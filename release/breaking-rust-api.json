@@ -1,14 +1,5 @@
 {
   "schemaVersion": 1,
-  "releaseVersion": "0.40.0",
-  "changes": [
-    {
-      "crate": "adocweave",
-      "description": "include展開後も安全に編集できるanchor識別子の物理範囲を保持するため、``ProjectedReference``へ``editable_anchor_origin`` fieldを追加しました。",
-      "item": "field ProjectedReference.editable_anchor_origin",
-      "lint": "constructible_struct_adds_field",
-      "migration": "``ProjectedReference``をstruct literalで構築している場合は、anchor識別子を一つの物理範囲へそのまま対応付けられなければ``editable_anchor_origin: None``を、対応付けられる場合はその``SourceOrigin``を``Some``で追加してください。",
-      "summary": "externally-constructible struct adds field"
-    }
-  ]
+  "releaseVersion": "0.40.1",
+  "changes": []
 }

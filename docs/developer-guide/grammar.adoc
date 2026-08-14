@@ -194,6 +194,9 @@ cross-reference  = "<<", anchor-id, [ ",", inline-sequence ], ">>"
                    "[", inline-sequence, "]" ;
 unordered-list-item = "*", { "*" }, (" " | "\t"), principal-text ;
 ordered-list-item   = ".", { "." }, (" " | "\t"), principal-text ;
+description-list-item = term, ( "::" | ":::" | "::::" | ";;" ),
+                        ( (" " | "\t"), principal-text
+                        | line-ending, [ principal-text ] ) ;
 principal-text      = inline-sequence,
                       { line-ending, principal-continuation-line } ;
 principal-continuation-line = { " " | "\t" }, inline-sequence ;
@@ -203,10 +206,14 @@ inline-math      = ("stem:[" | "latexmath:["), opaque-math, "]" ;
 hard-break       = " +", line-ending ;
 ----
 
-順序なし・順序付きリストの``principal-text``は、空行を挟まない通常段落行とインデント行を一つの
+順序なし・順序付き・定義リストの``principal-text``は、空行を挟まない通常段落行とインデント行を一つの
 項目本文として扱います。兄弟・子リストのマーカー、独立ブロックの開始行および単独の``+``は項目本文を
 終了します。改行とインデントは入力範囲を保つため解析結果へ残しますが、HTMLでは通常の段落内空白として
 折り畳みます。
+
+定義リストの説明文は``用語::``と同じ行に置くほか、次の行から始められます。マーカー行に本文がない
+場合、項目本文の範囲は最初の継続行の先頭から始まります。本文のない用語行が連続する場合、
+それらの用語は直後の項目と結合し、一つの説明文を共有します。
 
 EBNFには次の区切り記号条件を追加します。
 
