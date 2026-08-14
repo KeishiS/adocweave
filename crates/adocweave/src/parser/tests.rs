@@ -1064,6 +1064,55 @@ fn multiline_list_principal_text_resolves_an_explicit_hard_break() {
 }
 
 #[test]
+fn description_items_accept_next_line_principal_text() {
+    let source = "Term::\nnext-line description\nSecond::\nsecond description\n";
+    let parsed = parse(source).expect("description list");
+    let [AstBlock::List(list)] = parsed.ast.blocks() else {
+        panic!("one list");
+    };
+
+    assert_eq!(list.kind, ListKind::Description);
+    assert_eq!(list.items.len(), 2);
+    assert_eq!(list.items[0].terms[0].text, "Term");
+    assert_eq!(list.items[0].text, "next-line description");
+    assert_eq!(list.items[1].terms[0].text, "Second");
+    assert_eq!(list.items[1].text, "second description");
+    assert!(
+        list.items
+            .iter()
+            .all(|item| item.continuations.is_empty() && item.problems.is_empty())
+    );
+    assert_eq!(parsed.syntax.reconstruct(), source);
+}
+
+#[test]
+fn description_items_accept_multiline_principal_text_after_same_line_text() {
+    let parsed = parse("Term:: same-line\nwrapped line\n").expect("description list");
+    let [AstBlock::List(list)] = parsed.ast.blocks() else {
+        panic!("one list");
+    };
+
+    assert_eq!(list.kind, ListKind::Description);
+    assert_eq!(list.items.len(), 1);
+    assert_eq!(list.items[0].text, "same-line\nwrapped line");
+}
+
+#[test]
+fn description_terms_before_next_line_principal_text_still_combine() {
+    let parsed = parse("Alias::\nTerm::\nshared description\n").expect("description list");
+    let [AstBlock::List(list)] = parsed.ast.blocks() else {
+        panic!("one list");
+    };
+
+    assert_eq!(list.kind, ListKind::Description);
+    assert_eq!(list.items.len(), 1);
+    assert_eq!(list.items[0].terms.len(), 2);
+    assert_eq!(list.items[0].terms[0].text, "Alias");
+    assert_eq!(list.items[0].terms[1].text, "Term");
+    assert_eq!(list.items[0].text, "shared description");
+}
+
+#[test]
 fn ordered_list_presentation_is_resolved_during_lowering() {
     let parsed = parse("[start=3,%reversed,upperroman]\n. one\n. two\n").expect("parse");
     let AstBlock::List(list) = &parsed.ast.blocks()[0] else {

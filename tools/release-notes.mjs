@@ -26,7 +26,7 @@ if (breakingRustApi.releaseVersion !== RELEASE_NOTES_VERSION) {
     `破壊的変更記録のreleaseVersionがRelease Notesと一致しません：${breakingRustApi.releaseVersion}`,
   );
 }
-export const PREVIOUS_RELEASE_VERSION = "0.39.0";
+export const PREVIOUS_RELEASE_VERSION = "0.40.0";
 
 // The release manifest schema version the previous stable release shipped.
 //
@@ -52,8 +52,7 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  "Language Serverのrenameが、明示的なanchor IDと参照中のanchor部分だけを安全に変更するよう修正しました。",
-  "依存関係、HTML5およびRust公開APIの検査が、影響する変更をPull Requestと標準ローカル検査で漏れなく扱うよう修正しました。",
+  "定義リストで用語の次の行に書いた説明文が、説明として``dd``へ入るよう修正しました。従来はリスト外の段落になり、``dd``が空になっていました。",
 ];
 
 export function breakingContractNotes(changes) {
