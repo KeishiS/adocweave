@@ -1248,10 +1248,13 @@ fn parse_lists(
                     + 1,
             );
         }
-        let principal_start = absolute + text_start;
+        let mut principal_start = absolute + text_start;
         let mut principal_end = line.content_range().end().to_usize();
         let mut principal_end_line = index + 1;
-        if matches!(kind, ListKind::Ordered | ListKind::Unordered) {
+        if matches!(
+            kind,
+            ListKind::Ordered | ListKind::Unordered | ListKind::Description
+        ) {
             while principal_end_line < end_line {
                 if (context.is_cancelled)() {
                     return Err(ParseFailure::Cancelled);
@@ -1284,6 +1287,17 @@ fn parse_lists(
                 }
                 principal_end = continuation_line.content_range().end().to_usize();
                 principal_end_line += 1;
+            }
+            // マーカー行に本文がない場合、本文は継続行から始まる。行末の
+            // principal_startのままでは本文が改行で始まり、先頭に余分な
+            // 空白が出力される。
+            if principal_start >= line.content_range().end().to_usize()
+                && principal_end_line > index + 1
+            {
+                principal_start = source_document.lines()[index + 1]
+                    .content_range()
+                    .start()
+                    .to_usize();
             }
         }
         let text = context
