@@ -1659,6 +1659,30 @@ fn ordered_list_multiline_principal_text_renders_an_explicit_hard_break() {
 }
 
 #[test]
+fn description_list_next_line_text_renders_inside_dd() {
+    let parsed = parse("用語::\n次の行の説明です。\n第2用語::\n第2の説明です。\n").expect("parse");
+    let output = render(&parsed.ast, &RenderPolicy::default());
+
+    assert_eq!(
+        output.html,
+        "<dl>\n<dt>用語</dt>\n<dd>次の行の説明です。</dd>\n\
+         <dt>第2用語</dt>\n<dd>第2の説明です。</dd>\n</dl>\n"
+    );
+}
+
+#[test]
+fn description_list_next_line_text_matches_the_same_line_form() {
+    let next_line = parse("用語::\n説明です。\n").expect("parse");
+    let same_line = parse("用語:: 説明です。\n").expect("parse");
+    let policy = RenderPolicy::default();
+
+    assert_eq!(
+        render(&next_line.ast, &policy).html,
+        render(&same_line.ast, &policy).html
+    );
+}
+
+#[test]
 fn lists_match_the_supported_asciidoctor_fixture() {
     let parsed = parse(include_str!(
         "../../../../fixtures/lists/asciidoctor-compatible.adoc"
