@@ -141,7 +141,7 @@ jobs:
         if: matrix.build == 'nix'
         run: nix develop .#ci -c bash -c 'command -v cargo' | xargs dirname >> "$GITHUB_PATH"
       - if: matrix.build == 'nix'
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           prefix-key: native-${{ matrix.target }}
           key: ${{ hashFiles('flake.lock') }}
@@ -185,7 +185,7 @@ jobs:
             throw "cargo-dist version mismatch"
           }
       - if: matrix.build == 'windows'
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           prefix-key: native-${{ matrix.target }}
           key: ${{ hashFiles('release-manifest.json') }}
