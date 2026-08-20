@@ -53,6 +53,10 @@ impl AstDocument {
         self.resolved.catalogs()
     }
 
+    pub(crate) const fn facts(&self) -> &crate::resolved::DocumentFacts {
+        self.resolved.facts()
+    }
+
     pub const fn identifiers(&self) -> &crate::document::DocumentIdentifiers {
         self.resolved.identifiers()
     }

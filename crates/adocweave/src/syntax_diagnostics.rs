@@ -12,9 +12,13 @@ use crate::syntax::{SyntaxFix, SyntaxIssue, SyntaxIssueClass};
 pub(crate) fn collect_and_clear_cancellable(
     blocks: &mut [AstBlock],
     attribute_problems: &[AttributeProblem],
+    mut footnote_body_problems: Vec<InlineProblem>,
     checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
 ) -> Result<Vec<SyntaxIssue>, ()> {
     let mut output = Vec::new();
+    // Footnote bodies are parsed after the block tree is complete, so their
+    // inline problems arrive separately and project onto the same classes.
+    inline_issues(&mut footnote_body_problems, &mut output, checkpoint)?;
     for problem in attribute_problems {
         if checkpoint.is_cancelled() {
             return Err(());

@@ -318,7 +318,10 @@ directiveへ書く属性名は大文字と小文字を区別しません。``ifd
 |Bibliographyとfootnote
 |部分対応
 |bibliography anchorとfootnote macroの構文node、名前付きfootnote再利用、出現順番号、back reference、
-bibliography参照edgeおよび階層index catalogに対応します。`[bibliography]` section内の順序なしlistは
+bibliography参照edgeおよび階層index catalogに対応します。footnoteの本文は属性listではなく1つの文として扱い、
+カンマや``=``を含めてそのまま本文にします。本文は段落と同じinline記法(リンク、書式、属性参照など)として
+解析して描画し、``https://example.org/[label]``のような本文中の``]``では終了しません。本文に``]``を書く場合は
+``\]``と記述します。`[bibliography]` section内の順序なしlistは
 catalogのcitation／back referenceを出力します。bibliography styleのdoctype、document title／discrete heading、
 multipart bookのsection scopeを検証します。citation styleの整形およびindex rangeは未対応です。
 ``[[[id,表示テキスト]]]``のようにカンマの後ろへ表示テキストを書くと、IDと分けて保持し、``<<id>>``の

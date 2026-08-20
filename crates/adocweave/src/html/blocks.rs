@@ -15,7 +15,7 @@ pub(super) fn serialize_body_traversal(
                 render_toc(output, document.presentation());
             }
             body::BodyTraversalStep::FootnoteCatalog => {
-                render_footnote_catalog(output, document.catalogs());
+                render_footnote_catalog(output, document.catalogs(), document.facts(), context);
             }
             body::BodyTraversalStep::Block {
                 block,
@@ -887,6 +887,8 @@ pub(super) fn render_toc(
 pub(super) fn render_footnote_catalog(
     output: &mut String,
     catalogs: &crate::catalog::DocumentCatalogs,
+    facts: &crate::resolved::DocumentFacts,
+    context: &mut InlineRenderContext<'_, '_>,
 ) {
     if catalogs.footnotes().is_empty() {
         return;
@@ -898,7 +900,15 @@ pub(super) fn render_footnote_catalog(
     for footnote in catalogs.footnotes() {
         let footnote_id = format!("_footnote_{}", footnote.number);
         BlockWriter::start(output, "li", &[passive("id", footnote_id)]);
-        BlockWriter::inline_text(output, &footnote.text);
+        // The body is prose: links, formatting, and attribute references in
+        // it render exactly as they do in a paragraph.
+        match facts.footnote_body(footnote.definition_range) {
+            Some(body) => {
+                let plan = body::plan_inlines(body, context);
+                body::serialize_inlines(output, &plan);
+            }
+            None => BlockWriter::inline_text(output, &footnote.text),
+        }
         for (index, _) in footnote.occurrences.iter().enumerate() {
             BlockWriter::text(output, " ");
             let target = format!("_footnoteref_{}_{}", footnote.number, index + 1);

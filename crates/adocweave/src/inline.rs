@@ -1500,7 +1500,12 @@ fn recognize_macro_with_index(
         {
             return InlineRecognition::rejected(value, open, next_char_boundary(value, open));
         }
-        let Some(close) = delimiters.next_close_bracket(bracket + 1) else {
+        let close = if kind == StandardMacroKind::Footnote {
+            footnote_close(value, bracket + 1, delimiters)
+        } else {
+            delimiters.next_close_bracket(bracket + 1)
+        };
+        let Some(close) = close else {
             return InlineRecognition::recovered(
                 value,
                 open,
@@ -2067,6 +2072,42 @@ fn is_token_boundary(previous: Option<char>) -> bool {
     previous.is_none_or(|character| {
         character.is_whitespace() || matches!(character, '(' | '[' | '{' | '<' | '"' | '\'')
     })
+}
+
+/// Finds the `]` that closes a footnote body starting at `start`.
+///
+/// A footnote body is prose, and prose may carry bracketed inline syntax such as
+/// `https://example.org/[label]`. The first `]` would cut that label in half and
+/// leak the rest of the body into the paragraph, so brackets are matched by
+/// depth instead, and a `\]` written by the author never closes the body. A
+/// body whose brackets do not balance falls back to the first unescaped `]`,
+/// which is where the language specification ends it.
+fn footnote_close(value: &str, start: usize, delimiters: &DelimiterIndex) -> Option<usize> {
+    let mut first_close = None;
+    let mut depth = 0_usize;
+    let mut cursor = start;
+    while let Some(close) = delimiters.next_close_bracket(cursor) {
+        if let Some(open) = delimiters
+            .next_open_bracket(cursor)
+            .filter(|open| *open < close)
+        {
+            if !is_escaped(value, open) {
+                depth += 1;
+            }
+            cursor = open + 1;
+            continue;
+        }
+        cursor = close + 1;
+        if is_escaped(value, close) {
+            continue;
+        }
+        if depth == 0 {
+            return Some(close);
+        }
+        first_close.get_or_insert(close);
+        depth -= 1;
+    }
+    first_close
 }
 
 fn is_escaped(value: &str, offset: usize) -> bool {

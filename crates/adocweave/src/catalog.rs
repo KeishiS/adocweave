@@ -407,7 +407,7 @@ fn push_footnote(
             .attributes
             .first()
             .map_or(node.target_range, |attribute| attribute.range),
-        text: text.to_owned(),
+        text: crate::resolved::unescape_footnote_text(text),
         occurrences: vec![FootnoteOccurrence { range: node.range }],
     });
 }
@@ -439,6 +439,18 @@ mod tests {
         );
         assert_eq!(catalogs.index()[0].terms, ["Rust", "Ownership"]);
         assert_eq!(catalogs.index()[0].occurrences.len(), 2);
+    }
+
+    /// The body of a footnote is one piece of prose, with a comma kept and the
+    /// escape removed from a `\\]` the author wrote.
+    #[test]
+    fn footnote_text_is_the_whole_unescaped_body() {
+        let analysis = Engine::new(AnalysisOptions::default())
+            .analyze("footnote:[Hello, world \\] done]")
+            .expect("analyze");
+        let footnotes = analysis.ast().catalogs().footnotes();
+        assert_eq!(footnotes.len(), 1);
+        assert_eq!(footnotes[0].text, "Hello, world ] done");
     }
 
     #[test]

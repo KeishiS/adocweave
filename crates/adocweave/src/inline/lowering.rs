@@ -3,7 +3,7 @@
 use crate::budget::{BudgetExceeded, ParseBudget};
 use crate::inline_model::{
     AttributeUse, Inline, InlineLiteralKind, InlineProblem, InlineProblemKind, InlineStyle,
-    InlineText, MacroAttribute, Reference, ReferenceDestination, StandardMacro,
+    InlineText, MacroAttribute, Reference, ReferenceDestination, StandardMacro, StandardMacroKind,
 };
 use crate::source::TextRange;
 
@@ -107,14 +107,35 @@ pub(super) fn lower_standard_macro(
             ),
             target_expansion_error: None,
             attributes_range,
-            attributes: parse_macro_attributes(
-                &value[token.bracket + 1..token.close],
-                attributes_range,
-            ),
+            attributes: if token.kind == StandardMacroKind::Footnote {
+                footnote_body_attribute(&value[token.bracket + 1..token.close], attributes_range)
+            } else {
+                parse_macro_attributes(&value[token.bracket + 1..token.close], attributes_range)
+            },
         }),
         end: token.end,
         problems: Vec::new(),
     }
+}
+
+/// A footnote body is one piece of prose, not an attribute list: a comma or an
+/// equals sign inside it belongs to the sentence. The body therefore becomes a
+/// single unnamed attribute whose value is the raw source text between the
+/// brackets, so its range still addresses the source and the body can be parsed
+/// as inline content later.
+fn footnote_body_attribute(value: &str, range: TextRange) -> Vec<MacroAttribute> {
+    let start = value.len() - value.trim_start().len();
+    let end = value.trim_end().len();
+    if start >= end {
+        return Vec::new();
+    }
+    let body_range = subrange(range, start, end);
+    vec![MacroAttribute {
+        range: body_range,
+        value_range: body_range,
+        name: None,
+        value: value[start..end].to_owned(),
+    }]
 }
 
 fn parse_macro_attributes(value: &str, range: TextRange) -> Vec<MacroAttribute> {
