@@ -32,12 +32,23 @@ pub(super) fn lower_marker(
     let content_range = subrange(range, open + marker_width, close);
     let mut problems = Vec::new();
     let inline = match marker {
-        '`' => Inline::Literal {
-            kind: InlineLiteralKind::Monospace,
-            range: node_range,
-            content_range,
-            value: value[open + marker_width..close].to_owned(),
-        },
+        '`' => {
+            // `+text+` inside the backticks is the literal monospace form: the
+            // plus signs are passthrough markers around the text, not part of it.
+            let content = &value[open + marker_width..close];
+            let literal = content.len() >= 3 && content.starts_with('+') && content.ends_with('+');
+            let (content_start, content_end) = if literal {
+                (open + marker_width + 1, close - 1)
+            } else {
+                (open + marker_width, close)
+            };
+            Inline::Literal {
+                kind: InlineLiteralKind::Monospace,
+                range: node_range,
+                content_range: subrange(range, content_start, content_end),
+                value: value[content_start..content_end].to_owned(),
+            }
+        }
         '*' | '_' | '#' | '~' | '^' if depth >= config.max_depth => {
             problems.push(InlineProblem {
                 kind: InlineProblemKind::NestingLimitExceeded,
