@@ -92,6 +92,7 @@ const NON_RELEASE_FILES = new Set([
   "tools/release-readiness.mjs",
   "tools/sync-release-version.test.mjs",
   "tools/release-workflow-policy.mjs",
+  "tools/release-workflow-policy.test.mjs",
   "tools/semver-gate.mjs",
   "tools/semver-gate.test.mjs",
   "tools/verify-cargo-release-metadata.mjs",

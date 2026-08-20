@@ -184,6 +184,13 @@ tag rulesetを使わない理由はxref:adr/0006-direct-stable-releases.adoc[ADR
 再構築せず、metadataを再検証してattestationを作成してから、同じSHAへtagを作成します。
 その後private draftへ成果物を追加し、成果物集合が揃った後にstable releaseとして公開します。
 
+公開の成功後、同じrunの``binary-cache`` jobが候補SHAをcheckoutし、x86_64-linuxとaarch64-linuxの
+Nixパッケージをbuildしてruntime closureをbinary cache``keishis.cachix.org``へpushします。Cachixへの
+書き込みはOIDCで委任できないため、このjobだけがrepository secret``CACHIX_AUTH_TOKEN``(cacheのwrite token)を
+参照します。参照できるworkflow、jobおよびsecret名は``release-workflow-policy``の許可一覧で固定し、
+pull requestやmainへのpushでは参照しません。このjobはGitHubへの書き込み権限を持たず、pushに失敗しても
+tagとGitHub Releaseには影響しないため、同じrunの失敗したjobを再実行して回復します。
+
 == 検証
 
 配布仕様の確認には次のtaskを使用します。

@@ -249,7 +249,8 @@ gh workflow run release-dispatch.yml \
   -f candidate_sha="$candidate_sha"
 ----
 . workflowが候補SHAとdispatch時点のmain先端の一致、同じSHAのcandidate成功、既存tagとReleaseの不在を検査し、
-  同じrunでtagとGitHub Releaseを作成します。
+  同じrunでtagとGitHub Releaseを作成します。公開後、同じrunがLinux x86-64／ARM64のNixパッケージを
+  buildし、runtime closureをbinary cache(``keishis.cachix.org``)へpushします。
 . GitHub Releaseがstableとして公開され、予定されたassetだけを含むことを確認します。
 . checksumとattestationを検証し、xref:#release-checklist[Release checklist]に従って受け入れ結果を記録します。
 
@@ -316,5 +317,7 @@ xref:docs/developer-guide/adr/0006-direct-stable-releases.adoc[ADR 0006]を参�
 * [ ] Nix flakeをtagのコミットへ固定し、Linux x86-64／ARM64で``nix run``、profileへの導入・rollback・削除、
       利用側flakeへの固定、NixOSパッケージ評価およびoverlayを確認しました。runtime closureにbrowser、Node.js、
       Rust compiler、Cargoまたはfuzz toolが含まれていないことも確認しました。
+* [ ] ``keishis.cachix.org``をsubstituterに設定した利用側で、tagのコミットに固定したパッケージが
+      source buildなしで取得(substitute)できました。
 * [ ] 導入前後のfile一覧を比較し、CLI、LSP、browser package、Zed拡張、VS Code拡張およびtextlint用パッケージの削除後に
       管理対象fileが残っていないことを確認しました。

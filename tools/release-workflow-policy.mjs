@@ -19,6 +19,15 @@ const ALLOWED_WRITE_GRANTS = new Set([
   "release-dispatch.yml job publish",
 ]);
 
+// Workflows use the ambient job token only. The single exception is the binary
+// cache push after a stable release: Cachix has no OIDC federation, so the job
+// that pushes the published package closure reads the cache write token from
+// the repository secret. No other job, workflow, or secret is allowed.
+const ALLOWED_SECRET_REFERENCES = new Map([
+  ["release-dispatch.yml job binary-cache", new Set(["secrets.CACHIX_AUTH_TOKEN"])],
+]);
+const SECRET_REFERENCE = /secrets\.[A-Za-z_][A-Za-z0-9_]*/g;
+
 function fail(message) {
   throw new Error(message);
 }
@@ -76,10 +85,25 @@ export function validateWritePermissionGrants(workflows) {
   }
 }
 
-export function validateNoDirectSecretAccess(sources) {
+export function validateNoDirectSecretAccess(sources, workflows) {
   for (const [name, source] of Object.entries(sources)) {
-    if (source.includes("secrets.")) {
-      fail(`${name} reads from the secrets context; workflows use the ambient job token only`);
+    const references = source.match(SECRET_REFERENCE) ?? [];
+    if (references.length === 0) continue;
+    let permitted = 0;
+    for (const [jobName, job] of Object.entries(workflows[name]?.jobs ?? {})) {
+      const location = `${name} job ${jobName}`;
+      const allowed = ALLOWED_SECRET_REFERENCES.get(location);
+      for (const reference of JSON.stringify(job).match(SECRET_REFERENCE) ?? []) {
+        if (!allowed?.has(reference)) {
+          fail(`${location} reads ${reference}; workflows use the ambient job token only`);
+        }
+        permitted += 1;
+      }
+    }
+    // Every textual reference must be accounted for by an allowed job, so a
+    // secret read from a top-level `env:` block or a comment cannot hide.
+    if (permitted !== references.length) {
+      fail(`${name} reads from the secrets context outside an allowed job`);
     }
   }
 }
@@ -100,7 +124,7 @@ export function loadWorkflowPolicyInputs() {
 export function validateReleaseWorkflowPolicy({ sources, workflows }) {
   validatePinnedActions(workflows);
   validateWritePermissionGrants(workflows);
-  validateNoDirectSecretAccess(sources);
+  validateNoDirectSecretAccess(sources, workflows);
 }
 
 export function main() {

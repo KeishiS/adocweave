@@ -111,3 +111,38 @@ jobs:
       - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
       - name: Published textlint asset, checksum, and one-shot npx observation
         run: nix develop .#ci -c cargo make textlint-plugin-post-release-npx-smoke
+
+  # Stable releaseの公開が成功したら、同じcandidate SHAのNixパッケージのruntime closureを
+  # binary cache(keishis.cachix.org)へpushする。利用側はsubstituterを設定するだけで、
+  # AdocWeaveをsource buildせずに取得できる。push対象はstable releaseだけに限り、
+  # pull requestやmainへのpushではcacheの書き込みtokenを参照しない。
+  binary-cache:
+    needs: [readiness, publish]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            nixSystem: x86_64-linux
+          - runner: ubuntu-24.04-arm
+            nixSystem: aarch64-linux
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.readiness.outputs.candidate_sha }}
+          persist-credentials: false
+      - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+      - uses: cachix/cachix-action@5f2d7c5294214f71b873db4b969586b980625e71 # v17
+        with:
+          name: keishis
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          skipPush: true
+      - name: Release package closure build and push
+        env:
+          NIX_SYSTEM: ${{ matrix.nixSystem }}
+        run: |
+          package="$(nix build ".#packages.${NIX_SYSTEM}.default" --no-link --print-out-paths)"
+          test -n "$package"
+          cachix push keishis "$package"
