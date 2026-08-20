@@ -92,6 +92,8 @@ fn parse_segment(
     let mut output = InlineParseOutput::default();
     let mut cursor = 0;
     let mut plain_start = 0;
+    // Closing markers whose opening marker was escaped; they stay literal.
+    let mut suppressed_closers: Vec<usize> = Vec::new();
     let index = InlineCandidateIndex::new(value);
     let mut candidates = index.cursor();
 
@@ -223,20 +225,31 @@ fn parse_segment(
                 }
             }
             candidate @ InlineCandidate::Marker { open, form, .. } => {
-                if is_escaped(value, open) {
+                let escape_width = marker_escape_width(value, open, form);
+                let suppressed = suppressed_closers.iter().position(|close| *close == open);
+                if escape_width > 0 || suppressed.is_some() {
+                    // An escaped opening marker keeps its whole pair literal: the
+                    // matching closer must not open a new span of its own.
+                    if let Some(index_of_closer) = suppressed {
+                        suppressed_closers.swap_remove(index_of_closer);
+                    } else if let Some(InlineRecognition::Matched(InlineToken::Marker(token))) =
+                        index.recognize(value, candidate)
+                    {
+                        suppressed_closers.push(token.close);
+                    }
                     let marker_width = form.width();
                     push_text(
                         &mut output.inlines,
                         value,
                         range,
                         plain_start,
-                        open - 1,
+                        open - escape_width,
                         budget,
                     )?;
                     push_inline(
                         &mut output.inlines,
                         Inline::Text(InlineText {
-                            range: subrange(range, open - 1, open + marker_width),
+                            range: subrange(range, open - escape_width, open + marker_width),
                             value: value[open..open + marker_width].to_owned(),
                         }),
                         budget,
@@ -2108,6 +2121,23 @@ fn footnote_close(value: &str, start: usize, delimiters: &DelimiterIndex) -> Opt
         depth -= 1;
     }
     first_close
+}
+
+/// Number of backslashes an author wrote to keep a formatting marker literal.
+///
+/// A single backslash escapes a constrained marker. An unconstrained pair is
+/// recognized anywhere, so the language gives it a double escape: `\\__x__`
+/// shows as `__x__` with neither backslash. A single backslash before an
+/// unconstrained pair still escapes it, so a document written with the
+/// constrained habit keeps working. Zero means the marker is not escaped.
+fn marker_escape_width(value: &str, open: usize, form: MarkerForm) -> usize {
+    if form == MarkerForm::Unconstrained && value[..open].ends_with("\\\\") {
+        2
+    } else if is_escaped(value, open) {
+        1
+    } else {
+        0
+    }
 }
 
 fn is_escaped(value: &str, offset: usize) -> bool {

@@ -1100,3 +1100,58 @@ fn footnote_bodies_are_one_trimmed_attribute() {
         range("footnote:[ ".len(), "footnote:[ Hello, world=1".len())
     );
 }
+
+/// `\\` before an unconstrained pair keeps the whole pair literal without
+/// either backslash, and its closing marker does not open a new span. A single
+/// backslash keeps escaping a constrained marker as before.
+#[test]
+fn double_backslash_escapes_unconstrained_formatting() {
+    let source = "a \\\\__init__.py b `+__init__.py+` c \\*x* d \\\\**e** f **g**";
+    let parsed = parse(source, range(0, source.len()), InlineParseConfig::default());
+    let text = parsed
+        .inlines
+        .iter()
+        .map(|inline| match inline {
+            Inline::Text(text) => text.value.clone(),
+            Inline::Literal { value, .. } => format!("<code>{value}</code>"),
+            Inline::Styled { style, .. } => format!("<{style:?}>"),
+            other => panic!("unexpected inline: {other:?}"),
+        })
+        .collect::<String>();
+    assert_eq!(
+        text,
+        "a __init__.py b <code>__init__.py</code> c *x* d **e** f <Strong>"
+    );
+    assert!(parsed.problems.is_empty(), "{:?}", parsed.problems);
+}
+
+/// `+text+` inside backticks is the literal monospace form: the plus signs are
+/// not part of the text, and a lone or empty pair is ordinary content.
+#[test]
+fn literal_monospace_strips_the_passthrough_markers() {
+    for (source, expected, content_start) in [
+        ("`+__init__.py+`", "__init__.py", 2),
+        ("`+`", "+", 1),
+        ("`++`", "++", 1),
+        ("``+a+b+``", "a+b", 3),
+    ] {
+        let parsed = parse(source, range(0, source.len()), InlineParseConfig::default());
+        let Some(Inline::Literal {
+            value,
+            content_range,
+            ..
+        }) = parsed.inlines.first()
+        else {
+            panic!(
+                "monospace literal expected for {source}: {:?}",
+                parsed.inlines
+            );
+        };
+        assert_eq!(value, expected, "{source}");
+        assert_eq!(
+            *content_range,
+            range(content_start, content_start + expected.len()),
+            "{source}"
+        );
+    }
+}
