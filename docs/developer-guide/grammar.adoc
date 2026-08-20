@@ -259,6 +259,9 @@ markerでは最後のバックスラッシュと開始markerだけをliteral化�
 
 標準macroは``name:target[attributes]``を共通形とし、mediaのblock formだけ
 ``name::target[attributes]``を使用します。footnote、kbd、btn、citeおよびindextermは空targetを許します。
+footnoteだけは``[``と``]``の間を属性listとして分割せず、1つの本文として保持します。本文の終端は
+``[``と``]``の対応を数えて決め、``\]``は終端にしません。対応が取れない場合は最初のescapeされていない``]``を
+終端にします。本文は文書の意味解析の段階で``inline-sequence``として解析し、属性環境を同じ位置で適用します。
 ``cite:``は外部の書誌ライブラリーを参照するmacroで、常に空targetです。属性listのうち名前のない値を
 記述順のcitation keyとし、``name=value``形式の属性は引用の補足として保持します。keyを一つも持たない
 citationは``invalid-catalog``として診断します。認識優先順位は他の標準macroと同じで、

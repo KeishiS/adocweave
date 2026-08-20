@@ -1049,3 +1049,53 @@ fn extended_quotes_and_passthroughs_build_typed_nodes() {
         2
     );
 }
+
+/// A footnote body is prose. Bracketed inline syntax inside it, such as a URL
+/// label, must not end the footnote, and `\]` is the author's way of keeping a
+/// bracket. Unbalanced brackets fall back to the first `]`.
+#[test]
+fn footnote_bodies_close_at_the_matching_bracket() {
+    let source = "a footnote:[see https://example.org/[site] now] b footnote:[x \\] y] c footnote:[p [q] d";
+    let parsed = parse(source, range(0, source.len()), InlineParseConfig::default());
+    let bodies = parsed
+        .inlines
+        .iter()
+        .filter_map(|inline| match inline {
+            Inline::Macro(node) if node.kind == StandardMacroKind::Footnote => {
+                Some(node.attributes[0].value.as_str())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        bodies,
+        ["see https://example.org/[site] now", "x \\] y", "p [q"]
+    );
+    let text = parsed
+        .inlines
+        .iter()
+        .filter_map(|inline| match inline {
+            Inline::Text(text) => Some(text.value.as_str()),
+            _ => None,
+        })
+        .collect::<String>();
+    assert_eq!(text, "a  b  c  d");
+}
+
+/// The body is one attribute: a comma or `=` inside it belongs to the sentence,
+/// and surrounding spaces are not part of the text.
+#[test]
+fn footnote_bodies_are_one_trimmed_attribute() {
+    let source = "footnote:[ Hello, world=1 ]";
+    let parsed = parse(source, range(0, source.len()), InlineParseConfig::default());
+    let Some(Inline::Macro(node)) = parsed.inlines.first() else {
+        panic!("footnote macro expected");
+    };
+    assert_eq!(node.attributes.len(), 1);
+    assert_eq!(node.attributes[0].name, None);
+    assert_eq!(node.attributes[0].value, "Hello, world=1");
+    assert_eq!(
+        node.attributes[0].value_range,
+        range("footnote:[ ".len(), "footnote:[ Hello, world=1".len())
+    );
+}

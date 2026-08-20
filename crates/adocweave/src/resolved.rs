@@ -20,12 +20,27 @@ pub struct DocumentFacts {
     references: Vec<crate::inline_model::Reference>,
     macros: Vec<crate::inline_model::StandardMacro>,
     resources: Vec<crate::resource::ResourceReference>,
+    footnote_bodies: Vec<FootnoteBody>,
+}
+
+/// The inline content of one footnote definition.
+///
+/// A footnote body is prose written inside a macro, so the inline tree keeps
+/// it as the macro's attribute text and this fact carries the parsed content.
+/// Bodies are keyed by the macro range so catalogs and renderers can find the
+/// content of a definition without a second parse.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct FootnoteBody {
+    macro_range: crate::source::TextRange,
+    inlines: Vec<crate::inline_model::Inline>,
+    problems: Vec<crate::inline_model::InlineProblem>,
 }
 
 impl DocumentFacts {
     fn build(
         document: &AstDocument,
         attributes: &AttributeEnvironment,
+        limits: AnalysisLimits,
         checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
     ) -> Result<Self, ()> {
         let mut facts = Self::default();
@@ -84,6 +99,11 @@ impl DocumentFacts {
                 }
                 crate::walker::SemanticNode::Inline(crate::inline_model::Inline::Macro(node)) => {
                     facts.macros.push(node.clone());
+                    match footnote_body(node, attributes, limits, checkpoint) {
+                        Ok(Some(body)) => facts.footnote_bodies.push(body),
+                        Ok(None) => {}
+                        Err(()) => return std::ops::ControlFlow::Break(()),
+                    }
                     for reference in &node.target_attributes {
                         if checkpoint.is_cancelled() {
                             return std::ops::ControlFlow::Break(());
@@ -131,9 +151,33 @@ impl DocumentFacts {
             &mut |left, right| left.range().start().cmp(&right.range().start()),
             checkpoint,
         )?;
+        crate::cancellation::sort_by_cancellable(
+            &mut facts.footnote_bodies,
+            &mut |left, right| left.macro_range.start().cmp(&right.macro_range.start()),
+            checkpoint,
+        )?;
         Ok(facts)
     }
 
+    /// Parsed inline content of the footnote definition written as `macro_range`.
+    pub(crate) fn footnote_body(
+        &self,
+        macro_range: crate::source::TextRange,
+    ) -> Option<&[crate::inline_model::Inline]> {
+        self.footnote_bodies
+            .binary_search_by(|body| body.macro_range.start().cmp(&macro_range.start()))
+            .ok()
+            .map(|index| self.footnote_bodies[index].inlines.as_slice())
+    }
+
+    /// Inline problems found inside footnote bodies, in source order.
+    pub(crate) fn footnote_body_problems(
+        &self,
+    ) -> impl Iterator<Item = crate::inline_model::InlineProblem> + '_ {
+        self.footnote_bodies
+            .iter()
+            .flat_map(|body| body.problems.iter().copied())
+    }
     pub fn attribute_references(&self) -> &[crate::attributes::AttributeReference] {
         &self.attribute_references
     }
@@ -153,6 +197,78 @@ impl DocumentFacts {
     pub fn resources(&self) -> &[crate::resource::ResourceReference] {
         &self.resources
     }
+}
+
+/// Parses a footnote definition's body as inline content.
+///
+/// The body was kept as raw source text by the inline parser because a macro
+/// attribute has no children of its own. Parsing it here, with the document's
+/// attribute environment, gives links, formatting, and attribute references in
+/// a footnote the same meaning they have in a paragraph. A `\]` the author
+/// wrote to keep a bracket inside the body becomes a plain `]`.
+fn footnote_body(
+    node: &crate::inline_model::StandardMacro,
+    attributes: &AttributeEnvironment,
+    limits: AnalysisLimits,
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<Option<FootnoteBody>, ()> {
+    if node.kind != crate::inline_model::StandardMacroKind::Footnote {
+        return Ok(None);
+    }
+    let Some(body) = node.attributes.first() else {
+        return Ok(None);
+    };
+    let Ok(mut budget) = crate::budget::ParseBudget::new(limits) else {
+        return Ok(None);
+    };
+    let config = crate::inline::InlineParseConfig {
+        max_depth: limits.max_inline_depth as usize,
+        max_formula_bytes: limits.max_formula_bytes as usize,
+    };
+    let Ok(parsed) =
+        crate::inline::parse_with_budget_impl(&body.value, body.value_range, config, &mut budget)
+    else {
+        return Ok(None);
+    };
+    let mut inlines = parsed.inlines;
+    crate::lowering::resolve_inlines(&mut inlines, attributes, checkpoint)?;
+    unescape_closing_brackets(&mut inlines);
+    Ok(Some(FootnoteBody {
+        macro_range: node.range,
+        inlines,
+        problems: parsed.problems,
+    }))
+}
+
+/// Replaces the `\]` an author wrote inside a footnote body with `]`.
+///
+/// Only text nodes change; every range still addresses the source, so the
+/// escaped bracket keeps its position for diagnostics and editors.
+fn unescape_closing_brackets(inlines: &mut [crate::inline_model::Inline]) {
+    use crate::inline_model::Inline;
+    for inline in inlines {
+        match inline {
+            Inline::Text(text) => {
+                if text.value.contains("\\]") {
+                    text.value = text.value.replace("\\]", "]");
+                }
+            }
+            Inline::Styled { children, .. } => unescape_closing_brackets(children),
+            Inline::Link(link) => unescape_closing_brackets(&mut link.label),
+            Inline::Reference(reference) => unescape_closing_brackets(&mut reference.label),
+            Inline::Literal { .. }
+            | Inline::AttributeReference { .. }
+            | Inline::Formula(_)
+            | Inline::Macro(_)
+            | Inline::Passthrough { .. }
+            | Inline::HardBreak { .. } => {}
+        }
+    }
+}
+
+/// Removes the `\]` escape from the plain text of a footnote body.
+pub(crate) fn unescape_footnote_text(text: &str) -> String {
+    text.replace("\\]", "]")
 }
 
 fn attribute_reference(
@@ -220,7 +336,7 @@ impl ResolvedDocument {
         catalog_limits: AnalysisLimits,
         checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
     ) -> Result<Self, ResolvedBuildFailure> {
-        let facts = DocumentFacts::build(document, &attributes, checkpoint)
+        let facts = DocumentFacts::build(document, &attributes, catalog_limits, checkpoint)
             .map_err(|()| ResolvedBuildFailure::Cancelled)?;
         let identifiers = crate::document::build_identifiers(document, checkpoint)
             .map_err(|()| ResolvedBuildFailure::Cancelled)?;
@@ -300,6 +416,33 @@ mod tests {
 
     use super::DocumentFacts;
 
+    /// A footnote body is parsed with the document's attribute environment, and
+    /// an inline problem inside it is reported like one in a paragraph.
+    #[test]
+    fn footnote_bodies_are_parsed_and_their_problems_become_syntax_issues() {
+        let parsed = crate::parser::parse(":who: 筆者\n\nfootnote:[{who} *oops]").expect("parse");
+        let node = &parsed.ast.facts().macros()[0];
+        let body = parsed
+            .ast
+            .facts()
+            .footnote_body(node.range)
+            .expect("footnote body");
+        assert!(matches!(
+            body.first(),
+            Some(crate::inline_model::Inline::AttributeReference { value: Some(value), .. })
+                if value == "筆者"
+        ));
+        assert!(
+            parsed
+                .syntax
+                .issues()
+                .iter()
+                .any(|issue| issue.class == crate::syntax::SyntaxIssueClass::UnclosedInline),
+            "{:?}",
+            parsed.syntax.issues()
+        );
+    }
+
     #[test]
     fn document_facts_build_cancels_during_the_semantic_walk() {
         struct CancelAfterFirstCheckpoint(AtomicUsize);
@@ -319,6 +462,7 @@ mod tests {
         let result = DocumentFacts::build(
             &parsed.ast,
             parsed.ast.attribute_environment(),
+            crate::limits::AnalysisLimits::default(),
             &mut crate::cancellation::CancellationCheckpoint::new(&cancellation),
         );
 

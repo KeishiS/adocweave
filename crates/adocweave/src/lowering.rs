@@ -715,7 +715,7 @@ fn resolve_inline_attributes(
     .map_err(|()| LoweringFailure::Cancelled)
 }
 
-fn resolve_inlines(
+pub(crate) fn resolve_inlines(
     inlines: &mut [Inline],
     attributes: &crate::attributes::AttributeEnvironment,
     checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,

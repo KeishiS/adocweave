@@ -943,9 +943,11 @@ fn finish_document(
         }),
         crate::lowering::LoweringFailure::Cancelled => ParseFailure::Cancelled,
     })?;
+    let footnote_body_problems = ast.facts().footnote_body_problems().collect();
     let syntax_issues = crate::syntax_diagnostics::collect_and_clear_cancellable(
         &mut ast.blocks,
         &sequence.attribute_problems,
+        footnote_body_problems,
         &mut checkpoint,
     )
     .map_err(|()| ParseFailure::Cancelled)?;

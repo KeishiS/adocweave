@@ -2046,3 +2046,29 @@ fn math_contract_exposes_language_and_display_without_executing_source() {
     assert!(output.html.contains("&lt;script&gt;"));
     assert!(output.html.contains("&lt;img src=x onerror=alert(1)&gt;"));
 }
+
+/// A footnote body is prose: links, formatting, attribute references, and an
+/// escaped bracket render as they do in a paragraph, and a bracketed label
+/// inside the body does not leak the rest of the body into the paragraph.
+#[test]
+fn footnote_bodies_render_as_inline_content() {
+    let parsed = parse(concat!(
+        ":who: 筆者\n\n",
+        "本文 footnote:[なお筆者は https://asciidoc.org/[AsciiDoc] 信者です] 続き。\n",
+        "footnote:[Hello, world] footnote:[*強調* と {who} と \\] です]\n",
+    ))
+    .expect("parse");
+    let html = render(&parsed.ast, &RenderPolicy::default()).html;
+    assert!(html.contains("</sup> 続き。"), "{html}");
+    assert!(
+        html.contains(
+            "<li id=\"_footnote_1\">なお筆者は<a href=\"https://asciidoc.org/\">AsciiDoc</a> 信者です <a"
+        ),
+        "{html}"
+    );
+    assert!(html.contains("<li id=\"_footnote_2\">Hello, world <a"), "{html}");
+    assert!(
+        html.contains("<li id=\"_footnote_3\"><strong>強調</strong> と 筆者 と ] です <a"),
+        "{html}"
+    );
+}
