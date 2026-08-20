@@ -21,6 +21,7 @@ pub(super) fn lint_attributes(context: &LintContext<'_>, sink: &mut LintDiagnost
                     .as_ref()
                     .is_none_or(|expected| &attribute.value.folded_text != expected),
                 DocumentAttributeOperation::Unset => expected.is_some(),
+                DocumentAttributeOperation::Counter => true,
             };
             if changed {
                 sink.emit(PROTECTED_ATTRIBUTE, attribute.range, || {

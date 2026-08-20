@@ -160,6 +160,9 @@ fn wasm_document_attribute_occurrence(
             adocweave::semantic::DocumentAttributeOperation::Unset => {
                 WasmDocumentAttributeOperation::Unset
             }
+            adocweave::semantic::DocumentAttributeOperation::Counter => {
+                WasmDocumentAttributeOperation::Counter
+            }
         },
         valid: occurrence.valid,
     }
@@ -222,6 +225,9 @@ fn wasm_attribute_query_product(
                         }
                         adocweave::semantic::DocumentAttributeOperation::Unset => {
                             WasmDocumentAttributeOperation::Unset
+                        }
+                        adocweave::semantic::DocumentAttributeOperation::Counter => {
+                            WasmDocumentAttributeOperation::Counter
                         }
                     },
                     effective_value,

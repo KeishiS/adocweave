@@ -1000,7 +1000,7 @@ fn recognize_marker(
     if close == next {
         return InlineRecognition::rejected(value, open, close + width);
     }
-    if marker == '{' && !valid_attribute_name(&value[next..close]) {
+    if marker == '{' && !valid_reference_name(&value[next..close]) {
         return InlineRecognition::rejected(value, open, next);
     }
     if matches!(marker, '^' | '~') && value[next..close].chars().any(char::is_whitespace) {
@@ -1092,6 +1092,12 @@ fn index_marker_closers(
             *close = closer_at[*open];
         }
     }
+}
+
+/// A reference names an attribute, or counts one: `{counter:name}` and
+/// `{counter2:name}` are references too.
+fn valid_reference_name(name: &str) -> bool {
+    valid_attribute_name(name) || crate::attributes::counter_reference(name).is_some()
 }
 
 fn valid_attribute_name(name: &str) -> bool {

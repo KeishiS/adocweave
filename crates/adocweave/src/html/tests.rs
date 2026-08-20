@@ -2254,3 +2254,34 @@ fn references_to_blocks_show_caption_title_or_id() {
         "{html}"
     );
 }
+
+/// `{counter:name}` takes the next value at its own position and shows it;
+/// `{counter2:name}` counts without showing; a seed starts a letter or number
+/// sequence; a plain `{name}` afterwards reads the current count.
+#[test]
+fn counter_references_count_in_reading_order() {
+    let parsed = parse(concat!(
+        ":theorem-num: 0\n\n",
+        ".定理 {counter:theorem-num} (一意性)\n--\n本文\n--\n\n",
+        ".定理 {counter:theorem-num} (公式)\n--\n本文\n--\n\n",
+        "今は {theorem-num} 個。{counter2:hidden}{counter2:hidden}hidden={hidden} ",
+        "字 {counter:letter:a}{counter:letter} 数 {counter:n:5} {counter:n} 未定義 {nope}\n",
+    ))
+    .expect("parse");
+    let output = render(&parsed.ast, &RenderPolicy::default());
+    assert_eq!(
+        output.html,
+        concat!(
+            "<div class=\"open\">\n<div class=\"title\">定理 1 (一意性)</div>\n<p>本文</p>\n</div>\n",
+            "<div class=\"open\">\n<div class=\"title\">定理 2 (公式)</div>\n<p>本文</p>\n</div>\n",
+            "<p>今は 2 個。hidden=2 字 ab 数 5 6 未定義 {nope}</p>\n",
+        )
+    );
+    let undefined = parsed
+        .syntax
+        .issues()
+        .iter()
+        .filter(|issue| issue.class == crate::syntax::SyntaxIssueClass::UnclosedInline)
+        .count();
+    assert_eq!(undefined, 0);
+}

@@ -52,6 +52,7 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
+  "counter属性参照（``{counter:name}``、``{counter2:name}``、初期値付きの``{counter:name:5}``／``{counter:name:a}``）に対応しました。参照のたびに値を進め、以後の``{name}``参照とblock titleで現在値を参照できます。属性の履歴には``counter``操作として記録します。",
   "block titleを持つ画像blockを``figure``と``figcaption``で描画し、表・example blockとともに``Figure 1. ``形式の番号付きcaptionを付けるようにしました。語は``figure-caption``などの属性で変えられ、解除すると番号を付けません。見出し以外のblockへの空label参照は、anchorの表示テキスト、番号付きcaption、block title、識別子の順で表示し、blockのsourceを表示しなくなりました。構造情報のblock presentationへfigure、tableとcaptionを追加しました。",
   "literal monospace（`` `+text+` ``）の両端の``+``を表示から除き、unconstrained書式の直前の``\\\\``を言語仕様どおり二つともescapeとして扱うようにしました。``__init__.py``のような書式記号を含む文字列を標準の記法で書けます。",
   "example、sidebar、open blockを種類のclassを持つ``div``で囲み、block titleを``div.title``として出力するようにしました。``[%collapsible]``付きのexample blockは``details``と``summary``へ変換し、``%open``で展開した状態にします。先頭のpositional属性は``style#id.role%option``の形で書けます。",

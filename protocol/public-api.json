@@ -86,7 +86,7 @@
     "ResourceStatus": ["resolved", "failed"],
     "ResourceFailureKind": ["missing", "outside-root", "scheme-denied", "permission-denied", "media-type-unavailable", "resolver-failure"],
     "CitationStatus": ["resolved", "failed"],
-    "DocumentAttributeOperation": ["set", "unset"],
+    "DocumentAttributeOperation": ["set", "unset", "counter"],
     "AttributeExpansionError": ["undefined", "cycle", "depth-limit-exceeded", "size-limit-exceeded"],
     "AttributeValueContinuation": ["soft", "hard"],
     "ResourcePurpose": ["image", "icon", "audio", "video", "video-poster"],
