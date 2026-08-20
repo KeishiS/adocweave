@@ -60,9 +60,27 @@ nix profile remove AdocWeave
 ``adocweave-lsp``が含まれます。``adocweave.overlays.default``から``pkgs.adocweave``として参照することもできます。
 専用のNixOS service moduleは提供しません。
 
-Nixパッケージは``Cargo.lock``に固定したソースからbuildします。利用できるbinary cacheがない場合は利用側で
-Rust buildが実行されます。Rust compiler、Cargo、Node.js、Chromiumおよびfuzz toolは完成したパッケージの
-runtime closureへ含めません。
+Nixパッケージは``Cargo.lock``に固定したソースからbuildします。Rust compiler、Cargo、Node.js、Chromiumおよび
+fuzz toolは完成したパッケージのruntime closureへ含めません。
+
+stable releaseの公開時には、tagと同じcommitでbuildしたx86_64-linuxとaarch64-linux向けパッケージの
+runtime closureをbinary cache``https://keishis.cachix.org``へpushしています。利用側で次のsubstituterと
+公開鍵を設定し、flake inputをrelease tagのcommitへ固定すると、Rust buildを実行せずにパッケージを取得できます。
+
+[source,nix]
+----
+nix.settings = {
+  extra-substituters = [ "https://keishis.cachix.org" ];
+  extra-trusted-public-keys = [
+    "keishis.cachix.org-1:j3UwGrrgTifYMa9Uo6fyDU8GEJBcorOzrHdkXBXruK4="
+  ];
+};
+----
+
+NixOS以外では、system全体の``nix.conf``へ同じ``extra-substituters``と``extra-trusted-public-keys``を
+記載します。cacheへpushするのはrelease tagのcommitだけです。tag以外のcommitを使う場合や、利用側flakeで
+``inputs.adocweave.inputs.nixpkgs.follows``のようにinputを差し替えた場合はderivationが変わるため取得できず、
+利用側でRust buildが実行されます。
 
 == 配布物の選択
 

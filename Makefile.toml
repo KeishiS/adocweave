@@ -179,7 +179,8 @@ script = '''
 node tools/release-workflow-policy.mjs
 node --test \
   tools/browser-release-budget.test.mjs \
-  tools/browser-release-smoke.test.mjs
+  tools/browser-release-smoke.test.mjs \
+  tools/release-workflow-policy.test.mjs
 '''
 
 [tasks.workflow-lint]
