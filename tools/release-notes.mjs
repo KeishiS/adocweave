@@ -26,7 +26,7 @@ if (breakingRustApi.releaseVersion !== RELEASE_NOTES_VERSION) {
     `破壊的変更記録のreleaseVersionがRelease Notesと一致しません：${breakingRustApi.releaseVersion}`,
   );
 }
-export const PREVIOUS_RELEASE_VERSION = "0.40.0";
+export const PREVIOUS_RELEASE_VERSION = "0.40.1";
 
 // The release manifest schema version the previous stable release shipped.
 //
@@ -52,7 +52,7 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  "定義リストで用語の次の行に書いた説明文が、説明として``dd``へ入るよう修正しました。従来はリスト外の段落になり、``dd``が空になっていました。",
+  "制約付き引用符（``*strong*``、``_emphasis_``、``` `monospace` ``、``#highlight#``）の境界で、漢字・かな・ハングルなどのCJK文字を単語境界として扱うようにしました。日本語の地の文に隣接する``*太字*``がそのまま書式として認識されます。ラテン文字と数字が隣接する場合の判定は従来どおりです。",
 ];
 
 export function breakingContractNotes(changes) {
