@@ -1055,7 +1055,8 @@ fn extended_quotes_and_passthroughs_build_typed_nodes() {
 /// bracket. Unbalanced brackets fall back to the first `]`.
 #[test]
 fn footnote_bodies_close_at_the_matching_bracket() {
-    let source = "a footnote:[see https://example.org/[site] now] b footnote:[x \\] y] c footnote:[p [q] d";
+    let source =
+        "a footnote:[see https://example.org/[site] now] b footnote:[x \\] y] c footnote:[p [q] d";
     let parsed = parse(source, range(0, source.len()), InlineParseConfig::default());
     let bodies = parsed
         .inlines

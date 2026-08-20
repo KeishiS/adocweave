@@ -2066,7 +2066,10 @@ fn footnote_bodies_render_as_inline_content() {
         ),
         "{html}"
     );
-    assert!(html.contains("<li id=\"_footnote_2\">Hello, world <a"), "{html}");
+    assert!(
+        html.contains("<li id=\"_footnote_2\">Hello, world <a"),
+        "{html}"
+    );
     assert!(
         html.contains("<li id=\"_footnote_3\"><strong>強調</strong> と 筆者 と ] です <a"),
         "{html}"
