@@ -968,9 +968,10 @@ fn monospace_lint_reports_unclosed_span() {
 #[test]
 fn monospace_boundary_lint_recommends_unconstrained_delimiters_once() {
     let source = concat!(
-        "ファイル`pbmc_processed.h5ad`を\n",
-        "AnnDataの`obs[\"predicted.celltype.l1\"]`を\n",
+        "file`pbmc_processed.h5ad`s\n",
+        "snake_`obs[\"predicted.celltype.l1\"]`\n",
         "（`code`）\n",
+        "日本語`code`日本語\n",
         "日本語``code``日本語\n",
         "[source]\n----\n日本語`code`日本語\n----\n",
         "....\n日本語`code`日本語\n....\n",

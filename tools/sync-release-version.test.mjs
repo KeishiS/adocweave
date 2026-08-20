@@ -261,6 +261,33 @@ test("generator失敗時は管理対象と旧version fixtureを復元する", ()
   }
 });
 
+test("第三者packageの版が候補versionと一致してもinventoryを妨げない", () => {
+  const scope = fixture();
+  try {
+    // wit-bindgen系のように、外部packageの版が候補versionと偶然一致する
+    // lockfileを再現する。source付きblockのversion行は照合から除かれる。
+    const lockPath = join(scope.directory, "Cargo.lock");
+    writeFileSync(
+      lockPath,
+      readFileSync(lockPath, "utf8") +
+        '\n[[package]]\nname = "wit-example"\nversion = "1.3.0"\nsource = "registry+https://example.invalid/index"\n',
+    );
+    const foreignBlock = /name = "wit-example"\nversion = "1\.3\.0"/;
+    assert.doesNotThrow(() =>
+      syncReleaseVersion({
+        root: scope.root,
+        mode: "update",
+        version: "1.3.0",
+        registry: registry(),
+        runGenerator: generatedRunner,
+      }),
+    );
+    assert.match(readFileSync(lockPath, "utf8"), foreignBlock);
+  } finally {
+    scope.cleanup();
+  }
+});
+
 test("--checkの副作用を検出して復元する", () => {
   const scope = fixture();
   try {
