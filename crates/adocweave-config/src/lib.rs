@@ -87,6 +87,8 @@ pub enum ConfigErrorCode {
     InvalidLimit,
     /// Configured path is absolute or escapes its configuration directory.
     InvalidPath,
+    /// Configured HTML role is not a class token.
+    InvalidRole,
 }
 
 impl ConfigErrorCode {
@@ -101,6 +103,7 @@ impl ConfigErrorCode {
             Self::InvalidAttribute => "invalid-attribute",
             Self::InvalidLimit => "invalid-limit",
             Self::InvalidPath => "invalid-path",
+            Self::InvalidRole => "invalid-role",
         }
     }
 }
@@ -1210,6 +1213,8 @@ struct HtmlWire {
     stylesheet_files: Vec<PathBuf>,
     #[serde(default)]
     stylesheet_urls: Vec<String>,
+    #[serde(default)]
+    roles: Vec<String>,
 }
 
 impl HtmlWire {
@@ -1223,6 +1228,16 @@ impl HtmlWire {
             ..RenderPolicy::default()
         };
         policy.stylesheets.sources.clear();
+        for (index, role) in self.roles.iter().enumerate() {
+            if !adocweave::output::html::is_role_name(role) {
+                return Err(ConfigError::new(
+                    ConfigErrorCode::InvalidRole,
+                    "html.roles entries must use ASCII letters, digits, `-`, and `_`",
+                )
+                .at(format!("html.roles.{index}")));
+            }
+        }
+        policy.roles.allowed = self.roles.into_iter().collect();
         let stylesheet_files = self
             .stylesheet_files
             .into_iter()
@@ -1378,6 +1393,7 @@ max-consecutive-blank-lines = 2
 complete = true
 stylesheet-files = ["styles/manual.css"]
 stylesheet-urls = ["https://example.test/manual.css"]
+roles = ["definition", "theorem"]
 "#,
             Path::new("/workspace"),
         )
@@ -1449,6 +1465,22 @@ stylesheet-urls = ["https://example.test/manual.css"]
         assert_eq!(config.format.newline, NewlineStyle::CrLf);
         assert!(!config.format.final_newline);
         assert_eq!(config.html.policy.document_mode, HtmlDocumentMode::Complete);
+        assert!(config.html.policy.roles.allows("definition"));
+        assert!(config.html.policy.roles.allows("theorem"));
+        assert!(!config.html.policy.roles.allows("lemma"));
+    }
+
+    /// A role that is not a class token cannot reach a stylesheet, so the
+    /// configuration rejects it by field instead of dropping it silently.
+    #[test]
+    fn html_roles_must_be_class_tokens() {
+        let error = ResolvedProjectConfig::parse(
+            "schema-version = 1\n[html]\nroles = [\"ok\", \"not ok\"]\n",
+            Path::new("/workspace"),
+        )
+        .expect_err("invalid role");
+        assert_eq!(error.code, ConfigErrorCode::InvalidRole);
+        assert_eq!(error.field.as_deref(), Some("html.roles.1"));
     }
 
     #[test]

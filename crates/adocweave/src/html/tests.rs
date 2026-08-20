@@ -1192,6 +1192,7 @@ fn html_contract_has_explicit_allowlists() {
             "cite",
             "code",
             "dd",
+            "details",
             "div",
             "dl",
             "dt",
@@ -1219,6 +1220,7 @@ fn html_contract_has_explicit_allowlists() {
             "strong",
             "style",
             "sub",
+            "summary",
             "sup",
             "table",
             "tbody",
@@ -1249,6 +1251,7 @@ fn html_contract_has_explicit_allowlists() {
             "href",
             "id",
             "lang",
+            "open",
             "poster",
             "rel",
             "rowspan",
@@ -1278,6 +1281,7 @@ fn html_contract_has_explicit_allowlists() {
             "checklist-marker",
             "citation",
             "document-title",
+            "example",
             "footnote",
             "footnote-backref",
             "footnote-ref",
@@ -1288,9 +1292,12 @@ fn html_contract_has_explicit_allowlists() {
             "math-latex",
             "math-typst",
             "menu",
+            "open",
             "page-break",
             "revision",
+            "role-*",
             "quote",
+            "sidebar",
             "source-block",
             "table-align-center",
             "table-align-left",
@@ -2074,4 +2081,122 @@ fn footnote_bodies_render_as_inline_content() {
         html.contains("<li id=\"_footnote_3\"><strong>強調</strong> と 筆者 と ] です <a"),
         "{html}"
     );
+}
+
+fn role_policy(allowed: &[&str], unknown: super::UnknownRole) -> RenderPolicy {
+    RenderPolicy {
+        roles: super::RolePolicy {
+            allowed: allowed.iter().map(|role| (*role).to_owned()).collect(),
+            unknown,
+        },
+        ..RenderPolicy::default()
+    }
+}
+
+/// Example, sidebar, and open blocks are containers the reader can see: the
+/// wrapper names the kind and the block title leads the content, like an
+/// admonition. A quote delimiter without a quote style stays transparent.
+#[test]
+fn compound_blocks_render_a_wrapper_with_their_title() {
+    let parsed = parse(concat!(
+        ".Exampleのタイトル\n====\n例の本文\n====\n\n",
+        "****\n脇道\n****\n\n",
+        "[[def-a]]\n.定義 1\n--\n本文\n--\n\n",
+        "____\n引用\n____\n",
+    ))
+    .expect("parse");
+    assert_eq!(
+        render(&parsed.ast, &RenderPolicy::default()).html,
+        concat!(
+            "<div class=\"example\">\n<div class=\"title\">Exampleのタイトル</div>\n<p>例の本文</p>\n</div>\n",
+            "<div class=\"sidebar\">\n<p>脇道</p>\n</div>\n",
+            "<div id=\"def-a\" class=\"open\">\n<div class=\"title\">定義 1</div>\n<p>本文</p>\n</div>\n",
+            "<p>引用</p>\n",
+        )
+    );
+}
+
+/// `%collapsible` turns an example block into a disclosure whose summary is
+/// the title, or the language's default word; `%open` starts it expanded.
+#[test]
+fn collapsible_example_blocks_render_as_details() {
+    let parsed = parse(concat!(
+        ".クリックして詳細を表示\n[%collapsible]\n====\n隠れた本文\n====\n\n",
+        "[%collapsible%open]\n====\n開いた本文\n====\n\n",
+        "[NOTE%collapsible]\n====\n注意は折りたたまない\n====\n",
+    ))
+    .expect("parse");
+    assert_eq!(
+        render(&parsed.ast, &RenderPolicy::default()).html,
+        concat!(
+            "<details>\n<summary>クリックして詳細を表示</summary>\n<p>隠れた本文</p>\n</details>\n",
+            "<details open>\n<summary>Details</summary>\n<p>開いた本文</p>\n</details>\n",
+            "<div class=\"admonition admonition-note\"><div class=\"title\">NOTE</div>\n<p>注意は折りたたまない</p>\n</div>\n",
+        )
+    );
+}
+
+/// A role reaches HTML only as `role-<name>` and only when the host lists it;
+/// the policy applies to every block element, and the `lead` paragraph role
+/// keeps its fixed class.
+#[test]
+fn block_roles_render_only_through_the_role_policy() {
+    let source = concat!(
+        "[.definition.theorem]\n.定義\n--\n本文\n--\n\n",
+        "[role=\"lemma proof\"]\n段落\n\n",
+        "[.lead]\nリード\n\n",
+        "[.definition]\n* 項目\n",
+    );
+    let parsed = parse(source).expect("parse");
+    let html = render(&parsed.ast, &RenderPolicy::default()).html;
+    assert!(!html.contains("role-"), "{html}");
+    assert!(html.contains("<p class=\"lead\">リード</p>"), "{html}");
+
+    let output = render(
+        &parsed.ast,
+        &role_policy(&["definition", "proof"], super::UnknownRole::Silent),
+    );
+    assert_eq!(
+        output.html,
+        concat!(
+            "<div class=\"open role-definition\">\n<div class=\"title\">定義</div>\n<p>本文</p>\n</div>\n",
+            "<p class=\"role-proof\">段落</p>\n",
+            "<p class=\"lead\">リード</p>\n",
+            "<ul class=\"role-definition\">\n<li>項目</li>\n</ul>\n",
+        )
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+
+    let output = render(
+        &parsed.ast,
+        &role_policy(&["definition"], super::UnknownRole::Diagnostic),
+    );
+    let codes = output
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.code.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        codes,
+        [
+            "role-not-allowed",
+            "role-not-allowed",
+            "role-not-allowed",
+            "role-not-allowed"
+        ],
+        "{:?}",
+        output.diagnostics
+    );
+}
+
+/// A role that is not a class token never becomes a class, even when a host
+/// lists it, so the `class` attribute cannot carry whitespace or markup.
+#[test]
+fn roles_that_are_not_class_tokens_are_dropped() {
+    let parsed = parse("[role=\"x y\"]\n段落\n\n[.ok]\n次\n").expect("parse");
+    let output = render(
+        &parsed.ast,
+        &role_policy(&["x y", "ok"], super::UnknownRole::Diagnostic),
+    );
+    assert_eq!(output.html, "<p>段落</p>\n<p class=\"role-ok\">次</p>\n");
 }

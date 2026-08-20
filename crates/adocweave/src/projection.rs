@@ -70,6 +70,10 @@ pub enum BlockPresentationKind {
     Admonition,
     Quote,
     Verse,
+    Example,
+    Sidebar,
+    Open,
+    Collapsible,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -80,6 +84,72 @@ pub struct BlockPresentationProjection {
     pub title: Option<String>,
     pub attribution: Option<String>,
     pub citation: Option<String>,
+    /// Roles written on the block, independent of any render policy.
+    pub roles: Vec<String>,
+    /// For a collapsible block, whether it starts expanded.
+    pub open: Option<bool>,
+}
+
+/// The presentation facts of a delimited block, if it has any a host can use:
+/// the typed presentations, and the compound containers a reader can see.
+fn delimited_presentation(
+    block: &crate::block_model::DelimitedBlock,
+) -> Option<BlockPresentationProjection> {
+    use crate::block_model::{DelimitedBlockKind, DelimitedContent, DelimitedPresentation};
+    let title = block
+        .metadata
+        .title
+        .as_ref()
+        .map(|item| resolved_inline_text(&item.inlines));
+    let (kind, attribution, citation, open) = match &block.presentation {
+        Some(DelimitedPresentation::Admonition(_)) => {
+            (BlockPresentationKind::Admonition, None, None, None)
+        }
+        Some(DelimitedPresentation::Quote(quote)) => (
+            match quote.kind {
+                crate::block_model::QuoteKind::Quote => BlockPresentationKind::Quote,
+                crate::block_model::QuoteKind::Verse => BlockPresentationKind::Verse,
+            },
+            quote.attribution.as_ref().map(|item| item.value.clone()),
+            quote.citation.as_ref().map(|item| item.value.clone()),
+            None,
+        ),
+        Some(DelimitedPresentation::Collapsible(collapsible)) => (
+            BlockPresentationKind::Collapsible,
+            None,
+            None,
+            Some(collapsible.open),
+        ),
+        None => {
+            if !matches!(block.content, DelimitedContent::Compound(_)) {
+                return None;
+            }
+            let kind = match block.kind {
+                DelimitedBlockKind::Example => BlockPresentationKind::Example,
+                DelimitedBlockKind::Sidebar => BlockPresentationKind::Sidebar,
+                DelimitedBlockKind::Open => BlockPresentationKind::Open,
+                _ => return None,
+            };
+            (kind, None, None, None)
+        }
+    };
+    Some(BlockPresentationProjection {
+        kind,
+        source_range: block.range,
+        content_range: block.content_range,
+        title,
+        attribution,
+        citation,
+        roles: block_role_names(&block.metadata),
+        open,
+    })
+}
+
+fn block_role_names(metadata: &crate::block_model::BlockMetadata) -> Vec<String> {
+    metadata
+        .role_names()
+        .map(|(role, _)| role.to_owned())
+        .collect()
 }
 
 impl BlockPresentationKind {
@@ -88,6 +158,10 @@ impl BlockPresentationKind {
             Self::Admonition => "admonition",
             Self::Quote => "quote",
             Self::Verse => "verse",
+            Self::Example => "example",
+            Self::Sidebar => "sidebar",
+            Self::Open => "open",
+            Self::Collapsible => "collapsible",
         }
     }
 }
@@ -313,45 +387,13 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
                     .map(|value| value.value.clone()),
                 attribution: None,
                 citation: None,
+                roles: block_role_names(&value.metadata),
+                open: None,
             });
         }
         crate::walker::SemanticNode::Block(AstBlock::Delimited(value)) => {
-            if let Some(presentation) = &value.presentation {
-                match presentation {
-                    crate::block_model::DelimitedPresentation::Admonition(_) => block_presentations
-                        .push(BlockPresentationProjection {
-                            kind: BlockPresentationKind::Admonition,
-                            source_range: value.range,
-                            content_range: value.content_range,
-                            title: value
-                                .metadata
-                                .title
-                                .as_ref()
-                                .map(|item| resolved_inline_text(&item.inlines)),
-                            attribution: None,
-                            citation: None,
-                        }),
-                    crate::block_model::DelimitedPresentation::Quote(quote) => block_presentations
-                        .push(BlockPresentationProjection {
-                            kind: match quote.kind {
-                                crate::block_model::QuoteKind::Quote => {
-                                    BlockPresentationKind::Quote
-                                }
-                                crate::block_model::QuoteKind::Verse => {
-                                    BlockPresentationKind::Verse
-                                }
-                            },
-                            source_range: value.range,
-                            content_range: value.content_range,
-                            title: value
-                                .metadata
-                                .title
-                                .as_ref()
-                                .map(|item| resolved_inline_text(&item.inlines)),
-                            attribution: quote.attribution.as_ref().map(|item| item.value.clone()),
-                            citation: quote.citation.as_ref().map(|item| item.value.clone()),
-                        }),
-                }
+            if let Some(presentation) = delimited_presentation(value) {
+                block_presentations.push(presentation);
             }
         }
         _ => {}
@@ -952,6 +994,8 @@ mod wire {
         title: Option<&'a str>,
         attribution: Option<&'a str>,
         citation: Option<&'a str>,
+        roles: &'a [String],
+        open: Option<bool>,
     }
 
     #[derive(Serialize)]
@@ -1168,6 +1212,8 @@ mod wire {
                         title: block.title.as_deref(),
                         attribution: block.attribution.as_deref(),
                         citation: block.citation.as_deref(),
+                        roles: &block.roles,
+                        open: block.open,
                     })
                     .collect(),
                 structure: StructureW {

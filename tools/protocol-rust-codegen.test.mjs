@@ -476,6 +476,7 @@ test("request Rust enums are generated from the exact reachable ownership set", 
   for (const name of [
     "WasmDocumentMode",
     "WasmSyntaxMode",
+    "WasmUnknownRole",
     "WasmUnknownSourceLanguage",
     "WasmUnresolvedReferencePresentation",
   ]) {

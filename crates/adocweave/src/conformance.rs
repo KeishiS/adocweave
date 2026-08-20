@@ -372,11 +372,17 @@ fn block_node(block: &AstBlock) -> CanonicalNode {
                             crate::block_model::DelimitedPresentation::Quote(_) => {
                                 "quote-presentation"
                             }
+                            crate::block_model::DelimitedPresentation::Collapsible(_) => {
+                                "collapsible-presentation"
+                            }
                         },
                         range: range(node.range),
                         value: Some(match presentation {
                             crate::block_model::DelimitedPresentation::Admonition(value) => {
                                 value.kind.label().to_owned()
+                            }
+                            crate::block_model::DelimitedPresentation::Collapsible(value) => {
+                                if value.open { "open" } else { "closed" }.to_owned()
                             }
                             crate::block_model::DelimitedPresentation::Quote(value) => format!(
                                 "{}:{}:{}",

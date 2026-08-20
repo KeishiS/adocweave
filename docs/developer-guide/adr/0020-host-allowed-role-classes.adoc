@@ -1,0 +1,35 @@
+= ADR 0020: hostが許可したblock roleだけのclass出力
+
+:status: accepted
+
+== 文脈
+
+AsciiDocのrole（`[.definition]`）は、利用側がCSSで装飾を与えるための名前です。Asciidoctorはroleを
+そのまま``class``属性へ出力します。一方、AdocWeaveのHTML出力の仕様は、文書入力に由来する任意のclassを
+拒否しています（xref:0007-host-supplied-stylesheets.adoc[ADR 0007]）。文書を書く人と、HTMLを埋め込む
+ページを運用する人が同じとは限らないため、文書がページのstylesheetに存在する任意のclassへ到達できると、
+表示の乗っ取りや既存classとの衝突が起こるからです。
+
+定理環境や定義など、利用側が用意した装飾をroleで選びたい要求は正当です。そのためには、どのroleが
+classになるかを文書ではなく利用側が決める必要があります。
+
+== 決定
+
+``RenderPolicy.roles``にhostが許可するrole名の一覧を持ち、列挙した名前だけを``role-<name>`` classとして
+出力します。既定は空です。名前はASCIIの英数字、``-``、``_``に限り、未許可の名前は出力しません。
+``unknown``を``Diagnostic``にすると未許可のroleを診断として報告します。``lead`` roleは従来どおり
+固定class``lead``のままです。
+
+接頭辞``role-``を付けるのは、AdocWeave自身が使う固定class（`quote`、`title`など）や将来追加する固定classと
+roleが衝突しないようにし、stylesheet側が``[class^="role-"]``のように一族として扱えるようにするためです。
+
+この方針はsource blockの言語class（``SourceLanguagePolicy``で許可した言語だけ``language-*``を出す）と同じ形です。
+CLIでは``html.roles``、WASM APIでは``renderPolicy.roles``が同じ一覧を渡します。構造情報（projection）には
+policyと無関係に文書に書かれたroleをそのまま載せ、HTMLを介さずに利用側が判断できるようにします。
+
+== 帰結
+
+利用側はstylesheetが知っているrole名を設定へ列挙するだけで、文書側の記法はAsciiDocのままです。
+列挙していないroleは無言で消えるため、文書の書き手がroleの効果を確かめるには設定の確認か
+``Diagnostic``の利用が必要です。Asciidoctor向けに書いたCSSは、selectorを``.definition``から
+``.role-definition``へ書き換える必要があります。

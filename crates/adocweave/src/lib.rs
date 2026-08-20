@@ -143,8 +143,9 @@ pub mod output {
         pub use crate::html::{
             ALLOWED_ATTRIBUTES, ALLOWED_CLASSES, ALLOWED_ELEMENTS, ExternalLinkPresentation,
             HtmlDocumentMode, HtmlOutput, MathLanguagePolicy, RenderPolicy, ResolvedReference,
-            ResourceCapabilities, SourceLanguagePolicy, StylesheetPolicy, StylesheetSource,
-            UnknownSourceLanguage, UnresolvedReferencePresentation, render, render_with_inputs,
+            ResourceCapabilities, RolePolicy, SourceLanguagePolicy, StylesheetPolicy,
+            StylesheetSource, UnknownRole, UnknownSourceLanguage, UnresolvedReferencePresentation,
+            is_role_name, render, render_with_inputs,
         };
     }
     pub mod projection {

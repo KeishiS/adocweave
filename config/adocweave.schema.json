@@ -255,6 +255,14 @@
             "type": "string",
             "minLength": 1
           }
+        },
+        "roles": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "description": "HTMLへ`role-<name>` classとして出力するblock roleの名前。列挙していないroleは出力しません。"
         }
       }
     }

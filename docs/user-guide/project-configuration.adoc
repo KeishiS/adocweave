@@ -75,6 +75,7 @@ max-consecutive-blank-lines = 1
 complete = true
 stylesheet-files = ["styles/manual.css"]
 stylesheet-urls = ["https://example.com/manual.css"]
+roles = ["definition", "theorem"]
 ----
 
 属性は``value``または``unset = true``のどちらか一方を指定します。値は解析とinclude前処理の両方へ
@@ -83,6 +84,9 @@ stylesheet-urls = ["https://example.com/manual.css"]
 
 ``lint.rules.CODE``では、組込み規則ごとに``enabled``と``severity``を指定できます。既定で有効な規則の
 無効化と重要度変更、および既定で無効な規則の有効化を同じ形式で行います。不明なcodeはエラーです。
+
+``html.roles``は、HTML出力で``role-<name>`` classとして残すblock roleの名前を列挙します。文書に書いた
+roleのうち列挙していないものは出力しません。名前にはASCIIの英数字、``-``および``_``だけを使えます。
 
 リソース上限は組込み上限以下にだけ設定できます。`roots`、``project-root``およびstylesheetのファイルは
 設定ディレクトリ内の相対パスに限定されます。ネットワーク経由のincludeは設定できません。

@@ -69,6 +69,7 @@ fn expanded_request(corpus: &Value) -> Value {
         "activeUrls": {},
         "externalLinks": {},
         "sourceLanguages": {},
+        "roles": {},
         "resources": {},
         "mathLanguages": ["latex"],
         "stylesheets": [{ "kind": "inline", "css": "p {}" }]

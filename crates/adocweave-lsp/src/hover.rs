@@ -370,6 +370,17 @@ fn block_presentation_hover(
                         item.label_range,
                     ));
                 }
+                Some(parser::DelimitedPresentation::Collapsible(item))
+                    if range_contains_offset(item.option_range, offset) =>
+                {
+                    found = Some((
+                        format!(
+                            "**collapsible example block**  \nInitially {}",
+                            if item.open { "expanded" } else { "collapsed" }
+                        ),
+                        item.option_range,
+                    ));
+                }
                 Some(parser::DelimitedPresentation::Quote(item))
                     if range_contains_offset(
                         value.metadata.range.unwrap_or(value.range),

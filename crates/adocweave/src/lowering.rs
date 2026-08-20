@@ -176,6 +176,29 @@ fn resolve_delimited_presentations(
     }
 }
 
+/// The block option written as `%name`, or listed in `options=`/`opts=`, if any.
+fn block_option(
+    metadata: &crate::block_model::BlockMetadata,
+    name: &str,
+) -> Option<crate::block_model::MetadataValue> {
+    if let Some(option) = metadata.options.iter().find(|option| option.value == name) {
+        return Some(option.clone());
+    }
+    metadata
+        .attributes
+        .iter()
+        .filter(|attribute| {
+            attribute.name.as_deref().is_some_and(|attribute_name| {
+                attribute_name == "options" || attribute_name == "opts"
+            })
+        })
+        .find(|attribute| attribute.value.split(',').any(|value| value.trim() == name))
+        .map(|attribute| crate::block_model::MetadataValue {
+            value: name.to_owned(),
+            range: attribute.range,
+        })
+}
+
 fn resolve_delimited_presentation(
     block: &mut crate::block_model::DelimitedBlock,
     checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
@@ -201,6 +224,19 @@ fn resolve_delimited_presentation(
                     kind: crate::block_model::AdmonitionKind::parse(&attribute.value)
                         .expect("guarded admonition style"),
                     label_range: attribute.range,
+                },
+            ))
+        }
+        // An admonition style above already claimed the example block; only a
+        // plain example block becomes a disclosure.
+        (crate::block_model::DelimitedBlockKind::Example, _)
+            if block_option(&block.metadata, "collapsible").is_some() =>
+        {
+            let option = block_option(&block.metadata, "collapsible").expect("guarded option");
+            Some(crate::block_model::DelimitedPresentation::Collapsible(
+                crate::block_model::CollapsiblePresentation {
+                    open: block_option(&block.metadata, "open").is_some(),
+                    option_range: option.range,
                 },
             ))
         }

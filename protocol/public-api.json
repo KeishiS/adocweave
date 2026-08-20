@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 12,
+  "schemaVersion": 13,
   "packageVersion": "0.42.0",
   "identityField": "packageVersion",
   "workerProtocolVersion": 2,
@@ -8,6 +8,7 @@
     "SyntaxMode",
     "DocumentMode",
     "UnknownSourceLanguage",
+    "UnknownRole",
     "MathLanguage",
     "UnresolvedReferencePresentation",
     "StylesheetKind",
@@ -39,6 +40,7 @@
     "ActiveUrlPolicy",
     "ExternalLinkPolicy",
     "SourceLanguagePolicy",
+    "RolePolicy",
     "ResourceCapabilities",
     "OutputLimits"
   ],
@@ -74,6 +76,7 @@
     "SyntaxMode": ["permissive", "strict"],
     "DocumentMode": ["fragment", "complete"],
     "UnknownSourceLanguage": ["preserve-sanitized", "omit-class", "diagnostic"],
+    "UnknownRole": ["silent", "diagnostic"],
     "MathLanguage": ["latex", "typst"],
     "UnresolvedReferencePresentation": ["target", "label-only", "hidden"],
     "StylesheetKind": ["inline", "external"],
@@ -91,7 +94,7 @@
     "FormulaKind": ["inline", "block"]
     ,"ReferenceTargetKind": ["document-title", "part", "section", "explicit-anchor", "inline-anchor"]
     ,"OrderedListStyle": ["arabic", "decimal", "loweralpha", "upperalpha", "lowerroman", "upperroman", "lowergreek"]
-    ,"BlockPresentationKind": ["admonition", "quote", "verse"]
+    ,"BlockPresentationKind": ["admonition", "quote", "verse", "example", "sidebar", "open", "collapsible"]
     ,"SectionKind": ["document-title", "part", "section", "appendix", "discrete"]
     ,"SearchTextKind": ["prose", "code"]
     ,"Applicability": ["always", "maybe"]
@@ -139,6 +142,7 @@
         { "json": "activeUrls", "type": "ActiveUrlPolicy", "default": {} },
         { "json": "externalLinks", "type": "ExternalLinkPolicy", "default": {} },
         { "json": "sourceLanguages", "type": "SourceLanguagePolicy", "default": {} },
+        { "json": "roles", "type": "RolePolicy", "default": {} },
         { "json": "mathLanguages", "type": "MathLanguage[]", "default": ["latex", "typst"] },
         { "json": "unresolvedReferences", "type": "UnresolvedReferencePresentation", "default": "target" },
         { "json": "resources", "type": "ResourceCapabilities", "default": { "images": true, "media": true } },
@@ -272,6 +276,13 @@
         { "json": "unknown", "type": "UnknownSourceLanguage", "default": "preserve-sanitized" }
       ]
     },
+    "RolePolicy": {
+      "unknownFields": "reject",
+      "fields": [
+        { "json": "allowed", "type": "string[]", "default": [] },
+        { "json": "unknown", "type": "UnknownRole", "default": "silent" }
+      ]
+    },
     "ResourceCapabilities": {
       "unknownFields": "reject",
       "fields": [
@@ -374,7 +385,9 @@
         { "json": "contentRange", "type": "TextRange", "required": true },
         { "json": "title", "type": "string | null", "required": true },
         { "json": "attribution", "type": "string | null", "required": true },
-        { "json": "citation", "type": "string | null", "required": true }
+        { "json": "citation", "type": "string | null", "required": true },
+        { "json": "roles", "type": "string[]", "required": true },
+        { "json": "open", "type": "boolean | null", "required": true }
       ]
     },
     "DocumentStructure": {

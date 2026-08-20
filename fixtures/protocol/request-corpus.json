@@ -34,6 +34,7 @@
     { "enum": "SyntaxMode", "path": "/analysisOptions/syntax/syntaxMode" },
     { "enum": "DocumentMode", "path": "/renderPolicy/documentMode" },
     { "enum": "UnknownSourceLanguage", "path": "/renderPolicy/sourceLanguages/unknown" },
+    { "enum": "UnknownRole", "path": "/renderPolicy/roles/unknown" },
     { "enum": "MathLanguage", "path": "/renderPolicy/mathLanguages/0" },
     { "enum": "UnresolvedReferencePresentation", "path": "/renderPolicy/unresolvedReferences" },
     { "enum": "StylesheetKind", "path": "/renderPolicy/stylesheets/0/kind", "templates": {
@@ -79,6 +80,7 @@
     { "object": "ActiveUrlPolicy", "path": "/renderPolicy/activeUrls" },
     { "object": "ExternalLinkPolicy", "path": "/renderPolicy/externalLinks" },
     { "object": "SourceLanguagePolicy", "path": "/renderPolicy/sourceLanguages" },
+    { "object": "RolePolicy", "path": "/renderPolicy/roles" },
     { "object": "ResourceCapabilities", "path": "/renderPolicy/resources" },
     { "object": "OutputLimits", "path": "/outputLimits" }
   ],

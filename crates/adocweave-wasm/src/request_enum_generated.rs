@@ -18,6 +18,14 @@ pub enum WasmSyntaxMode {
 
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
+pub enum WasmUnknownRole {
+    #[default]
+    Silent,
+    Diagnostic,
+}
+
+#[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
 pub enum WasmUnknownSourceLanguage {
     #[default]
     PreserveSanitized,

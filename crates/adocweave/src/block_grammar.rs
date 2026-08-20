@@ -214,14 +214,19 @@ pub(crate) fn parse_block_attributes(content: &str, base: usize) -> Option<Block
         )
         .ok()?;
         if !value.is_empty() {
-            parse_element_attribute(value, range, &mut metadata);
+            parse_element_attribute(value, range, &mut metadata, field_start == 0);
         }
         field_start = field_end.saturating_add(1);
     }
     Some(metadata)
 }
 
-fn parse_element_attribute(value: &str, range: TextRange, metadata: &mut BlockMetadata) {
+fn parse_element_attribute(
+    value: &str,
+    range: TextRange,
+    metadata: &mut BlockMetadata,
+    first_positional: bool,
+) {
     if let Some((name, raw_value)) = value.split_once('=') {
         let name = name.trim();
         let raw_value = raw_value.trim();
@@ -233,7 +238,16 @@ fn parse_element_attribute(value: &str, range: TextRange, metadata: &mut BlockMe
         return;
     }
 
-    let mut shorthand = value;
+    // The first positional attribute may lead with a style: `[NOTE%collapsible]`
+    // is the style `NOTE` followed by shorthand, and the two halves are split
+    // apart the same way the language reads them.
+    let style = first_positional
+        .then(|| value.find(['#', '.', '%']))
+        .flatten()
+        .filter(|offset| *offset > 0 && !value[..*offset].contains(char::is_whitespace))
+        .filter(|_| !value.starts_with('"'))
+        .map(|offset| &value[..offset]);
+    let mut shorthand = style.map_or(value, |style| &value[style.len()..]);
     let mut consumed_shorthand = false;
     while let Some(marker) = shorthand
         .chars()
@@ -266,7 +280,21 @@ fn parse_element_attribute(value: &str, range: TextRange, metadata: &mut BlockMe
         consumed_shorthand = true;
         shorthand = &tail[end..];
     }
-    if !consumed_shorthand || !shorthand.is_empty() {
+    if let Some(style) = style
+        && consumed_shorthand
+        && shorthand.is_empty()
+    {
+        metadata.attributes.push(ElementAttribute {
+            name: None,
+            value: style.to_owned(),
+            range: TextRange::new(
+                range.start(),
+                TextSize::new(range.start().to_usize() + style.len())
+                    .expect("attribute offset is bounded"),
+            )
+            .expect("ordered style range"),
+        });
+    } else if !consumed_shorthand || !shorthand.is_empty() {
         metadata.attributes.push(ElementAttribute {
             name: None,
             value: unquote(value).to_owned(),
