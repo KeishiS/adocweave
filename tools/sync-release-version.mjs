@@ -341,11 +341,31 @@ function expectedVersionOccurrences(registry, version) {
   return expected;
 }
 
+// cargo-lock対象のlockfileで、外部（source付き）packageのversion行が候補versionと
+// 偶然一致した件数を数える。第三者packageの版はCargoが管理する値であり、リポジトリへ
+// 直書きしたversion記録ではないため、inventoryの照合から除く。
+function foreignCargoLockVersionOccurrences(source, version) {
+  let count = 0;
+  for (const block of source.split(/\n\n/)) {
+    if (!/^source = /m.test(block)) continue;
+    count += occurrences(block, `version = "${version}"`);
+  }
+  return count;
+}
+
 function validateInventory(root, registry, version) {
   const expected = expectedVersionOccurrences(registry, version);
+  const cargoLockPaths = new Set(
+    registry.targets
+      .filter((target) => target.type === "cargo-lock")
+      .map((target) => target.path),
+  );
   const actual = new Map();
   for (const [path, source] of sourceFiles(root)) {
-    const count = occurrences(source, version);
+    let count = occurrences(source, version);
+    if (count > 0 && cargoLockPaths.has(path)) {
+      count -= foreignCargoLockVersionOccurrences(source, version);
+    }
     if (count > 0) actual.set(path, count);
   }
   const paths = new Set([...expected.keys(), ...actual.keys()]);
