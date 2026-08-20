@@ -645,14 +645,7 @@ fn monospace_reports_invalid_constrained_boundaries() {
 
 #[test]
 fn constrained_monospace_rejects_standard_word_and_opening_boundaries() {
-    for source in [
-        "snake_`code`",
-        "key:`code`",
-        "key;`code`",
-        "x}`code`",
-        "日本`code`",
-        "１`code`",
-    ] {
+    for source in ["snake_`code`", "key:`code`", "key;`code`", "x}`code`"] {
         let output = parse(source, range(0, source.len()), InlineParseConfig::default());
         assert!(
             output
@@ -696,10 +689,34 @@ fn constrained_monospace_rejects_standard_word_and_opening_boundaries() {
             (InlineProblemKind::UnclosedEmphasis, range(6, 7)),
         ]
     );
+}
 
+/// CJKの文章は空白ではなく文字種で単語を区切るため、CJK文字と接する制約付き記法は
+/// 単語境界として認める([`crate::cjk`]、Asciidoctorとの意図的な差)。
+#[test]
+fn constrained_markers_treat_cjk_neighbours_as_word_boundaries() {
+    let source = "*太字*と_強調_と`等幅`と#強調表示#の文";
+    let output = parse(source, range(0, source.len()), InlineParseConfig::default());
+    assert!(output.problems.is_empty(), "{output:#?}");
+    let styled = |style: InlineStyle, expected: &str| {
+        output.inlines.iter().any(|inline| {
+            matches!(inline, Inline::Styled { style: actual, children, .. }
+                if *actual == style
+                    && matches!(&children[..], [Inline::Text(text)] if text.value == expected))
+        })
+    };
+    assert!(styled(InlineStyle::Strong, "太字"), "{output:#?}");
+    assert!(styled(InlineStyle::Emphasis, "強調"), "{output:#?}");
+    assert!(styled(InlineStyle::Highlight, "強調表示"), "{output:#?}");
+    assert!(output.inlines.iter().any(|inline| {
+        matches!(inline, Inline::Literal { kind: InlineLiteralKind::Monospace, value, .. }
+            if value == "等幅")
+    }));
+
+    // ラテン文字と数字の隣接は従来どおり単語の内側で、記法として認めない。
     let output = parse(
-        "`code`日本",
-        range(0, "`code`日本".len()),
+        "word*bold*word",
+        range(0, "word*bold*word".len()),
         InlineParseConfig::default(),
     );
     assert!(
@@ -707,11 +724,6 @@ fn constrained_monospace_rejects_standard_word_and_opening_boundaries() {
             .inlines
             .iter()
             .all(|inline| matches!(inline, Inline::Text(_)))
-    );
-    assert_eq!(output.problems.len(), 1);
-    assert_eq!(
-        (output.problems[0].kind, output.problems[0].range),
-        (InlineProblemKind::MonospaceBoundary, range(0, 6))
     );
 }
 
@@ -721,6 +733,9 @@ fn monospace_boundary_diagnostic_preserves_valid_and_protected_forms() {
         "(`code`)",
         "before `code` after",
         "日本語``code``日本語",
+        "日本語`code`日本語",
+        "ファイル`pbmc_processed.h5ad`を",
+        "AnnDataの`obs[\"predicted.celltype.l1\"]`を",
         r"日本語\`code\`日本語",
         r#""`quoted`""#,
         "+日本語`code`日本語+",
@@ -732,12 +747,7 @@ fn monospace_boundary_diagnostic_preserves_valid_and_protected_forms() {
 
 #[test]
 fn monospace_boundary_diagnostic_replaces_derived_unclosed_problem() {
-    for source in [
-        "ファイル`pbmc_processed.h5ad`を",
-        "AnnDataの`obs[\"predicted.celltype.l1\"]`を",
-        "key:`code`",
-        "before ` code ` after",
-    ] {
+    for source in ["value`code`s", "key:`code`", "before ` code ` after"] {
         let output = parse(source, range(0, source.len()), InlineParseConfig::default());
         assert_eq!(output.problems.len(), 1, "{source:?}: {output:#?}");
         assert_eq!(
