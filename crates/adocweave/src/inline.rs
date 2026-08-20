@@ -2096,7 +2096,18 @@ fn is_close_boundary(value: &str, offset: usize, marker: char) -> bool {
         && next.is_none_or(|character| !is_constrained_word_character(marker, character))
 }
 
+/// Returns whether the neighbouring character keeps a constrained span closed.
+///
+/// CJK text separates words by character shape rather than by spaces, so a
+/// CJK neighbour is a word boundary even though Unicode classifies it as
+/// alphanumeric. [`crate::cjk`] is the single authority for that judgement;
+/// the inline macro boundary and the paragraph line join already follow it.
+/// This is a deliberate difference from the specification, which treats every
+/// alphanumeric character as word-internal.
 fn is_constrained_word_character(marker: char, character: char) -> bool {
+    if crate::cjk::is_cjk(character) {
+        return false;
+    }
     character.is_alphanumeric() || (marker == '`' && character == '_')
 }
 
