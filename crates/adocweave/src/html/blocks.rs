@@ -104,6 +104,8 @@ pub(super) fn render_block(
                 render_paragraph(output, paragraph, None, context);
                 BlockWriter::end(output, "div");
                 BlockWriter::line_break(output);
+            } else if crate::caption::block_image(paragraph).is_some() {
+                render_image_block(output, paragraph, explicit_id, context);
             } else {
                 render_paragraph(output, paragraph, explicit_id, context);
             }
@@ -344,15 +346,7 @@ pub(super) fn render_delimited(
             render_preformatted(output, &attributes, value);
         }
         crate::block_model::DelimitedContent::Table(table) => {
-            render_table(
-                output,
-                table,
-                &block.metadata,
-                explicit_id,
-                policy,
-                context,
-                scope,
-            );
+            render_table(output, table, block, explicit_id, policy, context, scope);
         }
         crate::block_model::DelimitedContent::Compound(_) => {
             render_compound(output, block, explicit_id, policy, context, scope);
@@ -386,6 +380,9 @@ fn render_compound(
     BlockWriter::line_break(output);
     if let Some(title) = &block.metadata.title {
         BlockWriter::start(output, "div", &[classes(&["title"])]);
+        if let Some(lead) = caption_lead(block.range, context) {
+            BlockWriter::text(output, &lead);
+        }
         render_inlines(output, &title.inlines, context);
         BlockWriter::end(output, "div");
         BlockWriter::line_break(output);
@@ -473,12 +470,14 @@ pub(super) fn render_admonition_start(
 pub(super) fn render_table(
     output: &mut String,
     table: &crate::table::Table,
-    metadata: &crate::block_model::BlockMetadata,
+    block: &crate::block_model::DelimitedBlock,
     explicit_id: Option<&str>,
     policy: &RenderPolicy,
     context: &mut InlineRenderContext<'_, '_>,
     scope: RenderScope,
 ) {
+    let metadata = &block.metadata;
+    let caption_lead = caption_lead(block.range, context);
     use crate::table::{
         HorizontalAlignment, TableCellStyle, TableFrame, TableGrid, TableSection, TableStripes,
     };
@@ -514,6 +513,9 @@ pub(super) fn render_table(
     BlockWriter::line_break(output);
     if let Some(caption) = &metadata.title {
         BlockWriter::start(output, "caption", &[]);
+        if let Some(lead) = &caption_lead {
+            BlockWriter::text(output, lead);
+        }
         render_inlines(output, &caption.inlines, context);
         BlockWriter::end(output, "caption");
         BlockWriter::line_break(output);
@@ -900,6 +902,43 @@ pub(super) fn render_inlines(
 ) {
     let plan = body::plan_inlines(inlines, context);
     body::serialize_inlines(output, &plan);
+}
+
+/// The `Figure 1. ` a numbered caption writes in front of its title.
+fn caption_lead(
+    range: crate::source::TextRange,
+    context: &InlineRenderContext<'_, '_>,
+) -> Option<String> {
+    context
+        .presentation
+        .caption_at(range)
+        .and_then(crate::caption::BlockCaption::lead)
+}
+
+/// An image block is a figure: the image, then the numbered caption built
+/// from its block title. Without a title the figure has no caption.
+pub(super) fn render_image_block(
+    output: &mut String,
+    paragraph: &Paragraph,
+    explicit_id: Option<&str>,
+    context: &mut InlineRenderContext<'_, '_>,
+) {
+    let attributes = block_attributes(explicit_id, &paragraph.metadata, &["image-block"], context);
+    BlockWriter::start(output, "figure", &attributes);
+    BlockWriter::line_break(output);
+    render_inlines(output, &paragraph.inlines, context);
+    BlockWriter::line_break(output);
+    if let Some(title) = &paragraph.metadata.title {
+        BlockWriter::start(output, "figcaption", &[]);
+        if let Some(lead) = caption_lead(paragraph.range, context) {
+            BlockWriter::text(output, &lead);
+        }
+        render_inlines(output, &title.inlines, context);
+        BlockWriter::end(output, "figcaption");
+        BlockWriter::line_break(output);
+    }
+    BlockWriter::end(output, "figure");
+    BlockWriter::line_break(output);
 }
 
 pub(super) struct InlineRenderContext<'inputs, 'render> {

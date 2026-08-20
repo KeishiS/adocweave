@@ -94,6 +94,8 @@ pub enum WasmBlockPresentationKind {
     Sidebar,
     Open,
     Collapsible,
+    Figure,
+    Table,
 }
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
@@ -107,6 +109,7 @@ pub struct WasmBlockPresentationProjection {
     pub citation: Option<String>,
     pub roles: Vec<String>,
     pub open: Option<bool>,
+    pub caption: Option<String>,
 }
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]

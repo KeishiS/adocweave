@@ -191,19 +191,27 @@
         "projectionAssertions": [
           {
             "pointer": "/blockPresentations/0/kind",
+            "value": "table"
+          },
+          {
+            "pointer": "/blockPresentations/0/caption",
+            "value": "Table 1"
+          },
+          {
+            "pointer": "/blockPresentations/1/kind",
             "value": "quote"
           },
           {
-            "pointer": "/blockPresentations/0/attribution",
+            "pointer": "/blockPresentations/1/attribution",
             "value": "Author"
           },
           {
-            "pointer": "/blockPresentations/0/citation",
+            "pointer": "/blockPresentations/1/citation",
             "value": "Work"
           }
         ],
         "htmlContains": [
-          "<caption>Public table</caption>",
+          "<caption>Table 1. Public table</caption>",
           "<div class=\"quote\">",
           "<cite>Work</cite>",
           "<ul>\n<li>first"

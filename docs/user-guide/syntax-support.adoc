@@ -96,6 +96,7 @@ HTML IDに使用します。
 sidebar（`****`）、pass（`++++`）、quote（`____`）およびtable（`|===`、カスタムseparatorの``!===``等）を認識します。
 内容はcompound／verbatim／raw／tableの型で区別し、同種blockは異なるdelimiter長で入れ子にできます。
 HTMLではexample、sidebar、open blockを種類のclassを持つ``div``で囲み、block titleを``div.title``として出力します。
+example blockのtitleには``example-caption``属性の語と番号（``Example 1. ``）を付けます。
 ``[%collapsible]``付きのexample blockは``details``と``summary``（block title、なければ``Details``）へ変換し、
 ``%open``で展開した状態にします。quote styleのない``____``は要素を生成せず内容だけを出力します。
 
@@ -116,6 +117,7 @@ header／footer、column／row span、配置、cell styleおよびPSVのAsciiDoc
 ``cols``内の空column specは既定の列として保持するため、``cols=",,"``は三列を表します。
 AsciiDoc cellは文書rootと同じblock sequence状態機械を用い、カスタムseparator delimiterによる入れ子表も扱います。
 caption、`frame`、`grid`、`stripes`、1から100までの百分率``width``および``autowidth``を解決します。
+captionには``table-caption``属性の語と番号（``Table 1. ``）を付けます。
 ``width``と``autowidth``を同時に指定した場合は診断し、``autowidth``を優先します。
 
 |ソースブロック（`[source,LANGUAGE]`、`[,LANGUAGE]`、`source-language`）
@@ -208,7 +210,8 @@ Latin文字や数字が続く単語の内部、単一マーカーの外側に``_
 
 |文書内xref（`<<id,label>>`、`xref:#id[label]`）
 |対応
-|共通``Reference``へ変換し、同じ文書のアンカー索引で解決します。
+|共通``Reference``へ変換し、同じ文書のアンカー索引で解決します。空labelの表示文字列は、見出しなら見出し文字列、
+それ以外のblockではanchorの表示テキスト、番号付きcaption（`Figure 1`）、block title、識別子の順で決めます。
 
 |文書間・スキーム付きxref
 |構文対応
@@ -236,6 +239,8 @@ UI macroは``render_ui_macros``を有効にした場合だけ
 `image/*`、audioには``audio/*``、videoには``video/*``だけを使用します。Videoの``poster``は独立したimage resourceとして
 解決します。Imageの``alt``、寸法、title、iconのalt／title、audioのtitle、videoの寸法、poster、titleに対応します。
 Mediaのlink化、icon set固有のHTML、autoplay、loop、mutedおよびpreloadには対応していません。
+1行だけの``image::``は画像blockとして``figure``へ変換し、block titleを``figure-caption``属性の語と番号付きで
+``figcaption``へ出力します（`:figure-caption: 図`で``図 1. ``、`:figure-caption!:`で番号なし）。
 
 |Unconstrained書式（`**text**`、`__text__`、二重バッククォート）
 |対応

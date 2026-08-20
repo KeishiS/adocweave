@@ -421,7 +421,8 @@ mod tests {
             "attribution": null,
             "citation": null,
             "roles": [],
-            "open": null
+            "open": null,
+            "caption": null
         }]);
         projection["structure"]["manpage"] = json!({
             "name": "tool",

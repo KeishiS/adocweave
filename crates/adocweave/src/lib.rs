@@ -11,6 +11,7 @@ mod block_model;
 mod block_sequence;
 mod budget;
 mod cancellation;
+mod caption;
 mod catalog;
 mod citation;
 mod cjk;
@@ -71,6 +72,7 @@ pub mod semantic {
         Paragraph, QuoteKind, QuotePresentation, Revision, SourceBlock, SourceInfo, Unsupported,
         UnsupportedKind, VerbatimBlock, VerbatimKind,
     };
+    pub use crate::caption::{BlockCaption, CaptionFamily};
     pub use crate::catalog::{
         BibliographyEntry, BibliographyReference, CatalogProblem, CatalogProblemKind,
         DocumentCatalogs, Footnote, FootnoteOccurrence, IndexEntry,

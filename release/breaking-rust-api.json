@@ -129,6 +129,54 @@
       "lint": "enum_variant_added",
       "migration": "``WasmBlockPresentationKind``を網羅的にmatchしている場合は``Collapsible``の分岐を追加してください。",
       "summary": "enum variant added on exhaustive enum"
+    },
+    {
+      "crate": "adocweave",
+      "description": "構造情報のblock presentationへ、番号付きcaptionの表示文字列``caption``（``Figure 1``など）を追加しました。",
+      "item": "field BlockPresentationProjection.caption",
+      "lint": "constructible_struct_adds_field",
+      "migration": "``BlockPresentationProjection``をstruct literalで構築している場合は``caption: None``を追加してください。",
+      "summary": "externally-constructible struct adds field"
+    },
+    {
+      "crate": "adocweave",
+      "description": "構造情報のblock presentationに画像block（figure）を追加しました。",
+      "item": "variant BlockPresentationKind:Figure",
+      "lint": "enum_variant_added",
+      "migration": "``BlockPresentationKind``を網羅的にmatchしている場合は``Figure``と``Table``の分岐を追加してください。",
+      "summary": "enum variant added on exhaustive enum"
+    },
+    {
+      "crate": "adocweave",
+      "description": "構造情報のblock presentationに表（table）を追加しました。",
+      "item": "variant BlockPresentationKind:Table",
+      "lint": "enum_variant_added",
+      "migration": "``BlockPresentationKind``を網羅的にmatchしている場合は``Table``の分岐を追加してください。",
+      "summary": "enum variant added on exhaustive enum"
+    },
+    {
+      "crate": "adocweave-wasm",
+      "description": "WASM responseのblock presentationへ``caption``を追加しました。",
+      "item": "field WasmBlockPresentationProjection.caption",
+      "lint": "constructible_struct_adds_field",
+      "migration": "``WasmBlockPresentationProjection``をstruct literalで構築している場合は``caption: None``を追加してください。",
+      "summary": "externally-constructible struct adds field"
+    },
+    {
+      "crate": "adocweave-wasm",
+      "description": "WASM responseのblock presentation種別に``figure``を追加しました。",
+      "item": "variant WasmBlockPresentationKind:Figure",
+      "lint": "enum_variant_added",
+      "migration": "``WasmBlockPresentationKind``を網羅的にmatchしている場合は``Figure``と``Table``の分岐を追加してください。",
+      "summary": "enum variant added on exhaustive enum"
+    },
+    {
+      "crate": "adocweave-wasm",
+      "description": "WASM responseのblock presentation種別に``table``を追加しました。",
+      "item": "variant WasmBlockPresentationKind:Table",
+      "lint": "enum_variant_added",
+      "migration": "``WasmBlockPresentationKind``を網羅的にmatchしている場合は``Table``の分岐を追加してください。",
+      "summary": "enum variant added on exhaustive enum"
     }
   ]
 }

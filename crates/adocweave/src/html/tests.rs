@@ -160,7 +160,7 @@ fn resolved_block_titles_render_inline_semantics_for_captions_and_admonitions() 
 
     assert_eq!(
         render(&parsed.ast, &RenderPolicy::default()).html,
-        "<h1 class=\"document-title\" id=\"_title\">Title</h1>\n<table class=\"table-frame-all table-grid-all table-stripes-none\">\n<caption>The <strong>bold</strong> AdocWeave caption</caption>\n<tbody>\n<tr>\n<td class=\"table-align-left table-valign-top\">cell</td>\n</tr>\n</tbody>\n</table>\n<div class=\"admonition admonition-note\"><div class=\"title\"><strong>Important</strong> AdocWeave</div>\n<p>body</p>\n</div>\n"
+        "<h1 class=\"document-title\" id=\"_title\">Title</h1>\n<table class=\"table-frame-all table-grid-all table-stripes-none\">\n<caption>Table 1. The <strong>bold</strong> AdocWeave caption</caption>\n<tbody>\n<tr>\n<td class=\"table-align-left table-valign-top\">cell</td>\n</tr>\n</tbody>\n</table>\n<div class=\"admonition admonition-note\"><div class=\"title\"><strong>Important</strong> AdocWeave</div>\n<p>body</p>\n</div>\n"
     );
 }
 
@@ -1286,6 +1286,7 @@ fn html_contract_has_explicit_allowlists() {
             "footnote-backref",
             "footnote-ref",
             "footnotes",
+            "image-block",
             "index-term",
             "language-*",
             "lead",
@@ -1748,7 +1749,7 @@ fn table_presentation_renders_only_fixed_classes_and_caption() {
 
     assert_eq!(
         output.html,
-        "<table class=\"table-frame-ends table-grid-rows table-stripes-even\" width=\"75%\">\n<caption>Example</caption>\n<tbody>\n<tr>\n<td class=\"table-align-left table-valign-top\">value</td>\n</tr>\n</tbody>\n</table>\n"
+        "<table class=\"table-frame-ends table-grid-rows table-stripes-even\" width=\"75%\">\n<caption>Table 1. Example</caption>\n<tbody>\n<tr>\n<td class=\"table-align-left table-valign-top\">value</td>\n</tr>\n</tbody>\n</table>\n"
     );
 }
 
@@ -2108,7 +2109,7 @@ fn compound_blocks_render_a_wrapper_with_their_title() {
     assert_eq!(
         render(&parsed.ast, &RenderPolicy::default()).html,
         concat!(
-            "<div class=\"example\">\n<div class=\"title\">Exampleのタイトル</div>\n<p>例の本文</p>\n</div>\n",
+            "<div class=\"example\">\n<div class=\"title\">Example 1. Exampleのタイトル</div>\n<p>例の本文</p>\n</div>\n",
             "<div class=\"sidebar\">\n<p>脇道</p>\n</div>\n",
             "<div id=\"def-a\" class=\"open\">\n<div class=\"title\">定義 1</div>\n<p>本文</p>\n</div>\n",
             "<p>引用</p>\n",
@@ -2199,4 +2200,57 @@ fn roles_that_are_not_class_tokens_are_dropped() {
         &role_policy(&["x y", "ok"], super::UnknownRole::Diagnostic),
     );
     assert_eq!(output.html, "<p>段落</p>\n<p class=\"role-ok\">次</p>\n");
+}
+
+/// A titled image block is a figure with a numbered caption; tables and
+/// examples number their titles the same way; the caption word comes from the
+/// `*-caption` attribute at the block, and unsetting it leaves only the title.
+#[test]
+fn titled_figures_tables_and_examples_carry_numbered_captions() {
+    let parsed = parse(concat!(
+        ":figure-caption: 図\n\n",
+        "[[fig-a]]\n.図のタイトル\nimage::https://example.org/a.png[代替]\n\n",
+        "image::https://example.org/b.png[無題]\n\n",
+        ".表の題\n|===\n|a\n|===\n\n",
+        ".例題\n====\n本文\n====\n\n",
+        ":figure-caption!:\n\n.番号なし\nimage::https://example.org/c.png[alt]\n",
+    ))
+    .expect("parse");
+    let output = render_with_inputs(
+        &parsed.ast,
+        &RenderPolicy::default(),
+        &echo_resource_inputs(&parsed.ast),
+    );
+    assert_eq!(
+        output.html,
+        concat!(
+            "<figure id=\"fig-a\" class=\"image-block\">\n<img src=\"https://example.org/a.png\" alt=\"代替\">\n<figcaption>図 1. 図のタイトル</figcaption>\n</figure>\n",
+            "<figure class=\"image-block\">\n<img src=\"https://example.org/b.png\" alt=\"無題\">\n</figure>\n",
+            "<table class=\"table-frame-all table-grid-all table-stripes-none\">\n<caption>Table 1. 表の題</caption>\n<tbody>\n<tr>\n<td class=\"table-align-left table-valign-top\">a</td>\n</tr>\n</tbody>\n</table>\n",
+            "<div class=\"example\">\n<div class=\"title\">Example 1. 例題</div>\n<p>本文</p>\n</div>\n",
+            "<figure class=\"image-block\">\n<img src=\"https://example.org/c.png\" alt=\"alt\">\n<figcaption>番号なし</figcaption>\n</figure>\n",
+        )
+    );
+}
+
+/// An empty-label reference to a block shows, in order, the anchor's own
+/// text, the numbered caption, the block title, or the identifier; never the
+/// block's source.
+#[test]
+fn references_to_blocks_show_caption_title_or_id() {
+    let parsed = parse(concat!(
+        "[[fig-a]]\n.図\nimage::https://example.org/a.png[代替]\n\n",
+        "[[named,表示]]\n.題\n====\n本文\n====\n\n",
+        "[[titled]]\n.題だけ\n--\n本文\n--\n\n",
+        "[[plain]]\n段落\n\n",
+        "<<fig-a>> <<named>> <<titled>> <<plain>>\n",
+    ))
+    .expect("parse");
+    let html = render(&parsed.ast, &RenderPolicy::default()).html;
+    assert!(
+        html.contains(
+            "<a href=\"#fig-a\">Figure 1</a> <a href=\"#named\">表示</a> <a href=\"#titled\">題だけ</a> <a href=\"#plain\">plain</a>"
+        ),
+        "{html}"
+    );
 }
