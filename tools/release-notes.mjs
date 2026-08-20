@@ -26,7 +26,7 @@ if (breakingRustApi.releaseVersion !== RELEASE_NOTES_VERSION) {
     `破壊的変更記録のreleaseVersionがRelease Notesと一致しません：${breakingRustApi.releaseVersion}`,
   );
 }
-export const PREVIOUS_RELEASE_VERSION = "0.40.1";
+export const PREVIOUS_RELEASE_VERSION = "0.41.0";
 
 // The release manifest schema version the previous stable release shipped.
 //
@@ -52,7 +52,8 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  "制約付き引用符（``*strong*``、``_emphasis_``、``` `monospace` ``、``#highlight#``）の境界で、漢字・かな・ハングルなどのCJK文字を単語境界として扱うようにしました。日本語の地の文に隣接する``*太字*``がそのまま書式として認識されます。ラテン文字と数字が隣接する場合の判定は従来どおりです。",
+  "footnote macroの本文を段落と同じinline記法（リンク、書式、属性参照）として解析して描画するようにしました。本文中の``https://example.org/[label]``のような``]``でfootnoteが終わらなくなり、カンマを含む本文もそのまま本文になります。本文へ``]``を書く場合は``\\]``と記述します。",
+  "stable releaseの公開時に、x86_64-linuxとaarch64-linux向けNixパッケージのruntime closureをbinary cache（``https://keishis.cachix.org``）へpushするようにしました。利用側でsubstituterと公開鍵を設定し、flake inputをrelease tagへ固定すると、source buildなしで取得できます。設定方法は導入手順の「Nixによる導入」を参照してください。",
 ];
 
 export function breakingContractNotes(changes) {
