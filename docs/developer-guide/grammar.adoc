@@ -132,8 +132,10 @@ source表現、畳み込み後の値、各物理行、indent、内容、行末�
 
 ブロックメタデータ行は空行を挟まず直後のブロックへ結合します。複数行のソース順と
 各値のUTF-8バイト範囲はsyntax treeから復元可能でなければなりません。二重引用符内のcommaは
-属性区切りとしません。未知のstyle、role、optionおよびnamed属性は文字列として保持し、
-Parserが出力バックエンドの属性へ変換してはいけません。対象ブロックのないメタデータ列は
+属性区切りとしません。先頭のpositional属性は``style``に続けて``#id``、``.role``、``%option``の
+shorthandを書け、styleとshorthandを分けて保持します。未知のstyle、role、optionおよびnamed属性は文字列として保持し、
+Parserが出力バックエンドの属性へ変換してはいけません。example blockの``%collapsible`` option
+（``options=``でも可）は折りたたみのpresentationへ解決し、``%open``は初期状態を展開にします。対象ブロックのないメタデータ列は
 ``Unsupported``としてlosslessに回復します。
 
 delimiterはcomment、example、listing、literal、open、sidebar、pass、quoteまたはtableの

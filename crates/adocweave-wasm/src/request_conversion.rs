@@ -8,8 +8,8 @@ use adocweave::output::conformance::ProductSet;
 use adocweave::output::diagnostics::{LintConfig, RuleSettings, Severity, lint_rule};
 use adocweave::output::html::{
     ExternalLinkPresentation, HtmlDocumentMode, MathLanguagePolicy, RenderPolicy,
-    ResourceCapabilities, SourceLanguagePolicy, StylesheetPolicy, StylesheetSource,
-    UnknownSourceLanguage, UnresolvedReferencePresentation,
+    ResourceCapabilities, RolePolicy, SourceLanguagePolicy, StylesheetPolicy, StylesheetSource,
+    UnknownRole, UnknownSourceLanguage, UnresolvedReferencePresentation,
 };
 use adocweave::preprocess::{EffectiveProcessingOptions, ResourceSnapshot};
 use adocweave::resolution::{ActiveUrlPolicy, AuthoredUrlPolicy};
@@ -22,7 +22,7 @@ use crate::preprocess_wire::{resource_snapshot, to_core_options};
 use crate::protocol_generated::WasmProductSet;
 use crate::render_input_normalization::NormalizedRenderInputs;
 use crate::request_enum_generated::{
-    WasmDocumentMode, WasmSyntaxMode, WasmUnknownSourceLanguage,
+    WasmDocumentMode, WasmSyntaxMode, WasmUnknownRole, WasmUnknownSourceLanguage,
     WasmUnresolvedReferencePresentation,
 };
 use crate::request_normalization::NormalizedRequest;
@@ -185,6 +185,13 @@ fn render_policy(options: crate::request_wire::WasmRenderPolicy) -> RenderPolicy
                 }
                 WasmUnknownSourceLanguage::OmitClass => UnknownSourceLanguage::OmitClass,
                 WasmUnknownSourceLanguage::Diagnostic => UnknownSourceLanguage::Diagnostic,
+            },
+        },
+        roles: RolePolicy {
+            allowed: options.roles.allowed.into_iter().collect(),
+            unknown: match options.roles.unknown {
+                WasmUnknownRole::Silent => UnknownRole::Silent,
+                WasmUnknownRole::Diagnostic => UnknownRole::Diagnostic,
             },
         },
         math_languages: MathLanguagePolicy {

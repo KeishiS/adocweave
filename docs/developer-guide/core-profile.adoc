@@ -40,6 +40,7 @@ DBまたはアプリ固有のschemaへアクセスしません。
 * 文書タイトル、見出し、明示anchorおよび文書構造
 * 通常の外部linkと、文書内・文書間・任意schemeのxref
 * Source block、数式の表示形式・言語・未加工のソース・rangeおよびmedia resource
+* admonition、quote、verse、example、sidebar、open、collapsibleの各block presentation（title、role、展開状態）
 * Footnote、bibliographyおよび階層indexのcatalog
 * TOC、appendix、book partおよびmanpage header
 * 検索用文字列と元のソースのrange

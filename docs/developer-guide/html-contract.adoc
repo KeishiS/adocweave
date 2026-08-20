@@ -47,15 +47,17 @@ UTF-8 encodingと非空タイトルを持つ``head``および``body``を常に�
 * 文書構造：`html`、`head`、`meta`、`title`、`body`、`style`、`link`、`figure`、`figcaption`
 * 見出しと本文：``h1``から``h5``、`p`、`div`、`br`、`hr`
 * インライン：`a`、`strong`、`em`、`code`、`mark`、`span`、`sub`、`sup`、`kbd`
-* ブロック：`pre`、`blockquote`、`cite`
+* ブロック：`pre`、`blockquote`、`cite`、`details`、`summary`
 * list：`ul`、`ol`、`li`、`dl`、`dt`、`dd`
 * table：`table`、`caption`、`thead`、`tbody`、`tfoot`、`tr`、`th`、`td`
 * media：`img`、`audio`、`video`
 
-属性は``lang``、`charset`、`id`、`class`、`href`、`src`、`alt`、`width`、`height`、`title`、`controls`、
+属性は``lang``、`charset`、`id`、`class`、`href`、`src`、`alt`、`width`、`height`、`title`、`controls`、`open`、
 `poster`、`target`、`rel`、``colspan``、``rowspan``、``data-language``、``data-line-numbers``および
 ``data-line-start``、``data-math-language``および``data-math-display``に限定します。
-classには実装が列挙する固定値だけを使用します。
+classには実装が列挙する固定値、source blockの``language-*``、およびhostの``RolePolicy``が許可したblock roleを表す
+``role-*``だけを使用します。文書に書いたroleは、hostが名前を列挙した場合に限り``role-<name>``として出力し、
+それ以外は出力しません（xref:adr/0020-host-allowed-role-classes.adoc[ADR 0020]）。
 入力由来の任意属性、event handler、`script`、SVGおよびraw HTMLは生成しません。
 
 ``target``と``rel``は外部HTTP(S) linkの固定表示と外部stylesheetだけに使用します。入力に書かれた同名属性を
@@ -120,6 +122,20 @@ Validatorには``flake.lock``で固定したNixpkgsのNu Html Checkerを使用�
 
 この検査はHTML5標準への適合性だけを担当します。Golden fixtureのbyte比較、要素・属性allowlist、
 URL policy、安全性検査およびnativeとWASMの一致検査は引き続き独立して実行します。
+
+== 区切り付きblockとrole
+
+example、sidebarおよびopen blockは、種類を表す固定class（`example`、`sidebar`、`open`）を持つ``div``で囲み、
+block titleがある場合はadmonitionと同じく先頭に``div.title``を出力します。``%collapsible`` optionを持つ
+example blockは``details``で囲み、block title（ない場合は``Details``）を``summary``へ出力します。
+``%open``を併用した場合は``open``属性を付けます。admonition styleを持つexample blockは引き続きadmonitionです。
+quote styleのない``____``はこれまでどおり要素を生成せず、内容だけを出力します。
+
+文書に書いたblock role（`[.name]`または``role=``）は、``RenderPolicy.roles``で許可した名前だけを
+``role-<name>`` classとして、段落、ラッパー、表、list、見出しなどblock要素の``class``へ出力します。
+許可一覧の既定は空であり、未許可のroleは出力しません。``unknown``を``Diagnostic``にすると未許可のroleを
+``role-not-allowed``として報告します。名前はASCIIの英数字、``-``および``_``に限り、それ以外は許可一覧に
+含めても出力しません。``lead`` roleだけは従来どおり固定class``lead``を持ちます。
 
 == ソースと数式
 

@@ -36,6 +36,7 @@ const SHARED_RUST_ENUMS = [
 const REQUEST_RUST_ENUMS = [
   "DocumentMode",
   "SyntaxMode",
+  "UnknownRole",
   "UnknownSourceLanguage",
   "UnresolvedReferencePresentation",
 ];
@@ -59,6 +60,7 @@ const REQUEST_WIRE_OWNED_TYPES = new Set([
   "OutputLimits",
   "RenderPolicy",
   "ResourceCapabilities",
+  "RolePolicy",
   "RuleSettings",
   "SourceLanguagePolicy",
   "Stylesheet",
@@ -74,6 +76,7 @@ const REQUEST_WIRE_EXTERNAL_TYPES = {
   RenderInputs: "WasmRenderInputs",
   Severity: "WasmSeverity",
   SyntaxMode: "WasmSyntaxMode",
+  UnknownRole: "WasmUnknownRole",
   UnknownSourceLanguage: "WasmUnknownSourceLanguage",
   UnresolvedReferencePresentation: "WasmUnresolvedReferencePresentation",
 };
@@ -258,10 +261,19 @@ export function generateRustRequestWire(schema) {
   const imports = external
     .map((name) => REQUEST_WIRE_EXTERNAL_TYPES[name])
     .sort();
+  // Wrap the list the way rustfmt does at its 100-column width, so the
+  // generated file is also formatting-clean.
   const importLines = [];
-  for (let index = 0; index < imports.length; index += 4) {
-    importLines.push(`    ${imports.slice(index, index + 4).join(", ")},`);
+  let line = "   ";
+  for (const name of imports) {
+    const piece = ` ${name},`;
+    if (line.trim().length > 0 && line.length + piece.length > 100) {
+      importLines.push(line);
+      line = "   ";
+    }
+    line += piece;
   }
+  if (line.trim().length > 0) importLines.push(line);
   return `use std::collections::BTreeMap;
 
 use crate::{
@@ -709,6 +721,7 @@ function requestWireTypeIsCopy(parsed, reached, contracts, visiting) {
       "MathLanguage",
       "Severity",
       "SyntaxMode",
+      "UnknownRole",
       "UnknownSourceLanguage",
       "UnresolvedReferencePresentation",
     ].includes(parsed.name);

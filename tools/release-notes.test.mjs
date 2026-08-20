@@ -43,7 +43,7 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /Windows 10 version 1809（build 10\.0\.17763）以降/);
   assert.match(notes, /literal monospace/);
   assert.match(notes, /WASM protocol schema version/);
-  assert.match(notes, /どちらもv0\.41\.1から変更していません/);
+  assert.match(notes, /12から更新/);
   assert.match(notes, new RegExp(`${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}のpackageとAPIへ更新`));
   assert.match(notes, /Worker protocol version：2/);
   assert.match(notes, /schema versionは4のままで、項目を追加も削除もしていません/);

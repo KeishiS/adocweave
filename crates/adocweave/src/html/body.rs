@@ -8,8 +8,8 @@ use crate::url::UrlProvenance;
 use super::plan::{self, PlannedReferenceHref};
 use super::safe::{
     ActiveUrlAttributeName, AttributeValue, BooleanAttributeName, ClassName, ElementName,
-    HtmlWriter, OwnedSafeFragmentUrl, OwnedSafeUrl, PassiveAttributeName, SafeFragmentUrl,
-    SourceLanguageClass, TextValue,
+    HtmlWriter, OwnedSafeFragmentUrl, OwnedSafeUrl, PassiveAttributeName, RoleClass,
+    SafeFragmentUrl, SourceLanguageClass, TextValue,
 };
 use super::{
     InlineRenderContext, RenderPolicy, UnresolvedReferencePresentation, append_plan_diagnostics,
@@ -122,7 +122,10 @@ pub(super) enum PlannedAttribute {
     Passive(PassiveAttributeName<'static>, String),
     ActiveUrl(ActiveUrlAttributeName<'static>, OwnedSafeUrl),
     FragmentUrl(ActiveUrlAttributeName<'static>, OwnedSafeFragmentUrl),
-    Classes(Vec<ClassName<'static>>),
+    Classes {
+        names: Vec<ClassName<'static>>,
+        roles: Vec<RoleClass>,
+    },
     SourceLanguage(SourceLanguageClass),
     Boolean(BooleanAttributeName<'static>),
 }
@@ -778,18 +781,31 @@ fn append_dimension(
     }
 }
 
-fn math_attributes(
+pub(super) const fn math_class(language: crate::inline_model::MathLanguage) -> &'static str {
+    match language {
+        crate::inline_model::MathLanguage::Latex => "math-latex",
+        crate::inline_model::MathLanguage::Typst => "math-typst",
+    }
+}
+
+/// The `data-math-*` attributes; the class comes from `math_class`.
+pub(super) fn math_data_attributes(
     language: crate::inline_model::MathLanguage,
     display: &'static str,
 ) -> Vec<PlannedAttribute> {
     vec![
-        classes(&[match language {
-            crate::inline_model::MathLanguage::Latex => "math-latex",
-            crate::inline_model::MathLanguage::Typst => "math-typst",
-        }]),
         passive("data-math-language", language.as_asciidoc_name()),
         passive("data-math-display", display),
     ]
+}
+
+fn math_attributes(
+    language: crate::inline_model::MathLanguage,
+    display: &'static str,
+) -> Vec<PlannedAttribute> {
+    let mut attributes = vec![classes(&[math_class(language)])];
+    attributes.extend(math_data_attributes(language, display));
+    attributes
 }
 
 fn serialize_nodes(output: &mut String, nodes: &[InlineNode]) {
@@ -835,7 +851,7 @@ fn serialize_attributes(writer: &mut HtmlWriter<'_>, attributes: &[PlannedAttrib
             PlannedAttribute::FragmentUrl(name, value) => {
                 writer.owned_fragment_url_attribute(*name, value);
             }
-            PlannedAttribute::Classes(classes) => writer.class_attribute(classes),
+            PlannedAttribute::Classes { names, roles } => writer.class_attribute(names, roles),
             PlannedAttribute::SourceLanguage(class) => {
                 writer.source_language_class_attribute(class);
             }
@@ -907,15 +923,25 @@ pub(super) fn fragment_url(name: &'static str, value: OwnedSafeFragmentUrl) -> P
 }
 
 pub(super) fn classes(values: &[&'static str]) -> PlannedAttribute {
-    PlannedAttribute::Classes(
-        values
+    classes_with_roles(values, Vec::new())
+}
+
+/// One `class` attribute: the renderer's fixed classes, then the role classes
+/// the render policy admitted for this block.
+pub(super) fn classes_with_roles(
+    values: &[&'static str],
+    roles: Vec<RoleClass>,
+) -> PlannedAttribute {
+    PlannedAttribute::Classes {
+        names: values
             .iter()
             .map(|value| ClassName::new(value).expect("inline plan uses allowlisted HTML classes"))
             .collect(),
-    )
+        roles,
+    }
 }
 
-fn boolean(name: &'static str) -> PlannedAttribute {
+pub(super) fn boolean(name: &'static str) -> PlannedAttribute {
     PlannedAttribute::Boolean(boolean_name(name))
 }
 

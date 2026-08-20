@@ -34,7 +34,7 @@ pub use render_input_wire::{
     WasmResolvedResource, WasmResourceFailureKind, WasmResourceOutcome,
 };
 pub use request_enum_generated::{
-    WasmDocumentMode, WasmSyntaxMode, WasmUnknownSourceLanguage,
+    WasmDocumentMode, WasmSyntaxMode, WasmUnknownRole, WasmUnknownSourceLanguage,
     WasmUnresolvedReferencePresentation,
 };
 pub use request_wire::{
@@ -419,7 +419,9 @@ mod tests {
             "contentRange": { "start": 1, "end": 3 },
             "title": "Note",
             "attribution": null,
-            "citation": null
+            "citation": null,
+            "roles": [],
+            "open": null
         }]);
         projection["structure"]["manpage"] = json!({
             "name": "tool",

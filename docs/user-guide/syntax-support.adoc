@@ -77,7 +77,9 @@ inline属性代入は属性状態を変更しません。
 |対応
 |空行を挟まず直前に置いたblock title、`[[id]]`、`[#id]`、shorthand role／option、
 positional／named element attributeをすべてのsemantic blockで共通表現として保持します。
-未知のstyleや属性は意味を推測せず、HTML属性へ通過させません。
+未知のstyleや属性は意味を推測せず、HTML属性へ通過させません。先頭のpositional属性は``style#id.role%option``の
+形で書けます。roleは利用側が``RenderPolicy.roles``（CLIでは``html.roles``）で許可した名前だけを
+``role-<name>`` classとしてHTMLへ出力します。
 
 |明示アンカー
 |対応
@@ -93,6 +95,9 @@ HTML IDに使用します。
 |comment（`////`）、example（`====`）、listing（`----`）、literal（`....`）、open（`--`）、
 sidebar（`****`）、pass（`++++`）、quote（`____`）およびtable（`|===`、カスタムseparatorの``!===``等）を認識します。
 内容はcompound／verbatim／raw／tableの型で区別し、同種blockは異なるdelimiter長で入れ子にできます。
+HTMLではexample、sidebar、open blockを種類のclassを持つ``div``で囲み、block titleを``div.title``として出力します。
+``[%collapsible]``付きのexample blockは``details``と``summary``（block title、なければ``Details``）へ変換し、
+``%open``で展開した状態にします。quote styleのない``____``は要素を生成せず内容だけを出力します。
 
 |Admonition
 |対応

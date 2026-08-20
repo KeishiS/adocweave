@@ -54,6 +54,11 @@ macroの直後の空白と、書式記号の前後の空白は出力します。
 |Passthrough
 |置換を抑止する不透明なノードとして保持しますが、生のHTMLとして出力せずHTMLエスケープします。
 
+|Block roleとclass
+|roleをそのままclassにせず、利用側が許可した名前だけを``role-<name>``として出力します。文書入力から
+利用側ページのstylesheetへ任意のclassが届かないようにするためです。open blockは``div.open``、example blockは
+``div.example``、sidebar blockは``div.sidebar``で囲み、Asciidoctorの``openblock``／``content``構造は再現しません。
+
 |Quoteとverse
 |styleなしの``____``は入れ子を許すブロックとして扱い、``[quote,Author,Source]``だけを``blockquote``として出力します。
 ``[verse]``は改行を保持し、内容のインライン書式を解釈しません。

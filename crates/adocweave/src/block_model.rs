@@ -14,6 +14,29 @@ pub struct BlockMetadata {
     pub attributes: Vec<ElementAttribute>,
 }
 
+impl BlockMetadata {
+    /// Every role written on the block, in authored order: the `.name`
+    /// shorthand and each space-separated name in a `role=` attribute, with
+    /// the range of the text that names it.
+    pub fn role_names(&self) -> impl Iterator<Item = (&str, TextRange)> + '_ {
+        let shorthand = self
+            .roles
+            .iter()
+            .map(|role| (role.value.as_str(), role.range));
+        let named = self
+            .attributes
+            .iter()
+            .filter(|attribute| attribute.name.as_deref() == Some("role"))
+            .flat_map(|attribute| {
+                attribute
+                    .value
+                    .split_whitespace()
+                    .map(move |role| (role, attribute.range))
+            });
+        shorthand.chain(named)
+    }
+}
+
 /// A lossless block title together with its resolved inline presentation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BlockTitle {
@@ -283,6 +306,17 @@ pub struct DelimitedBlock {
 pub enum DelimitedPresentation {
     Admonition(AdmonitionPresentation),
     Quote(QuotePresentation),
+    Collapsible(CollapsiblePresentation),
+}
+
+/// An example block written with the `%collapsible` option.
+///
+/// The block is a disclosure: its title is the summary the reader clicks, and
+/// the content stays hidden until then. `%open` starts it expanded.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CollapsiblePresentation {
+    pub open: bool,
+    pub option_range: TextRange,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

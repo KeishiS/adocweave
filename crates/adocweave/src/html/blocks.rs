@@ -109,11 +109,16 @@ pub(super) fn render_block(
             }
         }
         AstBlock::LiteralParagraph(paragraph) => {
-            render_preformatted(output, explicit_id, &paragraph.value);
+            let attributes = block_attributes(explicit_id, &paragraph.metadata, &[], context);
+            render_preformatted(output, &attributes, &paragraph.value);
         }
-        AstBlock::Break(block) => render_break(output, block.kind, explicit_id),
+        AstBlock::Break(block) => render_break(output, block, explicit_id, context),
         AstBlock::Source(block) => {
-            BlockWriter::start(output, "pre", &optional_id(explicit_id));
+            BlockWriter::start(
+                output,
+                "pre",
+                &block_attributes(explicit_id, &block.metadata, &[], context),
+            );
             let mut attributes = Vec::new();
             if let Some(language) = &block.language {
                 if policy.source_languages.allows(language) {
@@ -136,8 +141,8 @@ pub(super) fn render_block(
             crate::block_model::VerbatimKind::Source(source) => {
                 let has_presentation = block.metadata.title.is_some() || source.line_numbers;
                 if has_presentation {
-                    let mut attributes = optional_id(explicit_id);
-                    attributes.push(classes(&["source-block"]));
+                    let attributes =
+                        block_attributes(explicit_id, &block.metadata, &["source-block"], context);
                     BlockWriter::start(output, "figure", &attributes);
                     BlockWriter::line_break(output);
                     if let Some(title) = &block.metadata.title {
@@ -152,7 +157,12 @@ pub(super) fn render_block(
                 }
                 let mut pre_attributes = Vec::new();
                 if !has_presentation {
-                    pre_attributes.extend(optional_id(explicit_id));
+                    pre_attributes.extend(block_attributes(
+                        explicit_id,
+                        &block.metadata,
+                        &[],
+                        context,
+                    ));
                 }
                 if has_presentation
                     && let Some(language) = &source.language
@@ -192,14 +202,20 @@ pub(super) fn render_block(
             }
             crate::block_model::VerbatimKind::Listing
             | crate::block_model::VerbatimKind::Literal => {
-                render_preformatted(output, explicit_id, &block.value);
+                let attributes = block_attributes(explicit_id, &block.metadata, &[], context);
+                render_preformatted(output, &attributes, &block.value);
             }
         },
         AstBlock::List(list) => render_list(output, list, explicit_id, policy, context, scope),
         AstBlock::Math(block) => {
             if policy.math_languages.allowed.contains(&block.language) {
-                let mut attributes = optional_id(explicit_id);
-                attributes.extend(math_attributes(block.language, "block"));
+                let mut attributes = block_attributes(
+                    explicit_id,
+                    &block.metadata,
+                    &[body::math_class(block.language)],
+                    context,
+                );
+                attributes.extend(body::math_data_attributes(block.language, "block"));
                 BlockWriter::start(output, "pre", &attributes);
                 BlockWriter::start(output, "code", &[]);
                 BlockWriter::text(output, &block.value);
@@ -207,7 +223,8 @@ pub(super) fn render_block(
                 BlockWriter::end(output, "pre");
                 BlockWriter::line_break(output);
             } else {
-                render_preformatted(output, explicit_id, &block.value);
+                let attributes = block_attributes(explicit_id, &block.metadata, &[], context);
+                render_preformatted(output, &attributes, &block.value);
                 context.diagnostics.push(render_diagnostic(
                     "math-language-not-allowed",
                     "math language is rejected by the render policy",
@@ -222,8 +239,12 @@ pub(super) fn render_block(
     }
 }
 
-pub(super) fn render_preformatted(output: &mut String, explicit_id: Option<&str>, value: &str) {
-    BlockWriter::start(output, "pre", &optional_id(explicit_id));
+pub(super) fn render_preformatted(
+    output: &mut String,
+    attributes: &[body::PlannedAttribute],
+    value: &str,
+) {
+    BlockWriter::start(output, "pre", attributes);
     BlockWriter::text(output, value);
     BlockWriter::end(output, "pre");
     BlockWriter::line_break(output);
@@ -251,8 +272,8 @@ pub(super) fn render_delimited(
                     crate::block_model::QuoteKind::Quote => "quote",
                     crate::block_model::QuoteKind::Verse => "verse",
                 };
-                let mut attributes = optional_id(explicit_id);
-                attributes.push(classes(&[quote_class]));
+                let attributes =
+                    block_attributes(explicit_id, &block.metadata, &[quote_class], context);
                 BlockWriter::start(output, "div", &attributes);
                 BlockWriter::line_break(output);
                 if quote.kind == crate::block_model::QuoteKind::Quote {
@@ -287,16 +308,40 @@ pub(super) fn render_delimited(
                 BlockWriter::line_break(output);
                 return;
             }
+            crate::block_model::DelimitedPresentation::Collapsible(collapsible) => {
+                // A disclosure: the title is what the reader clicks. Without a
+                // title the language's default word stands in.
+                let mut attributes = block_attributes(explicit_id, &block.metadata, &[], context);
+                if collapsible.open {
+                    attributes.push(body::boolean("open"));
+                }
+                BlockWriter::start(output, "details", &attributes);
+                BlockWriter::line_break(output);
+                BlockWriter::start(output, "summary", &[]);
+                if let Some(title) = &block.metadata.title {
+                    render_inlines(output, &title.inlines, context);
+                } else {
+                    BlockWriter::text(output, "Details");
+                }
+                BlockWriter::end(output, "summary");
+                BlockWriter::line_break(output);
+                render_delimited_children(output, block, policy, context, scope);
+                BlockWriter::end(output, "details");
+                BlockWriter::line_break(output);
+                return;
+            }
         }
     }
     match &block.content {
         crate::block_model::DelimitedContent::Verbatim(value) => {
             if !matches!(block.kind, crate::block_model::DelimitedBlockKind::Comment) {
-                render_preformatted(output, explicit_id, value);
+                let attributes = block_attributes(explicit_id, &block.metadata, &[], context);
+                render_preformatted(output, &attributes, value);
             }
         }
         crate::block_model::DelimitedContent::Passthrough(value) => {
-            render_preformatted(output, explicit_id, value);
+            let attributes = block_attributes(explicit_id, &block.metadata, &[], context);
+            render_preformatted(output, &attributes, value);
         }
         crate::block_model::DelimitedContent::Table(table) => {
             render_table(
@@ -310,9 +355,44 @@ pub(super) fn render_delimited(
             );
         }
         crate::block_model::DelimitedContent::Compound(_) => {
-            render_delimited_children(output, block, policy, context, scope);
+            render_compound(output, block, explicit_id, policy, context, scope);
         }
     }
+}
+
+/// A compound block is a container the reader can see: the wrapper names its
+/// kind, and the block title leads the content the same way it does for an
+/// admonition. A quote delimiter without a quote style stays transparent, as
+/// the compatibility guide records.
+fn render_compound(
+    output: &mut String,
+    block: &crate::block_model::DelimitedBlock,
+    explicit_id: Option<&str>,
+    policy: &RenderPolicy,
+    context: &mut InlineRenderContext<'_, '_>,
+    scope: RenderScope,
+) {
+    let kind_class = match block.kind {
+        crate::block_model::DelimitedBlockKind::Example => "example",
+        crate::block_model::DelimitedBlockKind::Sidebar => "sidebar",
+        crate::block_model::DelimitedBlockKind::Open => "open",
+        _ => {
+            render_delimited_children(output, block, policy, context, scope);
+            return;
+        }
+    };
+    let attributes = block_attributes(explicit_id, &block.metadata, &[kind_class], context);
+    BlockWriter::start(output, "div", &attributes);
+    BlockWriter::line_break(output);
+    if let Some(title) = &block.metadata.title {
+        BlockWriter::start(output, "div", &[classes(&["title"])]);
+        render_inlines(output, &title.inlines, context);
+        BlockWriter::end(output, "div");
+        BlockWriter::line_break(output);
+    }
+    render_delimited_children(output, block, policy, context, scope);
+    BlockWriter::end(output, "div");
+    BlockWriter::line_break(output);
 }
 
 pub(super) fn render_delimited_children(
@@ -378,8 +458,7 @@ pub(super) fn render_admonition_start(
         "WARNING" => "admonition-warning",
         _ => unreachable!("admonition kinds have fixed labels"),
     };
-    let mut attributes = optional_id(explicit_id);
-    attributes.push(classes(&["admonition", kind_class]));
+    let attributes = block_attributes(explicit_id, metadata, &["admonition", kind_class], context);
     BlockWriter::start(output, "div", &attributes);
     BlockWriter::start(output, "div", &[classes(&["title"])]);
     if let Some(title) = &metadata.title {
@@ -422,8 +501,12 @@ pub(super) fn render_table(
         TableStripes::None => "table-stripes-none",
         TableStripes::Odd => "table-stripes-odd",
     };
-    let mut attributes = optional_id(explicit_id);
-    attributes.push(classes(&[frame_class, grid_class, stripes_class]));
+    let mut attributes = block_attributes(
+        explicit_id,
+        metadata,
+        &[frame_class, grid_class, stripes_class],
+        context,
+    );
     if let Some(width) = table.presentation.width {
         attributes.push(passive("width", format!("{width}%")));
     }
@@ -552,13 +635,16 @@ pub(super) fn render_table_cell(
 
 pub(super) fn render_break(
     output: &mut String,
-    kind: crate::block_model::BreakKind,
+    block: &crate::block_model::BreakBlock,
     id: Option<&str>,
+    context: &mut InlineRenderContext<'_, '_>,
 ) {
-    let mut attributes = optional_id(id);
-    if kind == crate::block_model::BreakKind::Page {
-        attributes.push(classes(&["page-break"]));
-    }
+    let fixed: &[&'static str] = if block.kind == crate::block_model::BreakKind::Page {
+        &["page-break"]
+    } else {
+        &[]
+    };
+    let attributes = block_attributes(id, &block.metadata, fixed, context);
     BlockWriter::void(output, "hr", &attributes);
     BlockWriter::line_break(output);
 }
@@ -577,10 +663,12 @@ pub(super) fn render_list(
         crate::block_model::ListKind::Description => "dl",
         crate::block_model::ListKind::Callout => "ol",
     };
-    let mut attributes = optional_id(explicit_id);
-    if list.kind == crate::block_model::ListKind::Callout {
-        attributes.push(classes(&["callout-list"]));
-    }
+    let fixed: &[&'static str] = if list.kind == crate::block_model::ListKind::Callout {
+        &["callout-list"]
+    } else {
+        &[]
+    };
+    let attributes = block_attributes(explicit_id, &list.metadata, fixed, context);
     BlockWriter::start(output, tag, &attributes);
     BlockWriter::line_break(output);
     for item in &list.items {
@@ -708,10 +796,14 @@ pub(super) fn render_heading(
 
     match heading.kind {
         HeadingKind::DocumentTitle if policy.render_document_title => {
+            let roles = role_classes(&heading.metadata, context);
             BlockWriter::start(
                 output,
                 "h1",
-                &[classes(&["document-title"]), passive("id", id)],
+                &[
+                    body::classes_with_roles(&["document-title"], roles),
+                    passive("id", id),
+                ],
             );
             render_inlines(output, &heading.inlines, context);
             BlockWriter::end(output, "h1");
@@ -740,13 +832,15 @@ pub(super) fn render_heading_level(
         5 => "h5",
         _ => unreachable!("parser only produces supported heading levels"),
     };
-    let mut attributes = Vec::new();
-    if context
+    let appendix = context
         .structure
         .heading_at(heading.range)
-        .is_some_and(|item| item.kind == crate::structure::SectionKind::Appendix)
-    {
-        attributes.push(classes(&["appendix"]));
+        .is_some_and(|item| item.kind == crate::structure::SectionKind::Appendix);
+    let fixed: &[&'static str] = if appendix { &["appendix"] } else { &[] };
+    let roles = role_classes(&heading.metadata, context);
+    let mut attributes = Vec::new();
+    if !fixed.is_empty() || !roles.is_empty() {
+        attributes.push(body::classes_with_roles(fixed, roles));
     }
     attributes.push(passive("id", id));
     BlockWriter::start(output, name, &attributes);
@@ -779,8 +873,9 @@ pub(super) fn render_paragraph(
     id: Option<&str>,
     context: &mut InlineRenderContext<'_, '_>,
 ) {
-    let mut attributes = optional_id(id);
-    if paragraph
+    // `lead` is the one role with a fixed class of its own; the policy decides
+    // about every other role.
+    let lead = paragraph
         .metadata
         .roles
         .iter()
@@ -789,10 +884,9 @@ pub(super) fn render_paragraph(
             .metadata
             .attributes
             .iter()
-            .any(|attribute| attribute.name.is_none() && attribute.value == "lead")
-    {
-        attributes.push(classes(&["lead"]));
-    }
+            .any(|attribute| attribute.name.is_none() && attribute.value == "lead");
+    let fixed: &[&'static str] = if lead { &["lead"] } else { &[] };
+    let attributes = block_attributes(id, &paragraph.metadata, fixed, context);
     BlockWriter::start(output, "p", &attributes);
     render_inlines(output, &paragraph.inlines, context);
     BlockWriter::end(output, "p");
@@ -806,24 +900,6 @@ pub(super) fn render_inlines(
 ) {
     let plan = body::plan_inlines(inlines, context);
     body::serialize_inlines(output, &plan);
-}
-
-pub(super) const fn math_class(language: crate::inline_model::MathLanguage) -> &'static str {
-    match language {
-        crate::inline_model::MathLanguage::Latex => "math-latex",
-        crate::inline_model::MathLanguage::Typst => "math-typst",
-    }
-}
-
-pub(super) fn math_attributes(
-    language: crate::inline_model::MathLanguage,
-    display: &str,
-) -> Vec<body::PlannedAttribute> {
-    vec![
-        classes(&[math_class(language)]),
-        passive("data-math-language", language.as_asciidoc_name()),
-        passive("data-math-display", display),
-    ]
 }
 
 pub(super) struct InlineRenderContext<'inputs, 'render> {
@@ -988,4 +1064,49 @@ pub(super) fn render_unsupported(output: &mut String, unsupported: &Unsupported,
 
 pub(super) fn optional_id(id: Option<&str>) -> Vec<body::PlannedAttribute> {
     id.map(|id| vec![passive("id", id)]).unwrap_or_default()
+}
+
+/// `id` and `class` for a block element: the explicit anchor, the renderer's
+/// fixed classes, and the block roles the render policy admits as `role-<name>`.
+///
+/// Every block element goes through here so a role behaves the same on a
+/// paragraph, a wrapper, a table, or a list, and so a block never carries two
+/// `class` attributes.
+pub(super) fn block_attributes(
+    explicit_id: Option<&str>,
+    metadata: &crate::block_model::BlockMetadata,
+    fixed_classes: &[&'static str],
+    context: &mut InlineRenderContext<'_, '_>,
+) -> Vec<body::PlannedAttribute> {
+    let mut attributes = optional_id(explicit_id);
+    let roles = role_classes(metadata, context);
+    if !fixed_classes.is_empty() || !roles.is_empty() {
+        attributes.push(body::classes_with_roles(fixed_classes, roles));
+    }
+    attributes
+}
+
+/// The role classes the policy admits, in authored order without repeats. A
+/// role the host does not list is dropped, with a diagnostic when asked for.
+fn role_classes(
+    metadata: &crate::block_model::BlockMetadata,
+    context: &mut InlineRenderContext<'_, '_>,
+) -> Vec<super::safe::RoleClass> {
+    let mut classes = Vec::new();
+    for (role, range) in metadata.role_names() {
+        if context.policy.roles.allows(role) {
+            if let Some(class) = super::safe::RoleClass::new(role)
+                && !classes.contains(&class)
+            {
+                classes.push(class);
+            }
+        } else if context.policy.roles.unknown == UnknownRole::Diagnostic {
+            context.diagnostics.push(render_diagnostic(
+                "role-not-allowed",
+                "block role is not allowed by the render policy",
+                range,
+            ));
+        }
+    }
+    classes
 }

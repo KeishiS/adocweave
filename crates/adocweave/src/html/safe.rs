@@ -9,6 +9,7 @@ pub const ALLOWED_ELEMENTS: &[&str] = &[
     "cite",
     "code",
     "dd",
+    "details",
     "div",
     "dl",
     "dt",
@@ -36,6 +37,7 @@ pub const ALLOWED_ELEMENTS: &[&str] = &[
     "strong",
     "style",
     "sub",
+    "summary",
     "sup",
     "table",
     "tbody",
@@ -63,6 +65,7 @@ pub const ALLOWED_ATTRIBUTES: &[&str] = &[
     "href",
     "id",
     "lang",
+    "open",
     "poster",
     "rel",
     "rowspan",
@@ -89,6 +92,7 @@ pub const ALLOWED_CLASSES: &[&str] = &[
     "checklist-marker",
     "citation",
     "document-title",
+    "example",
     "footnote",
     "footnote-backref",
     "footnote-ref",
@@ -99,9 +103,12 @@ pub const ALLOWED_CLASSES: &[&str] = &[
     "math-latex",
     "math-typst",
     "menu",
+    "open",
     "page-break",
     "revision",
+    "role-*",
     "quote",
+    "sidebar",
     "source-block",
     "table-align-center",
     "table-align-left",
@@ -128,7 +135,7 @@ pub const ALLOWED_CLASSES: &[&str] = &[
 ];
 
 const ACTIVE_URL_ATTRIBUTES: &[&str] = &["href", "poster", "src"];
-const BOOLEAN_ATTRIBUTES: &[&str] = &["controls"];
+const BOOLEAN_ATTRIBUTES: &[&str] = &["controls", "open"];
 const CLASS_ATTRIBUTE: &str = "class";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -178,7 +185,22 @@ pub(super) struct ClassName<'a>(&'a str);
 
 impl<'a> ClassName<'a> {
     pub(super) fn new(value: &'a str) -> Option<Self> {
-        (value != "language-*" && ALLOWED_CLASSES.contains(&value)).then_some(Self(value))
+        (value != "language-*" && value != "role-*" && ALLOWED_CLASSES.contains(&value))
+            .then_some(Self(value))
+    }
+}
+
+/// The `role-<name>` class of a block role the render policy allows.
+///
+/// The prefix keeps authored roles apart from the fixed classes this renderer
+/// owns, so a role can never collide with `quote`, `title`, or a future fixed
+/// class, and a stylesheet can address roles with one selector family.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct RoleClass(String);
+
+impl RoleClass {
+    pub(super) fn new(role: &str) -> Option<Self> {
+        crate::html::is_role_name(role).then(|| Self(format!("role-{role}")))
     }
 }
 
@@ -332,13 +354,19 @@ impl<'a> HtmlWriter<'a> {
         self.output.push('"');
     }
 
-    pub(super) fn class_attribute(&mut self, classes: &[ClassName<'_>]) {
+    /// Writes one `class` attribute holding the fixed classes followed by the
+    /// allowed role classes. Callers never write two class attributes.
+    pub(super) fn class_attribute(&mut self, classes: &[ClassName<'_>], roles: &[RoleClass]) {
         self.output.push_str(" class=\"");
-        for (index, class) in classes.iter().enumerate() {
+        let names = classes
+            .iter()
+            .map(|class| class.0)
+            .chain(roles.iter().map(|role| role.0.as_str()));
+        for (index, class) in names.enumerate() {
             if index > 0 {
                 self.output.push(' ');
             }
-            escape_into(self.output, class.0);
+            escape_into(self.output, class);
         }
         self.output.push('"');
     }
@@ -525,16 +553,19 @@ mod tests {
             PassiveAttributeName::new("id").expect("passive attribute"),
             AttributeValue::new("\"<&"),
         );
-        writer.class_attribute(&[
-            ClassName::new("admonition").expect("class"),
-            ClassName::new("admonition-note").expect("class"),
-        ]);
+        writer.class_attribute(
+            &[
+                ClassName::new("admonition").expect("class"),
+                ClassName::new("admonition-note").expect("class"),
+            ],
+            &[RoleClass::new("definition").expect("role class")],
+        );
         writer.finish_start();
         writer.inline_text(TextValue::new("a\r\nb\n<&"));
         writer.end(ElementName::new("p").expect("allowlisted element"));
         assert_eq!(
             output,
-            "<p id=\"&#34;&lt;&amp;\" class=\"admonition admonition-note\">a b &lt;&amp;</p>"
+            "<p id=\"&#34;&lt;&amp;\" class=\"admonition admonition-note role-definition\">a b &lt;&amp;</p>"
         );
     }
 

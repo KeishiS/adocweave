@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use crate::{
     WasmAnalysisPreprocessInput, WasmDocumentMode, WasmMathLanguage, WasmProductSet,
-    WasmRenderInputs, WasmSeverity, WasmSyntaxMode, WasmUnknownSourceLanguage,
+    WasmRenderInputs, WasmSeverity, WasmSyntaxMode, WasmUnknownRole, WasmUnknownSourceLanguage,
     WasmUnresolvedReferencePresentation,
 };
 
@@ -151,6 +151,7 @@ pub struct WasmRenderPolicy {
     pub active_urls: WasmActiveUrlPolicy,
     pub external_links: WasmExternalLinkPolicy,
     pub source_languages: WasmSourceLanguagePolicy,
+    pub roles: WasmRolePolicy,
     pub math_languages: Vec<WasmMathLanguage>,
     pub unresolved_references: WasmUnresolvedReferencePresentation,
     pub resources: WasmResourceCapabilities,
@@ -164,6 +165,7 @@ impl Default for WasmRenderPolicy {
             active_urls: Default::default(),
             external_links: Default::default(),
             source_languages: Default::default(),
+            roles: Default::default(),
             math_languages: vec![WasmMathLanguage::Latex, WasmMathLanguage::Typst],
             unresolved_references: WasmUnresolvedReferencePresentation::Target,
             resources: Default::default(),
@@ -185,6 +187,22 @@ impl Default for WasmResourceCapabilities {
         Self {
             images: true,
             media: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct WasmRolePolicy {
+    pub allowed: Vec<String>,
+    pub unknown: WasmUnknownRole,
+}
+
+impl Default for WasmRolePolicy {
+    fn default() -> Self {
+        Self {
+            allowed: vec![],
+            unknown: WasmUnknownRole::Silent,
         }
     }
 }

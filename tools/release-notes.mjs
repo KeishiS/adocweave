@@ -53,6 +53,8 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 
 const highlights = [
   "literal monospace（`` `+text+` ``）の両端の``+``を表示から除き、unconstrained書式の直前の``\\\\``を言語仕様どおり二つともescapeとして扱うようにしました。``__init__.py``のような書式記号を含む文字列を標準の記法で書けます。",
+  "example、sidebar、open blockを種類のclassを持つ``div``で囲み、block titleを``div.title``として出力するようにしました。``[%collapsible]``付きのexample blockは``details``と``summary``へ変換し、``%open``で展開した状態にします。先頭のpositional属性は``style#id.role%option``の形で書けます。",
+  "block roleは、利用側が``RenderPolicy.roles``（CLIでは``html.roles``、WASM APIでは``renderPolicy.roles``）で許可した名前だけを``role-<name>`` classとしてHTMLへ出力するようにしました（ADR 0020）。構造情報のblock presentationにはexample、sidebar、open、collapsibleの種類と、roleおよび展開状態を追加しました。",
 ];
 
 export function breakingContractNotes(changes) {
@@ -74,7 +76,7 @@ export function breakingMigrationNotes(changes) {
 export const UNCHANGED_CONTRACTS = [
   "CLI引数",
   "Language Server protocol",
-  "設定schema",
+  "textlint Processorパッケージ契約",
 ];
 
 /// The file that decides whether a named contract changed.
@@ -86,15 +88,17 @@ export const UNCHANGED_CONTRACTS = [
 export const CONTRACT_SOURCES = {
   "WASM protocol": "protocol/public-api.json",
   設定schema: "config/adocweave.schema.json",
+  "textlint Processorパッケージ契約": "release/textlint-plugin-package-contract.json",
 };
 
 /// Fields that carry the release version rather than the contract's shape.
 export const CONTRACT_VERSION_FIELDS = ["packageVersion"];
 
 const contractNotes = [
+  "設定schema（config/adocweave.schema.json）へ``html.roles``（HTMLへ``role-<name>`` classとして出力するrole名の一覧）を追加しました。既存の設定はそのまま有効です。",
   `統一package version：${RELEASE_NOTES_VERSION}`,
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
-  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。どちらもv${PREVIOUS_RELEASE_VERSION}から変更していません。`,
+  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}（v${PREVIOUS_RELEASE_VERSION}の12から更新。block presentationへ種類と項目を追加し、\`\`renderPolicy.roles\`\`を追加しました）、Worker protocol version：${protocol.workerProtocolVersion}（v${PREVIOUS_RELEASE_VERSION}から変更していません）。`,
   manifestSchemaNote,
   ...breakingContractNotes(breakingRustApi.changes),
   "textlint Processorの公開API、TxtASTへの変換結果および自動修正を行わない保証は変更していません。",

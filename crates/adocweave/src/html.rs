@@ -64,6 +64,46 @@ impl SourceLanguagePolicy {
     }
 }
 
+/// Which block roles the host lets through to HTML as `role-<name>` classes.
+///
+/// A role is authored text, and a class reaches the host page's stylesheet, so
+/// the document does not decide by itself which classes exist: the host lists
+/// the roles its stylesheet knows. Everything else is dropped. The `lead`
+/// paragraph role keeps its fixed `lead` class independently of this policy.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RolePolicy {
+    /// Role names, written as in the document (`[.definition]` → `definition`).
+    pub allowed: BTreeSet<String>,
+    pub unknown: UnknownRole,
+}
+
+impl RolePolicy {
+    /// Whether `role` is written as a safe class token and the host allows it.
+    pub fn allows(&self, role: &str) -> bool {
+        is_role_name(role) && self.allowed.contains(role)
+    }
+}
+
+/// Roles are class tokens: ASCII letters, digits, `-`, and `_`, so a role can
+/// never smuggle whitespace or markup into the `class` attribute.
+pub fn is_role_name(role: &str) -> bool {
+    !role.is_empty()
+        && role
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum UnknownRole {
+    /// Drop the role without a diagnostic; the usual choice for a host that
+    /// styles nothing by role.
+    #[default]
+    Silent,
+    /// Drop the role and report `role-not-allowed`, so authors learn which
+    /// roles the host ignores.
+    Diagnostic,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MathLanguagePolicy {
     /// An empty set disables every math language.
@@ -151,6 +191,7 @@ pub struct RenderPolicy {
     pub external_links: ExternalLinkPresentation,
     pub source_languages: SourceLanguagePolicy,
     pub math_languages: MathLanguagePolicy,
+    pub roles: RolePolicy,
     pub unresolved_references: UnresolvedReferencePresentation,
     pub resources: ResourceCapabilities,
     pub stylesheets: StylesheetPolicy,
@@ -166,6 +207,7 @@ impl Default for RenderPolicy {
             external_links: ExternalLinkPresentation::default(),
             source_languages: SourceLanguagePolicy::default(),
             math_languages: MathLanguagePolicy::default(),
+            roles: RolePolicy::default(),
             unresolved_references: UnresolvedReferencePresentation::default(),
             resources: ResourceCapabilities::default(),
             stylesheets: StylesheetPolicy::default(),

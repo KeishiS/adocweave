@@ -188,6 +188,7 @@ pub(crate) fn build(
     Ok(RenderPolicy {
         document_mode,
         stylesheets: StylesheetPolicy { sources, ..limits },
+        roles: project.policy.roles.clone(),
         ..RenderPolicy::default()
     })
 }

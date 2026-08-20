@@ -15,3 +15,29 @@ ____
 line one
 line two
 ____
+
+.Example title
+====
+Example body.
+====
+
+****
+Sidebar body.
+****
+
+[[definition-1]]
+.Definition 1
+--
+Open block body.
+--
+
+.Click to reveal
+[%collapsible]
+====
+Hidden body.
+====
+
+[%collapsible%open]
+====
+Expanded body.
+====
