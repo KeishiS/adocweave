@@ -177,6 +177,22 @@
       "lint": "enum_variant_added",
       "migration": "``WasmBlockPresentationKind``を網羅的にmatchしている場合は``Table``の分岐を追加してください。",
       "summary": "enum variant added on exhaustive enum"
+    },
+    {
+      "crate": "adocweave",
+      "description": "``{counter:name}``参照を属性の履歴へ記録するため、``DocumentAttributeOperation::Counter``を追加しました。",
+      "item": "variant DocumentAttributeOperation:Counter",
+      "lint": "enum_variant_added",
+      "migration": "``DocumentAttributeOperation``を網羅的にmatchしている場合は``Counter``（値を次へ進める操作）の分岐を追加してください。",
+      "summary": "enum variant added on exhaustive enum"
+    },
+    {
+      "crate": "adocweave-wasm",
+      "description": "WASM responseの属性操作に``counter``を追加しました。",
+      "item": "variant WasmDocumentAttributeOperation:Counter",
+      "lint": "enum_variant_added",
+      "migration": "``WasmDocumentAttributeOperation``を網羅的にmatchしている場合は``Counter``の分岐を追加してください。",
+      "summary": "enum variant added on exhaustive enum"
     }
   ]
 }

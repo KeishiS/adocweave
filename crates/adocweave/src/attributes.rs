@@ -17,6 +17,71 @@ pub type ExternalAttributes = BTreeMap<String, Option<String>>;
 pub enum DocumentAttributeOperation {
     Set,
     Unset,
+    /// A `{counter:name}` or `{counter2:name}` reference: the attribute takes
+    /// the next value (one more than before, or the seed the reference names)
+    /// at the reference's position.
+    Counter,
+}
+
+/// A `{counter:name}` or `{counter2:name}` attribute reference taken apart.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct CounterReference<'a> {
+    /// The attribute the counter lives in.
+    pub(crate) name: &'a str,
+    /// Whether the reference shows the new value (`counter`) or only counts
+    /// (`counter2`).
+    pub(crate) display: bool,
+    /// The first value when the attribute is not yet set (`{counter:n:5}`,
+    /// `{counter:n:a}`).
+    pub(crate) seed: Option<&'a str>,
+}
+
+/// Reads `counter:name`, `counter2:name`, and their `:seed` forms.
+pub(crate) fn counter_reference(reference: &str) -> Option<CounterReference<'_>> {
+    let (display, rest) = match reference.strip_prefix("counter2:") {
+        Some(rest) => (false, rest),
+        None => (true, reference.strip_prefix("counter:")?),
+    };
+    let (name, seed) = match rest.split_once(':') {
+        Some((name, seed)) => (name, Some(seed)),
+        None => (rest, None),
+    };
+    let valid = !name.is_empty()
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'));
+    valid.then_some(CounterReference {
+        name,
+        display,
+        seed: seed.filter(|seed| !seed.is_empty()),
+    })
+}
+
+/// The value a counter takes: one past the previous value, else the seed, else
+/// `1`. Numbers count up; a single ASCII letter advances through the alphabet
+/// and wraps `z` to `aa`, as the language does.
+pub(crate) fn next_counter_value(previous: Option<&str>, seed: Option<&str>) -> String {
+    match previous.map(str::trim).filter(|value| !value.is_empty()) {
+        None => seed.map_or_else(|| "1".to_owned(), str::to_owned),
+        Some(value) => {
+            if let Ok(number) = value.parse::<i64>() {
+                return number.saturating_add(1).to_string();
+            }
+            let mut characters = value.chars();
+            match (characters.next(), characters.next()) {
+                (Some(letter), None) if letter.is_ascii_alphabetic() => {
+                    if letter == 'z' {
+                        "aa".to_owned()
+                    } else if letter == 'Z' {
+                        "AA".to_owned()
+                    } else {
+                        char::from(letter as u8 + 1).to_string()
+                    }
+                }
+                _ => "1".to_owned(),
+            }
+        }
+    }
 }
 
 /// How one physical attribute-value line continues onto the next line.
@@ -296,6 +361,17 @@ impl SequentialAttributeState {
             )
             .map(|(value, depth)| (Some(value), depth)),
             DocumentAttributeOperation::Unset => Ok((None, 0)),
+            DocumentAttributeOperation::Counter => {
+                let seed =
+                    Some(occurrence.value.folded_text.as_str()).filter(|seed| !seed.is_empty());
+                Ok((
+                    Some(next_counter_value(
+                        self.values.get(&name).map(String::as_str),
+                        seed,
+                    )),
+                    0,
+                ))
+            }
         };
         match &evaluated {
             Ok((Some(value), depth)) => {
@@ -346,12 +422,21 @@ impl Default for AttributeEnvironment {
 }
 
 impl AttributeEnvironment {
+    /// Builds the environment from the authored attribute lines and the counter
+    /// references found in the body, both in reading order. A counter reference
+    /// is an event like an attribute line: everything after it sees the new
+    /// value, and the history records it with its own binding.
     pub(crate) fn build(
         occurrences: &[DocumentAttributeOccurrence],
+        counters: &[DocumentAttributeOccurrence],
         external_values: &ExternalAttributes,
         limits: AttributeExpansionLimits,
         checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
     ) -> Result<Self, ()> {
+        let mut merged: Vec<&DocumentAttributeOccurrence> =
+            occurrences.iter().chain(counters.iter()).collect();
+        merged.sort_by_key(|occurrence| occurrence.range.start());
+        let occurrences = merged;
         let mut normalized_external_values = BTreeMap::new();
         for (name, value) in external_values {
             if checkpoint.is_cancelled() {
@@ -369,7 +454,7 @@ impl AttributeEnvironment {
             limits,
             checkpoint,
         )?;
-        for (ordinal, occurrence) in occurrences.iter().enumerate() {
+        for (ordinal, occurrence) in occurrences.iter().copied().enumerate() {
             if checkpoint.is_cancelled() {
                 return Err(());
             }
@@ -858,6 +943,30 @@ fn range(start: usize, end: usize) -> TextRange {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn counters_take_the_next_value_and_read_seeds() {
+        use super::{counter_reference, next_counter_value};
+        assert_eq!(next_counter_value(None, None), "1");
+        assert_eq!(next_counter_value(None, Some("5")), "5");
+        assert_eq!(next_counter_value(Some("5"), Some("9")), "6");
+        assert_eq!(next_counter_value(Some("a"), None), "b");
+        assert_eq!(next_counter_value(Some("z"), None), "aa");
+        assert_eq!(next_counter_value(Some("Z"), None), "AA");
+        assert_eq!(next_counter_value(Some("text"), None), "1");
+        let counter = counter_reference("counter:theorem-num").expect("counter");
+        assert_eq!(
+            (counter.name, counter.display, counter.seed),
+            ("theorem-num", true, None)
+        );
+        let counter = counter_reference("counter2:n:a").expect("counter");
+        assert_eq!(
+            (counter.name, counter.display, counter.seed),
+            ("n", false, Some("a"))
+        );
+        assert_eq!(counter_reference("counter:"), None);
+        assert_eq!(counter_reference("name"), None);
+    }
+
     use super::{
         AttributeEnvironment, AttributeEventId, AttributePosition, DocumentAttributeOccurrence,
         DocumentAttributeOperation,
@@ -899,6 +1008,7 @@ mod tests {
     fn event_id_breaks_ties_at_the_same_expanded_offset() {
         let environment = AttributeEnvironment::build(
             &[occurrence("first"), occurrence("second")],
+            &[],
             &Default::default(),
             AttributeExpansionLimits {
                 max_depth: 8,

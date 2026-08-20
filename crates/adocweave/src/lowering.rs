@@ -24,6 +24,51 @@ pub(crate) struct ParsedFacts<'a> {
     pub external_attributes: &'a std::collections::BTreeMap<String, Option<String>>,
 }
 
+/// Every `{counter:name}` reference in the body as an attribute event at its
+/// own position, in reading order. The counter is the one inline construct that
+/// changes attribute state, so it joins the attribute lines before the
+/// environment is built.
+fn counter_events(
+    blocks: &[AstBlock],
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<Vec<DocumentAttributeOccurrence>, LoweringFailure> {
+    let mut events = Vec::new();
+    let walked = crate::walker::try_walk_block_slice(blocks, |node| {
+        if checkpoint.is_cancelled() {
+            return std::ops::ControlFlow::Break(());
+        }
+        if let crate::walker::SemanticNode::Inline(Inline::AttributeReference {
+            range,
+            name_range,
+            name,
+            ..
+        }) = node
+            && let Some(counter) = crate::attributes::counter_reference(name)
+        {
+            let seed = counter.seed.unwrap_or_default().to_owned();
+            events.push(DocumentAttributeOccurrence {
+                range: crate::source::TextRange::new(range.start(), range.start())
+                    .expect("empty range is ordered"),
+                name_range: *name_range,
+                name: counter.name.to_owned(),
+                value: crate::attributes::DocumentAttributeValue {
+                    source_range: *name_range,
+                    source_text: seed.clone(),
+                    folded_text: seed,
+                    lines: Vec::new(),
+                },
+                operation: crate::attributes::DocumentAttributeOperation::Counter,
+                valid: true,
+            });
+        }
+        std::ops::ControlFlow::Continue(())
+    });
+    if walked.is_break() {
+        return Err(LoweringFailure::Cancelled);
+    }
+    Ok(events)
+}
+
 pub(crate) fn lower(
     mut facts: ParsedFacts<'_>,
     checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
@@ -31,8 +76,10 @@ pub(crate) fn lower(
     if checkpoint.is_cancelled() {
         return Err(LoweringFailure::Cancelled);
     }
+    let counters = counter_events(&facts.blocks, checkpoint)?;
     let attribute_environment = crate::attributes::AttributeEnvironment::build(
         &facts.attributes,
+        &counters,
         facts.external_attributes,
         facts.attribute_expansion_limits,
         checkpoint,
@@ -819,24 +866,35 @@ pub(crate) fn resolve_inlines(
                 value,
                 expansion_error,
                 ..
-            } => match attributes
-                .resolve_at(name, offset)
-                .map(|resolved| resolved.value)
-            {
-                Some(Ok(Some(resolved))) => {
-                    *value = Some(resolved.to_owned());
-                    *expansion_error = None;
+            } => {
+                // A counter reference reads the attribute it counts, and the
+                // `counter2` form shows nothing while still counting.
+                let counter = crate::attributes::counter_reference(name);
+                let lookup = counter.map_or(name.as_str(), |counter| counter.name);
+                let display = counter.is_none_or(|counter| counter.display);
+                match attributes
+                    .resolve_at(lookup, offset)
+                    .map(|resolved| resolved.value)
+                {
+                    Some(Ok(Some(resolved))) => {
+                        *value = Some(if display {
+                            resolved.to_owned()
+                        } else {
+                            String::new()
+                        });
+                        *expansion_error = None;
+                    }
+                    Some(Ok(None)) | None => {
+                        *value = None;
+                        *expansion_error =
+                            Some(crate::substitution::AttributeExpansionError::Undefined);
+                    }
+                    Some(Err(error)) => {
+                        *value = None;
+                        *expansion_error = Some(error);
+                    }
                 }
-                Some(Ok(None)) | None => {
-                    *value = None;
-                    *expansion_error =
-                        Some(crate::substitution::AttributeExpansionError::Undefined);
-                }
-                Some(Err(error)) => {
-                    *value = None;
-                    *expansion_error = Some(error);
-                }
-            },
+            }
             Inline::Text(text) => {
                 text.value = crate::substitution::apply_replacements(&text.value);
             }

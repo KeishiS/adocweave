@@ -277,8 +277,11 @@ fn attribute_reference(
     name_range: crate::source::TextRange,
     attributes: &AttributeEnvironment,
 ) -> crate::attributes::AttributeReference {
-    crate::attributes::reference_at(
-        name,
+    // A counter reference resolves the attribute it counts; the reference keeps
+    // its authored name so a host can tell the two forms apart.
+    let lookup = crate::attributes::counter_reference(name).map_or(name, |counter| counter.name);
+    let mut reference = crate::attributes::reference_at(
+        lookup,
         range,
         name_range,
         crate::attributes::AttributePosition::new(
@@ -286,7 +289,9 @@ fn attribute_reference(
             crate::attributes::AttributeEventId::new(u32::MAX),
         ),
         attributes,
-    )
+    );
+    reference.name = name.to_owned();
+    reference
 }
 
 fn attribute_use(

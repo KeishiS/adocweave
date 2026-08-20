@@ -39,7 +39,7 @@ export type ResourceFailureKind = "missing" | "outside-root" | "scheme-denied" |
 
 export type CitationStatus = "resolved" | "failed";
 
-export type DocumentAttributeOperation = "set" | "unset";
+export type DocumentAttributeOperation = "set" | "unset" | "counter";
 
 export type AttributeExpansionError = "undefined" | "cycle" | "depth-limit-exceeded" | "size-limit-exceeded";
 

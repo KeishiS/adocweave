@@ -172,6 +172,7 @@ pub struct WasmDocumentAttributeOccurrence {
 pub enum WasmDocumentAttributeOperation {
     Set,
     Unset,
+    Counter,
 }
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
