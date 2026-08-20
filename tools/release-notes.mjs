@@ -52,6 +52,7 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
+  "block titleを持つ画像blockを``figure``と``figcaption``で描画し、表・example blockとともに``Figure 1. ``形式の番号付きcaptionを付けるようにしました。語は``figure-caption``などの属性で変えられ、解除すると番号を付けません。見出し以外のblockへの空label参照は、anchorの表示テキスト、番号付きcaption、block title、識別子の順で表示し、blockのsourceを表示しなくなりました。構造情報のblock presentationへfigure、tableとcaptionを追加しました。",
   "literal monospace（`` `+text+` ``）の両端の``+``を表示から除き、unconstrained書式の直前の``\\\\``を言語仕様どおり二つともescapeとして扱うようにしました。``__init__.py``のような書式記号を含む文字列を標準の記法で書けます。",
   "example、sidebar、open blockを種類のclassを持つ``div``で囲み、block titleを``div.title``として出力するようにしました。``[%collapsible]``付きのexample blockは``details``と``summary``へ変換し、``%open``で展開した状態にします。先頭のpositional属性は``style#id.role%option``の形で書けます。",
   "block roleは、利用側が``RenderPolicy.roles``（CLIでは``html.roles``、WASM APIでは``renderPolicy.roles``）で許可した名前だけを``role-<name>`` classとしてHTMLへ出力するようにしました（ADR 0020）。構造情報のblock presentationにはexample、sidebar、open、collapsibleの種類と、roleおよび展開状態を追加しました。",

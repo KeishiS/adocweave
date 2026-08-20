@@ -97,6 +97,7 @@ pub const ALLOWED_CLASSES: &[&str] = &[
     "footnote-backref",
     "footnote-ref",
     "footnotes",
+    "image-block",
     "index-term",
     "language-*",
     "lead",

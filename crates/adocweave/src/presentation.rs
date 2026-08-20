@@ -84,9 +84,20 @@ pub struct DocumentPresentation {
     toc: Vec<crate::structure::TocEntry>,
     bibliography_sections: Vec<BibliographySection>,
     bibliography_ordinals: BTreeMap<TextRange, usize>,
+    captions: crate::caption::CaptionIndex,
 }
 
 impl DocumentPresentation {
+    /// Every numbered caption (figure, table, example) in reading order.
+    pub fn captions(&self) -> &[crate::caption::BlockCaption] {
+        self.captions.captions()
+    }
+
+    /// The caption of the block written at `range`, if it is titled.
+    pub fn caption_at(&self, range: TextRange) -> Option<&crate::caption::BlockCaption> {
+        self.captions.caption_at(range)
+    }
+
     pub fn headings(&self) -> &[HeadingPresentation] {
         &self.headings
     }
@@ -248,6 +259,7 @@ pub(crate) fn build_presentation(
     structure: &crate::structure::DocumentStructure,
     index: &DocumentIndex,
     attribute_environment: &crate::attributes::AttributeEnvironment,
+    captions: crate::caption::CaptionIndex,
     checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
 ) -> Result<DocumentPresentation, ()> {
     // These document-wide presentation controls are header metadata. Body
@@ -384,6 +396,7 @@ pub(crate) fn build_presentation(
         toc,
         bibliography_sections,
         bibliography_ordinals,
+        captions,
     })
 }
 

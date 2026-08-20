@@ -137,6 +137,16 @@ quote styleのない``____``はこれまでどおり要素を生成せず、内�
 ``role-not-allowed``として報告します。名前はASCIIの英数字、``-``および``_``に限り、それ以外は許可一覧に
 含めても出力しません。``lead`` roleだけは従来どおり固定class``lead``を持ちます。
 
+== 図表とcaption
+
+1行だけの``image::target[]``は画像blockであり、``figure.image-block``で囲んで``img``を出力します。block titleが
+ある場合は``figcaption``へ、表はtitleを``caption``へ、example blockはtitleを``div.title``へ出力し、いずれも
+先頭へ番号付きのcaption語（``Figure 1. ``、``Table 1. ``、``Example 1. ``）を付けます。caption語は
+``figure-caption``、``table-caption``、``example-caption``属性をblockの位置で解決した値であり、未定義なら
+言語既定の語、``:figure-caption!:``のように解除した場合は番号も語も付けずtitleだけを出力します。番号は
+語を持つblockだけを種類ごとに読み順で数えます。見出し以外のblockへの空label参照は、anchorの表示テキスト、
+番号付きcaption（`Figure 1`）、block title、識別子の順で表示文字列を決め、blockのsourceを表示しません。
+
 == ソースと数式
 
 Source blockの言語classは``SourceLanguagePolicy``で許可した言語だけに付けます。未知の言語ではclassを

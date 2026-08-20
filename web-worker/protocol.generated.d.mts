@@ -55,7 +55,7 @@ export type ReferenceTargetKind = "document-title" | "part" | "section" | "expli
 
 export type OrderedListStyle = "arabic" | "decimal" | "loweralpha" | "upperalpha" | "lowerroman" | "upperroman" | "lowergreek";
 
-export type BlockPresentationKind = "admonition" | "quote" | "verse" | "example" | "sidebar" | "open" | "collapsible";
+export type BlockPresentationKind = "admonition" | "quote" | "verse" | "example" | "sidebar" | "open" | "collapsible" | "figure" | "table";
 
 export type SectionKind = "document-title" | "part" | "section" | "appendix" | "discrete";
 
@@ -300,6 +300,7 @@ export interface BlockPresentationProjection {
   citation: string | null;
   roles: string[];
   open: boolean | null;
+  caption: string | null;
 }
 
 export interface DocumentStructure {

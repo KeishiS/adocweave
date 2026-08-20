@@ -188,6 +188,7 @@ pub(crate) fn reference_targets_ast(document: &AstDocument) -> Vec<ReferenceTarg
 
 pub(crate) fn build_identifiers(
     document: &AstDocument,
+    captions: &crate::caption::CaptionIndex,
     checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
 ) -> Result<DocumentIdentifiers, ()> {
     let mut inline_anchors = Vec::new();
@@ -261,7 +262,10 @@ pub(crate) fn build_identifiers(
                     _ => ReferenceTargetKind::ExplicitAnchor,
                 },
                 id: anchor.id.clone(),
-                label: anchor.label.clone().unwrap_or_else(|| block_label(block)),
+                label: anchor
+                    .label
+                    .clone()
+                    .unwrap_or_else(|| block_label(block, captions, &anchor.id)),
                 id_range: anchor.id_range,
                 target_range: range,
             });
@@ -386,34 +390,26 @@ fn unique_heading_id(
     }
 }
 
-fn block_label(block: &AstBlock) -> String {
-    match block {
-        AstBlock::Heading(value) => value.text.clone(),
-        AstBlock::Paragraph(value) => value.value.lines().next().unwrap_or_default().to_owned(),
-        AstBlock::LiteralParagraph(_) => "literal paragraph".to_owned(),
-        AstBlock::Break(_) => "break".to_owned(),
-        AstBlock::Source(value) => value.language.as_ref().map_or_else(
-            || "source block".to_owned(),
-            |name| format!("{name} source block"),
-        ),
-        AstBlock::Verbatim(value) => match &value.kind {
-            crate::block_model::VerbatimKind::Source(source) => {
-                source.language.as_ref().map_or_else(
-                    || "source block".to_owned(),
-                    |name| format!("{name} source block"),
-                )
-            }
-            crate::block_model::VerbatimKind::Listing => "listing block".to_owned(),
-            crate::block_model::VerbatimKind::Literal => "literal block".to_owned(),
-        },
-        AstBlock::List(value) => value
-            .items
-            .first()
-            .map_or_else(|| "list".to_owned(), |item| item.text.clone()),
-        AstBlock::Math(_) => "math block".to_owned(),
-        AstBlock::Delimited(value) => format!("{:?} block", value.kind).to_ascii_lowercase(),
-        AstBlock::Unsupported(_) => "unsupported block".to_owned(),
+fn block_label(block: &AstBlock, captions: &crate::caption::CaptionIndex, id: &str) -> String {
+    // The display text of a reference to a block that names no text of its
+    // own: a numbered caption (`Figure 1`), else the block title, else the
+    // identifier. A heading is its text. The block's source never shows.
+    if let AstBlock::Heading(heading) = block {
+        return heading.text.clone();
     }
+    if let Some(label) = captions
+        .caption_at(block.range())
+        .and_then(crate::caption::BlockCaption::label)
+    {
+        return label;
+    }
+    block
+        .metadata()
+        .title
+        .as_ref()
+        .map(|title| crate::projection::resolved_inline_text(&title.inlines))
+        .filter(|title| !title.is_empty())
+        .unwrap_or_else(|| id.to_owned())
 }
 
 pub fn heading_id_base(text: &str) -> String {
@@ -819,6 +815,7 @@ mod tests {
 
         let result = build_identifiers(
             &parsed.ast,
+            &crate::caption::CaptionIndex::default(),
             &mut crate::cancellation::CancellationCheckpoint::new(&cancellation),
         );
 
@@ -971,7 +968,7 @@ mod tests {
                 (
                     ReferenceTargetKind::ExplicitAnchor,
                     "paragraph",
-                    "Paragraph"
+                    "paragraph"
                 ),
             ]
         );

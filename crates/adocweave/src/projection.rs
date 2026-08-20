@@ -74,6 +74,8 @@ pub enum BlockPresentationKind {
     Sidebar,
     Open,
     Collapsible,
+    Figure,
+    Table,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -88,12 +90,16 @@ pub struct BlockPresentationProjection {
     pub roles: Vec<String>,
     /// For a collapsible block, whether it starts expanded.
     pub open: Option<bool>,
+    /// The numbered caption label (`Figure 1`) of a titled figure, table, or
+    /// example, when the document numbers it.
+    pub caption: Option<String>,
 }
 
 /// The presentation facts of a delimited block, if it has any a host can use:
 /// the typed presentations, and the compound containers a reader can see.
 fn delimited_presentation(
     block: &crate::block_model::DelimitedBlock,
+    presentation: &crate::presentation::DocumentPresentation,
 ) -> Option<BlockPresentationProjection> {
     use crate::block_model::{DelimitedBlockKind, DelimitedContent, DelimitedPresentation};
     let title = block
@@ -121,13 +127,17 @@ fn delimited_presentation(
             Some(collapsible.open),
         ),
         None => {
-            if !matches!(block.content, DelimitedContent::Compound(_)) {
-                return None;
-            }
-            let kind = match block.kind {
-                DelimitedBlockKind::Example => BlockPresentationKind::Example,
-                DelimitedBlockKind::Sidebar => BlockPresentationKind::Sidebar,
-                DelimitedBlockKind::Open => BlockPresentationKind::Open,
+            let kind = match (&block.content, block.kind) {
+                (DelimitedContent::Table(_), _) => BlockPresentationKind::Table,
+                (DelimitedContent::Compound(_), DelimitedBlockKind::Example) => {
+                    BlockPresentationKind::Example
+                }
+                (DelimitedContent::Compound(_), DelimitedBlockKind::Sidebar) => {
+                    BlockPresentationKind::Sidebar
+                }
+                (DelimitedContent::Compound(_), DelimitedBlockKind::Open) => {
+                    BlockPresentationKind::Open
+                }
                 _ => return None,
             };
             (kind, None, None, None)
@@ -142,6 +152,34 @@ fn delimited_presentation(
         citation,
         roles: block_role_names(&block.metadata),
         open,
+        caption: presentation
+            .caption_at(block.range)
+            .and_then(crate::caption::BlockCaption::label),
+    })
+}
+
+/// An image block is a figure in the structure information, titled or not.
+fn image_block_presentation(
+    paragraph: &crate::block_model::Paragraph,
+    presentation: &crate::presentation::DocumentPresentation,
+) -> Option<BlockPresentationProjection> {
+    crate::caption::block_image(paragraph)?;
+    Some(BlockPresentationProjection {
+        kind: BlockPresentationKind::Figure,
+        source_range: paragraph.range,
+        content_range: paragraph.content_range,
+        title: paragraph
+            .metadata
+            .title
+            .as_ref()
+            .map(|item| resolved_inline_text(&item.inlines)),
+        attribution: None,
+        citation: None,
+        roles: block_role_names(&paragraph.metadata),
+        open: None,
+        caption: presentation
+            .caption_at(paragraph.range)
+            .and_then(crate::caption::BlockCaption::label),
     })
 }
 
@@ -162,6 +200,8 @@ impl BlockPresentationKind {
             Self::Sidebar => "sidebar",
             Self::Open => "open",
             Self::Collapsible => "collapsible",
+            Self::Figure => "figure",
+            Self::Table => "table",
         }
     }
 }
@@ -389,10 +429,17 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
                 citation: None,
                 roles: block_role_names(&value.metadata),
                 open: None,
+                caption: None,
             });
         }
+        crate::walker::SemanticNode::Block(AstBlock::Paragraph(value)) => {
+            if let Some(figure) = image_block_presentation(value, analysis.ast().presentation()) {
+                block_presentations.push(figure);
+            }
+        }
         crate::walker::SemanticNode::Block(AstBlock::Delimited(value)) => {
-            if let Some(presentation) = delimited_presentation(value) {
+            if let Some(presentation) = delimited_presentation(value, analysis.ast().presentation())
+            {
                 block_presentations.push(presentation);
             }
         }
@@ -996,6 +1043,7 @@ mod wire {
         citation: Option<&'a str>,
         roles: &'a [String],
         open: Option<bool>,
+        caption: Option<&'a str>,
     }
 
     #[derive(Serialize)]
@@ -1214,6 +1262,7 @@ mod wire {
                         citation: block.citation.as_deref(),
                         roles: &block.roles,
                         open: block.open,
+                        caption: block.caption.as_deref(),
                     })
                     .collect(),
                 structure: StructureW {

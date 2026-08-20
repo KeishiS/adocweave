@@ -94,7 +94,7 @@
     "FormulaKind": ["inline", "block"]
     ,"ReferenceTargetKind": ["document-title", "part", "section", "explicit-anchor", "inline-anchor"]
     ,"OrderedListStyle": ["arabic", "decimal", "loweralpha", "upperalpha", "lowerroman", "upperroman", "lowergreek"]
-    ,"BlockPresentationKind": ["admonition", "quote", "verse", "example", "sidebar", "open", "collapsible"]
+    ,"BlockPresentationKind": ["admonition", "quote", "verse", "example", "sidebar", "open", "collapsible", "figure", "table"]
     ,"SectionKind": ["document-title", "part", "section", "appendix", "discrete"]
     ,"SearchTextKind": ["prose", "code"]
     ,"Applicability": ["always", "maybe"]
@@ -387,7 +387,8 @@
         { "json": "attribution", "type": "string | null", "required": true },
         { "json": "citation", "type": "string | null", "required": true },
         { "json": "roles", "type": "string[]", "required": true },
-        { "json": "open", "type": "boolean | null", "required": true }
+        { "json": "open", "type": "boolean | null", "required": true },
+        { "json": "caption", "type": "string | null", "required": true }
       ]
     },
     "DocumentStructure": {

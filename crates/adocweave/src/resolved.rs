@@ -338,17 +338,22 @@ impl ResolvedDocument {
     ) -> Result<Self, ResolvedBuildFailure> {
         let facts = DocumentFacts::build(document, &attributes, catalog_limits, checkpoint)
             .map_err(|()| ResolvedBuildFailure::Cancelled)?;
-        let identifiers = crate::document::build_identifiers(document, checkpoint)
+        // Captions come before identifiers: a cross reference to a figure shows
+        // the figure's numbered label, so the labels need the numbering.
+        let index = crate::presentation::build_index(document, checkpoint)
+            .map_err(|()| ResolvedBuildFailure::Cancelled)?;
+        let captions = crate::caption::build_captions(document, &index, &attributes, checkpoint)
+            .map_err(|()| ResolvedBuildFailure::Cancelled)?;
+        let identifiers = crate::document::build_identifiers(document, &captions, checkpoint)
             .map_err(|()| ResolvedBuildFailure::Cancelled)?;
         let structure = crate::structure::build(document, &identifiers, checkpoint)
-            .map_err(|()| ResolvedBuildFailure::Cancelled)?;
-        let index = crate::presentation::build_index(document, checkpoint)
             .map_err(|()| ResolvedBuildFailure::Cancelled)?;
         let presentation = crate::presentation::build_presentation(
             document,
             &structure,
             &index,
             &attributes,
+            captions,
             checkpoint,
         )
         .map_err(|()| ResolvedBuildFailure::Cancelled)?;
