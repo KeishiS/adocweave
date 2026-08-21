@@ -1,4 +1,10 @@
-import { type ExtensionManifest, type ReleaseManifest, readJson } from "./manifests.mts";
+import { type ExtensionManifest, readJson } from "./manifests.mts";
+
+// The release train checks that this package stays private and that its version
+// and repository URL match the release manifest (`tools/release-contract.mjs`).
+// What only the extension can check is what VS Code itself reads: the entry
+// point, the language contribution, and the TextMate grammar. A broken grammar
+// pattern silently stops highlighting rather than failing anything else.
 
 interface LanguageConfiguration {
   brackets?: unknown;
@@ -16,22 +22,9 @@ interface Grammar {
 }
 
 const packageJson = readJson<ExtensionManifest>("package.json");
-const release = readJson<ReleaseManifest>("../../release-manifest.json");
 const language = readJson<LanguageConfiguration>("language-configuration.json");
 const grammar = readJson<Grammar>("syntaxes/asciidoc.tmLanguage.json");
 
-if (packageJson.version !== release.packageVersion) {
-  throw new Error("The VS Code extension version does not match the release manifest");
-}
-if (packageJson.private !== true || packageJson.scripts?.publish || packageJson.publishConfig) {
-  throw new Error("The VS Code extension must keep registry publishing disabled");
-}
-if (
-  packageJson.homepage !== "https://github.com/KeishiS/adocweave" ||
-  packageJson.repository?.url !== "https://github.com/KeishiS/adocweave.git"
-) {
-  throw new Error("The VS Code extension repository URL does not match the canonical name");
-}
 if (
   packageJson.main !== "./dist/extension.cjs" ||
   packageJson.contributes?.languages?.[0]?.id !== "asciidoc"

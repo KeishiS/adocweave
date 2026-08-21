@@ -30,11 +30,14 @@ const allowed: ReadonlySet<string> = new Set([
   "extension/syntaxes/asciidoc.tmLanguage.json",
 ]);
 const maximumBytes = 5 * 1024 * 1024;
+// Building twice doubles the packaging time, so only the paths that produce the
+// published artifact pay for it. Pull requests build once and verify the
+// contents; the release artifact build compares two builds byte for byte.
+const verifyDeterminism = process.argv.includes("--verify-determinism");
 
 interface NormalizedPackage {
   bytes: Uint8Array;
   entries: Unzipped;
-  entryHashes: Record<string, string>;
 }
 
 function sha256(bytes: Uint8Array): string {
@@ -75,41 +78,39 @@ function normalizedPackage(scratch: string, suffix: string): NormalizedPackage {
     throw new Error(`Unexpected files in the VSIX: ${names.join(", ")}`);
   }
   const canonical: Unzipped = {};
-  const entryHashes: Record<string, string> = {};
   for (const name of names) {
     const contents = entries[name];
     if (contents === undefined) throw new Error(`Missing VSIX entry: ${name}`);
     canonical[name] = contents;
-    entryHashes[name] = sha256(contents);
   }
   return {
     bytes: zipSync(canonical, { level: 9, mtime: new Date("1980-01-01T00:00:00.000Z") }),
     entries,
-    entryHashes,
   };
 }
 
 const scratch = mkdtempSync(join(tmpdir(), "adocweave-vsix-"));
 try {
-  const first = normalizedPackage(scratch, "a");
-  const second = normalizedPackage(scratch, "b");
-  if (JSON.stringify(first.entryHashes) !== JSON.stringify(second.entryHashes)) {
-    throw new Error("The VSIX entries are not built deterministically");
-  }
-  if (sha256(first.bytes) !== sha256(second.bytes)) {
+  const built = normalizedPackage(scratch, "a");
+  const hash = sha256(built.bytes);
+  if (verifyDeterminism && sha256(normalizedPackage(scratch, "b").bytes) !== hash) {
     throw new Error("The VSIX is not built deterministically");
   }
-  if (first.bytes.byteLength > maximumBytes) throw new Error("The VSIX exceeds 5 MiB");
+  if (built.bytes.byteLength > maximumBytes) throw new Error("The VSIX exceeds 5 MiB");
   for (const forbidden of ["/workspace/", "/home/", "/tmp/", extensionRoot]) {
-    for (const [name, contents] of Object.entries(first.entries)) {
+    for (const [name, contents] of Object.entries(built.entries)) {
       if (Buffer.from(contents).toString("utf8").includes(forbidden)) {
         throw new Error(`VSIX entry ${name} contains a machine-specific path`);
       }
     }
   }
   mkdirSync(dirname(output), { recursive: true });
-  writeFileSync(output, first.bytes);
-  process.stdout.write(`Created a deterministic VSIX: ${output}\n`);
+  writeFileSync(output, built.bytes);
+  process.stdout.write(
+    `Packaged ${output}: ${built.bytes.byteLength} bytes, SHA-256 ${hash}${
+      verifyDeterminism ? ", reproduced from a second build" : ""
+    }\n`,
+  );
 } finally {
   rmSync(scratch, { force: true, recursive: true });
 }

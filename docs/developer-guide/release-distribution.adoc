@@ -100,7 +100,8 @@ devShellのNode.jsを使い、flakeはshellを構築する時点でNixpkgsのNod
 直接書くと、devShellのNode.jsと分かれても誰も気付かないため、必ずmanifestから取得します。
 
 VSIXは固定したNode.js依存とlockfileからbundleし、runtimeの``node_modules``とsource mapを同梱しません。
-許可file一覧、license、package size、機械固有pathの不在および同一sourceから2回構築したbyte列の一致を確認します。
+同梱fileが許可一覧と完全に一致すること、package sizeおよび機械固有pathの不在を確認します。公開するbyte列が
+入力だけから決まることは、成果物を公開する経路で同じsourceからもう一度構築してSHA-256を比較して確認します。
 VSIXのmanaged Language Serverは同じバージョンの配布manifestだけを使用します。この判断の背景は
 xref:adr/0013-vscode-release-boundary.adoc[ADR 0013]を参照してください。
 

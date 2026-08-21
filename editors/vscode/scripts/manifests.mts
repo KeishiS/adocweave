@@ -14,11 +14,6 @@ export interface ExtensionManifest {
   contributes?: { languages?: Array<{ id?: string }> };
 }
 
-/** The fields of the repository `release-manifest.json` these scripts read. */
-export interface ReleaseManifest {
-  packageVersion: string;
-}
-
 /**
  * Parses a JSON file as the given shape.
  *

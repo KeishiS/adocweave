@@ -24,6 +24,7 @@ cargo make check-vscode
 cargo make test-vscode
 cargo make test-vscode-extension-host
 cargo make test-vscode-release-package
+cargo make test-vscode-release-determinism
 ----
 
 Extension host testは固定バージョンの公式VS Codeを隔離したuser dataディレクトリへ取得し、local buildの
@@ -31,9 +32,13 @@ Extension host testは固定バージョンの公式VS Codeを隔離したuser d
 References、Document Link、Rename、Semantic Tokens、UTF-16位置、include先の更新、連続編集後の古い結果の不採用、
 複数workspace folder、再起動および終了後のprocess残存を確認します。通常利用しているVS Code profileは使用しません。
 
-``test-vscode-release-package``は同じソースからVSIXを2回構築し、byte列の一致、許可ファイル一覧、license、
-source mapと``node_modules``の不在、sizeおよび機械固有pathの不在を検査します。さらに、隔離したVS Codeへ
-VSIXを導入し、更新、以前のバージョンへのrollbackおよびuninstallを確認します。
+``test-vscode-release-package``はVSIXを構築し、同梱fileが許可一覧と完全に一致すること、sizeの上限および
+機械固有pathの不在を検査します。さらに、隔離したVS CodeへVSIXを導入し、更新、以前のバージョンへのrollbackおよび
+uninstallを確認します。
+
+公開するbyte列が入力だけから決まることは``test-vscode-release-determinism``が確認します。このtaskは同じソースから
+VSIXをもう一度構築してSHA-256を比較するため、構築時間が2倍になります。成果物を公開する経路（``release-check``と
+release candidateの構築）だけで実行し、Pull Requestでは1回だけ構築します。
 
 これらの構築と検査を行う``editors/vscode/scripts``はTypeScript（``.mts``）で書き、配布物で固定したNode.jsが型注釈を
 取り除いてそのまま実行します（変換や追加の依存はありません）。型検査は``npm run check``（``check-vscode``）の

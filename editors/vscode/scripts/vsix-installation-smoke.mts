@@ -9,7 +9,6 @@ import {
 } from "@vscode/test-electron";
 import { unzipSync, zipSync } from "fflate";
 
-import { exitAfterSuccessfulCleanup } from "./exit-after-successful-cleanup.mts";
 import { type ExtensionManifest, readJson } from "./manifests.mts";
 
 if (process.platform === "linux" && process.env.GITHUB_ACTIONS === "true") {
@@ -113,4 +112,7 @@ try {
   rmSync(scratch, { force: true, recursive: true });
 }
 
-exitAfterSuccessfulCleanup();
+// A retried VS Code download can leave helper handles alive after every
+// installation check and cleanup has completed. Do not let those unrelated
+// handles keep the release gate running until its job timeout.
+process.exit(0);

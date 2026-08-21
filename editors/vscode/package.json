@@ -88,7 +88,6 @@
     "test": "npm run build:test && node --test dist-test/test/*.test.js",
     "build:test": "node scripts/build-test.mts",
     "package": "node scripts/package.mts",
-    "test:vsix": "node scripts/vsix-smoke.mts",
     "test:vsix-installation": "node scripts/vsix-installation-smoke.mts",
     "test:extension": "node scripts/run-extension-tests.mts"
   },
