@@ -35,15 +35,18 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   const notes = buildReleaseNotes(`v${RELEASE_NOTES_VERSION}`);
   assert.doesNotThrow(() => validateReleaseNotes(notes));
   assert.match(notes, /## 主な変更/);
-  assert.equal(PREVIOUS_RELEASE_VERSION, "0.42.0");
+  assert.equal(PREVIOUS_RELEASE_VERSION, "0.43.0");
   assert.match(notes, /x86_64-unknown-linux-musl/);
   assert.match(notes, /aarch64-apple-darwin/);
   assert.match(notes, /x86_64-pc-windows-msvc/);
   assert.match(notes, /macOS 14\.0以降/);
   assert.match(notes, /Windows 10 version 1809（build 10\.0\.17763）以降/);
-  assert.match(notes, /block title/);
+  assert.match(notes, /list継続内のblock title.*通常のblockと同じ解析上限/);
+  assert.match(notes, /投機的な解析で上限を消費しません/);
   assert.match(notes, /WASM protocol schema version/);
-  assert.match(notes, /13から更新/);
+  assert.match(notes, /どちらもv0\.43\.0から変更していません/);
+  assert.match(notes, /sourceRange.*開始区切り行.*終了区切り行/);
+  assert.match(notes, /v0\.43\.0のRelease Notesには記載されていませんでした/);
   assert.match(notes, new RegExp(`${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}のpackageとAPIへ更新`));
   assert.match(notes, /Worker protocol version：2/);
   assert.match(notes, /schema versionは4のままで、項目を追加も削除もしていません/);
@@ -56,6 +59,7 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
     new RegExp(`\`\`PROTOCOL_SCHEMA_VERSION = ${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}\`\``),
   );
   assert.match(notes, /保存済みの結果やcache/);
+  assert.match(notes, /v0\.42\.x以前の``sourceRange``.*構造情報とrange索引は再生成/);
   assert.match(notes, new RegExp(textlintContract.compatibility.nodeEngine.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(notes, new RegExp(textlintContract.compatibility.textlintVersion.replaceAll(".", "\\.")));
   assert.doesNotMatch(notes, /``npx --package``/);

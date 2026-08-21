@@ -26,7 +26,7 @@ if (breakingRustApi.releaseVersion !== RELEASE_NOTES_VERSION) {
     `破壊的変更記録のreleaseVersionがRelease Notesと一致しません：${breakingRustApi.releaseVersion}`,
   );
 }
-export const PREVIOUS_RELEASE_VERSION = "0.42.0";
+export const PREVIOUS_RELEASE_VERSION = "0.43.0";
 
 // The release manifest schema version the previous stable release shipped.
 //
@@ -52,9 +52,7 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  "先頭が``..``の行を、``.``で始まるblock titleとして扱うようにしました（``..github/workflows/a.yml``は「.github/workflows/a.yml」というtitle）。``...``と``.. ``は従来どおりtitleにしません。",
-  "source blockを「styleが``source``のlisting block」として結合済みblock metadataから判定するようにしました。block title・``[[id]]``・属性行の並び順に依存せず、``[source#id.role%linenums,rust]``のような先頭属性の短縮形、``[,lang]``、list継続内のmetadata行も同じ規則で扱います。未知のsource optionは診断だけを出してsource blockのまま描画します。公開モデルの``AstBlock::Source``と``SourceBlock``、syntax treeの``SourceBlock``種別は廃止し、source blockは常に``Verbatim``のsource kindと``DelimitedBlock``になります。",
-  "``listing-caption``属性を設定した文書では、titleを持つsource／listing blockへ``Listing 1. ``形式の番号付きcaptionを付け、``<<id>>``の表示にも使うようにしました（未設定なら従来どおり番号なし）。titleを持つlisting block（``----``）とliteral block（``....``）は``figure``と``figcaption``で描画し、titleが失われなくなりました。構造情報のsource blockへ``caption``を追加しました。",
+  "list継続内のblock title、anchorおよび属性行へ、通常のblockと同じ解析上限を適用するようにしました。明示anchorと属性行の短縮IDをHTMLの``id``とxrefの参照先へ反映します。後続blockがないmetadata形式の行は本文として一度だけ解析し、投機的な解析で上限を消費しません。",
 ];
 
 export function breakingContractNotes(changes) {
@@ -98,9 +96,10 @@ export const CONTRACT_VERSION_FIELDS = ["packageVersion"];
 const contractNotes = [
   `統一package version：${RELEASE_NOTES_VERSION}`,
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
-  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}（v${PREVIOUS_RELEASE_VERSION}の13から更新。source blockの構造情報へ\`\`caption\`\`を追加しました）、Worker protocol version：${protocol.workerProtocolVersion}（v${PREVIOUS_RELEASE_VERSION}から変更していません）。`,
+  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。どちらもv${PREVIOUS_RELEASE_VERSION}から変更していません。`,
   manifestSchemaNote,
   ...breakingContractNotes(breakingRustApi.changes),
+  "``SourceBlockProjection.sourceRange``とWASM responseの``sourceRange``は、source blockの開始区切り行の行頭から終了区切り行の行末までを表し、先行するblock title、anchorおよび属性行を含みません。この意味はv0.43.0で変更されましたが、v0.43.0のRelease Notesには記載されていませんでした。",
   "textlint Processorの公開API、TxtASTへの変換結果および自動修正を行わない保証は変更していません。",
   `${UNCHANGED_CONTRACTS.join("、")}は変更していません。`,
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
@@ -109,6 +108,7 @@ const contractNotes = [
 const migrationNotes = [
   `Browser向けWASMのJSON requestを直接構築している場合は、${RELEASE_NOTES_VERSION}のpackageとAPIへ更新し、requestの\`\`packageVersion\`\`も\`\`${RELEASE_NOTES_VERSION}\`\`にそろえてください。\`\`schemaVersion\`\`はrequestの項目ではありません。requestには追加しないでください。保存済みの結果やcacheは、packageが公開する\`\`PROTOCOL_SCHEMA_VERSION = ${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}\`\`を使って区別してください。`,
   `CLI、LSP、browser、Zed、VS Codeおよびtextlint向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。バージョンの異なる配布物を混ぜて使えないため、更新する場合はすべてを入れ替えます。`,
+  "source blockの本文には``contentRange``、言語名には``languageRange``、titleには``title.sourceRange``を使用してください。metadataを含む記述全体が必要な場合は、native APIの``VerbatimBlock.metadata.range``またはsyntax treeの先行するmetadata行を参照します。v0.42.x以前の``sourceRange``の意味を前提に保存した構造情報とrange索引は再生成してください。",
   ...breakingMigrationNotes(breakingRustApi.changes),
 ];
 
