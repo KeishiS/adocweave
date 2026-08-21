@@ -7,13 +7,22 @@ test("worker consumes the public WASM contract registry", async () => {
   const manifestUrl = new URL("../release-manifest.json", import.meta.url);
   const manifest = JSON.parse(await readFile(manifestUrl, "utf8"));
 
+  // 3製品共通のrelease manifest schema(version 1)と、AdocWeave固有の拡張項目distributionPlan。
   assert.deepEqual(Object.keys(manifest).sort(), [
+    "assets",
+    "distributionPlan",
     "nodeVersion",
     "packageVersion",
+    "product",
+    "releaseNotes",
     "rustVersion",
     "schemaVersion",
   ]);
-  assert.equal(manifest.schemaVersion, 4);
+  assert.equal(manifest.schemaVersion, 1);
+  assert.equal(manifest.product, "adocweave");
+  assert.equal(manifest.releaseNotes, "release/notes.md");
+  assert.deepEqual(manifest.assets, []);
+  assert.equal(manifest.distributionPlan, "release/distribution-plan.json");
   assert.equal(manifest.packageVersion, PACKAGE_VERSION);
   assert.equal(manifest.packageVersion, BROWSER_PACKAGE_VERSION);
   assert.match(manifest.rustVersion, /^\d+\.\d+\.\d+$/);
