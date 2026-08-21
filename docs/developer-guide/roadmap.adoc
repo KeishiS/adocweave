@@ -31,11 +31,18 @@ https://github.com/KeishiS/adocweave/releases[GitHub Releases]のRelease Notes�
 単体CLIのlocal resource profileは、相対resourceを解決する需要が確認された場合に再評価します。
 RenovateによるNix依存更新は、手動更新が継続的な負担となった場合に再評価します。
 
+== 進行中の公開経路
+
+公式VS Code拡張をOpen VSX Registryへ公開する準備を進めています。公開はGitHub Releaseの公開後に
+同じworkflowの専用jobだけが行い、VSIXの内容と構築方法は変えません。
+
+* https://github.com/KeishiS/adocweave/issues/611[Open VSX Registryへの公開]
+
 == 実施しない公開経路
 
-extension registry、public package registryおよびOSのpackage managerへの登録・公開は行いません。
-次のIssueは実装候補ではなく、この判断と過去の検討内容を残す記録として保留します。
+Visual Studio Marketplace、Zed Extension Gallery、public package registryおよびOSのpackage managerへの
+登録・公開は行いません。次のIssueは実装候補ではなく、この判断と過去の検討内容を残す記録として保留します。
 
-* https://github.com/KeishiS/adocweave/issues/82[公式extension registry]
+* https://github.com/KeishiS/adocweave/issues/82[公式extension registry（Open VSX以外）]
 * https://github.com/KeishiS/adocweave/issues/83[crates.io・npm公開の評価]
 * https://github.com/KeishiS/adocweave/issues/86[Homebrew・WinGet・Scoopの評価]
