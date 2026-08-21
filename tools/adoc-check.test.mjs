@@ -58,7 +58,6 @@ test("repositoryの全追跡AsciiDocを動的な検査計画へ含める", () =>
   for (const path of [
     "docs/developer-guide/vscode-development.adoc",
     "docs/developer-guide/adr/0013-vscode-release-boundary.adoc",
-    "editors/vscode/README.adoc",
   ]) {
     assert.equal(plan.find((entry) => entry.path === path)?.localTargets, true, path);
   }

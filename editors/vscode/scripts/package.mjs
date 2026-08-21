@@ -21,7 +21,7 @@ const allowed = new Set([
   "extension.vsixmanifest",
   "extension/LICENSE-APACHE",
   "extension/LICENSE-MIT",
-  "extension/README.adoc",
+  "extension/readme.md",
   "extension/dist/extension.cjs",
   "extension/language-configuration.json",
   "extension/package.json",
@@ -34,7 +34,7 @@ function normalizedPackage(scratch, suffix) {
   const stage = join(scratch, `stage-${suffix}`);
   mkdirSync(join(stage, "dist"), { recursive: true });
   mkdirSync(join(stage, "syntaxes"), { recursive: true });
-  for (const name of ["README.adoc", "language-configuration.json", "package.json"]) {
+  for (const name of ["README.md", "language-configuration.json", "package.json"]) {
     copyFileSync(join(extensionRoot, name), join(stage, name));
   }
   copyFileSync(join(repositoryRoot, "LICENSE-APACHE"), join(stage, "LICENSE-APACHE"));
