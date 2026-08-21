@@ -302,6 +302,12 @@ Release Notesの本文は``release/notes.md``に人が書きます。題名は``
 追記するため、本文には書きません。``cargo make release-contract``（``verify``に含む）がこの形を検査し、
 公開workflowが同じtoolでGitHub Releaseの本文を生成します。
 
+版を上げるときは、雛形``release/notes.template.md``を``release/notes.md``へ複製し、``X.Y.Z``を新しい版へ
+置き換えてから各節を書きます。雛形の「記載してから公開」を含む案内文は、書き終えたら消します。残っている
+場合は``release-contract``が未記入として拒否します。本文中の版表記の個数が変わった場合は、
+``release/version-sync.json``の``release/notes.md``の``count``を、``node tools/sync-release-version.mjs --check``が
+報告する実際の個数へ合わせます。
+
 公開処理の権限、candidateの再利用条件およびReleaseの状態遷移は
 xref:docs/developer-guide/release-distribution.adoc[GitHub Releases配布仕様]を基準とします。
 公開に失敗した場合は、再実行前にprivate draft、既存assetおよびattestationの対象digestを確認します。
