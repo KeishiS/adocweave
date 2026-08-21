@@ -47,7 +47,7 @@
       "source": "fn main() {\n    println!(\"Hello\");\n}\n",
       "sourceRange": {
         "end": 117,
-        "start": 39
+        "start": 70
       },
       "startLine": 7,
       "title": {
@@ -73,7 +73,7 @@
       "source": "invalid();\n",
       "sourceRange": {
         "end": 185,
-        "start": 130
+        "start": 164
       },
       "startLine": 1,
       "title": {

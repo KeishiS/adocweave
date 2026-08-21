@@ -6,8 +6,6 @@ use crate::source::{TextRange, TextSize};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum LineRecognition {
-    Source,
-    InvalidSource,
     Math,
     Delimited,
     Anchor,
@@ -27,8 +25,6 @@ pub(crate) enum LineRecognition {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum BlockRecognizer {
-    Source,
-    InvalidSource,
     Math,
     Delimited,
     Anchor,
@@ -46,8 +42,6 @@ enum BlockRecognizer {
 }
 
 const BLOCK_RECOGNIZER_PRIORITY: &[BlockRecognizer] = &[
-    BlockRecognizer::Source,
-    BlockRecognizer::InvalidSource,
     BlockRecognizer::Math,
     BlockRecognizer::Delimited,
     BlockRecognizer::Anchor,
@@ -78,12 +72,6 @@ impl BlockRecognizer {
     fn recognize(self, input: &RecognitionInput<'_>) -> Option<LineRecognition> {
         let content = input.content;
         match self {
-            Self::Source => (parse_source_attribute(content).is_some()
-                && input.next_content == Some("----"))
-            .then_some(LineRecognition::Source),
-            Self::InvalidSource => (content.starts_with("[source")
-                && input.next_content == Some("----"))
-            .then_some(LineRecognition::InvalidSource),
             Self::Math => (parse_math_attribute(content).is_some()
                 && input.next_content == Some("++++"))
             .then_some(LineRecognition::Math),
@@ -219,6 +207,14 @@ pub(crate) fn parse_block_attributes(content: &str, base: usize) -> Option<Block
         .ok()?;
         if !value.is_empty() {
             parse_element_attribute(value, range, &mut metadata, field_start == 0);
+        } else if field_start == 0 && field_end < inner.len() {
+            // `[,rust]`: an empty first positional attribute keeps its place, so
+            // the language still reads as the second positional attribute.
+            metadata.attributes.push(ElementAttribute {
+                name: None,
+                value: String::new(),
+                range,
+            });
         }
         field_start = field_end.saturating_add(1);
     }
@@ -321,45 +317,6 @@ pub(crate) fn parse_math_attribute(text: &str) -> Option<MathLanguage> {
     }
 }
 
-pub(crate) fn parse_source_attribute(text: &str) -> Option<Option<(usize, usize)>> {
-    let (language, prefix_len) = if let Some(inner) = text.strip_prefix("[source") {
-        let inner = inner.strip_suffix(']')?;
-        if inner.is_empty() {
-            return Some(None);
-        }
-        (inner.strip_prefix(',')?, "[source,".len())
-    } else {
-        let inner = text.strip_prefix('[')?.strip_suffix(']')?;
-        (inner.strip_prefix(',')?, "[,".len())
-    };
-    let (language, trailing) = language
-        .split_once(',')
-        .map_or((language, None), |(value, trailing)| {
-            (value, Some(trailing))
-        });
-    if trailing.is_some_and(|trailing| {
-        trailing.split(',').any(|value| {
-            let value = value.trim();
-            value != "linenums"
-                && value != "%linenums"
-                && !value.starts_with("start=")
-                && value != "options=linenums"
-        })
-    }) {
-        return None;
-    }
-    let leading = language.len() - language.trim_start_matches([' ', '\t']).len();
-    let trimmed = language.trim_matches([' ', '\t']);
-    if trimmed.is_empty() {
-        return Some(None);
-    }
-    if trimmed.contains(']') {
-        return None;
-    }
-    let start = prefix_len + leading;
-    Some(Some((start, start + trimmed.len())))
-}
-
 /// Reason recorded on an [`crate::block_model::Unsupported`] block built from a
 /// preprocessor directive that this analysis did not preprocess.
 pub(crate) const CONDITIONAL_DIRECTIVE_REASON: &str = "conditional directive was not preprocessed";
@@ -390,7 +347,6 @@ pub(crate) fn trailing_whitespace_is_structural(content: &str) -> bool {
     trimmed != content
         && (crate::delimiter::spec(trimmed).is_some()
             || parse_block_attributes(trimmed, 0).is_some()
-            || parse_source_attribute(trimmed).is_some()
             || parse_math_attribute(trimmed).is_some()
             || parse_explicit_anchor(
                 trimmed,
@@ -445,8 +401,6 @@ mod tests {
         assert_eq!(
             BLOCK_RECOGNIZER_PRIORITY,
             &[
-                BlockRecognizer::Source,
-                BlockRecognizer::InvalidSource,
                 BlockRecognizer::Math,
                 BlockRecognizer::Delimited,
                 BlockRecognizer::Anchor,
@@ -473,11 +427,7 @@ mod tests {
     fn overlapping_forms_follow_the_static_priority() {
         assert_eq!(
             recognize("[source,rust]", Some("----"), false),
-            LineRecognition::Source
-        );
-        assert_eq!(
-            recognize("[source,rust,unknown]", Some("----"), false),
-            LineRecognition::InvalidSource
+            LineRecognition::BlockMetadata
         );
         assert_eq!(
             recognize("[stem]", Some("++++"), false),

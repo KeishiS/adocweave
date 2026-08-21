@@ -385,14 +385,6 @@ impl<'analysis> Builder<'analysis> {
                 });
             }
             Block::Break(_) | Block::Math(_) | Block::Unsupported(_) => {}
-            Block::Source(source) => {
-                self.budget.claim()?;
-                output.push(ByteNode::CodeBlock {
-                    range: ByteRange(source.range),
-                    value_range: ByteRange(source.content_range),
-                    lang: source.language.clone(),
-                });
-            }
             Block::Verbatim(verbatim) => {
                 self.budget.claim()?;
                 output.push(ByteNode::CodeBlock {
@@ -603,7 +595,6 @@ impl<'analysis> Builder<'analysis> {
                 }
                 Block::LiteralParagraph(_)
                 | Block::Break(_)
-                | Block::Source(_)
                 | Block::Verbatim(_)
                 | Block::Math(_)
                 | Block::Unsupported(_) => {}

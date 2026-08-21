@@ -175,19 +175,6 @@ impl AstDocument {
                     )
                     .expect("writing to a String cannot fail");
                 }
-                AstBlock::Source(source) => {
-                    writeln!(
-                        output,
-                        "  Source@{}..{} language={:?} content={}..{} problems={:?}",
-                        source.range.start().to_u32(),
-                        source.range.end().to_u32(),
-                        source.language,
-                        source.content_range.start().to_u32(),
-                        source.content_range.end().to_u32(),
-                        source.problems
-                    )
-                    .expect("writing to a String cannot fail");
-                }
                 AstBlock::Verbatim(verbatim) => {
                     writeln!(
                         output,
@@ -265,7 +252,6 @@ impl AstBlock {
             Self::Paragraph(value) => &value.metadata,
             Self::LiteralParagraph(value) => &value.metadata,
             Self::Break(value) => &value.metadata,
-            Self::Source(value) => &value.metadata,
             Self::Verbatim(value) => &value.metadata,
             Self::List(value) => &value.metadata,
             Self::Math(value) => &value.metadata,
@@ -280,7 +266,6 @@ impl AstBlock {
             Self::Paragraph(value) => &mut value.metadata,
             Self::LiteralParagraph(value) => &mut value.metadata,
             Self::Break(value) => &mut value.metadata,
-            Self::Source(value) => &mut value.metadata,
             Self::Verbatim(value) => &mut value.metadata,
             Self::List(value) => &mut value.metadata,
             Self::Math(value) => &mut value.metadata,
@@ -295,7 +280,6 @@ impl AstBlock {
             Self::Paragraph(value) => value.range,
             Self::LiteralParagraph(value) => value.range,
             Self::Break(value) => value.range,
-            Self::Source(value) => value.range,
             Self::Verbatim(value) => value.range,
             Self::List(value) => value.range,
             Self::Math(value) => value.range,

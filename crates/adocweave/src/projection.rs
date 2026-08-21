@@ -353,26 +353,6 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
     let mut block_presentations = Vec::new();
     let mut formulas = Vec::new();
     crate::walker::walk(analysis.document(), |node| match node {
-        crate::walker::SemanticNode::Block(AstBlock::Source(source)) => {
-            source_blocks.push(SourceBlockProjection {
-                source_range: source.range,
-                content_range: source.content_range,
-                title: source.metadata.title.as_ref().map(|title| ProjectedText {
-                    source_range: title.range,
-                    text: resolved_inline_text(&title.inlines),
-                }),
-                language_range: source.language_range,
-                language: source.language.clone(),
-                line_numbers: false,
-                start_line: None,
-                source: source.value.clone(),
-                caption: analysis
-                    .ast()
-                    .presentation()
-                    .caption_at(source.range)
-                    .and_then(crate::caption::BlockCaption::label),
-            });
-        }
         crate::walker::SemanticNode::Block(AstBlock::Verbatim(block))
             if matches!(block.kind, crate::block_model::VerbatimKind::Source(_)) =>
         {
@@ -552,11 +532,8 @@ fn collect_search_blocks(blocks: &[AstBlock], output: &mut Vec<SearchTextSegment
                 literal.value.clone(),
             );
         }
-        crate::walker::SemanticNode::Block(
-            block @ (AstBlock::Source(_) | AstBlock::Verbatim(_)),
-        ) => {
+        crate::walker::SemanticNode::Block(block @ AstBlock::Verbatim(_)) => {
             let (content_range, value) = match block {
-                AstBlock::Source(source) => (source.content_range, source.value.clone()),
                 AstBlock::Verbatim(source) => (source.content_range, source.value.clone()),
                 _ => unreachable!("the pattern admits only source and verbatim blocks"),
             };

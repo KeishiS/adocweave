@@ -1,1 +1,1 @@
-[{"id":"invalid-attribute@0:30","code":"invalid-attribute","severity":"warning","range":{"start":0,"end":30},"message":"unsupported source block option","related":[],"fixes":[]}]
+[{"id":"invalid-attribute@13:28","code":"invalid-attribute","severity":"warning","range":{"start":13,"end":28},"message":"unsupported source block option","related":[],"fixes":[]}]

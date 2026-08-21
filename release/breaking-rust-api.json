@@ -25,6 +25,30 @@
       "lint": "constructible_struct_adds_field",
       "migration": "``WasmSourceBlockProjection``をstruct literalで構築している場合は``caption: None``を追加してください。",
       "summary": "externally-constructible struct adds field"
+    },
+    {
+      "crate": "adocweave",
+      "description": "source blockを結合済みblock metadataから判定するlisting blockへ統一したため、parser専用だった``AstBlock::Source``を削除しました。source blockは常に``AstBlock::Verbatim``の``VerbatimKind::Source``です。",
+      "item": "variant AstBlock::Source, previously",
+      "lint": "enum_variant_missing",
+      "migration": "``AstBlock::Source``を扱うmatch分岐を削除し、``AstBlock::Verbatim``で``VerbatimKind::Source``を見てください（lowering後の文書には以前から``Source``は現れませんでした）。",
+      "summary": "pub enum variant removed or renamed"
+    },
+    {
+      "crate": "adocweave",
+      "description": "source attribute行は通常のblock attribute行になり、syntax treeの``SyntaxKind::SourceBlock``を削除しました。source blockは``BlockAttribute``行と``DelimitedBlock``として現れます。",
+      "item": "variant SyntaxKind::SourceBlock, previously",
+      "lint": "enum_variant_missing",
+      "migration": "syntax treeで``SyntaxKind::SourceBlock``を扱っている場合は、``DelimitedBlock``（listing）と先行する``BlockAttribute``へ置き換えてください。",
+      "summary": "pub enum variant removed or renamed"
+    },
+    {
+      "crate": "adocweave",
+      "description": "``AstBlock::Source``の削除に伴い、``SourceBlock``構造体を削除しました。",
+      "item": "struct adocweave::semantic::SourceBlock, previously",
+      "lint": "struct_missing",
+      "migration": "``SourceBlock``の代わりに``VerbatimBlock``と``SourceInfo``（``VerbatimKind::Source``）を使ってください。",
+      "summary": "pub struct removed or renamed"
     }
   ]
 }

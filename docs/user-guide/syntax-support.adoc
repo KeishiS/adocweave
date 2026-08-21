@@ -123,7 +123,9 @@ captionには``table-caption``属性の語と番号（``Table 1. ``）を付け�
 
 |ソースブロック（`[source,LANGUAGE]`、`[,LANGUAGE]`、`source-language`）
 |対応
-|標準形と短縮形を同じsource verbatim blockへ正規化します。``source-language``はlisting blockの既定言語となり、
+|標準形と短縮形を同じsource verbatim blockへ正規化します。source blockの判定は結合済みのblock metadataで行うため、
+block title・``[[id]]``・属性行の並び順に依存せず、
+``[source#id.role%linenums,rust]``のような先頭属性の短縮形も使えます。``source-language``はlisting blockの既定言語となり、
 明示した``[listing]``は既定値を抑止します。Block title、言語、不透明な本体、`linenums` optionおよび
 1以上の``start``開始行はHTML、projection、LSPで共有します。``:listing-caption: コード``のように属性を設定すると、
 titleを持つsource／listing blockへ``コード 1. ``形式の番号付きcaptionを付け、`<<id>>`の表示にも使います（未設定なら番号なし）。

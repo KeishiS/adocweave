@@ -2335,3 +2335,31 @@ fn listing_captions_follow_the_listing_caption_attribute() {
         )
     );
 }
+
+/// A source block is a listing block whose merged metadata says `source`: the
+/// title, anchor, and attribute lines may come in any order, the first
+/// attribute may carry `#id.role%option` shorthand, `[,lang]` is the short
+/// form, and callouts survive. The same holds for a block attached to a list
+/// item.
+#[test]
+fn source_blocks_are_recognized_from_merged_metadata() {
+    let parsed = parse(concat!(
+        ".src/c.rs\n[source,rust]\n[[id-c]]\n----\nfn c() {} // <1>\n----\n<1> note\n\n",
+        ".src/e.rs\n[source#id-e%linenums,rust]\n----\nfn e() {}\n----\n\n",
+        "[,toml]\n----\na = 1\n----\n\n",
+        "* item\n+\n.attached\n[source,python]\n----\nprint(1)\n----\n\n",
+        "<<id-c>> <<id-e>>\n",
+    ))
+    .expect("parse");
+    assert_eq!(
+        render(&parsed.ast, &RenderPolicy::default()).html,
+        concat!(
+            "<figure id=\"id-c\" class=\"source-block\">\n<figcaption>src/c.rs</figcaption>\n<pre data-language=\"rust\"><code class=\"language-rust\">fn c() {} // &lt;1&gt;\n</code></pre>\n</figure>\n",
+            "<ol class=\"callout-list\">\n<li><span class=\"callout-number\">1</span> note</li>\n</ol>\n",
+            "<figure id=\"id-e\" class=\"source-block\">\n<figcaption>src/e.rs</figcaption>\n<pre data-language=\"rust\" data-line-numbers=\"true\" data-line-start=\"1\"><code class=\"language-rust\">fn e() {}\n</code></pre>\n</figure>\n",
+            "<pre><code class=\"language-toml\">a = 1\n</code></pre>\n",
+            "<ul>\n<li>item\n<figure class=\"source-block\">\n<figcaption>attached</figcaption>\n<pre data-language=\"python\"><code class=\"language-python\">print(1)\n</code></pre>\n</figure>\n</li>\n</ul>\n",
+            "<p><a href=\"#id-c\">src/c.rs</a> <a href=\"#id-e\">src/e.rs</a></p>\n",
+        )
+    );
+}

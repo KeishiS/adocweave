@@ -53,6 +53,7 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 
 const highlights = [
   "先頭が``..``の行を、``.``で始まるblock titleとして扱うようにしました（``..github/workflows/a.yml``は「.github/workflows/a.yml」というtitle）。``...``と``.. ``は従来どおりtitleにしません。",
+  "source blockを「styleが``source``のlisting block」として結合済みblock metadataから判定するようにしました。block title・``[[id]]``・属性行の並び順に依存せず、``[source#id.role%linenums,rust]``のような先頭属性の短縮形、``[,lang]``、list継続内のmetadata行も同じ規則で扱います。未知のsource optionは診断だけを出してsource blockのまま描画します。公開モデルの``AstBlock::Source``と``SourceBlock``、syntax treeの``SourceBlock``種別は廃止し、source blockは常に``Verbatim``のsource kindと``DelimitedBlock``になります。",
   "``listing-caption``属性を設定した文書では、titleを持つsource／listing blockへ``Listing 1. ``形式の番号付きcaptionを付け、``<<id>>``の表示にも使うようにしました（未設定なら従来どおり番号なし）。titleを持つlisting block（``----``）とliteral block（``....``）は``figure``と``figcaption``で描画し、titleが失われなくなりました。構造情報のsource blockへ``caption``を追加しました。",
 ];
 

@@ -499,28 +499,6 @@ pub(crate) fn document_element_at_ast(
             AstBlock::Heading(heading) if contains(heading.text_range, offset, true) => {
                 Some(DocumentElement::HeadingText(heading))
             }
-            AstBlock::Source(source)
-                if source
-                    .language_range
-                    .is_some_and(|range| contains(range, offset, true)) =>
-            {
-                Some(DocumentElement::SourceLanguage(SourceInfo {
-                    attribute_range: source.attribute_range,
-                    language_range: source.language_range,
-                    language: source.language.clone(),
-                    line_numbers: false,
-                    start_line: None,
-                }))
-            }
-            AstBlock::Source(source) if contains(source.attribute_range, offset, false) => {
-                Some(DocumentElement::SourceAttribute(SourceInfo {
-                    attribute_range: source.attribute_range,
-                    language_range: source.language_range,
-                    language: source.language.clone(),
-                    line_numbers: false,
-                    start_line: None,
-                }))
-            }
             AstBlock::Verbatim(block)
                 if matches!(&block.kind, crate::block_model::VerbatimKind::Source(source) if source.language_range.is_some_and(|range| contains(range, offset, true))) =>
             {

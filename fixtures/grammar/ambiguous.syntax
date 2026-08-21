@@ -20,9 +20,10 @@ Document@0..237
     BlockDelimiter@120..124
     BlockDelimiter@147..151
   BlankLine@152..153
-  SourceBlock@153..193
-    BlockAttribute@153..167
+  DelimitedBlock@153..193
+    BlockAttribute@153..168
     BlockDelimiter@168..172
+    BlockDelimiter@188..192
   BlankLine@193..194
   LiteralBlock@194..216
     Error@194..198
