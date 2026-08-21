@@ -1174,6 +1174,52 @@ fn list_continuation_attaches_literal_and_source_blocks() {
 }
 
 #[test]
+fn list_continuation_orphan_metadata_falls_back_to_lossless_paragraphs() {
+    for source in ["* item\n+\n.Title\n", "* item\n+\n.Title\n\n"] {
+        let parsed = parse(source).expect("orphan metadata is paragraph text");
+        assert_eq!(parsed.syntax.reconstruct(), source);
+        let AstBlock::List(list) = &parsed.ast.blocks()[0] else {
+            panic!("list");
+        };
+        let AstBlock::Paragraph(paragraph) = &list.items[0].continuations[0] else {
+            panic!("continuation paragraph");
+        };
+        assert_eq!(paragraph.value, ".Title");
+        assert!(paragraph.metadata.range.is_none());
+    }
+}
+
+#[test]
+fn list_continuation_metadata_attaches_to_a_nested_list() {
+    let source = "* outer\n+\n.Nested\n[[nested]]\n[.role]\n* inner\n\n<<nested>>\n";
+    let parsed = parse(source).expect("nested list with metadata");
+    assert_eq!(parsed.syntax.reconstruct(), source);
+    let AstBlock::List(outer) = &parsed.ast.blocks()[0] else {
+        panic!("outer list");
+    };
+    let AstBlock::List(nested) = &outer.items[0].continuations[0] else {
+        panic!("nested continuation list");
+    };
+    assert_eq!(
+        nested.metadata.title.as_ref().expect("title").value,
+        "Nested"
+    );
+    assert_eq!(nested.metadata.id.as_ref().expect("id").value, "nested");
+    assert_eq!(nested.metadata.roles[0].value, "role");
+    assert!(parsed.ast.anchors().iter().any(|anchor| {
+        anchor.id == "nested" && anchor.valid && anchor.target_range == Some(nested.range)
+    }));
+    let html = crate::html::render_with_inputs_ast(
+        &parsed.ast,
+        &crate::html::RenderPolicy::default(),
+        &crate::render::RenderInputs::default(),
+    )
+    .html;
+    assert!(html.contains("<ul id=\"nested\">"), "{html}");
+    assert!(html.contains("<a href=\"#nested\">Nested</a>"), "{html}");
+}
+
+#[test]
 fn list_continuation_uses_the_same_admonition_paragraph_model() {
     let source = "* item\n+\nWARNING:  text\n";
     let parsed = parse(source).expect("parse");

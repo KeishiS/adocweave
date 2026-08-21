@@ -2347,8 +2347,9 @@ fn source_blocks_are_recognized_from_merged_metadata() {
         ".src/c.rs\n[source,rust]\n[[id-c]]\n----\nfn c() {} // <1>\n----\n<1> note\n\n",
         ".src/e.rs\n[source#id-e%linenums,rust]\n----\nfn e() {}\n----\n\n",
         "[,toml]\n----\na = 1\n----\n\n",
-        "* item\n+\n.attached\n[source,python]\n----\nprint(1)\n----\n\n",
-        "<<id-c>> <<id-e>>\n",
+        "* item\n+\n.attached\n[[id-attached,Attached source]]\n[source,python]\n----\nprint(1)\n----\n",
+        "* second\n+\n[source#id-second,ruby]\n.second\n----\nputs 2\n----\n\n",
+        "<<id-c>> <<id-e>> <<id-attached>> <<id-second>>\n",
     ))
     .expect("parse");
     assert_eq!(
@@ -2358,8 +2359,9 @@ fn source_blocks_are_recognized_from_merged_metadata() {
             "<ol class=\"callout-list\">\n<li><span class=\"callout-number\">1</span> note</li>\n</ol>\n",
             "<figure id=\"id-e\" class=\"source-block\">\n<figcaption>src/e.rs</figcaption>\n<pre data-language=\"rust\" data-line-numbers=\"true\" data-line-start=\"1\"><code class=\"language-rust\">fn e() {}\n</code></pre>\n</figure>\n",
             "<pre><code class=\"language-toml\">a = 1\n</code></pre>\n",
-            "<ul>\n<li>item\n<figure class=\"source-block\">\n<figcaption>attached</figcaption>\n<pre data-language=\"python\"><code class=\"language-python\">print(1)\n</code></pre>\n</figure>\n</li>\n</ul>\n",
-            "<p><a href=\"#id-c\">src/c.rs</a> <a href=\"#id-e\">src/e.rs</a></p>\n",
+            "<ul>\n<li>item\n<figure id=\"id-attached\" class=\"source-block\">\n<figcaption>attached</figcaption>\n<pre data-language=\"python\"><code class=\"language-python\">print(1)\n</code></pre>\n</figure>\n</li>\n",
+            "<li>second\n<figure id=\"id-second\" class=\"source-block\">\n<figcaption>second</figcaption>\n<pre data-language=\"ruby\"><code class=\"language-ruby\">puts 2\n</code></pre>\n</figure>\n</li>\n</ul>\n",
+            "<p><a href=\"#id-c\">src/c.rs</a> <a href=\"#id-e\">src/e.rs</a> <a href=\"#id-attached\">Attached source</a> <a href=\"#id-second\">second</a></p>\n",
         )
     );
 }

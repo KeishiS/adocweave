@@ -1,10 +1,8 @@
-# AdocWeave v0.43.0
+# AdocWeave v0.43.1
 
 ## 主な変更
 
-- 先頭が``..``の行を、``.``で始まるblock titleとして扱うようにしました（``..github/workflows/a.yml``は「.github/workflows/a.yml」というtitle）。``...``と``.. ``は従来どおりtitleにしません。
-- source blockを「styleが``source``のlisting block」として結合済みblock metadataから判定するようにしました。block title・``[[id]]``・属性行の並び順に依存せず、``[source#id.role%linenums,rust]``のような先頭属性の短縮形、``[,lang]``、list継続内のmetadata行も同じ規則で扱います。未知のsource optionは診断だけを出してsource blockのまま描画します。公開モデルの``AstBlock::Source``と``SourceBlock``、syntax treeの``SourceBlock``種別は廃止し、source blockは常に``Verbatim``のsource kindと``DelimitedBlock``になります。
-- ``listing-caption``属性を設定した文書では、titleを持つsource／listing blockへ``Listing 1. ``形式の番号付きcaptionを付け、``<<id>>``の表示にも使うようにしました（未設定なら従来どおり番号なし）。titleを持つlisting block（``----``）とliteral block（``....``）は``figure``と``figcaption``で描画し、titleが失われなくなりました。構造情報のsource blockへ``caption``を追加しました。
+- list継続内のblock title、anchorおよび属性行へ、通常のblockと同じ解析上限を適用するようにしました。明示anchorと属性行の短縮IDをHTMLの``id``とxrefの参照先へ反映します。後続blockがないmetadata形式の行は本文として一度だけ解析し、投機的な解析で上限を消費しません。
 
 ## 対応環境
 
@@ -12,20 +10,23 @@ CLIとLanguage Serverのnative archiveは、次に挙げるLinux、macOSおよ�
 
 ## 公開契約と破壊的変更
 
-WASM protocol schema versionを13から14へ更新しました。source blockの構造情報へ``caption``を追加したためです。Worker protocol versionは2のままです。
+WASM protocol schema version（14）とWorker protocol version（2）は、どちらもv0.43.0から変更していません。
+
+``SourceBlockProjection.sourceRange``とWASM responseの``sourceRange``は、source blockの開始区切り行の行頭から終了区切り行の行末までを表し、先行するblock title、anchorおよび属性行を含みません。この意味はv0.43.0で変更されましたが、v0.43.0のRelease Notesには記載されていませんでした。
 
 textlint Processorの公開API、TxtASTへの変換結果および自動修正を行わない保証は変更していません。GitHub Release以外のregistryへpackageまたは拡張を公開しません。
 
 consumerは記載されたpackage versionを厳密に一致させてください。異なるversionのCLI、LSP、browser、Zed、VS Codeまたはtextlint向け配布物を混在させないでください。
 
-## v0.43.0への移行
+## v0.43.1への移行
 
-- Browser向けWASMのJSON requestを直接構築している場合は、0.43.0のpackageとAPIへ更新し、requestの``packageVersion``も``0.43.0``にそろえてください。``schemaVersion``はrequestの項目ではありません。requestには追加しないでください。保存済みの結果やcacheは、packageが公開する``PROTOCOL_SCHEMA_VERSION = 14``を使って区別してください。
-- CLI、LSP、browser、Zed、VS Codeおよびtextlint向け配布物のversionを0.43.0へそろえてください。バージョンの異なる配布物を混ぜて使えないため、更新する場合はすべてを入れ替えます。
+- Browser向けWASMのJSON requestを直接構築している場合は、0.43.1のpackageとAPIへ更新し、requestの``packageVersion``も``0.43.1``にそろえてください。``schemaVersion``はrequestの項目ではありません。requestには追加しないでください。保存済みの結果やcacheは、packageが公開する``PROTOCOL_SCHEMA_VERSION = 14``を使って区別してください。
+- CLI、LSP、browser、Zed、VS Codeおよびtextlint向け配布物のversionを0.43.1へそろえてください。バージョンの異なる配布物を混ぜて使えないため、更新する場合はすべてを入れ替えます。
+- source blockの本文には``contentRange``、言語名には``languageRange``、titleには``title.sourceRange``を使用してください。metadataを含む記述全体が必要な場合は、native APIの``VerbatimBlock.metadata.range``またはsyntax treeの先行するmetadata行を参照します。v0.42.x以前の``sourceRange``の意味を前提に保存した構造情報とrange索引は再生成してください。
 
 ## 更新とロールバック
 
-native archiveはversion別directoryへ展開し、`--version --json`が`0.43.0`を返すことを確認してから選択先を切り替えてください。
+native archiveはversion別directoryへ展開し、`--version --json`が`0.43.1`を返すことを確認してから選択先を切り替えてください。
 
 VS Codeでは検証済みVSIXを手動導入し、拡張とLanguage Serverのversion一致を確認してください。受入確認が成功するまで以前のVSIXとnative directoryを保持します。
 
