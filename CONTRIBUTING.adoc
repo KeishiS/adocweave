@@ -297,7 +297,7 @@ gh workflow run release-dispatch.yml \
 Release Notesの本文は``release/notes.md``に人が書きます。題名は``# AdocWeave vX.Y.Z``とし、
 ``## 主な変更``、``## 対応環境``、``## 公開契約と破壊的変更``、``## vX.Y.Zへの移行``、
 ``## 更新とロールバック``、``## 既知の制約``、``## 配布物の検証``の7見出しをこの順に一度ずつ置いて、
-各節に本文を書きます。この見出しはMarginalis、Renkanと共通です。配布target、契約version、Rust APIの
+各節に本文を書きます。この見出しはMarginalis、Renkanと共通です。配布target、公開仕様のversion、Rust APIの
 破壊的変更と移行、textlintの対応範囲は``tools/release-notes.mjs``が正本のfileから生成して各節の後ろへ
 追記するため、本文には書きません。``cargo make release-contract``（``verify``に含む）がこの形を検査し、
 公開workflowが同じtoolでGitHub Releaseの本文を生成します。

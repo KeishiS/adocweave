@@ -1,4 +1,4 @@
-= ADR 0021: 3製品で共通の開発手順と公開契約
+= ADR 0021: 3製品で共通の開発手順と公開仕様
 
 :status: accepted
 
@@ -15,7 +15,7 @@ target別のbuild、smoke test、installation E2E、SBOM、checksum、attestatio
 
 == 決定
 
-外から見える手順と契約だけを3製品で共通にし、検査の中身と書き込み権限を持つworkflowは各repositoryに
+外から見える手順と公開仕様だけを3製品で共通にし、検査の中身と書き込み権限を持つworkflowは各repositoryに
 残します。
 
 * 公開方式は、``main``の検証済みcommitをそのままtagとGitHub Releaseへ昇格するbuild-once／promote方式の
@@ -29,8 +29,8 @@ target別のbuild、smoke test、installation E2E、SBOM、checksum、attestatio
   見出しは``## 主な変更``、``## 対応環境``、``## 公開契約と破壊的変更``、``## vX.Y.Zへの移行``、
   ``## 更新とロールバック``、``## 既知の制約``、``## 配布物の検証``をこの順に一度ずつ置き、
   各節に本文を書きます。``tools/release-notes.mjs``はこの形を検査し、正本のfileから決まる部分
-  （配布target、契約version、Rust APIの破壊的変更と移行、textlintの対応範囲）を各節の後ろへ追記します。
-  公開契約の「変更していません」という主張は、従来どおり``tools/release-claims.mjs``がbaseline tagとの
+  （配布target、公開仕様のversion、Rust APIの破壊的変更と移行、textlintの対応範囲）を各節の後ろへ追記します。
+  公開仕様について「変更していません」と述べる主張は、従来どおり``tools/release-claims.mjs``がbaseline tagとの
   差分で照合します。
 * ``cargo make``の外向きtask名は``fmt``、``fmt-check``、``verify``、``security-audit``、``acceptance``、
   ``release-check``とし、既定taskは``verify``です。AdocWeaveでは``security-audit``が
