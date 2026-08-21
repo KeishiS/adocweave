@@ -863,7 +863,7 @@ script_runner = "@shell"
 script = '''
 npm run package --prefix editors/vscode
 npm run test:vsix --prefix editors/vscode
-node --test editors/vscode/scripts/exit-after-successful-cleanup.test.mjs
+node --test editors/vscode/scripts/exit-after-successful-cleanup.test.mts
 npm run test:vsix-installation --prefix editors/vscode
 '''
 

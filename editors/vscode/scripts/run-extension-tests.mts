@@ -27,6 +27,22 @@ const server = join(
   process.platform === "win32" ? "adocweave-lsp-test.exe" : "adocweave-lsp-test",
 );
 
+/** Command lines of every running process, one per line. */
+function runningProcesses(): string {
+  if (process.platform === "win32") {
+    return execFileSync(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-Command",
+        "Get-CimInstance Win32_Process | Select-Object -ExpandProperty CommandLine",
+      ],
+      { encoding: "utf8" },
+    );
+  }
+  return execFileSync("ps", ["-eo", "args="], { encoding: "utf8" });
+}
+
 try {
   copyFileSync(sourceServer, server);
   if (process.platform !== "win32") chmodSync(server, 0o755);
@@ -51,24 +67,13 @@ try {
     ],
     version: "1.125.0",
   });
-  const processes =
-    process.platform === "win32"
-      ? execFileSync(
-          "powershell.exe",
-          [
-            "-NoProfile",
-            "-Command",
-            "Get-CimInstance Win32_Process | Select-Object -ExpandProperty CommandLine",
-          ],
-          { encoding: "utf8" },
-        )
-      : execFileSync("ps", ["-eo", "args="], { encoding: "utf8" });
+  const serverNeedle = server.toLocaleLowerCase("en-US");
   if (
-    processes
+    runningProcesses()
       .split(/\r?\n/)
-      .some((line) => line.toLocaleLowerCase("en-US").includes(server.toLocaleLowerCase("en-US")))
+      .some((line) => line.toLocaleLowerCase("en-US").includes(serverNeedle))
   ) {
-    throw new Error("extension host終了後もLanguage Server processが残っています");
+    throw new Error("A Language Server process is still running after the extension host exited");
   }
 } finally {
   rmSync(scratch, { force: true, recursive: true });

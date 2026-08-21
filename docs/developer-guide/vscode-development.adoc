@@ -35,6 +35,10 @@ References、Document Link、Rename、Semantic Tokens、UTF-16位置、include�
 source mapと``node_modules``の不在、sizeおよび機械固有pathの不在を検査します。さらに、隔離したVS Codeへ
 VSIXを導入し、更新、以前のバージョンへのrollbackおよびuninstallを確認します。
 
+これらの構築と検査を行う``editors/vscode/scripts``はTypeScript（``.mts``）で書き、配布物で固定したNode.jsが型注釈を
+取り除いてそのまま実行します（変換や追加の依存はありません）。型検査は``npm run check``（``check-vscode``）の
+``tsc -p tsconfig.scripts.json``で行い、型消去だけでは実行できない構文は拒否します。
+
 == 手動確認
 
 . Language Serverと拡張をbuildします。

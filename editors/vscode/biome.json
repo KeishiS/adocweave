@@ -4,7 +4,7 @@
     "includes": [
       "src/**/*.ts",
       "test/**/*.ts",
-      "scripts/**/*.mjs"
+      "scripts/**/*.mts"
     ]
   },
   "formatter": {
