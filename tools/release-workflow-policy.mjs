@@ -19,12 +19,14 @@ const ALLOWED_WRITE_GRANTS = new Set([
   "release-dispatch.yml job publish",
 ]);
 
-// Workflows use the ambient job token only. The single exception is the binary
-// cache push after a stable release: Cachix has no OIDC federation, so the job
-// that pushes the published package closure reads the cache write token from
-// the repository secret. No other job, workflow, or secret is allowed.
+// Workflows use the ambient job token only. The exceptions are the two
+// publications after a stable release that no OIDC federation covers: the
+// binary cache push reads the Cachix write token, and the Open VSX publication
+// reads its registry token. Both jobs run after the GitHub Release exists and
+// hold no write permission here. No other job, workflow, or secret is allowed.
 const ALLOWED_SECRET_REFERENCES = new Map([
   ["release-dispatch.yml job binary-cache", new Set(["secrets.CACHIX_AUTH_TOKEN"])],
+  ["release-dispatch.yml job open-vsx", new Set(["secrets.OPEN_VSX_TOKEN"])],
 ]);
 const SECRET_REFERENCE = /secrets\.[A-Za-z_][A-Za-z0-9_]*/g;
 
