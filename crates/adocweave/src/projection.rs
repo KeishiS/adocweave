@@ -46,6 +46,9 @@ pub struct RenderingFeatures {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SourceBlockProjection {
+    /// The delimited source block from the opening delimiter through the
+    /// closing delimiter. Preceding title, anchor, and attribute lines are not
+    /// part of this range.
     pub source_range: TextRange,
     pub content_range: TextRange,
     pub title: Option<ProjectedText>,
@@ -1649,7 +1652,15 @@ let x = 1;
         assert!(source.line_numbers);
         assert_eq!(source.start_line, Some(7));
         assert_eq!(source.source, "let x = 1;\n");
-        assert!(source.language_range.is_some());
+        let title = source.title.as_ref().expect("source title");
+        let language_range = source.language_range.expect("source language range");
+        assert_eq!(
+            &analysis.source()
+                [source.source_range.start().to_usize()..source.source_range.end().to_usize()],
+            "----\nlet x = 1;\n----\n"
+        );
+        assert!(title.source_range.end() < source.source_range.start());
+        assert!(language_range.end() < source.source_range.start());
         assert!(source.source_range.start() <= source.content_range.start());
         assert!(source.content_range.end() <= source.source_range.end());
     }

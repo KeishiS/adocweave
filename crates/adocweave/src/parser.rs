@@ -1479,7 +1479,13 @@ fn parse_list_continuation(
         return Ok(Some((vec![AstBlock::Delimited(block)], end)));
     }
     if crate::list_parser::marker(content).is_some() {
-        let (lists, end, _) = parse_lists(context, index, end_line, state, depth)?;
+        let (mut lists, end, _) = parse_lists(context, index, end_line, state, depth)?;
+        if let Some(list) = lists.first_mut()
+            && metadata.range.is_some()
+        {
+            let existing = std::mem::take(&mut list.metadata);
+            list.metadata = merge_block_metadata(metadata, existing);
+        }
         return Ok(Some((lists.into_iter().map(AstBlock::List).collect(), end)));
     }
     let mut paragraph = Paragraph {
@@ -1506,9 +1512,16 @@ fn collect_continuation_metadata(
     state: &mut ParseState<'_>,
 ) -> Result<(BlockMetadata, usize), ParseFailure> {
     let source_document = context.source_document;
+    // Metadata is speculative until a following block is found. Recognize the
+    // complete prefix before parsing it so the fallback path can parse the
+    // original lines as a paragraph without charging metadata or registering
+    // anchors that were not attached.
+    let Some(metadata_end) = continuation_metadata_end(source_document, index, end_line) else {
+        return Ok((BlockMetadata::default(), index));
+    };
     let mut metadata = BlockMetadata::default();
     let mut cursor = index;
-    while cursor < end_line {
+    while cursor < metadata_end {
         let Some(line) = source_document.lines().get(cursor).copied() else {
             break;
         };
@@ -1521,14 +1534,31 @@ fn collect_continuation_metadata(
         let start = line.content_range().start().to_usize();
         if is_block_title(content) {
             metadata.title = parse_block_title(content, start, context.config, state.budget)?;
+            state.budget.consume_node()?;
+            state.budget.consume_attribute()?;
         } else if content.starts_with("[[")
             && let Some(anchor) = parse_explicit_anchor(content, start, line.full_range())
         {
+            state.budget.consume_node()?;
             metadata.id = Some(MetadataValue {
-                value: anchor.id,
+                value: anchor.id.clone(),
                 range: anchor.id_range,
             });
+            state.anchors.push(anchor);
         } else if let Some(parsed) = parse_block_attributes(content, start) {
+            state.budget.consume_node()?;
+            consume_metadata_budget(&parsed, state.budget)?;
+            if let Some(id) = &parsed.id {
+                state.anchors.push(ExplicitAnchor {
+                    range: line.full_range(),
+                    id_range: id.range,
+                    label_range: None,
+                    id: id.value.clone(),
+                    label: None,
+                    target_range: None,
+                    valid: crate::document::is_valid_anchor_id(&id.value),
+                });
+            }
             if parsed.id.is_some() {
                 metadata.id = parsed.id;
             }
@@ -1536,7 +1566,7 @@ fn collect_continuation_metadata(
             metadata.options.extend(parsed.options);
             metadata.attributes.extend(parsed.attributes);
         } else {
-            break;
+            return Err(ParseFailure::InternalInvariant);
         }
         let full = line.full_range();
         metadata.range = Some(match metadata.range {
@@ -1545,18 +1575,41 @@ fn collect_continuation_metadata(
         });
         cursor += 1;
     }
-    let followed_by_block = cursor > index
+    Ok((metadata, cursor))
+}
+
+fn continuation_metadata_end(
+    source_document: &SourceDocument,
+    index: usize,
+    end_line: usize,
+) -> Option<usize> {
+    let mut cursor = index;
+    while cursor < end_line {
+        let line = source_document.lines().get(cursor).copied()?;
+        let content = source_document
+            .text(line.content_range())
+            .expect("valid continuation line");
+        if content.trim_matches([' ', '\t']).is_empty() {
+            break;
+        }
+        let start = line.content_range().start().to_usize();
+        let is_metadata = is_block_title(content)
+            || (content.starts_with("[[")
+                && parse_explicit_anchor(content, start, line.full_range()).is_some())
+            || parse_block_attributes(content, start).is_some();
+        if !is_metadata {
+            break;
+        }
+        cursor += 1;
+    }
+    (cursor > index
         && cursor < end_line
         && source_document
             .lines()
             .get(cursor)
             .and_then(|line| source_document.text(line.content_range()))
-            .is_some_and(|content| !content.trim_matches([' ', '\t']).is_empty());
-    if followed_by_block {
-        Ok((metadata, cursor))
-    } else {
-        Ok((BlockMetadata::default(), index))
-    }
+            .is_some_and(|content| !content.trim_matches([' ', '\t']).is_empty()))
+    .then_some(cursor)
 }
 
 pub(crate) fn scan_callout_markers(

@@ -443,6 +443,120 @@ second
 }
 
 #[test]
+fn list_continuation_metadata_obeys_exact_node_and_attribute_limits() {
+    let source = "\
+* item
++
+.Attached
+[[attached]]
+[source#source-id.role%linenums,rust]
+----
+fn main() {}
+----
+";
+
+    let minimum_nodes = (1..64)
+        .find(|maximum| {
+            analyze_with_limits(
+                source,
+                AnalysisLimits {
+                    max_nodes: *maximum,
+                    ..AnalysisLimits::default()
+                },
+            )
+            .is_ok()
+        })
+        .expect("small list continuation has a bounded node minimum");
+    assert_eq!(minimum_nodes, 9);
+    assert!(matches!(
+        analyze_with_limits(
+            source,
+            AnalysisLimits {
+                max_nodes: minimum_nodes - 1,
+                ..AnalysisLimits::default()
+            },
+        ),
+        Err(ParseError::LimitExceeded {
+            resource: "nodes",
+            limit: 8,
+            actual: 9,
+        })
+    ));
+
+    let minimum_attributes = (0..16)
+        .find(|maximum| {
+            analyze_with_limits(
+                source,
+                AnalysisLimits {
+                    max_attributes: *maximum,
+                    ..AnalysisLimits::default()
+                },
+            )
+            .is_ok()
+        })
+        .expect("small list continuation has a bounded attribute minimum");
+    assert_eq!(minimum_attributes, 6);
+    assert!(matches!(
+        analyze_with_limits(
+            source,
+            AnalysisLimits {
+                max_attributes: minimum_attributes - 1,
+                ..AnalysisLimits::default()
+            },
+        ),
+        Err(ParseError::LimitExceeded {
+            resource: "document attributes",
+            limit: 5,
+            actual: 6,
+        })
+    ));
+}
+
+#[test]
+fn list_continuation_metadata_fallback_does_not_charge_speculative_attributes() {
+    for source in ["* item\n+\n.Title\n", "* item\n+\n.Title\n\n"] {
+        let minimum_nodes = (1..16)
+            .find(|maximum| {
+                analyze_with_limits(
+                    source,
+                    AnalysisLimits {
+                        max_nodes: *maximum,
+                        max_attributes: 0,
+                        ..AnalysisLimits::default()
+                    },
+                )
+                .is_ok()
+            })
+            .expect("orphan metadata paragraph has a bounded node minimum");
+        assert_eq!(minimum_nodes, 6);
+        assert!(matches!(
+            analyze_with_limits(
+                source,
+                AnalysisLimits {
+                    max_nodes: minimum_nodes - 1,
+                    max_attributes: 0,
+                    ..AnalysisLimits::default()
+                },
+            ),
+            Err(ParseError::LimitExceeded {
+                resource: "nodes",
+                limit: 5,
+                actual: 6,
+            })
+        ));
+        analyze_with_limits(
+            source,
+            AnalysisLimits {
+                max_nodes: minimum_nodes,
+                max_attributes: 0,
+                ..AnalysisLimits::default()
+            },
+        )
+        .expect("metadata without a following block is parsed as paragraph text");
+    }
+}
+
+#[test]
 fn formula_limit_recovers_as_text_and_reports_a_diagnostic() {
     let limits = AnalysisLimits {
         max_formula_bytes: 4,
