@@ -205,7 +205,8 @@ Nix入力はDependabotの対象外であり、``flake.lock``を手動で更新�
 * 新しい文書を追加する前に、既存の文書へ統合できないか確認します。
 * バージョン固有の変更内容と移行手順は、原則としてGitHub Release Notesへ記載します。その本文は
   ``release/notes.md``に書き、版を上げるときに書き直します。Release本文がMarkdownであるため、このfileだけは
-  ``.adoc``ではなく``.md``です。
+  ``.adoc``ではなく``.md``です。VS Code拡張の``editors/vscode/README.md``も、拡張registryとeditorの拡張画面が
+  Markdownだけを表示するため``.md``です。
 * CLI option、診断code、パッケージバージョン、対応target、公開APIおよびschemaなど、codeや機械可読な
   manifestから取得できる情報を文書へ重複して記載しません。
 * 現行仕様、設計理由および作業計画を同じ文書に混在させません。現行仕様は``docs/``、設計理由はADR、

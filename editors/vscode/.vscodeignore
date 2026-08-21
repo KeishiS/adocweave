@@ -2,5 +2,6 @@
 !dist/extension.cjs
 !language-configuration.json
 !syntaxes/asciidoc.tmLanguage.json
-!README.adoc
+!README.md
+!LICENSE
 !package.json

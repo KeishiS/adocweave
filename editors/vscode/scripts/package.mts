@@ -22,9 +22,8 @@ const output = join(
 const allowed: ReadonlySet<string> = new Set([
   "[Content_Types].xml",
   "extension.vsixmanifest",
-  "extension/LICENSE-APACHE",
-  "extension/LICENSE-MIT",
-  "extension/README.adoc",
+  "extension/LICENSE.txt",
+  "extension/readme.md",
   "extension/dist/extension.cjs",
   "extension/language-configuration.json",
   "extension/package.json",
@@ -53,11 +52,12 @@ function normalizedPackage(scratch: string, suffix: string): NormalizedPackage {
   const stage = join(scratch, `stage-${suffix}`);
   mkdirSync(join(stage, "dist"), { recursive: true });
   mkdirSync(join(stage, "syntaxes"), { recursive: true });
-  for (const name of ["README.adoc", "language-configuration.json", "package.json"]) {
+  for (const name of ["README.md", "language-configuration.json", "package.json"]) {
     copyFileSync(join(extensionRoot, name), join(stage, name));
   }
-  copyFileSync(join(repositoryRoot, "LICENSE-APACHE"), join(stage, "LICENSE-APACHE"));
-  copyFileSync(join(repositoryRoot, "LICENSE-MIT"), join(stage, "LICENSE-MIT"));
+  // Like rust-analyzer, ship one LICENSE that states the dual license and carries
+  // both texts: extension registries and editors only detect a file named LICENSE.
+  copyFileSync(join(extensionRoot, "LICENSE"), join(stage, "LICENSE"));
   copyFileSync(join(extensionRoot, "dist", "extension.cjs"), join(stage, "dist", "extension.cjs"));
   copyFileSync(
     join(extensionRoot, "syntaxes", "asciidoc.tmLanguage.json"),

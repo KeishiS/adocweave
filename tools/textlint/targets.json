@@ -3,7 +3,6 @@
   "authoredFiles": [
     "CONTRIBUTING.adoc",
     "README.adoc",
-    "editors/vscode/README.adoc",
     "editors/zed/README.adoc",
     "fuzz/corpus/README.adoc",
     "web-worker/README.adoc"
