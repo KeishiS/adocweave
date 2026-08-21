@@ -8,6 +8,11 @@ import {
 import { loadBreakingRustApi } from "./breaking-rust-api.mjs";
 import { loadTextlintPluginPackageContract } from "./textlint-plugin-package-contract.mjs";
 
+// Release Notesの本文は人が``release/notes.md``へ書き、このtoolはその検証と機械生成部分の追記だけを
+// 行います。版ごとに変わる説明をcodeへ書くと、Release用Pull Requestの差分から公開内容を読み取りにくく、
+// 3製品で同じ手順を取れません。target一覧、契約version、Rust APIの破壊的変更と移行、textlintの
+// 対応範囲は、正本のfileから生成して人の文章の後ろへ追記します。
+
 const ROOT = new URL("../", import.meta.url);
 const manifest = JSON.parse(readFileSync(new URL("release-manifest.json", ROOT), "utf8"));
 const plan = JSON.parse(readFileSync(new URL("release/distribution-plan.json", ROOT), "utf8"));
@@ -16,6 +21,8 @@ const textlintContract = loadTextlintPluginPackageContract();
 const breakingRustApi = loadBreakingRustApi();
 export { RELEASE_NOTES_VERSION };
 export const RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION = PUBLIC_PROTOCOL_SCHEMA_VERSION;
+export const RELEASE_NOTES_SOURCE = manifest.releaseNotes;
+export const RELEASE_NOTES_TITLE = `# AdocWeave v${RELEASE_NOTES_VERSION}`;
 
 const releaseVersionParts = RELEASE_NOTES_VERSION.split(".").map(Number);
 if (releaseVersionParts.length !== 3 || releaseVersionParts.some((part) => !Number.isInteger(part))) {
@@ -26,34 +33,23 @@ if (breakingRustApi.releaseVersion !== RELEASE_NOTES_VERSION) {
     `破壊的変更記録のreleaseVersionがRelease Notesと一致しません：${breakingRustApi.releaseVersion}`,
   );
 }
-export const PREVIOUS_RELEASE_VERSION = "0.43.0";
+if (typeof RELEASE_NOTES_SOURCE !== "string" || RELEASE_NOTES_SOURCE.length === 0) {
+  throw new Error("release-manifest.jsonのreleaseNotesがRelease Notesのfileを指していません");
+}
 
-// The release manifest schema version the previous stable release shipped.
-//
-// An earlier release shipped notes announcing a manifest change that had not
-// been made: the same body stated one schema version in one line and a
-// different transition in another. Deriving the sentence from this value and
-// the manifest keeps a claim from outliving the change it describes, and keeps
-// a release that changes nothing from announcing a transition.
-export const PREVIOUS_RELEASE_MANIFEST_SCHEMA_VERSION = 4;
-
-const manifestSchemaNote =
-  manifest.schemaVersion === PREVIOUS_RELEASE_MANIFEST_SCHEMA_VERSION
-    ? `release manifestのschema versionは${manifest.schemaVersion}のままで、項目を追加も削除もしていません。`
-    : `release manifestのschema versionを${PREVIOUS_RELEASE_MANIFEST_SCHEMA_VERSION}から${manifest.schemaVersion}へ更新しました。`;
-
+/// 3製品で共通の必須見出し。公開のたびに読み手が同じ観点を確認できるように、この順で要求します。
 export const REQUIRED_RELEASE_NOTE_HEADINGS = [
+  "## 主な変更",
   "## 対応環境",
-  "## 公開仕様と破壊的変更",
+  "## 公開契約と破壊的変更",
   `## v${RELEASE_NOTES_VERSION}への移行`,
+  "## 更新とロールバック",
   "## 既知の制約",
   "## 配布物の検証",
-  "## 更新とロールバック",
 ];
 
-const highlights = [
-  "list継続内のblock title、anchorおよび属性行へ、通常のblockと同じ解析上限を適用するようにしました。明示anchorと属性行の短縮IDをHTMLの``id``とxrefの参照先へ反映します。後続blockがないmetadata形式の行は本文として一度だけ解析し、投機的な解析で上限を消費しません。",
-];
+/// 未記入のまま公開しないための目印。
+const UNFINISHED_MARKERS = /TODO|FIXME|記載してから公開/;
 
 export function breakingContractNotes(changes) {
   if (changes.length === 0) return ["Rust APIの破壊的変更：ありません。"];
@@ -93,45 +89,6 @@ export const CONTRACT_SOURCES = {
 /// Fields that carry the release version rather than the contract's shape.
 export const CONTRACT_VERSION_FIELDS = ["packageVersion"];
 
-const contractNotes = [
-  `統一package version：${RELEASE_NOTES_VERSION}`,
-  `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
-  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。どちらもv${PREVIOUS_RELEASE_VERSION}から変更していません。`,
-  manifestSchemaNote,
-  ...breakingContractNotes(breakingRustApi.changes),
-  "``SourceBlockProjection.sourceRange``とWASM responseの``sourceRange``は、source blockの開始区切り行の行頭から終了区切り行の行末までを表し、先行するblock title、anchorおよび属性行を含みません。この意味はv0.43.0で変更されましたが、v0.43.0のRelease Notesには記載されていませんでした。",
-  "textlint Processorの公開API、TxtASTへの変換結果および自動修正を行わない保証は変更していません。",
-  `${UNCHANGED_CONTRACTS.join("、")}は変更していません。`,
-  "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
-];
-
-const migrationNotes = [
-  `Browser向けWASMのJSON requestを直接構築している場合は、${RELEASE_NOTES_VERSION}のpackageとAPIへ更新し、requestの\`\`packageVersion\`\`も\`\`${RELEASE_NOTES_VERSION}\`\`にそろえてください。\`\`schemaVersion\`\`はrequestの項目ではありません。requestには追加しないでください。保存済みの結果やcacheは、packageが公開する\`\`PROTOCOL_SCHEMA_VERSION = ${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}\`\`を使って区別してください。`,
-  `CLI、LSP、browser、Zed、VS Codeおよびtextlint向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。バージョンの異なる配布物を混ぜて使えないため、更新する場合はすべてを入れ替えます。`,
-  "source blockの本文には``contentRange``、言語名には``languageRange``、titleには``title.sourceRange``を使用してください。metadataを含む記述全体が必要な場合は、native APIの``VerbatimBlock.metadata.range``またはsyntax treeの先行するmetadata行を参照します。v0.42.x以前の``sourceRange``の意味を前提に保存した構造情報とrange索引は再生成してください。",
-  ...breakingMigrationNotes(breakingRustApi.changes),
-];
-
-const knownConstraints = [
-  `対応Rust toolchain：${manifest.rustVersion}。このreleaseのflake.lockで固定しています。`,
-  "native binaryは配布計画に定義したLinux、macOSおよびWindows環境へ提供します。macOSとWindowsのbinaryはOSのsystem libraryへ動的linkします。",
-  "macOS binaryへDeveloper ID署名とnotarizationを行わず、Windows binaryへAuthenticode署名を行いません。OSの警告が表示された場合はchecksumとattestationを確認してください。",
-  "Zed拡張はdevelopment extension、VS Code拡張はVSIXとして手動導入します。拡張registryへは公開しません。",
-  "ZedがLanguage Serverの導入中に異常終了すると、安全のため導入ロックを自動削除しません。すべてのZedプロセスを終了してから、エラーに表示されたロックのpathを削除して再試行してください。",
-  "公式Playgroundはこのreleaseに含みません。`adocweave preview`は利用者の端末で実行するローカル機能です。",
-  "packageはcrates.io、npmまたはOS package registryへ公開しません。Nix packageはこのrepositoryのflakeから直接buildします。",
-  `textlint用Processorの対応範囲はNode.js \`\`${textlintContract.compatibility.nodeEngine}\`\`、textlint \`\`${textlintContract.compatibility.textlintVersion}\`\`です。includeは展開せず、入力した一つの物理ファイルだけを検査します。`,
-  "AdocWeaveはBibTeXの保存・解析やCSL相当の書誌の組版を行いません。citation keyの解決と引用表示の組み立ては利用側アプリの責務です。",
-  "解決結果を渡さない引用の表示は`unresolved_references`の設定に従い、`hidden`では出力しません。ただし文書内の`[bibliography]`項目を指すkeyは、設定にかかわらずその項目へのlinkとして出力します。",
-  "引用の解決結果は文書全体の並べ替えを行いません。番号付きの引用styleで通し番号を振る場合は、利用側アプリが出現順を見て文字列を決めてください。出現順は公開projectionの`citations`から取得できます。",
-  "単一ファイルのworkspaceでは、同じディレクトリの別のAsciiDocファイルとinclude先を自動では読み込みません。複数ファイルの解析にはディレクトリのworkspace folderが必要です。",
-  "Language Serverはworkspaceの走査を初期化の応答後に、要求へ応答するthreadの外で行います。走査中もほかの要求へ応答しますが、走査の完了前は、開いた文書の解析にworkspace内のほかの文書が反映されません。走査の完了後に再解析します。",
-  "Linuxでfilesystemのhandle相対競合耐性を利用するには、``/proc/self/fd``を読み取れる実行環境が必要です。利用できない場合や、開いたfileのpathとidentityを確認できない場合は、安全性の低いpath検査へ切り替えず、``local-target-unverifiable``としてworkspaceの読込を拒否します。macOSとWindowsは、同時変更のない静的なfilesystem snapshotだけを前提とします。",
-  "一つのfilesystem policyが保持できるrootは128件までです。読込対象を増やす場合は、設定のrootを必要な上位directoryへまとめてください。",
-  "Language Serverの初期ワークスペース走査は、複数project scopeの合計で設定と本文の読込10,000回、取得内容50 MiB、directory entry 100,000件、候補変更10,000回、参加session 10,002件までです。project設定のsession単位の上限も別に適用します。",
-  "``workspace.scan.exclude``はLanguage Serverの初期走査だけに適用します。CLI入力、明示的に開いた文書、file watcherの通知およびinclude先を拒否する設定ではありません。",
-];
-
 function markdownList(items) {
   return items.map((item) => `- ${item}`).join("\n");
 }
@@ -150,32 +107,139 @@ function minimumOsDescription(target) {
   return `、${description}`;
 }
 
-export function buildReleaseNotes(tag) {
-  if (tag !== `v${RELEASE_NOTES_VERSION}`) {
-    throw new Error(`Release Notesはv${RELEASE_NOTES_VERSION}専用です`);
-  }
+function targetList() {
   const osNames = { darwin: "macOS", linux: "Linux", win32: "Windows" };
-  const targets = plan.targets
+  return plan.targets
     .map(
       (target) =>
         `- ${osNames[target.os]} ${target.architecture}（\`${target.triple}\`${minimumOsDescription(target)}）`,
     )
     .join("\n");
-  const notes = `## 主な変更\n\n${markdownList(highlights)}\n\n` +
-    `${REQUIRED_RELEASE_NOTE_HEADINGS[0]}\n\n${targets}\n\n` +
-    `${REQUIRED_RELEASE_NOTE_HEADINGS[1]}\n\n${markdownList(contractNotes)}\n\n` +
-    "consumerは記載されたpackage versionを厳密に一致させてください。異なるversionのCLI、LSP、browser、Zed、VS Codeまたはtextlint向け配布物を混在させないでください。\n\n" +
-    `${REQUIRED_RELEASE_NOTE_HEADINGS[2]}\n\n${markdownList(migrationNotes)}\n\n` +
-    `${REQUIRED_RELEASE_NOTE_HEADINGS[3]}\n\n${markdownList(knownConstraints)}\n\n` +
-    `${REQUIRED_RELEASE_NOTE_HEADINGS[4]}\n\n` +
-    "すべてのrelease assetをdownloadし、`sha256sum --check sha256.sum`を実行してください。その後、必要なassetを`gh attestation verify <asset> --repo KeishiS/adocweave`で検証してください。\n\n" +
-    `${REQUIRED_RELEASE_NOTE_HEADINGS[5]}\n\n` +
-    `native archiveはversion別directoryへ展開し、\`--version --json\`が\`${RELEASE_NOTES_VERSION}\`を返すことを確認してから選択先を切り替えてください。\n\n` +
-    "VS Codeでは検証済みVSIXを手動導入し、拡張とLanguage Serverのversion一致を確認してください。受入確認が成功するまで以前のVSIXとnative directoryを保持します。\n\n" +
-    "Zedでは新versionのmanaged Language Server取得とeditor機能を確認するまで旧versionのZed directoryを保持します。rollback時は旧directoryをdev extensionとして選び直し、Zedを再起動してください。\n\n" +
-    "textlint用Processorは新しいReleaseのtarball URLへ変更してlockfileを更新します。rollback時は以前の検証済みURLへ戻し、lockfileから依存を再導入してください。\n\n" +
-    "rollback時は以前のversion別directoryまたはVSIXへ戻します。詳細は`docs/user-guide/release-installation.adoc`を参照してください。\n";
-  return notes;
+}
+
+/// 見出しごとに、人の文章の後ろへ追記する機械生成部分。正本のfileから決まる値だけを置きます。
+const GENERATED_SECTIONS = {
+  "## 対応環境": () => [
+    targetList(),
+    `構築に使用したRust toolchainは${manifest.rustVersion}（flake.lockで固定）、Node.jsは${manifest.nodeVersion}（release-manifest.jsonで固定）です。`,
+  ],
+  "## 公開契約と破壊的変更": () => [
+    markdownList([
+      `統一package version：${RELEASE_NOTES_VERSION}`,
+      `release manifest schema version：${manifest.schemaVersion}（3製品共通schema）、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
+      `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。`,
+      ...breakingContractNotes(breakingRustApi.changes),
+      `${UNCHANGED_CONTRACTS.join("、")}は変更していません。`,
+    ]),
+  ],
+  [`## v${RELEASE_NOTES_VERSION}への移行`]: () => {
+    const notes = breakingMigrationNotes(breakingRustApi.changes);
+    return notes.length === 0 ? [] : [markdownList(notes)];
+  },
+  "## 既知の制約": () => [
+    `textlint用Processorの対応範囲はNode.js \`\`${textlintContract.compatibility.nodeEngine}\`\`、textlint \`\`${textlintContract.compatibility.textlintVersion}\`\`です。`,
+  ],
+};
+
+/// 本文が述べるschema versionの遷移先と、正本の現在値の対応。
+///
+/// 過去のReleaseで、行っていないmanifestの変更を告知したことがあります。遷移を述べる文は
+/// 人が書きますが、到達値は必ず正本の現在値と一致させます。
+const SCHEMA_VERSION_AUTHORITIES = {
+  "WASM protocol schema version": RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION,
+  "Worker protocol version": protocol.workerProtocolVersion,
+  "release manifest schema version": manifest.schemaVersion,
+  "distribution plan schema version": plan.schemaVersion,
+};
+
+export function loadReleaseNotesSource() {
+  return readFileSync(new URL(RELEASE_NOTES_SOURCE, ROOT), "utf8");
+}
+
+/// ``release/notes.md``を題名と``## ``見出しの節へ分けます。
+export function parseReleaseNotesSource(text) {
+  const lines = text.split("\n");
+  const title = lines[0] ?? "";
+  const sections = [];
+  const preamble = [];
+  let current = null;
+  for (const line of lines.slice(1)) {
+    if (line.startsWith("## ")) {
+      current = { heading: line, lines: [] };
+      sections.push(current);
+    } else if (current) {
+      current.lines.push(line);
+    } else {
+      preamble.push(line);
+    }
+  }
+  return { title, preamble, sections };
+}
+
+function sectionBody(section) {
+  return section.lines.join("\n").trim();
+}
+
+/// 人が書いたRelease Notesが公開できる形かを検査します。
+export function validateReleaseNotesSource(text, version = RELEASE_NOTES_VERSION) {
+  const title = `# AdocWeave v${version}`;
+  const parsed = parseReleaseNotesSource(text);
+  if (parsed.title !== title) {
+    throw new Error(`Release Notesの題名が公開する版と一致しません：期待「${title}」、実際「${parsed.title}」`);
+  }
+  if (parsed.preamble.some((line) => line.trim().length > 0)) {
+    throw new Error("Release Notesの題名と最初の見出しの間に本文を置けません");
+  }
+  const required = REQUIRED_RELEASE_NOTE_HEADINGS.map((heading) =>
+    heading.replace(`v${RELEASE_NOTES_VERSION}`, `v${version}`),
+  );
+  const headings = parsed.sections.map((section) => section.heading);
+  for (const heading of required) {
+    const count = headings.filter((candidate) => candidate === heading).length;
+    if (count !== 1) throw new Error(`Release Notesに必須の見出しが一つだけ現れていません：${heading}`);
+  }
+  for (const heading of headings) {
+    if (!required.includes(heading)) throw new Error(`Release Notesに共通見出し以外の節があります：${heading}`);
+  }
+  if (headings.join("\n") !== required.join("\n")) {
+    throw new Error("Release Notesの見出しの順序が共通の順序と一致しません");
+  }
+  for (const section of parsed.sections) {
+    if (sectionBody(section).length === 0) {
+      throw new Error(`Release Notesに本文のない節があります：${section.heading}`);
+    }
+  }
+  if (UNFINISHED_MARKERS.test(text)) {
+    throw new Error("Release Notesに未記入の目印が残っています");
+  }
+  for (const [, name, , to] of text.matchAll(/([A-Za-z ]*(?:schema|protocol) version)を(\d+)から(\d+)へ/g)) {
+    const authority = SCHEMA_VERSION_AUTHORITIES[name.trim()];
+    if (authority === undefined) {
+      throw new Error(`Release Notesが述べる「${name.trim()}」の正本が登録されていません`);
+    }
+    if (Number(to) !== authority) {
+      throw new Error(`Release Notesが述べる${name.trim()}の遷移先${to}が現在値${authority}と一致しません`);
+    }
+  }
+  return parsed;
+}
+
+/// 人の文章の各節の後ろへ機械生成部分を追記した、公開するRelease Notesの本文を返します。
+/// 題名はGitHub ReleaseのnameにあるためBodyへは含めません。
+export function renderReleaseNotes(source) {
+  const parsed = validateReleaseNotesSource(source);
+  const sections = parsed.sections.map((section) => {
+    const generated = (GENERATED_SECTIONS[section.heading] ?? (() => []))();
+    return [section.heading, sectionBody(section), ...generated].join("\n\n");
+  });
+  return `${sections.join("\n\n")}\n`;
+}
+
+export function buildReleaseNotes(tag) {
+  if (tag !== `v${RELEASE_NOTES_VERSION}`) {
+    throw new Error(`Release Notesはv${RELEASE_NOTES_VERSION}専用です`);
+  }
+  return renderReleaseNotes(loadReleaseNotesSource());
 }
 
 export function validateReleaseNotes(body) {
@@ -185,12 +249,19 @@ export function validateReleaseNotes(body) {
 }
 
 if (process.argv[1] && import.meta.url === new URL(process.argv[1], "file:").href) {
-  const tag = process.argv[2];
-  // cargo-distの自動生成本文は英語であるため読み捨て、単一の日本語本文を生成します。
-  for await (const _chunk of process.stdin) {
-    // 標準入力を最後まで読み、呼出側のpipeを正常に終了させます。
+  const argument = process.argv[2];
+  if (argument === "--check") {
+    // release-contract taskから呼び、公開前にrelease/notes.mdの形と機械生成部分を確認します。
+    const output = buildReleaseNotes(`v${RELEASE_NOTES_VERSION}`);
+    validateReleaseNotes(output);
+    process.stdout.write(`Release Notesの入力を確認しました：${RELEASE_NOTES_SOURCE}（v${RELEASE_NOTES_VERSION}）\n`);
+  } else {
+    // cargo-distの自動生成本文は英語であるため読み捨て、単一の日本語本文を生成します。
+    for await (const _chunk of process.stdin) {
+      // 標準入力を最後まで読み、呼出側のpipeを正常に終了させます。
+    }
+    const output = buildReleaseNotes(argument);
+    validateReleaseNotes(output);
+    process.stdout.write(output);
   }
-  const output = buildReleaseNotes(tag);
-  validateReleaseNotes(output);
-  process.stdout.write(output);
 }

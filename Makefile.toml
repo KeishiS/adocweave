@@ -122,6 +122,7 @@ dependencies = [
 script_runner = "@shell"
 script = '''
 node --test tools/release-metadata.test.mjs tools/release-notes.test.mjs
+node tools/release-notes.mjs --check
 args=""
 metadata="$(mktemp "${TMPDIR:-/tmp}/adocweave-release-metadata.XXXXXX.json")"
 zed_metadata="$(mktemp "${TMPDIR:-/tmp}/adocweave-zed-release-metadata.XXXXXX.json")"
@@ -893,7 +894,7 @@ args = ["doc", "--workspace", "--all-features", "--no-deps"]
 description = "Reject documentation .md files except repository metadata"
 script_runner = "@shell"
 script = '''
-unexpected="$(rg --files --hidden -g '*.md' -g '!.git/**' | rg -v '^(AGENTS\.md|\.github/pull_request_template\.md|\.github/SECURITY\.md)$' || true)"
+unexpected="$(rg --files --hidden -g '*.md' -g '!.git/**' | rg -v '^(AGENTS\.md|\.github/pull_request_template\.md|\.github/SECURITY\.md|release/notes\.md)$' || true)"
 if [ -n "$unexpected" ]; then
   echo "repository documentation must use .adoc except repository metadata:" >&2
   echo "$unexpected" >&2
@@ -1050,6 +1051,21 @@ description = "Run the pull request gate together with the global candidate acce
 dependencies = [
   "verify",
   "release-global-candidate",
+]
+
+# 3製品(AdocWeave、Marginalis、Renkan)で共通の外向きtask名。fmt、fmt-check、verify、security-audit、
+# acceptanceおよびrelease-checkを同じ意味で使い、既定taskはverifyとします。
+
+[tasks.security-audit]
+description = "Audit dependency sources, licenses, and advisories (common task name across the three products)"
+dependencies = ["dependency-governance"]
+
+[tasks.acceptance]
+description = "Run the pull request gate together with every automated acceptance suite CI performs for the current host"
+dependencies = [
+  "verify-with-global-candidate",
+  "native-artifact-smoke",
+  "installation-e2e",
 ]
 
 [tasks.release-check]

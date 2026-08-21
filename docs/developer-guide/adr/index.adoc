@@ -23,3 +23,4 @@ ADRは、複数の機能に影響する長期的な設計判断と、その理�
 * xref:0018-textlint-txtast-backend.adoc[ADR 0018: textlint専用TxtAST backendへの責務集約]
 * xref:0019-workspace-scan-pruning.adoc[ADR 0019: 初期ワークスペース走査とリソース読込の分離]
 * xref:0020-host-allowed-role-classes.adoc[ADR 0020: hostが許可したblock roleだけのclass出力]
+* xref:0021-common-development-contract.adoc[ADR 0021: 3製品で共通の開発手順と公開仕様]

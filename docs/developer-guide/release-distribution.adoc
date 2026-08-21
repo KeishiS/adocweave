@@ -147,6 +147,15 @@ archive検証および実URLを指定した単発実行を確認します。公�
 
 == 配布メタデータ
 
+``release-manifest.json``は、公開する版と構築に使うtoolchainを宣言する正本です。Marginalis、Renkanと
+共通のschema（``schemaVersion`` 1）に従い、``product``、``packageVersion``、``rustVersion``、``nodeVersion``、
+``releaseNotes``、``assets``を必須項目とします。共通の``assets``はrepository内のfileをそのまま公開する
+一覧であるため、buildで成果物を作るAdocWeaveでは空とし、target、archive、SBOMおよびchecksumは拡張項目
+``distributionPlan``が指す``release/distribution-plan.json``が決めます。Release Notesの本文は
+``releaseNotes``が指す``release/notes.md``に人が書き、公開workflowの``tools/release-notes.mjs``が
+形を検査して機械生成部分を追記します。``cargo make release-contract``が、manifestの項目、配布計画との
+整合およびRelease Notesの形を検査します（xref:adr/0021-common-development-contract.adoc[ADR 0021]）。
+
 ``tools/release-metadata.mjs``を配布manifest、SPDX SBOMおよびchecksumの生成器とします。target別の成果物を
 一つのcandidateディレクトリへ集約した後、実際に公開するarchiveから次を決定的に生成します。
 
@@ -176,6 +185,11 @@ release用workflowで``contents: write``を持つjobはここだけであり、E
 Environmentのdeployment branch制限はGitHub上の外部設定であり、workflow自身では検査しません。公開担当者は
 dispatch前にこの設定をRelease checklistで確認します。外部actionは完全なcommit SHAへ固定します。
 
+この権限境界は3製品で共通の前提です。すべてのworkflowで外部actionを完全なcommit SHAへ固定し、
+jobごとに``timeout-minutes``を設定し、Pull Requestとmain pushのjobはread-only権限で実行して
+repository secretを参照しません。書き込み権限を持つ公開workflowは各repositoryに置き、共通のworkflowへ
+集約しません。``release-workflow-policy``がこれらの条件を検査します。
+
 ``v*`` tagを作成できる主体を公開jobだけに限る機械的な仕組みはありません。tagの作成経路はEnvironmentの
 制限で間接的に限定されるだけで、repositoryへ書き込める利用者は手元からもtagを作成できます。
 tag rulesetを使わない理由はxref:adr/0006-direct-stable-releases.adoc[ADR 0006]に記載しています。
@@ -200,9 +214,12 @@ tagとGitHub Releaseには影響しないため、同じrunの失敗したjobを
 cargo make platform-contract
 cargo make release-contract
 cargo make dist-plan
+cargo make acceptance
 cargo make release-check
 ----
 
+``acceptance``は、``verify``に加えて、CIが行う自動受入検証のうち現在のhostで実行できるもの
+（global成果物の実Chromium検査、native smoke、installation E2E）を実行します。
 ``release-check``は公開前の完全な検査です。標準の``verify``が行うsourceと公開Rust APIの検査に、配布物および
 導入経路の検査を加えます。公開Rust API差分とRelease Notesに記載した公開仕様は``semver-check``で照合します。
 GitHub Actionsのsource qualityも、
@@ -308,7 +325,7 @@ jobは常に起動し、実行するかどうかをstepの条件で決めます�
 成果物のbuildと配布計画の生成は、``cargo make ci-preflight``が成功した後に開始します。
 この事前検査では書式、生成file、workflow policy、release contractおよび変更pathの分類を確認します。
 成果物を作らないPull Requestと、公開済みバージョンの通常の``main`` pushでは配布計画を生成しません。
-Pull Requestの``quality / verify``はsource qualityに加え、変更に応じて選択したbuild、smoke test、
+Pull Requestの必須check``verify``はsource qualityに加え、変更に応じて選択したbuild、smoke test、
 candidate検証およびinstallation E2Eが完了してから成功します。
 
 release manifestのバージョンに対応するtagが存在する通常の``main`` pushではsource quality gateを実行し、

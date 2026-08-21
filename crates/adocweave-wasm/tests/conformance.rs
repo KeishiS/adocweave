@@ -17,9 +17,13 @@ struct ConformanceConsumers {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ReleaseManifest {
     schema_version: u16,
+    product: String,
     package_version: String,
     rust_version: String,
     node_version: String,
+    release_notes: String,
+    assets: Vec<serde_json::Value>,
+    distribution_plan: String,
 }
 
 #[test]
@@ -189,7 +193,14 @@ fn release_package_version_is_explicit() {
     let manifest: ReleaseManifest =
         serde_json::from_str(include_str!("../../../release-manifest.json"))
             .expect("valid release manifest");
-    assert_eq!(manifest.schema_version, 4);
+    assert_eq!(manifest.schema_version, 1, "common release manifest schema");
+    assert_eq!(manifest.product, "adocweave");
+    assert_eq!(manifest.release_notes, "release/notes.md");
+    assert!(
+        manifest.assets.is_empty(),
+        "AdocWeave assets come from the distribution plan"
+    );
+    assert_eq!(manifest.distribution_plan, "release/distribution-plan.json");
     assert_eq!(manifest.package_version, env!("CARGO_PKG_VERSION"));
     assert_eq!(manifest.rust_version, env!("CARGO_PKG_RUST_VERSION"));
     assert!(
