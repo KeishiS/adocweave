@@ -229,6 +229,7 @@ export interface SourceBlockProjection {
   lineNumbers: boolean;
   startLine: number | null;
   source: string;
+  caption: string | null;
 }
 
 export interface FormulaProjection {
@@ -628,7 +629,7 @@ export interface AdocWeaveError {
   generation: number;
 }
 
-export declare const PROTOCOL_SCHEMA_VERSION: 13;
+export declare const PROTOCOL_SCHEMA_VERSION: 14;
 export declare const WORKER_PROTOCOL_VERSION: 2;
 export declare const PACKAGE_VERSION: "0.43.0";
 export declare const PRODUCT_FIELDS: readonly ["syntax", "canonicalAst", "html", "attributeOccurrences", "attributeQueries", "resourceQueries", "diagnostics", "symbols", "projection"];

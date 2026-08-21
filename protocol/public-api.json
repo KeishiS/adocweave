@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 13,
+  "schemaVersion": 14,
   "packageVersion": "0.43.0",
   "identityField": "packageVersion",
   "workerProtocolVersion": 2,
@@ -306,7 +306,8 @@
         { "json": "language", "type": "string | null", "required": true },
         { "json": "lineNumbers", "type": "boolean", "required": true },
         { "json": "startLine", "type": "u32 | null", "required": true },
-        { "json": "source", "type": "string", "required": true }
+        { "json": "source", "type": "string", "required": true },
+        { "json": "caption", "type": "string | null", "required": true }
       ]
     },
     "FormulaProjection": {

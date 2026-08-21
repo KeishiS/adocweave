@@ -22,6 +22,10 @@ pub enum CaptionFamily {
     Figure,
     Table,
     Example,
+    /// Source and listing blocks. The language numbers these only when the
+    /// document sets `listing-caption`, so code samples are not captioned by
+    /// default.
+    Listing,
 }
 
 impl CaptionFamily {
@@ -31,15 +35,18 @@ impl CaptionFamily {
             Self::Figure => "figure-caption",
             Self::Table => "table-caption",
             Self::Example => "example-caption",
+            Self::Listing => "listing-caption",
         }
     }
 
-    /// The caption word the language uses when the attribute is never set.
-    pub const fn default_prefix(self) -> &'static str {
+    /// The caption word the language uses when the attribute is never set, or
+    /// `None` for a family the language leaves unnumbered by default.
+    pub const fn default_prefix(self) -> Option<&'static str> {
         match self {
-            Self::Figure => "Figure",
-            Self::Table => "Table",
-            Self::Example => "Example",
+            Self::Figure => Some("Figure"),
+            Self::Table => Some("Table"),
+            Self::Example => Some("Example"),
+            Self::Listing => None,
         }
     }
 }
@@ -125,6 +132,11 @@ pub(crate) fn block_image(paragraph: &Paragraph) -> Option<&StandardMacro> {
 fn caption_family(block: &AstBlock) -> Option<CaptionFamily> {
     match block {
         AstBlock::Paragraph(paragraph) => block_image(paragraph).map(|_| CaptionFamily::Figure),
+        AstBlock::Verbatim(verbatim) => match verbatim.kind {
+            crate::block_model::VerbatimKind::Source(_)
+            | crate::block_model::VerbatimKind::Listing => Some(CaptionFamily::Listing),
+            crate::block_model::VerbatimKind::Literal => None,
+        },
         AstBlock::Delimited(delimited) => match (&delimited.content, &delimited.presentation) {
             (crate::block_model::DelimitedContent::Table(_), _) => Some(CaptionFamily::Table),
             (crate::block_model::DelimitedContent::Compound(_), None)
@@ -177,7 +189,7 @@ pub(crate) fn build_captions(
         // `None`: never set, the language's word applies. `Ok(None)`: unset by
         // the document, the caption is just the title.
         let prefix = match attributes.resolve_at(family.attribute_name(), range.start()) {
-            None => Some(family.default_prefix().to_owned()),
+            None => family.default_prefix().map(str::to_owned),
             Some(resolved) => resolved
                 .value
                 .ok()

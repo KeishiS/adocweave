@@ -1290,6 +1290,8 @@ fn html_contract_has_explicit_allowlists() {
             "index-term",
             "language-*",
             "lead",
+            "listing-block",
+            "literal-block",
             "math-latex",
             "math-typst",
             "menu",
@@ -2301,6 +2303,35 @@ fn double_dot_block_titles_keep_their_leading_dot() {
             "<figure class=\"source-block\">\n<figcaption>.github/workflows/a.yml</figcaption>\n",
             "<pre data-language=\"yaml\"><code class=\"language-yaml\">a: 1\n</code></pre>\n</figure>\n",
             "<pre>literal\n</pre>\n",
+        )
+    );
+}
+
+/// Source and listing blocks carry a numbered caption only when the document
+/// sets `listing-caption`; the label then serves cross references too. A
+/// titled listing or literal block is a figure, so its title is not lost.
+#[test]
+fn listing_captions_follow_the_listing_caption_attribute() {
+    let unnumbered = parse(".src/a.rs\n[source,rust]\n----\nfn a() {}\n----\n").expect("parse");
+    assert_eq!(
+        render(&unnumbered.ast, &RenderPolicy::default()).html,
+        "<figure class=\"source-block\">\n<figcaption>src/a.rs</figcaption>\n<pre data-language=\"rust\"><code class=\"language-rust\">fn a() {}\n</code></pre>\n</figure>\n"
+    );
+    let numbered = parse(concat!(
+        ":listing-caption: コード\n\n",
+        "[[lst]]\n.src/lib.rs\n[source,rust]\n----\nfn f() {}\n----\n\n",
+        ".出力\n----\nok\n----\n\n",
+        ".リテラル\n....\nraw\n....\n\n",
+        "<<lst>>\n",
+    ))
+    .expect("parse");
+    assert_eq!(
+        render(&numbered.ast, &RenderPolicy::default()).html,
+        concat!(
+            "<figure id=\"lst\" class=\"source-block\">\n<figcaption>コード 1. src/lib.rs</figcaption>\n<pre data-language=\"rust\"><code class=\"language-rust\">fn f() {}\n</code></pre>\n</figure>\n",
+            "<figure class=\"listing-block\">\n<figcaption>コード 2. 出力</figcaption>\n<pre>ok\n</pre>\n</figure>\n",
+            "<figure class=\"literal-block\">\n<figcaption>リテラル</figcaption>\n<pre>raw\n</pre>\n</figure>\n",
+            "<p><a href=\"#lst\">コード 1</a></p>\n",
         )
     );
 }

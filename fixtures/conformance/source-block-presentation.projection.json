@@ -33,6 +33,7 @@
   },
   "sourceBlocks": [
     {
+      "caption": null,
       "contentRange": {
         "end": 112,
         "start": 75
@@ -58,6 +59,7 @@
       }
     },
     {
+      "caption": null,
       "contentRange": {
         "end": 180,
         "start": 169

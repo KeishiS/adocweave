@@ -53,6 +53,7 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 
 const highlights = [
   "先頭が``..``の行を、``.``で始まるblock titleとして扱うようにしました（``..github/workflows/a.yml``は「.github/workflows/a.yml」というtitle）。``...``と``.. ``は従来どおりtitleにしません。",
+  "``listing-caption``属性を設定した文書では、titleを持つsource／listing blockへ``Listing 1. ``形式の番号付きcaptionを付け、``<<id>>``の表示にも使うようにしました（未設定なら従来どおり番号なし）。titleを持つlisting block（``----``）とliteral block（``....``）は``figure``と``figcaption``で描画し、titleが失われなくなりました。構造情報のsource blockへ``caption``を追加しました。",
 ];
 
 export function breakingContractNotes(changes) {
@@ -96,7 +97,7 @@ export const CONTRACT_VERSION_FIELDS = ["packageVersion"];
 const contractNotes = [
   `統一package version：${RELEASE_NOTES_VERSION}`,
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
-  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。どちらもv${PREVIOUS_RELEASE_VERSION}から変更していません。`,
+  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}（v${PREVIOUS_RELEASE_VERSION}の13から更新。source blockの構造情報へ\`\`caption\`\`を追加しました）、Worker protocol version：${protocol.workerProtocolVersion}（v${PREVIOUS_RELEASE_VERSION}から変更していません）。`,
   manifestSchemaNote,
   ...breakingContractNotes(breakingRustApi.changes),
   "textlint Processorの公開API、TxtASTへの変換結果および自動修正を行わない保証は変更していません。",

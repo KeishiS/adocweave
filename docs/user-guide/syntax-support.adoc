@@ -125,7 +125,9 @@ captionには``table-caption``属性の語と番号（``Table 1. ``）を付け�
 |対応
 |標準形と短縮形を同じsource verbatim blockへ正規化します。``source-language``はlisting blockの既定言語となり、
 明示した``[listing]``は既定値を抑止します。Block title、言語、不透明な本体、`linenums` optionおよび
-1以上の``start``開始行はHTML、projection、LSPで共有します。`linenums`の見た目、構文強調、themeおよび
+1以上の``start``開始行はHTML、projection、LSPで共有します。``:listing-caption: コード``のように属性を設定すると、
+titleを持つsource／listing blockへ``コード 1. ``形式の番号付きcaptionを付け、`<<id>>`の表示にも使います（未設定なら番号なし）。
+titleを持つlisting block（`----`）とliteral block（`....`）は``figure``と``figcaption``で描画します。`linenums`の見た目、構文強調、themeおよび
 copy操作は利用側アプリが提供します。不正な``start``は診断して1へ回復し、未対応optionをsource blockの
 意味として推測しません。
 
