@@ -26,7 +26,7 @@ if (breakingRustApi.releaseVersion !== RELEASE_NOTES_VERSION) {
     `破壊的変更記録のreleaseVersionがRelease Notesと一致しません：${breakingRustApi.releaseVersion}`,
   );
 }
-export const PREVIOUS_RELEASE_VERSION = "0.41.1";
+export const PREVIOUS_RELEASE_VERSION = "0.42.0";
 
 // The release manifest schema version the previous stable release shipped.
 //
@@ -52,11 +52,7 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  "counter属性参照（``{counter:name}``、``{counter2:name}``、初期値付きの``{counter:name:5}``／``{counter:name:a}``）に対応しました。参照のたびに値を進め、以後の``{name}``参照とblock titleで現在値を参照できます。属性の履歴には``counter``操作として記録します。",
-  "block titleを持つ画像blockを``figure``と``figcaption``で描画し、表・example blockとともに``Figure 1. ``形式の番号付きcaptionを付けるようにしました。語は``figure-caption``などの属性で変えられ、解除すると番号を付けません。見出し以外のblockへの空label参照は、anchorの表示テキスト、番号付きcaption、block title、識別子の順で表示し、blockのsourceを表示しなくなりました。構造情報のblock presentationへfigure、tableとcaptionを追加しました。",
-  "literal monospace（`` `+text+` ``）の両端の``+``を表示から除き、unconstrained書式の直前の``\\\\``を言語仕様どおり二つともescapeとして扱うようにしました。``__init__.py``のような書式記号を含む文字列を標準の記法で書けます。",
-  "example、sidebar、open blockを種類のclassを持つ``div``で囲み、block titleを``div.title``として出力するようにしました。``[%collapsible]``付きのexample blockは``details``と``summary``へ変換し、``%open``で展開した状態にします。先頭のpositional属性は``style#id.role%option``の形で書けます。",
-  "block roleは、利用側が``RenderPolicy.roles``（CLIでは``html.roles``、WASM APIでは``renderPolicy.roles``）で許可した名前だけを``role-<name>`` classとしてHTMLへ出力するようにしました（ADR 0020）。構造情報のblock presentationにはexample、sidebar、open、collapsibleの種類と、roleおよび展開状態を追加しました。",
+  "先頭が``..``の行を、``.``で始まるblock titleとして扱うようにしました（``..github/workflows/a.yml``は「.github/workflows/a.yml」というtitle）。``...``と``.. ``は従来どおりtitleにしません。",
 ];
 
 export function breakingContractNotes(changes) {
@@ -78,6 +74,7 @@ export function breakingMigrationNotes(changes) {
 export const UNCHANGED_CONTRACTS = [
   "CLI引数",
   "Language Server protocol",
+  "設定schema",
   "textlint Processorパッケージ契約",
 ];
 
@@ -97,10 +94,9 @@ export const CONTRACT_SOURCES = {
 export const CONTRACT_VERSION_FIELDS = ["packageVersion"];
 
 const contractNotes = [
-  "設定schema（config/adocweave.schema.json）へ``html.roles``（HTMLへ``role-<name>`` classとして出力するrole名の一覧）を追加しました。既存の設定はそのまま有効です。",
   `統一package version：${RELEASE_NOTES_VERSION}`,
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
-  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}（v${PREVIOUS_RELEASE_VERSION}の12から更新。block presentationへ種類と項目を追加し、\`\`renderPolicy.roles\`\`を追加しました）、Worker protocol version：${protocol.workerProtocolVersion}（v${PREVIOUS_RELEASE_VERSION}から変更していません）。`,
+  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。どちらもv${PREVIOUS_RELEASE_VERSION}から変更していません。`,
   manifestSchemaNote,
   ...breakingContractNotes(breakingRustApi.changes),
   "textlint Processorの公開API、TxtASTへの変換結果および自動修正を行わない保証は変更していません。",
