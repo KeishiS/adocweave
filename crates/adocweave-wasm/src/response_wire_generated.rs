@@ -501,6 +501,7 @@ pub struct WasmSourceBlockProjection {
     pub line_numbers: bool,
     pub start_line: Option<u32>,
     pub source: String,
+    pub caption: Option<String>,
 }
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]

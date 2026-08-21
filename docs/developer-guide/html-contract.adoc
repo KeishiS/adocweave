@@ -154,6 +154,10 @@ Source blockの言語classは``SourceLanguagePolicy``で許可した言語だけ
 
 Block titleまたは``linenums``を持つsource blockは``figure.source-block``で囲み、titleを``figcaption``へ
 inline装飾を除いた解決済みplain textとして安全に出力します。Projectionのtitleも同じplain textです。
+文書が``listing-caption``属性を設定している場合は、titleを持つsource blockとlisting block（``----``）へ
+読み順の番号付きcaption語（``Listing 1. ``）を付け、xrefの空label表示にも使います。figureやtableと違い、
+属性が未定義なら番号を付けません。titleを持つlisting blockは``figure.listing-block``、literal block（``....``）は
+``figure.literal-block``で囲み、titleを同じ形の``figcaption``へ出力します。
 ``pre``の``data-language``、``data-line-numbers="true"``および``data-line-start``は
 projectionと同じ言語、行番号指定および開始行を表します。行番号要素、構文強調、themeおよび操作buttonは
 生成しません。Titleも行番号指定もない従来のsource blockは既存の``pre > code.language-*``構造を維持します。

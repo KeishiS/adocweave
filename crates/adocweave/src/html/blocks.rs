@@ -148,13 +148,7 @@ pub(super) fn render_block(
                     BlockWriter::start(output, "figure", &attributes);
                     BlockWriter::line_break(output);
                     if let Some(title) = &block.metadata.title {
-                        BlockWriter::start(output, "figcaption", &[]);
-                        BlockWriter::text(
-                            output,
-                            &crate::projection::resolved_inline_text(&title.inlines),
-                        );
-                        BlockWriter::end(output, "figcaption");
-                        BlockWriter::line_break(output);
+                        render_verbatim_caption(output, title, block.range, context);
                     }
                 }
                 let mut pre_attributes = Vec::new();
@@ -204,8 +198,26 @@ pub(super) fn render_block(
             }
             crate::block_model::VerbatimKind::Listing
             | crate::block_model::VerbatimKind::Literal => {
-                let attributes = block_attributes(explicit_id, &block.metadata, &[], context);
-                render_preformatted(output, &attributes, &block.value);
+                // A titled listing or literal block is a figure like a titled
+                // source block, so the title is not lost; a listing title
+                // carries the listing caption number when the document sets it.
+                if let Some(title) = &block.metadata.title {
+                    let class = match block.kind {
+                        crate::block_model::VerbatimKind::Listing => "listing-block",
+                        _ => "literal-block",
+                    };
+                    let attributes =
+                        block_attributes(explicit_id, &block.metadata, &[class], context);
+                    BlockWriter::start(output, "figure", &attributes);
+                    BlockWriter::line_break(output);
+                    render_verbatim_caption(output, title, block.range, context);
+                    render_preformatted(output, &[], &block.value);
+                    BlockWriter::end(output, "figure");
+                    BlockWriter::line_break(output);
+                } else {
+                    let attributes = block_attributes(explicit_id, &block.metadata, &[], context);
+                    render_preformatted(output, &attributes, &block.value);
+                }
             }
         },
         AstBlock::List(list) => render_list(output, list, explicit_id, policy, context, scope),
@@ -902,6 +914,26 @@ pub(super) fn render_inlines(
 ) {
     let plan = body::plan_inlines(inlines, context);
     body::serialize_inlines(output, &plan);
+}
+
+/// The `figcaption` of a verbatim block: the caption lead, then the title as
+/// plain text, as the HTML contract promises for code samples.
+fn render_verbatim_caption(
+    output: &mut String,
+    title: &crate::block_model::BlockTitle,
+    range: crate::source::TextRange,
+    context: &mut InlineRenderContext<'_, '_>,
+) {
+    BlockWriter::start(output, "figcaption", &[]);
+    if let Some(lead) = caption_lead(range, context) {
+        BlockWriter::text(output, &lead);
+    }
+    BlockWriter::text(
+        output,
+        &crate::projection::resolved_inline_text(&title.inlines),
+    );
+    BlockWriter::end(output, "figcaption");
+    BlockWriter::line_break(output);
 }
 
 /// The `Figure 1. ` a numbered caption writes in front of its title.

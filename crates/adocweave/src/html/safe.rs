@@ -101,6 +101,8 @@ pub const ALLOWED_CLASSES: &[&str] = &[
     "index-term",
     "language-*",
     "lead",
+    "listing-block",
+    "literal-block",
     "math-latex",
     "math-typst",
     "menu",

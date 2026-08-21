@@ -61,7 +61,8 @@ macroの直後の空白と、書式記号の前後の空白は出力します。
 
 |図表のcaption番号
 |titleを持つ画像block、表、example blockへAsciidoctorと同じ``Figure 1. ``形式の番号を付けます。blockごとの
-``caption``属性による上書きと、listing blockの番号付けには対応しません。
+``caption``属性による上書きには対応しません。source／listing blockはAsciidoctorと同じく``listing-caption``属性を
+設定した場合だけ番号を付けます。
 
 |Quoteとverse
 |styleなしの``____``は入れ子を許すブロックとして扱い、``[quote,Author,Source]``だけを``blockquote``として出力します。

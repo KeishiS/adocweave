@@ -54,6 +54,9 @@ pub struct SourceBlockProjection {
     pub line_numbers: bool,
     pub start_line: Option<u32>,
     pub source: String,
+    /// The numbered caption label (`Listing 1`) when the document sets
+    /// `listing-caption` and the block has a title.
+    pub caption: Option<String>,
 }
 
 /// Presentation facts for an ordered list, resolved once during lowering.
@@ -363,6 +366,11 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
                 line_numbers: false,
                 start_line: None,
                 source: source.value.clone(),
+                caption: analysis
+                    .ast()
+                    .presentation()
+                    .caption_at(source.range)
+                    .and_then(crate::caption::BlockCaption::label),
             });
         }
         crate::walker::SemanticNode::Block(AstBlock::Verbatim(block))
@@ -383,6 +391,11 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
                 line_numbers: source.line_numbers,
                 start_line: source.start_line,
                 source: block.value.clone(),
+                caption: analysis
+                    .ast()
+                    .presentation()
+                    .caption_at(block.range)
+                    .and_then(crate::caption::BlockCaption::label),
             });
         }
         crate::walker::SemanticNode::Inline(Inline::Formula(formula)) => {
@@ -987,6 +1000,7 @@ mod wire {
         line_numbers: bool,
         start_line: Option<u32>,
         source: &'a str,
+        caption: Option<&'a str>,
     }
 
     #[derive(Serialize)]
@@ -1202,6 +1216,7 @@ mod wire {
                         line_numbers: source.line_numbers,
                         start_line: source.start_line,
                         source: &source.source,
+                        caption: source.caption.as_deref(),
                     })
                     .collect(),
                 formulas: doc

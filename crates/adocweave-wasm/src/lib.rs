@@ -405,7 +405,8 @@ mod tests {
             "language": "rust",
             "lineNumbers": true,
             "startLine": 3,
-            "source": "fn main() {}"
+            "source": "fn main() {}",
+            "caption": null
         }]);
         projection["orderedLists"] = json!([{
             "sourceRange": { "start": 0, "end": 4 },

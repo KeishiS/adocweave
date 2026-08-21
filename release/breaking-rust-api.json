@@ -1,5 +1,30 @@
 {
   "schemaVersion": 1,
   "releaseVersion": "0.43.0",
-  "changes": []
+  "changes": [
+    {
+      "crate": "adocweave",
+      "description": "構造情報のsource blockへ、``listing-caption``による番号付きcaptionの表示文字列``caption``を追加しました。",
+      "item": "field SourceBlockProjection.caption",
+      "lint": "constructible_struct_adds_field",
+      "migration": "``SourceBlockProjection``をstruct literalで構築している場合は``caption: None``を追加してください。",
+      "summary": "externally-constructible struct adds field"
+    },
+    {
+      "crate": "adocweave",
+      "description": "source／listing blockの番号付きcaptionのため、``CaptionFamily::Listing``を追加しました。",
+      "item": "variant CaptionFamily:Listing",
+      "lint": "enum_variant_added",
+      "migration": "``CaptionFamily``を網羅的にmatchしている場合は``Listing``の分岐を追加してください。",
+      "summary": "enum variant added on exhaustive enum"
+    },
+    {
+      "crate": "adocweave-wasm",
+      "description": "WASM responseのsource blockへ``caption``を追加しました。protocol schema versionは14です。",
+      "item": "field WasmSourceBlockProjection.caption",
+      "lint": "constructible_struct_adds_field",
+      "migration": "``WasmSourceBlockProjection``をstruct literalで構築している場合は``caption: None``を追加してください。",
+      "summary": "externally-constructible struct adds field"
+    }
+  ]
 }
