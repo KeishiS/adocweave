@@ -207,10 +207,48 @@ function tomlValue(source, key) {
   return match?.[1] ?? fail(`missing TOML field: ${key}`);
 }
 
+/// release manifestの3製品共通schema(version 1)とAdocWeave固有の拡張項目を検査します。
+///
+/// 共通項目はproduct、packageVersion、rustVersion、nodeVersion、releaseNotes、assetsです。AdocWeaveの
+/// 公開assetはbuildで作るため、共通の``assets``(repository内のfileをそのまま公開する一覧)は空とし、
+/// target、archive、SBOMおよびchecksumは拡張項目``distributionPlan``が指す配布計画が決めます。
+function verifyReleaseManifest(manifest) {
+  const keys = Object.keys(manifest).sort();
+  const expected = [
+    "assets",
+    "distributionPlan",
+    "nodeVersion",
+    "packageVersion",
+    "product",
+    "releaseNotes",
+    "rustVersion",
+    "schemaVersion",
+  ];
+  if (JSON.stringify(keys) !== JSON.stringify(expected)) {
+    fail(`release manifest keys must be exactly ${expected.join(", ")}`);
+  }
+  if (manifest.schemaVersion !== 1) fail("release manifest schemaVersion must be 1 (common schema)");
+  if (manifest.product !== "adocweave") fail("release manifest product must be adocweave");
+  for (const field of ["packageVersion", "rustVersion", "nodeVersion"]) {
+    if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(manifest[field])) {
+      fail(`release manifest ${field} must be MAJOR.MINOR.PATCH`);
+    }
+  }
+  if (manifest.releaseNotes !== "release/notes.md") fail("release manifest releaseNotes must be release/notes.md");
+  if (!Array.isArray(manifest.assets) || manifest.assets.length !== 0) {
+    fail("release manifest assets must be empty: AdocWeave assets come from the distribution plan");
+  }
+  if (manifest.distributionPlan !== "release/distribution-plan.json") {
+    fail("release manifest distributionPlan must be release/distribution-plan.json");
+  }
+  if (read(manifest.releaseNotes).length === 0) fail(`release notes source is empty: ${manifest.releaseNotes}`);
+}
+
 function verifyRepository() {
   const cargo = read("Cargo.toml");
   const manifest = json("release-manifest.json");
   const plan = json("release/distribution-plan.json");
+  verifyReleaseManifest(manifest);
   const platformFixture = json("release/platform-selection.fixture.json");
   const vscodePlatforms = json("editors/vscode/resources/platforms.json");
   const vscodePackage = json("editors/vscode/package.json");

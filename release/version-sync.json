@@ -80,6 +80,12 @@
     },
     {
       "type": "literal",
+      "path": "release/notes.md",
+      "template": "{version}",
+      "count": 6
+    },
+    {
+      "type": "literal",
       "path": "release/breaking-rust-api.json",
       "template": "\"releaseVersion\": \"{version}\"",
       "count": 1

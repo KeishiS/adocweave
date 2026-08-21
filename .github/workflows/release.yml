@@ -402,7 +402,7 @@ jobs:
           "artifacts/adocweave-textlint-plugin-asciidoc-$(jq -r .packageVersion release-manifest.json).tgz"
 
   merge-gate:
-    name: quality / verify
+    name: verify
     if: always() && github.event_name == 'pull_request'
     needs:
       - changes

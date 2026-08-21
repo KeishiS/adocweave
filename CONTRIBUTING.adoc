@@ -20,18 +20,43 @@ WebAssemblyを構築しますが、文書を自動修正しません。
 cargo make docs-prose-lint
 ----
 
-``cargo make verify``はPull Request用の標準検査です。ソース、依存関係、Nixパッケージ、
-browserおよびeditor adapter、HTML5標準適合性、文書をまとめて検査し、fuzz targetが既知の入力で
+``cargo make verify``はPull Request用の標準検査であり、``cargo make``の既定taskです。ソース、依存関係、
+Nixパッケージ、browserおよびeditor adapter、HTML5標準適合性、文書をまとめて検査し、fuzz targetが既知の入力で
 落ちないことと、公開Rust APIの差分が選んだバージョンとRelease Notesに整合することを確認します。
+
+次のtask名は、並行して開発するMarginalis、Renkanと共通の外向きの名前です。repositoryが変わっても
+同じ名前で同じ意味の検査を実行できます。
+
+[cols="1,3",options="header"]
+|===
+|task |意味
+
+|``fmt`` / ``fmt-check``
+|ソースの整形と、整形済みであることの検査
+
+|``verify``
+|Pull Request用の標準検査（既定task）
+
+|``security-audit``
+|依存関係の出所、license、advisoryおよび例外の監査（``dependency-governance``と同じ）
+
+|``acceptance``
+|``verify``に加え、CIが行う自動受入検証のうち現在のhostで実行できるもの
+ （global成果物の実Chromium検査、native smoke、installation E2E）
+
+|``release-check``
+|公開前の完全な検査
+|===
 
 == 作業の進め方
 
-. ``main``を最新にし、変更の目的に合う短命なブランチを作成します。
+. ``main``を最新にし、変更の目的に合う短命なブランチを作成します。GitHub上のこのリポジトリを指す
+  remote名は``upstream``とします。
 +
 [source,console]
 ----
 git switch main
-git pull --ff-only origin main
+git pull --ff-only upstream main
 git switch -c fix/browser-archive-import-check
 ----
 +
@@ -45,19 +70,30 @@ git switch -c fix/browser-archive-import-check
 cargo make verify
 ----
 
-. 最新の``origin/main``へrebaseし、ブランチをpushしてpull requestを作成します。
+. ブランチをpushしてpull requestを作成し、squash方式のauto-mergeを設定します。必須check``verify``が
+  成功すると``main``へ統合されます。``main``へ直接pushしません。
 +
 [source,console]
 ----
-git fetch origin main
-git rebase origin/main
-git push -u origin fix/browser-archive-import-check
+git push -u upstream fix/browser-archive-import-check
 gh pr create
+gh pr merge --auto --squash
+----
+
+. ``main``が先へ進んで競合した場合は、rebaseではなく``upstream/main``をブランチへmergeして解消します。
+  squash mergeで履歴は1 commitにまとまるため、ブランチ上のmerge commitは``main``へ残りません。
++
+[source,console]
+----
+git fetch upstream main
+git merge upstream/main
 ----
 
 . pull request完了後は作業ブランチを削除します。
 
 競合の解消が難しい場合や変更の目的が増えた場合は、pull requestを分割します。
+remote名、ブランチ名、mergeの方式および必須checkの構成は、Marginalis、Renkanと共通です
+（xref:docs/developer-guide/adr/0021-common-development-contract.adoc[ADR 0021]）。
 
 [#branch-names]
 == ブランチ名
@@ -91,8 +127,8 @@ gh pr create
 |上のいずれにも当たらない保守作業
 |===
 
-人以外が作業する場合は、作業主体を先頭に付けて``agent/種別/目的``とします。どのブランチを人が
-確認すべきかが一覧から分かるようにするためです。
+人以外が作業する場合は、作業主体を先頭に付けて``agent/<種別>/<目的>``とします。どのブランチを人が
+確認すべきかが一覧から分かるようにするためです。この形は3製品で共通です。
 
 == 変更時の確認
 
@@ -167,7 +203,9 @@ Nix入力はDependabotの対象外であり、``flake.lock``を手動で更新�
 文書の重複と陳腐化を避けるため、次の規則に従います。
 
 * 新しい文書を追加する前に、既存の文書へ統合できないか確認します。
-* バージョン固有の変更内容と移行手順は、原則としてGitHub Release Notesへ記載します。
+* バージョン固有の変更内容と移行手順は、原則としてGitHub Release Notesへ記載します。その本文は
+  ``release/notes.md``に書き、版を上げるときに書き直します。Release本文がMarkdownであるため、このfileだけは
+  ``.adoc``ではなく``.md``です。
 * CLI option、診断code、パッケージバージョン、対応target、公開APIおよびschemaなど、codeや機械可読な
   manifestから取得できる情報を文書へ重複して記載しません。
 * 現行仕様、設計理由および作業計画を同じ文書に混在させません。現行仕様は``docs/``、設計理由はADR、
@@ -182,13 +220,14 @@ Nix入力はDependabotの対象外であり、``flake.lock``を手動で更新�
 pull requestを作成するときは、link:.github/pull_request_template.md[Pull Request template]を使用します。
 変更の目的、主な変更点、実行した検証を簡潔に記載し、未実施の検証がある場合は理由を記載してください。
 
-CIではdependency governance、source quality、fuzz quality、Nixパッケージの検査を確認します。失敗した場合は、
-該当する``cargo make`` taskをNix開発環境で再実行し、設定の基準である``.github/workflows``と
-``Makefile.toml``を確認してください。
+CIの必須checkは``verify``の一つだけです。``verify``は、dependency governance、source quality、fuzz、
+Nixパッケージ、公開Rust API差分に加え、変更に応じて選択したcandidate build、smoke testおよび
+installation E2Eの結果を``always()``で集約します。個々の検査がskipされた場合も、必要な検査が成功したか
+どうかをこのjobが判定するため、検査のskipを成功と取り違えません。失敗した場合は、該当する``cargo make``
+taskをNix開発環境で再実行し、設定の基準である``.github/workflows``と``Makefile.toml``を確認してください。
 
 source qualityは、書式や生成ファイルなどの短い検査、Rustワークスペースの検査、WASM・browser・editor adapterの
-検査に分けて並列実行します。``quality / verify``はこれらとdependency governance、fuzz、Nixパッケージに加え、
-変更に応じて選択したcandidate build、smoke testおよびinstallation E2Eの結果を集約する必須checkです。
+検査に分けて並列実行します。
 成果物を構築するPull Requestでは、書式、生成ファイル、workflow、``release-contract``および
 変更pathの分類を``cargo make ci-preflight``で先に確認します。global成果物へ影響する場合は、
 実Chromiumによるarchiveの受入検査もPull Requestで実行します。
@@ -230,7 +269,8 @@ node tools/sync-release-version.mjs --version X.Y.Z
 +
 このtoolはlink:release/version-sync.json[バージョン同期対象]に明示したmanifest、lockfile、公開仕様のfixtureおよび生成物だけを
 更新します。更新前に部分的なバージョン変更や管理対象外の同じバージョンを検出した場合は、ファイルを書き換えず停止します。
-. 差分を確認し、必要な仕様文書、Release Notesおよびテスト用入力を更新してから、同期状態を検査します。
+. 差分を確認し、``release/notes.md``のRelease Notes、必要な仕様文書およびテスト用入力を更新してから、
+  同期状態を検査します。
 +
 [source,console]
 ----
@@ -253,6 +293,14 @@ gh workflow run release-dispatch.yml \
   buildし、runtime closureをbinary cache(``keishis.cachix.org``)へpushします。
 . GitHub Releaseがstableとして公開され、予定されたassetだけを含むことを確認します。
 . checksumとattestationを検証し、xref:#release-checklist[Release checklist]に従って受け入れ結果を記録します。
+
+Release Notesの本文は``release/notes.md``に人が書きます。題名は``# AdocWeave vX.Y.Z``とし、
+``## 主な変更``、``## 対応環境``、``## 公開契約と破壊的変更``、``## vX.Y.Zへの移行``、
+``## 更新とロールバック``、``## 既知の制約``、``## 配布物の検証``の7見出しをこの順に一度ずつ置いて、
+各節に本文を書きます。この見出しはMarginalis、Renkanと共通です。配布target、契約version、Rust APIの
+破壊的変更と移行、textlintの対応範囲は``tools/release-notes.mjs``が正本のfileから生成して各節の後ろへ
+追記するため、本文には書きません。``cargo make release-contract``（``verify``に含む）がこの形を検査し、
+公開workflowが同じtoolでGitHub Releaseの本文を生成します。
 
 公開処理の権限、candidateの再利用条件およびReleaseの状態遷移は
 xref:docs/developer-guide/release-distribution.adoc[GitHub Releases配布仕様]を基準とします。
@@ -281,6 +329,8 @@ xref:docs/developer-guide/adr/0006-direct-stable-releases.adoc[ADR 0006]を参�
       Zed crateの``rust-version``が一致しています。
 * [ ] Rustワークスペース、WASM、browser package、Zed拡張、textlint用パッケージ、配布planのパッケージバージョンが
       ``release-manifest.json``と一致しています。
+* [ ] ``release/notes.md``が公開する版の内容になっており、題名と移行の見出しの版が
+      ``release-manifest.json``と一致しています（``cargo make release-contract``で検査します）。
 * [ ] ``cargo make release-check``が成功しています。このtaskはClippy、文書、Zed、WASM、native／実WASM
       conformance、短時間fuzz、Web Worker、release fixture、WASM sizeおよび配布planを検査します。
 * [ ] ``github-release`` Environmentが``main``だけを許可しています。workflowはこの外部設定を
