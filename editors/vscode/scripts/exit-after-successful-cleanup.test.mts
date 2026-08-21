@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
-test("未解放handleがあっても成功した検証processを終了します", () => {
-  const moduleUrl = new URL("./exit-after-successful-cleanup.mjs", import.meta.url).href;
+test("exits a successful verification process even when handles are still open", () => {
+  const moduleUrl = new URL("./exit-after-successful-cleanup.mts", import.meta.url).href;
   const result = spawnSync(
     process.execPath,
     [
