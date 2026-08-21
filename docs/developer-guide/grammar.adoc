@@ -91,7 +91,7 @@ attribute-value-line = attribute-value ;
 block-anchor   = "[[", anchor-id, [ ",", reference-text ], "]]"
                | "[#", anchor-id, "]" ;
 block-metadata = { block-title | block-anchor | element-attribute-list } ;
-block-title    = ".", nonempty text not beginning with space, TAB, or "." ;
+block-title    = ".", [ "." ], nonempty text not beginning with space, TAB, or "." ;
 element-attribute-list = "[", [ element-attribute,
                          { ",", element-attribute } ], "]" ;
 element-attribute = positional-attribute

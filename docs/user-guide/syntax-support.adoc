@@ -76,7 +76,7 @@ inline属性代入は属性状態を変更しません。ただしcounter参照�
 
 |共通ブロックメタデータ
 |対応
-|空行を挟まず直前に置いたblock title、`[[id]]`、`[#id]`、shorthand role／option、
+|空行を挟まず直前に置いたblock title（``.``で始まるtitleは``..github``のように``.``を重ねて書く）、`[[id]]`、`[#id]`、shorthand role／option、
 positional／named element attributeをすべてのsemantic blockで共通表現として保持します。
 未知のstyleや属性は意味を推測せず、HTML属性へ通過させません。先頭のpositional属性は``style#id.role%option``の
 形で書けます。roleは利用側が``RenderPolicy.roles``（CLIでは``html.roles``）で許可した名前だけを

@@ -2285,3 +2285,22 @@ fn counter_references_count_in_reading_order() {
         .count();
     assert_eq!(undefined, 0);
 }
+
+/// A second leading dot makes a block title that starts with a dot; a literal
+/// block delimiter is not a title.
+#[test]
+fn double_dot_block_titles_keep_their_leading_dot() {
+    let parsed = parse(concat!(
+        "..github/workflows/a.yml\n[source,yaml]\n----\na: 1\n----\n\n",
+        "....\nliteral\n....\n",
+    ))
+    .expect("parse");
+    assert_eq!(
+        render(&parsed.ast, &RenderPolicy::default()).html,
+        concat!(
+            "<figure class=\"source-block\">\n<figcaption>.github/workflows/a.yml</figcaption>\n",
+            "<pre data-language=\"yaml\"><code class=\"language-yaml\">a: 1\n</code></pre>\n</figure>\n",
+            "<pre>literal\n</pre>\n",
+        )
+    );
+}
