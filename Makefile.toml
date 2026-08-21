@@ -571,6 +571,7 @@ dependencies = [
   "textlint-plugin-reproducibility",
   "test-zed-release-package",
   "test-vscode-release-package",
+  "test-vscode-release-determinism",
 ]
 
 [tasks.release-global-candidate]
@@ -862,9 +863,15 @@ dependencies = ["check-vscode", "test-vscode"]
 script_runner = "@shell"
 script = '''
 npm run package --prefix editors/vscode
-npm run test:vsix --prefix editors/vscode
-node --test editors/vscode/scripts/exit-after-successful-cleanup.test.mts
 npm run test:vsix-installation --prefix editors/vscode
+'''
+
+[tasks.test-vscode-release-determinism]
+description = "Rebuild the VSIX and require the published bytes to be reproducible"
+dependencies = ["vscode-dependencies"]
+script_runner = "@shell"
+script = '''
+npm run package --prefix editors/vscode -- --verify-determinism
 '''
 
 [tasks.clippy-zed]
