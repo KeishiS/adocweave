@@ -80,17 +80,17 @@
     ]
   },
   "scripts": {
-    "build": "node scripts/build.mjs",
-    "check": "npm run format:check && npm run lint && tsc --noEmit && node scripts/validate-package.mjs",
+    "build": "node scripts/build.mts",
+    "check": "npm run format:check && npm run lint && tsc --noEmit && tsc -p tsconfig.scripts.json && node scripts/validate-package.mts",
     "format": "biome format --write src test scripts",
     "format:check": "biome format src test scripts",
     "lint": "biome lint src test scripts",
     "test": "npm run build:test && node --test dist-test/test/*.test.js",
-    "build:test": "node scripts/build-test.mjs",
-    "package": "node scripts/package.mjs",
-    "test:vsix": "node scripts/vsix-smoke.mjs",
-    "test:vsix-installation": "node scripts/vsix-installation-smoke.mjs",
-    "test:extension": "node scripts/run-extension-tests.mjs"
+    "build:test": "node scripts/build-test.mts",
+    "package": "node scripts/package.mts",
+    "test:vsix": "node scripts/vsix-smoke.mts",
+    "test:vsix-installation": "node scripts/vsix-installation-smoke.mts",
+    "test:extension": "node scripts/run-extension-tests.mts"
   },
   "dependencies": {
     "fflate": "0.8.3",
