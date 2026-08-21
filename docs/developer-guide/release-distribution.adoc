@@ -15,9 +15,12 @@ xref:../user-guide/release-installation.adoc[インストールと更新]を参�
 == 配布境界
 
 CLI、Language Server、WebAssembly、browser package、Zed拡張、VS Code拡張およびtextlint用AsciiDoc Processorは、
-一つのパッケージバージョンとしてGitHub Releasesへまとめて公開します。crates.io、npm、Homebrew、WinGet、Visual Studio Marketplace、
-Open VSXおよびZed Extension Registryには公開しません。GitHubが自動生成するソースarchiveは、
+一つのパッケージバージョンとしてGitHub Releasesへまとめて公開します。GitHubが自動生成するソースarchiveは、
 検証対象のbinary配布物に含めません。
+
+VS Code拡張は、GitHub Releaseへ添付したVSIXと同一のfileをOpen VSX Registryへも公開します。Open VSX向けに
+成果物を作り直さず、公開はGitHub Releaseの公開後に行います（xref:adr/0013-vscode-release-boundary.adoc[ADR 0013]）。
+crates.io、npm、Homebrew、WinGet、Visual Studio MarketplaceおよびZed Extension Registryには公開しません。
 
 textlint用Processorはnpm互換の``.tgz``ですが、npm registryまたはGitHub Packagesへ公開しません。
 パッケージには``private: true``を設定し、GitHub ReleaseのURLを明示した導入だけを対象とします。
@@ -198,6 +201,12 @@ tag rulesetを使わない理由はxref:adr/0006-direct-stable-releases.adoc[ADR
 公開処理は、dispatchで指定したmain先端commitに対する検証済みmain candidateを再利用します。成果物を
 再構築せず、metadataを再検証してattestationを作成してから、同じSHAへtagを作成します。
 その後private draftへ成果物を追加し、成果物集合が揃った後にstable releaseとして公開します。
+
+公開の成功後、同じrunの``open-vsx`` jobがGitHub Releaseに添付されたVSIXをdownloadし、checksumとattestationを
+検証してからOpen VSX Registryへ公開します。Open VSXのAPIはOIDCによる委任へ対応しないため、このjobだけが
+repository secret``OPEN_VSX_TOKEN``(namespace``adocweave``のpublish token)を参照します。このjobはGitHubへの
+書き込み権限を持たず、公開に失敗してもtagとGitHub Releaseへ影響しないため、同じrunのjobを再実行して回復します。
+同じversionの再公開はOpen VSXが拒否するため、公開済みの版を上書きしません。
 
 公開の成功後、同じrunの``binary-cache`` jobが候補SHAをcheckoutし、x86_64-linuxとaarch64-linuxの
 Nixパッケージをbuildしてruntime closureをbinary cache``keishis.cachix.org``へpushします。Cachixへの

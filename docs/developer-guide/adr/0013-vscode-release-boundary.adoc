@@ -16,11 +16,18 @@ VSIXは同じcandidate workflowで一度だけ構築し、配布manifest、SBOM�
 対象にします。拡張は自身と完全に一致するバージョンのLanguage Serverだけを起動し、managed binaryは同じtagの
 配布manifestから選択します。
 
-Visual Studio MarketplaceおよびOpen VSXへは公開しません。VSIXはGitHub Releaseから取得して手動で導入します。
-registry公開を将来評価する場合も、managed Language Serverの互換性の保証とGitHub Releaseの正本性は変更しません。
+GitHub Releaseを正本とし、VSIXをそこから取得して導入できる状態を常に保ちます。
+
+Open VSX RegistryへはこのVSIXをそのまま公開します（2026-08-21の改訂、https://github.com/KeishiS/adocweave/issues/611[Issue 611]）。公開するのは
+GitHub Releaseへ添付したものと同一のfileであり、Open VSX向けに作り直しません。公開は
+GitHub Releaseの公開が成功した後、同じworkflowのjobがchecksumとattestationを検証してから行います。
+Visual Studio MarketplaceおよびZed Extension Galleryへは公開しません。
 
 == 結果
 
 一つのcandidateと対象コミットから全成果物を追跡でき、拡張独自の互換表が不要になります。VSIXだけを修正する
-場合も新しいパッケージバージョンとreleaseが必要です。registry固有の自動更新は利用できませんが、資格情報と
-公開先の増加を避けられます。
+場合も新しいパッケージバージョンとreleaseが必要です。
+
+Open VSXの利用者はeditorの標準UIから導入と更新を行えます。公開するfileがGitHub Releaseのassetと同一であるため、
+どちらの経路で入手しても同じattestationで確認できます。取り消しは行わず、問題のある版は新しいversionで置き換えます。
+Open VSXの公開tokenという資格情報が一つ増えますが、参照できるのは公開後に動く専用jobだけです。

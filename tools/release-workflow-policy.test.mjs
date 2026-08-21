@@ -19,6 +19,30 @@ test("the binary cache job may read the Cachix write token", () => {
   validateNoDirectSecretAccess(sources, workflows);
 });
 
+const OPEN_VSX_STEP = { env: { OPEN_VSX_TOKEN: "${{ secrets.OPEN_VSX_TOKEN }}" }, run: "curl ..." };
+const OPEN_VSX_SOURCE = "OPEN_VSX_TOKEN: ${{ secrets.OPEN_VSX_TOKEN }}\n";
+
+test("the Open VSX job may read the registry publish token", () => {
+  const { sources, workflows } = policyInput(
+    "release-dispatch.yml",
+    { jobs: { "open-vsx": { steps: [OPEN_VSX_STEP] } } },
+    OPEN_VSX_SOURCE,
+  );
+  validateNoDirectSecretAccess(sources, workflows);
+});
+
+test("the Open VSX token outside its job is rejected", () => {
+  const { sources, workflows } = policyInput(
+    "release-dispatch.yml",
+    { jobs: { "binary-cache": { steps: [OPEN_VSX_STEP] } } },
+    OPEN_VSX_SOURCE,
+  );
+  assert.throws(
+    () => validateNoDirectSecretAccess(sources, workflows),
+    /job binary-cache reads secrets\.OPEN_VSX_TOKEN/,
+  );
+});
+
 test("workflows without secret references pass", () => {
   const { sources, workflows } = policyInput(
     "release.yml",

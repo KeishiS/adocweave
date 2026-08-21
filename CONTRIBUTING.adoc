@@ -362,6 +362,8 @@ xref:docs/developer-guide/adr/0006-direct-stable-releases.adoc[ADR 0006]を参�
 * [ ] 公開Zed archiveとmanaged LSPをoverrideなしで使用し、AsciiDoc認識とLSP起動前の基本構文色付けを確認しました。
       診断、Outline、Code Action、Format、Hover、補完、Definition、References、Document Linkおよび
       Semantic Tokensが編集後と再起動後にも更新されることを確認しました。
+* [ ] Open VSXの拡張ページに公開したversionが表示され、namespace``adocweave``の発行者として掲載されています。
+      editorの拡張画面から導入し、managed Language Serverの取得と更新を確認しました。
 * [ ] 公開VSIXを隔離profileへ導入し、AsciiDoc認識、基本構文色付け、managed LSPの取得、offline cache、
       再起動および全LSP機能を確認しました。以前のVSIXへのrollback後にも起動でき、managed cacheの削除と
       拡張のuninstall後に管理対象fileが残っていません。

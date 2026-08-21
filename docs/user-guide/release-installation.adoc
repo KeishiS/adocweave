@@ -489,7 +489,17 @@ managed LSP取得とeditor機能を確認するまで保持します。
 [#vscode-installation]
 == VS Codeへの導入
 
-Visual Studio MarketplaceとOpen VSXへ公開しないため、同じReleaseの
+Open VSX Registryを利用できる環境では、editorの拡張画面から``adocweave.adocweave-vscode``を導入できます。
+公式の発行者はnamespace``adocweave``です。同じ名前のほかのnamespaceが現れた場合は、
+https://open-vsx.org/extension/adocweave/adocweave-vscode[公式の拡張ページ]で発行者を確認してください。
+Open VSXへ公開するfileは、同じReleaseへ添付したVSIXと同一です。
+
+[source,console]
+----
+codium --install-extension adocweave.adocweave-vscode
+----
+
+Visual Studio Marketplaceへは公開しないため、Visual Studio Code本体では同じReleaseの
 ``adocweave-vscode-<version>.vsix``を検証して手動で導入します。
 
 [source,console]
