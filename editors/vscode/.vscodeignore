@@ -3,4 +3,5 @@
 !language-configuration.json
 !syntaxes/asciidoc.tmLanguage.json
 !README.md
+!LICENSE
 !package.json

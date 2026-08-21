@@ -1,17 +1,16 @@
 # AdocWeave for Visual Studio Code
 
-AsciiDocの基本構文色付けと、`adocweave-lsp`による診断、補完、移動、整形およびSemantic Tokensを提供します。
+A Visual Studio Code extension for [AdocWeave](https://github.com/KeishiS/adocweave), an AsciiDoc processor.
+This extension provides the following features:
 
-## Language Serverの選択
+- Syntax highlighting
+- Diagnostics
+- Formatting
 
-拡張は、明示設定、`PATH`、検証済みmanaged binaryの順でLanguage Serverを選択します。managed binaryは、拡張と同じversionのGitHub Releaseからdownloadし、checksumを検証してから使用します。workspaceの設定値は、Visual Studio Codeがそのworkspaceを信頼している場合だけ使用します。
+## Requirements
 
-## 導入
+Install the verified VSIX from [GitHub Releases](https://github.com/KeishiS/adocweave/releases) manually. The extension and the Language Server must have the same version. See `docs/user-guide/release-installation.adoc` in the repository for installation, update, rollback, and verification steps.
 
-検証済みVSIXをGitHub Releases（<https://github.com/KeishiS/adocweave/releases>）から取得し、手動で導入します。拡張とLanguage Serverのversionは一致させてください。導入、更新、rollbackおよび検証の手順は、リポジトリの`docs/user-guide/release-installation.adoc`を参照してください。
-
-Visual Studio MarketplaceおよびOpen VSXへは公開していません。
-
-## ライセンス
+## License
 
 MIT OR Apache-2.0

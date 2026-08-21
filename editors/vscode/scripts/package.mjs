@@ -19,8 +19,7 @@ const output = join(
 const allowed = new Set([
   "[Content_Types].xml",
   "extension.vsixmanifest",
-  "extension/LICENSE-APACHE",
-  "extension/LICENSE-MIT",
+  "extension/LICENSE.txt",
   "extension/readme.md",
   "extension/dist/extension.cjs",
   "extension/language-configuration.json",
@@ -37,8 +36,9 @@ function normalizedPackage(scratch, suffix) {
   for (const name of ["README.md", "language-configuration.json", "package.json"]) {
     copyFileSync(join(extensionRoot, name), join(stage, name));
   }
-  copyFileSync(join(repositoryRoot, "LICENSE-APACHE"), join(stage, "LICENSE-APACHE"));
-  copyFileSync(join(repositoryRoot, "LICENSE-MIT"), join(stage, "LICENSE-MIT"));
+  // rust-analyzerと同じく、二重ライセンスの宣言と両原文を1つのLICENSEにまとめて同梱します。
+  // 拡張registryとeditorはLICENSEという名前のfileだけをライセンスとして検出するためです。
+  copyFileSync(join(extensionRoot, "LICENSE"), join(stage, "LICENSE"));
   copyFileSync(join(extensionRoot, "dist", "extension.cjs"), join(stage, "dist", "extension.cjs"));
   copyFileSync(
     join(extensionRoot, "syntaxes", "asciidoc.tmLanguage.json"),

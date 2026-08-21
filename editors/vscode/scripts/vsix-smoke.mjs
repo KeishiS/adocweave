@@ -13,7 +13,8 @@ const manifest = JSON.parse(Buffer.from(entries["extension/package.json"]).toStr
 if (manifest.version !== packageJson.version || manifest.main !== "./dist/extension.cjs") {
   throw new Error("VSIX manifestがsource packageと一致しません");
 }
-if (!entries["extension/LICENSE-APACHE"] || !entries["extension/LICENSE-MIT"]) {
+const license = entries["extension/LICENSE.txt"];
+if (!license || !Buffer.from(license).toString("utf8").includes("either of the Apache License, Version\n2.0, or the MIT License")) {
   throw new Error("VSIXにlicenseがありません");
 }
 if (Object.keys(entries).some((name) => name.includes("node_modules") || name.endsWith(".map"))) {
