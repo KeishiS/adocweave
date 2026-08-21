@@ -69,7 +69,7 @@ pub mod semantic {
         HeadingKind, HeadingProblem, ListBlock, ListItem, ListKind, ListPresentationProblem,
         ListPresentationProblemKind, ListProblem, ListProblemKind, LiteralParagraph, MathBlock,
         MathProblem, MathProblemKind, MetadataValue, OrderedListPresentation, OrderedListStyle,
-        Paragraph, QuoteKind, QuotePresentation, Revision, SourceBlock, SourceInfo, Unsupported,
+        Paragraph, QuoteKind, QuotePresentation, Revision, SourceInfo, Unsupported,
         UnsupportedKind, VerbatimBlock, VerbatimKind,
     };
     pub use crate::caption::{BlockCaption, CaptionFamily};

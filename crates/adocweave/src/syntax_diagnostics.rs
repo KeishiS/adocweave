@@ -200,9 +200,6 @@ fn block_issues(
             inline_issues(&mut paragraph.inline_problems, output, checkpoint)?;
         }
         AstBlock::LiteralParagraph(_) | AstBlock::Break(_) => {}
-        AstBlock::Source(block) => {
-            block_problem_issues(&mut block.problems, "source", output, checkpoint)?;
-        }
         AstBlock::Verbatim(block) => {
             let name = match block.kind {
                 crate::block_model::VerbatimKind::Literal => "literal",

@@ -115,30 +115,6 @@ pub(super) fn render_block(
             render_preformatted(output, &attributes, &paragraph.value);
         }
         AstBlock::Break(block) => render_break(output, block, explicit_id, context),
-        AstBlock::Source(block) => {
-            BlockWriter::start(
-                output,
-                "pre",
-                &block_attributes(explicit_id, &block.metadata, &[], context),
-            );
-            let mut attributes = Vec::new();
-            if let Some(language) = &block.language {
-                if policy.source_languages.allows(language) {
-                    attributes.push(source_language_class(language));
-                } else if policy.source_languages.unknown == UnknownSourceLanguage::Diagnostic {
-                    context.diagnostics.push(render_diagnostic(
-                        "source-language-not-allowed",
-                        "source language is rejected by the render policy",
-                        block.language_range.unwrap_or(block.attribute_range),
-                    ));
-                }
-            }
-            BlockWriter::start(output, "code", &attributes);
-            BlockWriter::text(output, &block.value);
-            BlockWriter::end(output, "code");
-            BlockWriter::end(output, "pre");
-            BlockWriter::line_break(output);
-        }
         AstBlock::Verbatim(block) => match &block.kind {
             crate::block_model::VerbatimKind::Source(source) => {
                 let has_presentation = block.metadata.title.is_some() || source.line_numbers;

@@ -20,7 +20,6 @@ pub enum SyntaxKind {
     ThematicBreak,
     PageBreak,
     LiteralBlock,
-    SourceBlock,
     DelimitedBlock,
     CommentLine,
     BlankLine,
@@ -99,7 +98,6 @@ impl SyntaxKind {
                 | Self::ThematicBreak
                 | Self::PageBreak
                 | Self::LiteralBlock
-                | Self::SourceBlock
                 | Self::DelimitedBlock
                 | Self::CommentLine
                 | Self::BlankLine
@@ -120,7 +118,6 @@ impl SyntaxKind {
                 | Self::Heading
                 | Self::MalformedHeading
                 | Self::LiteralBlock
-                | Self::SourceBlock
                 | Self::DelimitedBlock
                 | Self::Unsupported
                 | Self::DocumentAttribute

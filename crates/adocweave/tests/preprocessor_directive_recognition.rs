@@ -112,7 +112,7 @@ fn strict_mode_still_refuses_syntax_this_version_cannot_read() {
         ..AnalysisOptions::default()
     };
     let error = Engine::new(options)
-        .analyze("= Note\n\n[source,rust,unknown]\n----\nfn main() {}\n----\n")
+        .analyze("= Note\n\n[.orphan]\n\nparagraph\n")
         .expect_err("strict analysis rejects unsupported syntax");
 
     assert!(matches!(error, ParseError::UnsupportedSyntax), "{error:?}");

@@ -1065,7 +1065,7 @@ fn source_block_lint_reports_missing_language() {
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(diagnostics[0].code.as_str(), "missing-source-language");
     assert_eq!(diagnostics[0].range.start().to_u32(), 0);
-    assert_eq!(diagnostics[0].range.end().to_u32(), 8);
+    assert_eq!(diagnostics[0].range.end().to_u32(), 9);
 }
 
 #[test]

@@ -226,20 +226,6 @@ pub struct BlockProblem {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SourceBlock {
-    pub metadata: BlockMetadata,
-    pub range: TextRange,
-    pub attribute_range: TextRange,
-    pub language_range: Option<TextRange>,
-    pub language: Option<String>,
-    pub delimiter_range: TextRange,
-    pub content_range: TextRange,
-    pub value: String,
-    pub callouts: Vec<CalloutMarker>,
-    pub(crate) problems: Vec<BlockProblem>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SourceInfo {
     pub attribute_range: TextRange,
     pub language_range: Option<TextRange>,
@@ -510,7 +496,6 @@ pub enum AstBlock {
     Paragraph(Paragraph),
     LiteralParagraph(LiteralParagraph),
     Break(BreakBlock),
-    Source(SourceBlock),
     Verbatim(VerbatimBlock),
     List(ListBlock),
     Math(MathBlock),

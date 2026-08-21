@@ -28,9 +28,7 @@ pub enum BlockTextRole {
 pub const fn block_text_role(block: &AstBlock) -> BlockTextRole {
     match block {
         AstBlock::Heading(_) | AstBlock::Paragraph(_) => BlockTextRole::Prose,
-        AstBlock::LiteralParagraph(_) | AstBlock::Source(_) | AstBlock::Verbatim(_) => {
-            BlockTextRole::Code
-        }
+        AstBlock::LiteralParagraph(_) | AstBlock::Verbatim(_) => BlockTextRole::Code,
         AstBlock::List(_) => BlockTextRole::Container,
         AstBlock::Break(_) | AstBlock::Math(_) | AstBlock::Unsupported(_) => {
             BlockTextRole::Excluded

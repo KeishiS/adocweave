@@ -6,7 +6,7 @@ use std::sync::Arc;
 use crate::attributes::parse_lines as parse_attribute_lines;
 use crate::block_grammar::{
     LineRecognition, is_block_title, parse_block_attributes, parse_explicit_anchor,
-    parse_math_attribute, parse_source_attribute, recognize_line, unsupported_reason,
+    parse_math_attribute, recognize_line, unsupported_reason,
 };
 use crate::block_model::*;
 use crate::block_sequence::{
@@ -365,46 +365,6 @@ fn recognize_source_or_math(
     line: SourceLine,
 ) -> Result<BlockRecognition<BlockCommit>, ParseFailure> {
     match recognition {
-        LineRecognition::Source => {
-            let (mut source_block, next_line) = parse_source_block(
-                context.source_document,
-                line_index,
-                context.source,
-                end_line,
-            )?;
-            source_block.metadata =
-                parse_block_attributes(content, line.content_range().start().to_usize())
-                    .unwrap_or_default();
-            let attribute_count = metadata_attribute_count(&source_block.metadata);
-            source_block.metadata.range = Some(line.full_range());
-            let syntax = crate::syntax_builder::source(&source_block);
-            let recovered = !source_block.problems.is_empty();
-            let commit =
-                BlockCommit::single(syntax, AstBlock::Source(source_block), attribute_count);
-            Ok(if recovered {
-                BlockRecognition::recovered(BlockConsumption::Through(next_line), commit)
-            } else {
-                BlockRecognition::matched(BlockConsumption::Through(next_line), commit)
-            })
-        }
-        LineRecognition::InvalidSource => Ok(BlockRecognition::recovered(
-            BlockConsumption::OneLine,
-            BlockCommit::single(
-                SyntaxNode::new(
-                    SyntaxKind::Unsupported,
-                    line.full_range(),
-                    vec![SyntaxNode::leaf(SyntaxKind::Unknown, line.full_range())],
-                ),
-                AstBlock::Unsupported(Unsupported {
-                    metadata: BlockMetadata::default(),
-                    range: line.full_range(),
-                    raw: content.to_owned(),
-                    reason: "invalid source block attribute".to_owned(),
-                    kind: UnsupportedKind::Syntax,
-                }),
-                0,
-            ),
-        )),
         LineRecognition::Math => {
             let (mut math, next_line) = parse_math_block(
                 context.source_document,
@@ -627,9 +587,7 @@ fn parse_block_sequence(
         );
         let recognized_block = if matches!(
             recognition,
-            LineRecognition::Source
-                | LineRecognition::InvalidSource
-                | LineRecognition::Math
+            LineRecognition::Math
                 | LineRecognition::Break
                 | LineRecognition::LiteralParagraph
                 | LineRecognition::PreprocessorDirective
@@ -641,10 +599,7 @@ fn parse_block_sequence(
                 nodes: 1,
                 attributes: 0,
             })?;
-            if matches!(
-                recognition,
-                LineRecognition::Source | LineRecognition::InvalidSource | LineRecognition::Math
-            ) {
+            if matches!(recognition, LineRecognition::Math) {
                 let recognition_context = DelimitedParseContext {
                     source_document,
                     source,
@@ -673,9 +628,8 @@ fn parse_block_sequence(
             budget,
         )? {
             match recognition {
-                LineRecognition::Source | LineRecognition::Math => parser.mark_content_seen(),
-                LineRecognition::InvalidSource
-                | LineRecognition::Break
+                LineRecognition::Math => parser.mark_content_seen(),
+                LineRecognition::Break
                 | LineRecognition::LiteralParagraph
                 | LineRecognition::PreprocessorDirective
                 | LineRecognition::Unsupported => parser.mark_body_content(),
@@ -1479,7 +1433,6 @@ fn parse_list_continuation(
     depth: ParseDepth,
 ) -> Result<Option<(Vec<AstBlock>, usize)>, ParseFailure> {
     let source_document = context.source_document;
-    let source = context.source;
     let config = context.config;
     if index >= end_line {
         return Ok(None);
@@ -1495,18 +1448,16 @@ fn parse_list_continuation(
     }
     state.budget.consume_block()?;
     state.budget.consume_node()?;
-    if parse_source_attribute(content).is_some()
-        && source_document
-            .lines()
-            .get(index + 1)
-            .and_then(|line| source_document.text(line.content_range()))
-            == Some("----")
-    {
-        let (mut block, end) = parse_source_block(source_document, index, source, end_line)?;
-        block.metadata = parse_block_attributes(content, line.content_range().start().to_usize())
-            .unwrap_or_default();
-        return Ok(Some((vec![AstBlock::Source(block)], end)));
-    }
+    // Block metadata lines (title, anchor, attribute list) attached to the item
+    // belong to the block they precede, as they do at the top level; a source
+    // attribute line is one of them.
+    let (metadata, index) = collect_continuation_metadata(context, index, end_line, state)?;
+    let Some(line) = source_document.lines().get(index).copied() else {
+        return Ok(None);
+    };
+    let content = source_document
+        .text(line.content_range())
+        .expect("valid continuation line");
     if let Some(spec) = crate::delimiter::spec(content) {
         let (block, nested_syntax, end) = parse_delimited_block(
             context,
@@ -1518,9 +1469,13 @@ fn parse_list_continuation(
                 block: depth.block + 1,
                 table: depth.table,
             },
-            None,
+            metadata.range.is_some().then_some(&metadata),
         )?;
         let _ = nested_syntax;
+        let mut block = block;
+        if metadata.range.is_some() {
+            block.metadata = metadata;
+        }
         return Ok(Some((vec![AstBlock::Delimited(block)], end)));
     }
     if crate::list_parser::marker(content).is_some() {
@@ -1528,7 +1483,7 @@ fn parse_list_continuation(
         return Ok(Some((lists.into_iter().map(AstBlock::List).collect(), end)));
     }
     let mut paragraph = Paragraph {
-        metadata: BlockMetadata::default(),
+        metadata,
         range: line.full_range(),
         content_range: line.content_range(),
         value: content.to_owned(),
@@ -1540,7 +1495,71 @@ fn parse_list_continuation(
     Ok(Some((vec![AstBlock::Paragraph(paragraph)], index + 1)))
 }
 
-fn scan_callout_markers(
+/// Reads the block metadata lines that start a list continuation and returns
+/// them with the index of the first line that is not metadata. Metadata that
+/// nothing follows (end of the item or a blank line) is not metadata at all:
+/// the caller then parses from the original line, so no text is lost.
+fn collect_continuation_metadata(
+    context: &DelimitedParseContext<'_>,
+    index: usize,
+    end_line: usize,
+    state: &mut ParseState<'_>,
+) -> Result<(BlockMetadata, usize), ParseFailure> {
+    let source_document = context.source_document;
+    let mut metadata = BlockMetadata::default();
+    let mut cursor = index;
+    while cursor < end_line {
+        let Some(line) = source_document.lines().get(cursor).copied() else {
+            break;
+        };
+        let content = source_document
+            .text(line.content_range())
+            .expect("valid continuation line");
+        if content.trim_matches([' ', '\t']).is_empty() {
+            break;
+        }
+        let start = line.content_range().start().to_usize();
+        if is_block_title(content) {
+            metadata.title = parse_block_title(content, start, context.config, state.budget)?;
+        } else if content.starts_with("[[")
+            && let Some(anchor) = parse_explicit_anchor(content, start, line.full_range())
+        {
+            metadata.id = Some(MetadataValue {
+                value: anchor.id,
+                range: anchor.id_range,
+            });
+        } else if let Some(parsed) = parse_block_attributes(content, start) {
+            if parsed.id.is_some() {
+                metadata.id = parsed.id;
+            }
+            metadata.roles.extend(parsed.roles);
+            metadata.options.extend(parsed.options);
+            metadata.attributes.extend(parsed.attributes);
+        } else {
+            break;
+        }
+        let full = line.full_range();
+        metadata.range = Some(match metadata.range {
+            Some(range) => TextRange::new(range.start(), full.end())?,
+            None => full,
+        });
+        cursor += 1;
+    }
+    let followed_by_block = cursor > index
+        && cursor < end_line
+        && source_document
+            .lines()
+            .get(cursor)
+            .and_then(|line| source_document.text(line.content_range()))
+            .is_some_and(|content| !content.trim_matches([' ', '\t']).is_empty());
+    if followed_by_block {
+        Ok((metadata, cursor))
+    } else {
+        Ok((BlockMetadata::default(), index))
+    }
+}
+
+pub(crate) fn scan_callout_markers(
     value: &str,
     range: TextRange,
 ) -> Result<Vec<CalloutMarker>, PositionError> {
@@ -1854,60 +1873,6 @@ fn parse_nested_blocks(
         blocks: sequence.blocks,
         syntax: sequence.syntax,
     })
-}
-
-fn parse_source_block(
-    source_document: &SourceDocument,
-    attribute_index: usize,
-    source: &str,
-    end_line: usize,
-) -> Result<(SourceBlock, usize), PositionError> {
-    let attribute = source_document.lines()[attribute_index];
-    let attribute_text = source_document
-        .text(attribute.content_range())
-        .expect("attribute range is valid");
-    let language_relative =
-        parse_source_attribute(attribute_text).expect("caller recognized source attribute");
-    let language_range = language_relative
-        .map(|(start, end)| {
-            text_range(
-                attribute.content_range().start().to_usize() + start,
-                attribute.content_range().start().to_usize() + end,
-            )
-        })
-        .transpose()?;
-    let language = language_relative.map(|(start, end)| attribute_text[start..end].to_owned());
-    let delimiter_index = attribute_index + 1;
-    let delimiter = source_document.lines()[delimiter_index];
-    let mut body =
-        crate::delimiter::body(source_document, delimiter_index, "----", source, end_line)?;
-    if language.is_none() {
-        body.problems.push(BlockProblem {
-            kind: BlockProblemKind::MissingSourceLanguage,
-            range: attribute.content_range(),
-        });
-    }
-    let value = source
-        .get(body.content_range.start().to_usize()..body.content_range.end().to_usize())
-        .expect("source block content range is valid")
-        .to_owned();
-    let callouts = scan_callout_markers(&value, body.content_range)?;
-
-    Ok((
-        SourceBlock {
-            metadata: BlockMetadata::default(),
-            range: TextRange::new(attribute.full_range().start(), body.range_end)?,
-            attribute_range: attribute.content_range(),
-            language_range,
-            language,
-            delimiter_range: delimiter.content_range(),
-            content_range: body.content_range,
-            value,
-            callouts,
-            problems: body.problems,
-        },
-        body.next_line,
-    ))
 }
 
 fn parse_heading(

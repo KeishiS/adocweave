@@ -852,11 +852,12 @@ fn source_block_handles_missing_language_empty_and_unclosed() {
 fn unsupported_source_options_are_not_misinterpreted() {
     let parsed = parse("[source,rust,unknown]\n----\ncode\n----\n").expect("lossless recovery");
 
-    assert!(matches!(parsed.ast.blocks()[0], AstBlock::Unsupported(_)));
+    // The block stays a source block with its language; only the unknown
+    // option is reported.
     assert!(matches!(
-        parsed.ast.blocks()[1],
+        parsed.ast.blocks()[0],
         AstBlock::Verbatim(ref block)
-            if matches!(block.kind, VerbatimKind::Listing)
+            if matches!(&block.kind, VerbatimKind::Source(source) if source.language.as_deref() == Some("rust"))
     ));
     assert!(parsed.syntax.issues().iter().any(|issue| {
         issue.class == crate::syntax::SyntaxIssueClass::InvalidAttribute
@@ -1847,10 +1848,7 @@ fn asciidoc_cell_context_policy_covers_every_block_variant() {
         ("* item\n", Expected::List),
         ("[stem]\n++++\nx\n++++\n", Expected::Math),
         ("====\ninside\n====\n", Expected::Delimited),
-        (
-            "[source,rust,extra]\n----\ninside\n----\n",
-            Expected::Unsupported,
-        ),
+        ("[.orphan]\n\n", Expected::Unsupported),
     ];
     for (cell_source, expected) in cases {
         let source = format!("[cols=a]\n|===\n|{cell_source}|===\n");

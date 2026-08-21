@@ -351,26 +351,6 @@ fn normalize_verbatim_block(
     checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
 ) -> Result<AstBlock, LoweringFailure> {
     let block = match block {
-        AstBlock::Source(mut source) => {
-            let info = source_info(
-                source.attribute_range,
-                source.language_range,
-                source.language,
-                &source.metadata,
-                &mut source.problems,
-                checkpoint,
-            )?;
-            AstBlock::Verbatim(crate::block_model::VerbatimBlock {
-                metadata: source.metadata,
-                kind: crate::block_model::VerbatimKind::Source(info),
-                range: source.range,
-                delimiter_range: source.delimiter_range,
-                content_range: source.content_range,
-                value: source.value,
-                callouts: source.callouts,
-                problems: source.problems,
-            })
-        }
         AstBlock::Delimited(mut block) => {
             match &mut block.content {
                 crate::block_model::DelimitedContent::Compound(children) => {
@@ -403,6 +383,53 @@ fn normalize_verbatim_block(
                 }
                 crate::block_model::DelimitedContent::Verbatim(_)
                 | crate::block_model::DelimitedContent::Passthrough(_) => {}
+            }
+            // A listing block styled `source`, or written `[,lang]`, is a source
+            // block wherever among the metadata lines the attribute sits: the
+            // merged metadata decides, not the line order.
+            if block.kind == crate::block_model::DelimitedBlockKind::Listing
+                && matches!(
+                    block.content,
+                    crate::block_model::DelimitedContent::Verbatim(_)
+                )
+                && let Some(language_attribute) = source_style(&block.metadata)
+            {
+                let attribute_range = block
+                    .metadata
+                    .range
+                    .unwrap_or(block.opening_delimiter_range);
+                let language = language_attribute
+                    .map(|attribute| attribute.value.trim().to_owned())
+                    .filter(|language| !language.is_empty());
+                if language.is_none() {
+                    block.problems.push(crate::block_model::BlockProblem {
+                        kind: crate::block_model::BlockProblemKind::MissingSourceLanguage,
+                        range: attribute_range,
+                    });
+                }
+                let info = source_info(
+                    attribute_range,
+                    language_attribute.map(|attribute| attribute.range),
+                    language,
+                    &block.metadata,
+                    &mut block.problems,
+                    checkpoint,
+                )?;
+                let crate::block_model::DelimitedContent::Verbatim(value) = block.content else {
+                    unreachable!("guarded above");
+                };
+                let callouts = crate::parser::scan_callout_markers(&value, block.content_range)
+                    .unwrap_or_default();
+                return Ok(AstBlock::Verbatim(crate::block_model::VerbatimBlock {
+                    metadata: block.metadata,
+                    kind: crate::block_model::VerbatimKind::Source(info),
+                    range: block.range,
+                    delimiter_range: block.opening_delimiter_range,
+                    content_range: block.content_range,
+                    value,
+                    callouts,
+                    problems: block.problems,
+                }));
             }
             let implicit_listing = block.kind == crate::block_model::DelimitedBlockKind::Listing
                 && !block
@@ -486,6 +513,25 @@ fn normalize_verbatim_block(
         other => other,
     };
     Ok(block)
+}
+
+/// The language attribute of a block whose first positional attribute makes it a
+/// source block: `[source,lang]`, `[source]`, or the `[,lang]` shorthand. `None`
+/// when the block is not styled as source.
+fn source_style(
+    metadata: &crate::block_model::BlockMetadata,
+) -> Option<Option<&crate::block_model::ElementAttribute>> {
+    let mut positional = metadata
+        .attributes
+        .iter()
+        .filter(|attribute| attribute.name.is_none());
+    let style = positional.next()?;
+    let language = positional.next();
+    if style.value == "source" || (style.value.is_empty() && language.is_some()) {
+        Some(language)
+    } else {
+        None
+    }
 }
 
 fn source_info(

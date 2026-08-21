@@ -1,8 +1,8 @@
 //! Builds lossless syntax nodes from recognized semantic facts.
 
 use crate::block_model::{
-    BlockProblemKind, DelimitedBlock, DelimitedBlockKind, Heading, ListBlock, ListItem, MathBlock,
-    MathProblemKind, Paragraph, SourceBlock,
+    DelimitedBlock, DelimitedBlockKind, Heading, ListBlock, ListItem, MathBlock, MathProblemKind,
+    Paragraph,
 };
 use crate::inline_model::Inline;
 use crate::source::TextRange;
@@ -22,23 +22,6 @@ pub(crate) fn paragraph(paragraph: &Paragraph) -> SyntaxNode {
         SyntaxKind::Paragraph,
         paragraph.range,
         inlines(&paragraph.inlines),
-    )
-}
-
-pub(crate) fn source(source: &SourceBlock) -> SyntaxNode {
-    SyntaxNode::new(
-        SyntaxKind::SourceBlock,
-        source.range,
-        vec![
-            SyntaxNode::leaf(SyntaxKind::BlockAttribute, source.attribute_range),
-            delimiter(
-                source.delimiter_range,
-                source
-                    .problems
-                    .iter()
-                    .any(|problem| problem.kind == BlockProblemKind::UnclosedBlock),
-            ),
-        ],
     )
 }
 

@@ -286,13 +286,12 @@
       "stableContract": {
         "projectionAssertions": [
           {
-            "pointer": "/sourceBlocks",
-            "value": []
+            "pointer": "/sourceBlocks/0/language",
+            "value": "rust"
           }
         ],
         "htmlContains": [
-          "<p>[source,rust,options=unknown]</p>",
-          "<pre>unsupported();"
+          "<pre><code class=\"language-rust\">unsupported();"
         ],
         "diagnosticCodes": [
           "invalid-attribute"

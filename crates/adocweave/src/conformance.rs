@@ -282,16 +282,6 @@ fn block_node(block: &AstBlock) -> CanonicalNode {
             value: None,
             children: Vec::new(),
         },
-        AstBlock::Source(node) => CanonicalNode {
-            kind: "source-block",
-            range: range(node.range),
-            value: Some(format!(
-                "{}:{}",
-                node.language.as_deref().unwrap_or(""),
-                node.value
-            )),
-            children: Vec::new(),
-        },
         AstBlock::Verbatim(node) => CanonicalNode {
             kind: match node.kind {
                 crate::block_model::VerbatimKind::Listing => "listing-block",

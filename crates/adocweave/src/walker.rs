@@ -200,7 +200,6 @@ pub(crate) fn walk_inline_sequences_mut_cancellable(
                 },
                 AstBlock::LiteralParagraph(_)
                 | AstBlock::Break(_)
-                | AstBlock::Source(_)
                 | AstBlock::Verbatim(_)
                 | AstBlock::Math(_)
                 | AstBlock::Unsupported(_) => {}
@@ -300,7 +299,6 @@ fn walk_semantic_mut_cancellable(
             },
             AstBlock::LiteralParagraph(_)
             | AstBlock::Break(_)
-            | AstBlock::Source(_)
             | AstBlock::Verbatim(_)
             | AstBlock::Math(_)
             | AstBlock::Unsupported(_) => {}
@@ -359,7 +357,6 @@ pub(crate) fn try_visit_children<'document, Break>(
                 },
                 AstBlock::LiteralParagraph(_)
                 | AstBlock::Break(_)
-                | AstBlock::Source(_)
                 | AstBlock::Verbatim(_)
                 | AstBlock::Math(_)
                 | AstBlock::Unsupported(_) => {}
@@ -489,7 +486,6 @@ mod tests {
                     AstBlock::Paragraph(_) => "block-paragraph",
                     AstBlock::LiteralParagraph(_) => "block-literal-paragraph",
                     AstBlock::Break(_) => "block-break",
-                    AstBlock::Source(_) => "block-source",
                     AstBlock::Verbatim(_) => "block-verbatim",
                     AstBlock::List(_) => "block-list",
                     AstBlock::Math(_) => "block-math",
@@ -995,9 +991,6 @@ mod tests {
                         assert!(value.inline_problems.is_empty());
                     }
                     AstBlock::Paragraph(value) => assert!(value.inline_problems.is_empty()),
-                    AstBlock::Source(_) => {
-                        panic!("parser-only source blocks must not reach the semantic document")
-                    }
                     AstBlock::Verbatim(value) => assert!(value.problems.is_empty()),
                     AstBlock::Math(value) => assert!(value.problems.is_empty()),
                     AstBlock::Delimited(value) => assert!(value.problems.is_empty()),

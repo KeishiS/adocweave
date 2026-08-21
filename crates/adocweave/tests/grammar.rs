@@ -232,21 +232,25 @@ fn substitutions_cover_every_supported_semantic_context() {
     assert!(!html.contains("<unsafe>"));
 }
 
+/// A source attribute line is an ordinary attribute list: a stray bracket in
+/// the language stays in the language text, and the HTML class is sanitized.
 #[test]
-fn grammar_rejects_invalid_source_language_syntax() {
+fn grammar_reads_a_source_attribute_line_as_block_metadata() {
     let parsed = parse("[source, rust]extra]\n----\ncode\n----\n");
 
-    assert!(
-        parsed
-            .document()
-            .blocks()
-            .iter()
-            .all(|block| !matches!(block, Block::Source(_)))
-    );
     assert!(matches!(
         parsed.document().blocks().first(),
-        Some(Block::Unsupported(_))
+        Some(Block::Verbatim(block)) if matches!(&block.kind, VerbatimKind::Source(source) if source.language.as_deref() == Some("rust]extra"))
     ));
+    let html = adocweave::output::html::render(
+        parsed.document(),
+        &adocweave::output::html::RenderPolicy::default(),
+    )
+    .html;
+    assert!(
+        html.contains("<code class=\"language-rust-extra\">"),
+        "{html}"
+    );
 }
 
 #[test]
@@ -263,13 +267,10 @@ fn grammar_source_attribute_requires_an_adjacent_column_zero_delimiter() {
     );
     let parsed = parse(source);
 
-    assert!(
-        parsed
-            .document()
-            .blocks()
-            .iter()
-            .all(|block| !matches!(block, Block::Source(_)))
-    );
+    assert!(parsed.document().blocks().iter().all(|block| !matches!(
+        block,
+        Block::Verbatim(verbatim) if matches!(verbatim.kind, VerbatimKind::Source(_))
+    )));
     assert_eq!(
         parsed
             .syntax()
