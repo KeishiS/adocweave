@@ -180,9 +180,13 @@ pub(crate) fn parse_explicit_anchor(
     })
 }
 
+/// `.Title` is a block title. A second leading dot (`..github`) makes a title
+/// that itself starts with a dot, as the language reads it; `...` and `.. ` do
+/// not, so a literal block delimiter and a stray ellipsis stay what they are.
 pub(crate) fn is_block_title(content: &str) -> bool {
     content
         .strip_prefix('.')
+        .map(|value| value.strip_prefix('.').unwrap_or(value))
         .is_some_and(|value| !value.is_empty() && !value.starts_with([' ', '\t', '.']))
 }
 
