@@ -3,8 +3,10 @@ import { test } from "node:test";
 
 import {
   validateNoDirectSecretAccess,
+  validatePinnedActions,
   validateProductReleaseRouting,
-  validateTextlintReleaseGates,
+  validateStandardSourceAndCandidateGates,
+  validateWritePermissionGrants,
 } from "./release-workflow-policy.mjs";
 
 const CACHE_STEP = { uses: "cachix/cachix-action@sha", with: { authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}" } };
@@ -13,6 +15,36 @@ const CACHE_SOURCE = "authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}\n";
 function policyInput(name, document, source) {
   return { sources: { [name]: source }, workflows: { [name]: document } };
 }
+
+test("外部actionはcommit SHAへ固定する", () => {
+  validatePinnedActions({
+    "release.yml": {
+      jobs: { source: { steps: [{ uses: "actions/checkout@0000000000000000000000000000000000000000" }] } },
+    },
+  });
+  assert.throws(
+    () => validatePinnedActions({
+      "release.yml": { jobs: { source: { steps: [{ uses: "actions/checkout@v7" }] } } },
+    }),
+    /not pinned to a full commit SHA/,
+  );
+});
+
+test("publication以外は明示したread権限だけを持つ", () => {
+  validateWritePermissionGrants({
+    "release.yml": { permissions: { actions: "read", contents: "read" }, jobs: { source: {} } },
+  });
+  assert.throws(
+    () => validateWritePermissionGrants({
+      "release.yml": { permissions: { contents: "read" }, jobs: { source: { permissions: { contents: "write" } } } },
+    }),
+    /write permissions are reserved for publication/,
+  );
+  assert.throws(
+    () => validateWritePermissionGrants({ "release.yml": { jobs: { source: {} } } }),
+    /must declare explicit top-level permissions/,
+  );
+});
 
 test("the binary cache job may read the Cachix write token", () => {
   const { sources, workflows } = policyInput(
@@ -170,53 +202,112 @@ test("product release routing rejects a generic candidate artifact", () => {
   );
 });
 
-test("textlintのPR検査を完成archiveと固定consumerの各1回に限定する", () => {
-  const workflows = {
-    "release.yml": {
-      jobs: {
-        "build-global": {
-          steps: [{
-            name: "Product candidate build and runtime verification",
-            run: "case \"$PRODUCT\" in\n  textlint) task=verify-textlint-plugin-release-package ;;\nesac",
-          }],
-        },
-        "global-installation-e2e": {
-          steps: [{
-            name: "Global installation and complete removal",
-            run: "for product in browser vscode zed; do verify $product; done",
-          }],
-        },
+function sourceAndCandidateWorkflow() {
+  return {
+    on: { pull_request: {}, push: { branches: ["main"] } },
+    jobs: {
+      source: {
+        name: "verify",
+        steps: [{ run: "nix develop .#ci -c cargo make source-gate" }],
+      },
+      "main-gate": {
+        if: "github.event_name == 'push' && github.ref == 'refs/heads/main'",
+        needs: ["source"],
+        steps: [{ run: "nix develop .#ci -c cargo make main-gate" }],
+      },
+      "candidate-plan": {
+        needs: ["source", "main-gate"],
+        steps: [{ run: "node tools/product-candidate-plan.mjs $GITHUB_OUTPUT" }],
+      },
+      "build-native": {
+        needs: ["candidate-plan"],
+        steps: [{ run: "dist build" }],
+      },
+      "native-smoke": {
+        needs: ["build-native"],
+        steps: [{ run: "node tools/native-release-smoke.mjs" }],
+      },
+      "build-global": {
+        needs: ["candidate-plan"],
+        steps: [{ run: "cargo make global-candidate" }],
+      },
+      "installation-e2e": {
+        needs: ["native-smoke"],
+        steps: [{ run: "node tools/release-installation-e2e.mjs" }],
+      },
+      "verify-candidate": {
+        needs: ["installation-e2e", "build-global"],
+        steps: [{ run: "node tools/product-release.mjs --verify-candidate" }],
       },
     },
   };
-  const makefile = `
-[tasks.package-textlint-plugin-release]
-command = "bash"
-[tasks.verify-textlint-plugin-release-package]
-dependencies = ["package-textlint-plugin-release"]
-script = 'node tools/verify-textlint-plugin-package.mjs archive.tgz'
-[tasks.textlint-plugin-release-consumer-e2e]
-dependencies = ["verify-textlint-plugin-release-package"]
-[tasks.release-global-artifacts]
-dependencies = ["verify-textlint-plugin-release-package"]
-[tasks.release-global-candidate]
-dependencies = ["release-global-artifacts", "textlint-plugin-release-consumer-e2e"]
-[tasks.release-installation-e2e-host]
-dependencies = ["native-release-smoke-host", "package-browser-release"]
-`;
-  validateTextlintReleaseGates(workflows, makefile);
+}
 
-  const brokenBuild = structuredClone(workflows);
-  brokenBuild["release.yml"].jobs["build-global"].steps[0].run =
-    "textlint) task=test-textlint-plugin-release-package ;;";
-  assert.throws(
-    () => validateTextlintReleaseGates(brokenBuild, makefile),
-    /must call the completed archive verifier task/,
+function validateSourceAndCandidateWorkflow(release = sourceAndCandidateWorkflow()) {
+  validateStandardSourceAndCandidateGates(
+    { "release.yml": release },
+    { "release.yml": JSON.stringify(release) },
   );
+}
 
-  workflows["release.yml"].jobs["textlint-plugin-installation-e2e"] = {};
+test("Pull Requestはpath条件なしで標準source gateを1回だけ直接実行する", () => {
+  validateSourceAndCandidateWorkflow();
+
+  for (const mutate of [
+    (workflow) => { workflow.jobs.source.name = "source"; },
+    (workflow) => { workflow.jobs.source.if = "github.event_name == 'pull_request'"; },
+    (workflow) => { workflow.jobs.source.uses = "./.github/workflows/quality.yml"; },
+    (workflow) => { workflow.jobs["main-gate"].steps.push({ run: "cargo make source-gate" }); },
+  ]) {
+    const workflow = sourceAndCandidateWorkflow();
+    mutate(workflow);
+    assert.throws(() => validateSourceAndCandidateWorkflow(workflow), /source|必須check/);
+  }
+});
+
+test("削除したpath分類と手動aggregateをworkflowへ戻さない", () => {
+  const mutations = [
+    ["native-change-plan", (workflow) => { workflow.jobs.source.steps.push({ run: "node tools/native-change-plan.mjs" }); }],
+    ["git diff", (workflow) => { workflow.jobs.source.steps.push({ run: "git diff --name-only HEAD^" }); }],
+    ["candidate_required", (workflow) => { workflow.jobs.source.env = { candidate_required: "true" }; }],
+    ["quality input", (workflow) => { workflow.jobs.source.with = { run_rust_source: true }; }],
+    ["not reachable", (workflow) => { workflow.jobs.source.steps.push({ run: "echo not reachable" }); }],
+    ["always aggregate", (workflow) => { workflow.jobs.source.if = "always()"; }],
+    ["PR candidate", (workflow) => { workflow.jobs["candidate-plan"].strategy = { matrix: { product: ["pr"], artifact_key: ["local"] } }; }],
+  ];
+  for (const [name, mutate] of mutations) {
+    const workflow = sourceAndCandidateWorkflow();
+    mutate(workflow);
+    assert.throws(
+      () => validateSourceAndCandidateWorkflow(workflow),
+      undefined,
+      `${name}を拒否しませんでした`,
+    );
+  }
+
+  const workflow = sourceAndCandidateWorkflow();
+  workflow.jobs["merge-gate"] = { if: "success()", steps: [{ run: "true" }] };
+  assert.throws(() => validateSourceAndCandidateWorkflow(workflow), /削除済みjob merge-gate/);
+});
+
+test("main candidate planはsourceとmain gateの成功後に製品計画を1回だけ生成する", () => {
+  for (const mutate of [
+    (workflow) => { workflow.jobs["candidate-plan"].needs = ["main-gate"]; },
+    (workflow) => { workflow.jobs["candidate-plan"].steps = [{ run: "node custom-plan.mjs" }]; },
+    (workflow) => { workflow.jobs["candidate-plan"].steps.push({ run: "node tools/product-candidate-plan.mjs" }); },
+    (workflow) => { delete workflow.jobs["main-gate"].if; },
+  ]) {
+    const workflow = sourceAndCandidateWorkflow();
+    mutate(workflow);
+    assert.throws(() => validateSourceAndCandidateWorkflow(workflow), /candidate-plan|main-gate/);
+  }
+});
+
+test("成果物のbuild、smoke、installationおよびcandidate処理をmainへ限定する", () => {
+  const workflow = sourceAndCandidateWorkflow();
+  workflow.jobs["build-native"].needs = ["source"];
   assert.throws(
-    () => validateTextlintReleaseGates(workflows, makefile),
-    /must not duplicate the fixed textlint consumer E2E/,
+    () => validateSourceAndCandidateWorkflow(workflow),
+    /成果物job build-nativeはmain candidate経路/,
   );
 });
