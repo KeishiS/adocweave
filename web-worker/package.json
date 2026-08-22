@@ -12,7 +12,7 @@
   "types": "./worker/index.d.mts",
   "files": ["worker", "wasm", "example", "README.adoc", "LICENSE-*", "THIRD_PARTY_NOTICES.adoc"],
   "scripts": {
-    "test": "node --test controller.test.mjs release-manifest.test.mjs package-api.test.mjs",
+    "test": "node --test worker.test.mjs release-manifest.test.mjs package-api.test.mjs",
     "test:cross-runtime": "node --test cross-runtime.test.mjs"
   }
 }

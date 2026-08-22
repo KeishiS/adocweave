@@ -7,14 +7,73 @@ import {
   AdocWeaveClientError,
   BROWSER_PACKAGE_VERSION,
   PROTOCOL_SCHEMA_VERSION,
-  analyzeOnce,
   defaultAssetUrls,
   isAdocWeaveClientLifecycleError,
 } from "./index.mjs";
-import { WORKER_PROTOCOL_VERSION } from "./contracts.mjs";
-import { PROTOCOL_SCHEMA_VERSION as GENERATED_PROTOCOL_SCHEMA_VERSION } from "./worker-protocol.mjs";
+import { WORKER_PROTOCOL_VERSION } from "./worker-protocol.mjs";
 
-test("public entry owns worker and WASM asset resolution", () => {
+class FakeWorker {
+  static created = [];
+  listeners = new Map();
+  removed = [];
+  messages = [];
+  terminated = false;
+  autoReady = true;
+
+  constructor() { FakeWorker.created.push(this); }
+  addEventListener(type, listener) {
+    if (!this.listeners.has(type)) this.listeners.set(type, new Set());
+    this.listeners.get(type).add(listener);
+  }
+  removeEventListener(type, listener) {
+    this.removed.push([type, listener]);
+    this.listeners.get(type)?.delete(listener);
+  }
+  postMessage(message) {
+    this.messages.push(message);
+    if (message.type === "init" && this.autoReady) {
+      queueMicrotask(() => this.publish({
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        type: "ready",
+      }));
+    }
+  }
+  terminate() { this.terminated = true; }
+  publish(data) {
+    for (const listener of this.listeners.get("message") ?? []) listener({ data });
+  }
+  fail(message = "worker failed") {
+    for (const listener of this.listeners.get("error") ?? []) listener({ message });
+  }
+}
+
+function client(Worker = FakeWorker) {
+  return new AdocWeaveClient({
+    workerUrl: "worker.mjs", moduleUrl: "wasm.js", wasmUrl: "wasm.wasm", Worker,
+  });
+}
+
+function result(requestId, value = { html: "ok" }) {
+  return { protocolVersion: WORKER_PROTOCOL_VERSION, type: "result", requestId, result: value };
+}
+
+function error(requestId, code = "invalid-request") {
+  return {
+    protocolVersion: WORKER_PROTOCOL_VERSION,
+    type: "error",
+    requestId,
+    error: { code, message: code },
+  };
+}
+
+async function dispatched(worker) {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  return worker.messages.findLast((message) => message.type === "analyze");
+}
+
+test.beforeEach(() => { FakeWorker.created = []; });
+
+test("public entry resolves assets without eager work", () => {
   for (const base of [
     "https://example.test/pkg/worker/index.mjs",
     "https://example.test/assets/adocweave/worker/index.mjs?hash=vite",
@@ -26,764 +85,276 @@ test("public entry owns worker and WASM asset resolution", () => {
     assert.equal(urls.moduleUrl.href, new URL("wasm/adocweave_wasm.js", root).href);
     assert.equal(urls.wasmUrl.href, new URL("wasm/adocweave_wasm_bg.wasm", root).href);
   }
-  assert.equal(typeof AdocWeaveClient, "function");
+  assert.equal(FakeWorker.created.length, 0);
   assert.match(BROWSER_PACKAGE_VERSION, /^\d+\.\d+\.\d+(?:-rc\.[1-9]\d*)?$/);
+  assert.ok(Number.isSafeInteger(PROTOCOL_SCHEMA_VERSION));
 });
 
-test("public entry exposes the generated protocol schema version", () => {
-  assert.equal(PROTOCOL_SCHEMA_VERSION, GENERATED_PROTOCOL_SCHEMA_VERSION);
-  assert.ok(Number.isSafeInteger(PROTOCOL_SCHEMA_VERSION) && PROTOCOL_SCHEMA_VERSION > 0);
-});
-
-test("package metadata exposes only the typed public entry", async () => {
-  const pkg = JSON.parse(await readFile(new URL("./package.json", import.meta.url)));
-  assert.equal(pkg.name, "@adocweave/browser");
-  assert.equal(pkg.version, BROWSER_PACKAGE_VERSION);
-  assert.deepEqual(pkg.exports["."], {
-    types: "./worker/index.d.mts",
-    import: "./worker/index.mjs",
-  });
-});
-
-test("fallback mode recreates workers and never publishes stale results", async () => {
-  const workers = [];
-  class FakeWorker {
-    listeners = new Map();
-    terminated = false;
-    constructor() { workers.push(this); }
-    addEventListener(type, callback) { this.listeners.set(type, callback); }
-    postMessage(message) {
-      if (message.type === "initialize") {
-        queueMicrotask(() => this.listeners.get("message")?.({
-          data: { protocolVersion: WORKER_PROTOCOL_VERSION, type: "ready" },
-        }));
-      }
-      this.lastMessage = message;
-    }
-    terminate() { this.terminated = true; }
-    publish(data) { this.listeners.get("message")?.({ data }); }
+test("client exposes only analyze and dispose operations", async () => {
+  assert.deepEqual(Object.getOwnPropertyNames(AdocWeaveClient.prototype).sort(), [
+    "analyze", "constructor", "dispose",
+  ]);
+  const exports = await import("./index.mjs");
+  for (const removed of ["AdocWeaveWorkerClient", "analyzeOnce", "PACKAGE_VERSION"]) {
+    assert.equal(Object.hasOwn(exports, removed), false, removed);
   }
-  const results = [];
-  const client = new AdocWeaveClient({
-    workerUrl: "worker.mjs", moduleUrl: "wasm.js", wasmUrl: "wasm.wasm",
-    Worker: FakeWorker, sharedCancellation: false,
-    onResult: (result) => results.push(result),
+});
+
+test("analyze sends one requestId and responsibility-specific defaults", async () => {
+  const instance = client();
+  const analysis = instance.analyze({
+    source: "include::part.adoc[]",
+    preprocess: { resources: { "part.adoc": { sourceId: "part.adoc", source: "text" } } },
   });
-  client.update({ version: 1, source: "old" });
-  const oldWorker = workers.at(-1);
-  client.update({ version: 2, source: "new" });
-  const currentWorker = workers.at(-1);
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  const worker = FakeWorker.created[0];
+  const message = await dispatched(worker);
+  assert.deepEqual(Object.keys(worker.messages[0]).sort(), [
+    "moduleUrl", "protocolVersion", "type", "wasmUrl",
+  ]);
+  assert.deepEqual(Object.keys(message).sort(), [
+    "payload", "protocolVersion", "requestId", "type",
+  ]);
+  assert.equal(message.requestId, 1);
+  for (const removed of ["packageVersion", "version", "generation"]) {
+    assert.equal(Object.hasOwn(message.payload, removed), false, removed);
+  }
+  assert.deepEqual(message.payload.analysisOptions, {});
+  assert.deepEqual(message.payload.renderPolicy, {});
+  assert.deepEqual(message.payload.outputLimits, {});
+  worker.publish(result(1, { html: "done" }));
+  assert.deepEqual(await analysis, { html: "done" });
+  instance.dispose();
+});
+
+test("a second analysis is rejected without disturbing the active request", async () => {
+  const instance = client();
+  const first = instance.analyze({ source: "first" });
+  await assert.rejects(
+    instance.analyze({ source: "second" }),
+    errorWithCode("analysis-in-progress"),
+  );
+  const worker = FakeWorker.created[0];
+  const message = await dispatched(worker);
+  worker.publish(result(message.requestId));
+  await first;
+  assert.equal(worker.terminated, false);
+  instance.dispose();
+});
+
+test("a pre-aborted signal rejects with AbortError without creating a worker", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  const instance = client();
+  await assert.rejects(
+    instance.analyze({ source: "text" }, { signal: controller.signal }),
+    isAbortError,
+  );
+  assert.equal(FakeWorker.created.length, 0);
+  instance.dispose();
+});
+
+test("Abort during initialization settles and permits a fresh worker", async () => {
+  class SlowWorker extends FakeWorker { autoReady = false; }
+  const controller = new AbortController();
+  const instance = client(SlowWorker);
+  const aborted = instance.analyze({ source: "first" }, { signal: controller.signal });
+  const oldWorker = FakeWorker.created[0];
+  controller.abort();
+  await assert.rejects(aborted, isAbortError);
   assert.equal(oldWorker.terminated, true);
-  oldWorker.publish(responseEnvelope(1, 1, BROWSER_PACKAGE_VERSION, "old"));
-  currentWorker.publish(responseEnvelope(2, 2, BROWSER_PACKAGE_VERSION, "new"));
-  assert.equal(results.length, 1);
-  assert.equal(results[0].html, "new");
-  assert.equal(results[0].sourceVersion, 2);
-  client.dispose();
+  assert.equal(oldWorker.removed.length, 3);
+
+  const next = instance.analyze({ source: "next" });
+  const newWorker = FakeWorker.created[1];
+  newWorker.publish({ protocolVersion: WORKER_PROTOCOL_VERSION, type: "ready" });
+  const message = await dispatched(newWorker);
+  newWorker.publish(result(message.requestId, { html: "fresh" }));
+  assert.deepEqual(await next, { html: "fresh" });
+  instance.dispose();
 });
 
-test("ready and analyze provide a one-shot Promise over the callback controller", async () => {
-  const workers = [];
-  const callbackResults = [];
-  class FakeWorker {
-    listeners = new Map();
-    constructor() { workers.push(this); }
-    addEventListener(type, callback) { this.listeners.set(type, callback); }
-    postMessage(message) {
-      if (message.type === "initialize") {
-        queueMicrotask(() => this.publish({
-          protocolVersion: WORKER_PROTOCOL_VERSION,
-          type: "ready",
-        }));
-      } else {
-        queueMicrotask(() => this.publish(
-          responseEnvelope(message.version, message.generation, BROWSER_PACKAGE_VERSION, "one-shot"),
-        ));
-      }
-    }
-    terminate() {}
-    publish(data) { this.listeners.get("message")?.({ data }); }
-  }
-  const client = new AdocWeaveClient({
-    workerUrl: "worker.mjs", moduleUrl: "wasm.js", wasmUrl: "wasm.wasm",
-    Worker: FakeWorker, sharedCancellation: false,
-    onResult: (result) => callbackResults.push(result),
-  });
+test("Abort during execution removes its listener and starts fresh next time", async () => {
+  const controller = new AbortController();
+  let added = 0;
+  let removed = 0;
+  const originalAdd = controller.signal.addEventListener.bind(controller.signal);
+  const originalRemove = controller.signal.removeEventListener.bind(controller.signal);
+  controller.signal.addEventListener = (...args) => { ++added; return originalAdd(...args); };
+  controller.signal.removeEventListener = (...args) => { ++removed; return originalRemove(...args); };
 
-  assert.equal(workers.length, 0);
-  await client.ready;
-  assert.equal(workers.length, 1);
-  const result = await client.analyze({ version: 1, source: "text" });
-  assert.equal(result.html, "one-shot");
-  assert.equal(result.sourceVersion, 1);
-  assert.equal(Object.hasOwn(result, "version"), false);
-  assert.equal(Object.hasOwn(result, "result"), false);
-  assert.equal(callbackResults[0], result);
-  client.dispose();
+  const instance = client();
+  const analysis = instance.analyze({ source: "first" }, { signal: controller.signal });
+  const oldWorker = FakeWorker.created[0];
+  await dispatched(oldWorker);
+  controller.abort();
+  await assert.rejects(analysis, isAbortError);
+  assert.equal(oldWorker.terminated, true);
+  assert.equal(added, 1);
+  assert.equal(removed, 1);
+
+  const next = instance.analyze({ source: "next" });
+  const newWorker = FakeWorker.created[1];
+  const message = await dispatched(newWorker);
+  newWorker.publish(result(message.requestId));
+  await next;
+  instance.dispose();
 });
 
-test("one-shot Promise rejects supersede, cancel, and dispose with stable codes", async () => {
-  class FakeWorker {
-    listeners = new Map();
-    addEventListener(type, callback) { this.listeners.set(type, callback); }
-    postMessage(message) {
-      if (message.type === "initialize") {
-        queueMicrotask(() => this.listeners.get("message")?.({
-          data: { protocolVersion: WORKER_PROTOCOL_VERSION, type: "ready" },
-        }));
-      }
-    }
-    terminate() {}
-  }
-  const client = new AdocWeaveClient({
-    workerUrl: "worker.mjs", moduleUrl: "wasm.js", wasmUrl: "wasm.wasm",
-    Worker: FakeWorker, sharedCancellation: true,
-  });
+test("ordinary WASM errors settle the Promise and reuse the worker", async () => {
+  const instance = client();
+  const first = instance.analyze({ source: "bad" });
+  const worker = FakeWorker.created[0];
+  const firstMessage = await dispatched(worker);
+  worker.publish(error(firstMessage.requestId));
+  await assert.rejects(first, errorWithCode("invalid-request"));
+  assert.equal(worker.terminated, false);
 
-  const first = client.analyze({ version: 1, source: "first" });
-  const firstRejected = assert.rejects(first, errorWithCode("superseded"));
-  const second = client.analyze({ version: 2, source: "second" });
-  await firstRejected;
-  const secondRejected = assert.rejects(second, errorWithCode("cancelled"));
-  client.cancel();
-  await secondRejected;
-  const third = client.analyze({ version: 3, source: "third" });
-  const thirdRejected = assert.rejects(third, errorWithCode("disposed"));
-  client.dispose();
-  await thirdRejected;
+  const second = instance.analyze({ source: "good" });
+  const secondMessage = await dispatched(worker);
+  assert.equal(secondMessage.requestId, firstMessage.requestId + 1);
+  worker.publish(result(secondMessage.requestId));
+  await second;
+  assert.equal(FakeWorker.created.length, 1);
+  instance.dispose();
 });
 
-test("callback exceptions never prevent Promise settlement", async () => {
-  class FakeWorker {
-    listeners = new Map();
-    addEventListener(type, callback) { this.listeners.set(type, callback); }
-    postMessage(message) {
-      if (message.type === "initialize") {
-        queueMicrotask(() => this.publish({
-          protocolVersion: WORKER_PROTOCOL_VERSION,
-          type: "ready",
-        }));
-      } else {
-        queueMicrotask(() => this.publish(
-          responseEnvelope(message.version, message.generation, BROWSER_PACKAGE_VERSION, "settled"),
-        ));
-      }
-    }
-    terminate() {}
-    publish(data) { this.listeners.get("message")?.({ data }); }
-  }
-  const client = new AdocWeaveClient({
-    workerUrl: "worker.mjs", moduleUrl: "wasm.js", wasmUrl: "wasm.wasm",
-    Worker: FakeWorker, sharedCancellation: false,
-    onResult() { throw new Error("callback failed"); },
+test("fatal responses discard the worker and the next request starts fresh", async () => {
+  const instance = client();
+  const first = instance.analyze({ source: "trap" });
+  const oldWorker = FakeWorker.created[0];
+  const message = await dispatched(oldWorker);
+  oldWorker.publish({
+    protocolVersion: WORKER_PROTOCOL_VERSION,
+    type: "fatal",
+    requestId: message.requestId,
+    error: { code: "wasm-trapped", message: "unreachable" },
   });
-  const result = await client.analyze({ version: 1, source: "text" });
-  assert.equal(result.html, "settled");
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  const next = await client.analyze({ version: 2, source: "next" });
-  assert.equal(next.html, "settled");
-  client.dispose();
+  await assert.rejects(first, errorWithCode("wasm-trapped"));
+  assert.equal(oldWorker.terminated, true);
+
+  const next = instance.analyze({ source: "fresh" });
+  const newWorker = FakeWorker.created[1];
+  const nextMessage = await dispatched(newWorker);
+  newWorker.publish(result(nextMessage.requestId));
+  await next;
+  instance.dispose();
 });
 
-test("synchronous worker failures reject the already registered analysis", async () => {
-  class ProtocolMismatchWorker {
-    listeners = new Map();
-    addEventListener(type, callback) { this.listeners.set(type, callback); }
-    postMessage(message) {
-      if (message.type === "initialize") {
-        this.listeners.get("message")?.({
-          data: { protocolVersion: WORKER_PROTOCOL_VERSION - 1, type: "ready" },
-        });
-      }
-    }
-    terminate() {}
-  }
-  const mismatch = new AdocWeaveClient({
-    workerUrl: "worker.mjs", moduleUrl: "wasm.js", wasmUrl: "wasm.wasm",
-    Worker: ProtocolMismatchWorker, sharedCancellation: false,
-  });
-  await assert.rejects(
-    mismatch.analyze({ version: 1, source: "text" }),
-    errorWithCode("unsupported-worker-protocol"),
-  );
-  mismatch.dispose();
+test("old worker events cannot settle a current request", async () => {
+  const controller = new AbortController();
+  const instance = client();
+  const oldAnalysis = instance.analyze({ source: "old" }, { signal: controller.signal });
+  const oldWorker = FakeWorker.created[0];
+  const oldMessage = await dispatched(oldWorker);
+  const staleListener = [...oldWorker.listeners.get("message")][0];
+  controller.abort();
+  await assert.rejects(oldAnalysis, isAbortError);
 
-  const readyMismatch = new AdocWeaveClient({
-    workerUrl: "worker.mjs", moduleUrl: "wasm.js", wasmUrl: "wasm.wasm",
-    Worker: ProtocolMismatchWorker, sharedCancellation: false,
-  });
-  await assert.rejects(
-    readyMismatch.ready,
-    errorWithCode("unsupported-worker-protocol"),
-  );
-  readyMismatch.dispose();
-
-  const constructorFailure = new AdocWeaveClient({
-    workerUrl: "worker.mjs", moduleUrl: "wasm.js", wasmUrl: "wasm.wasm",
-    Worker: class { constructor() { throw new Error("constructor failed"); } },
-    sharedCancellation: false,
-  });
-  await assert.rejects(
-    constructorFailure.analyze({ version: 1, source: "text" }),
-    errorWithCode("worker-failed"),
-  );
-  constructorFailure.dispose();
-
-  class PostMessageFailureWorker {
-    addEventListener() {}
-    postMessage() { throw new Error("postMessage failed"); }
-    terminate() {}
-  }
-  const postMessageFailure = new AdocWeaveClient({
-    workerUrl: "worker.mjs", moduleUrl: "wasm.js", wasmUrl: "wasm.wasm",
-    Worker: PostMessageFailureWorker, sharedCancellation: false,
-  });
-  await assert.rejects(
-    postMessageFailure.analyze({ version: 1, source: "text" }),
-    errorWithCode("worker-failed"),
-  );
-  postMessageFailure.dispose();
+  const current = instance.analyze({ source: "current" });
+  const currentWorker = FakeWorker.created[1];
+  const currentMessage = await dispatched(currentWorker);
+  staleListener({ data: result(oldMessage.requestId, { html: "stale" }) });
+  assert.equal(currentWorker.terminated, false);
+  currentWorker.publish(result(currentMessage.requestId, { html: "current" }));
+  assert.deepEqual(await current, { html: "current" });
+  instance.dispose();
 });
 
-test("constructor failure callbacks can retry without losing the new version contract", async () => {
-  const results = [];
-  const workers = [];
-  let attempts = 0;
-  class RetryWorker {
-    listeners = new Map();
-    constructor() {
-      ++attempts;
-      if (attempts === 1) throw new Error("constructor failed");
-      workers.push(this);
-    }
-    addEventListener(type, callback) { this.listeners.set(type, callback); }
-    postMessage(message) {
-      if (message.type === "initialize") {
-        queueMicrotask(() => this.listeners.get("message")?.({
-          data: { protocolVersion: WORKER_PROTOCOL_VERSION, type: "ready" },
-        }));
-      }
-    }
-    terminate() {}
-    publish(data) { this.listeners.get("message")?.({ data }); }
-  }
-  let client;
-  client = new AdocWeaveClient({
-    workerUrl: "worker.mjs", moduleUrl: "wasm.js", wasmUrl: "wasm.wasm",
-    Worker: RetryWorker, sharedCancellation: false,
-    onError(error) {
-      assert.equal(error.code, "worker-failed");
-      client.update({ version: 2, source: "retry" });
-    },
-    onResult: (result) => results.push(result),
-  });
-
-  const failed = client.analyze({ version: 1, source: "first" });
-  await assert.rejects(failed, errorWithCode("worker-failed"));
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  workers[0].publish(responseEnvelope(2, 2, BROWSER_PACKAGE_VERSION, "retried"));
-
-  assert.equal(results[0].html, "retried");
-  assert.equal(results[0].sourceVersion, 2);
-  assert.equal(results.length, 1);
-  client.dispose();
+test("a mismatched requestId rejects and discards the current worker", async () => {
+  const instance = client();
+  const analysis = instance.analyze({ source: "text" });
+  const worker = FakeWorker.created[0];
+  const message = await dispatched(worker);
+  worker.publish(result(message.requestId + 1));
+  await assert.rejects(analysis, errorWithCode("invalid-worker-response"));
+  assert.equal(worker.terminated, true);
+  instance.dispose();
 });
 
-test("consecutive constructor failures retry without synchronous recursion", async () => {
-  const results = [];
-  const workers = [];
-  let attempts = 0;
-  class RetryWorker {
-    listeners = new Map();
-    constructor() {
-      ++attempts;
-      if (attempts <= 3) throw new Error(`constructor failed ${attempts}`);
-      workers.push(this);
-    }
-    addEventListener(type, callback) { this.listeners.set(type, callback); }
-    postMessage(message) {
-      if (message.type === "initialize") {
-        queueMicrotask(() => this.listeners.get("message")?.({
-          data: { protocolVersion: WORKER_PROTOCOL_VERSION, type: "ready" },
-        }));
-      }
-    }
-    terminate() {}
-    publish(data) { this.listeners.get("message")?.({ data }); }
-  }
-  let client;
-  client = new AdocWeaveClient({
-    workerUrl: "worker.mjs", moduleUrl: "wasm.js", wasmUrl: "wasm.wasm",
-    Worker: RetryWorker, sharedCancellation: false,
-    onError() {
-      if (attempts <= 3) {
-        client.update({ version: attempts + 1, source: "retry" });
-      }
-    },
-    onResult: (result) => results.push(result),
-  });
-
-  await assert.rejects(
-    client.analyze({ version: 1, source: "first" }),
-    errorWithCode("worker-failed"),
-  );
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(attempts, 4);
-  workers[0].publish(responseEnvelope(4, 4, BROWSER_PACKAGE_VERSION, "retried"));
-  assert.equal(results[0].sourceVersion, 4);
-  client.dispose();
-});
-
-test("terminal worker failures can retry without terminating the replacement worker", async () => {
-  for (const failure of ["identity", "worker-error"]) {
-    const results = [];
-    const workers = [];
-    class RetryWorker {
-      listeners = new Map();
-      terminated = false;
-      constructor() { workers.push(this); }
-      addEventListener(type, callback) { this.listeners.set(type, callback); }
-      postMessage(message) {
-        if (message.type === "initialize") {
-          queueMicrotask(() => this.listeners.get("message")?.({
-            data: { protocolVersion: WORKER_PROTOCOL_VERSION, type: "ready" },
-          }));
-        }
-      }
-      terminate() { this.terminated = true; }
-      publish(data) { this.listeners.get("message")?.({ data }); }
-      fail() { this.listeners.get("error")?.({ message: "worker failed" }); }
-    }
-    let client;
-    client = new AdocWeaveClient({
-      workerUrl: "worker.mjs", moduleUrl: "wasm.js", wasmUrl: "wasm.wasm",
-      Worker: RetryWorker, sharedCancellation: false,
-      onError() {
-        client.update({ version: 2, source: "retry" });
-      },
-      onResult: (result) => results.push(result),
-    });
-
-    const first = client.analyze({ version: 1, source: "first" });
-    const rejected = assert.rejects(
-      first,
-      errorWithCode(failure === "identity"
-        ? "invalid-worker-response"
-        : "worker-failed"),
+test("an invalid or obsolete worker response settles and discards the worker", async () => {
+  for (const response of [
+    { type: "unknown", protocolVersion: WORKER_PROTOCOL_VERSION },
+    { type: "ready", protocolVersion: WORKER_PROTOCOL_VERSION - 1 },
+  ]) {
+    const instance = client();
+    const analysis = instance.analyze({ source: "text" });
+    const worker = FakeWorker.created.at(-1);
+    worker.publish(response);
+    await assert.rejects(
+      analysis,
+      errorWithCode(response.type === "ready"
+        ? "unsupported-worker-protocol"
+        : "invalid-worker-response"),
     );
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    if (failure === "identity") {
-      workers[0].publish(responseEnvelope(9, 1, BROWSER_PACKAGE_VERSION, "invalid"));
-    } else {
-      workers[0].fail();
-    }
-    await rejected;
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    assert.equal(workers[0].terminated, true);
-    assert.equal(workers[1].terminated, false);
-    workers[1].publish(responseEnvelope(2, 2, BROWSER_PACKAGE_VERSION, "retried"));
-    assert.equal(results[0].sourceVersion, 2);
-    client.dispose();
+    assert.equal(worker.terminated, true);
+    assert.equal(worker.removed.length, 3);
+    instance.dispose();
   }
 });
 
-test("disposed analyze is a typed rejected Promise", async () => {
-  const client = new AdocWeaveClient({
-    workerUrl: "worker.mjs", moduleUrl: "wasm.js", wasmUrl: "wasm.wasm",
-    Worker: class {}, sharedCancellation: false,
-  });
-  client.dispose();
-  const analysis = client.analyze({ version: 1, source: "text" });
-  assert.equal(typeof analysis.then, "function");
-  await assert.rejects(analysis, (error) =>
-    isAdocWeaveClientLifecycleError(error) && error.code === "disposed");
+test("constructor, init postMessage, and worker errors settle the active Promise", async () => {
+  const constructorFailure = client(class { constructor() { throw new Error("constructor failed"); } });
+  await assert.rejects(constructorFailure.analyze({ source: "text" }), errorWithCode("worker-failed"));
+
+  class PostMessageFailure extends FakeWorker { postMessage() { throw new Error("postMessage failed"); } }
+  const postFailure = client(PostMessageFailure);
+  await assert.rejects(postFailure.analyze({ source: "text" }), errorWithCode("worker-failed"));
+  assert.equal(FakeWorker.created.at(-1).terminated, true);
+
+  const workerFailure = client();
+  const analysis = workerFailure.analyze({ source: "text" });
+  const worker = FakeWorker.created.at(-1);
+  await dispatched(worker);
+  worker.fail();
+  await assert.rejects(analysis, errorWithCode("worker-failed"));
+  assert.equal(worker.terminated, true);
 });
 
-test("fallback analyze supersedes an unfinished ready initialization", async () => {
-  class FakeWorker {
-    addEventListener() {}
-    postMessage() {}
-    terminate() {}
-  }
-  const client = new AdocWeaveClient({
-    workerUrl: "worker.mjs", moduleUrl: "wasm.js", wasmUrl: "wasm.wasm",
-    Worker: FakeWorker, sharedCancellation: false,
-  });
-  const ready = client.ready;
-  const rejectedReady = assert.rejects(ready, errorWithCode("superseded"));
-  const analysis = client.analyze({ version: 1, source: "text" });
-  await rejectedReady;
-  client.cancel();
-  await assert.rejects(analysis, errorWithCode("cancelled"));
-  client.dispose();
+test("dispose settles the active Promise and removes all worker listeners", async () => {
+  const instance = client();
+  const analysis = instance.analyze({ source: "text" });
+  const worker = FakeWorker.created[0];
+  instance.dispose();
+  await assert.rejects(analysis, errorWithCode("disposed"));
+  assert.equal(worker.terminated, true);
+  assert.equal(worker.removed.length, 3);
+  await assert.rejects(instance.analyze({ source: "again" }), errorWithCode("disposed"));
 });
 
-test("SSR import and client construction are lazy until ready or analyze", async () => {
+test("SSR import and client construction remain lazy", async () => {
   const originalWorker = globalThis.Worker;
-  const originalFetch = globalThis.fetch;
-  let networkRequests = 0;
   try {
     globalThis.Worker = undefined;
-    globalThis.fetch = async () => {
-      ++networkRequests;
-      throw new Error("unexpected network request");
-    };
     const imported = await import(`./index.mjs?ssr=${Date.now()}`);
-    assert.equal(typeof imported.AdocWeaveClient, "function");
-    assert.equal(networkRequests, 0);
+    const instance = new imported.AdocWeaveClient({
+      workerUrl: "worker.mjs", moduleUrl: "wasm.js", wasmUrl: "wasm.wasm",
+    });
+    await assert.rejects(instance.analyze({ source: "text" }), errorWithCode("worker-failed"));
   } finally {
     globalThis.Worker = originalWorker;
-    globalThis.fetch = originalFetch;
-  }
-
-  let workers = 0;
-  let wasmInitializations = 0;
-  class ProbeWorker {
-    listeners = new Map();
-    constructor() { ++workers; }
-    addEventListener(type, callback) { this.listeners.set(type, callback); }
-    postMessage(message) {
-      if (message.type === "initialize") {
-        ++wasmInitializations;
-        queueMicrotask(() => this.listeners.get("message")?.({
-          data: { protocolVersion: WORKER_PROTOCOL_VERSION, type: "ready" },
-        }));
-      }
-    }
-    terminate() {}
-  }
-  const client = new AdocWeaveClient({
-    workerUrl: "worker.mjs", moduleUrl: "wasm.js", wasmUrl: "wasm.wasm",
-    Worker: ProbeWorker, sharedCancellation: false,
-  });
-  assert.equal(workers, 0);
-  assert.equal(wasmInitializations, 0);
-  await client.ready;
-  assert.equal(workers, 1);
-  assert.equal(wasmInitializations, 1);
-  client.dispose();
-});
-
-test("analyzeOnce is a framework-independent one-shot utility", async () => {
-  let terminated = false;
-  class FakeWorker {
-    listeners = new Map();
-    addEventListener(type, callback) { this.listeners.set(type, callback); }
-    postMessage(message) {
-      queueMicrotask(() => this.listeners.get("message")?.({
-        data: message.type === "initialize"
-          ? { protocolVersion: WORKER_PROTOCOL_VERSION, type: "ready" }
-          : responseEnvelope(message.version, message.generation, BROWSER_PACKAGE_VERSION, "once"),
-      }));
-    }
-    terminate() { terminated = true; }
-  }
-  const result = await analyzeOnce({
-    workerUrl: "worker.mjs", moduleUrl: "wasm.js", wasmUrl: "wasm.wasm",
-    Worker: FakeWorker, sharedCancellation: false,
-  }, { version: 1, source: "text" });
-  assert.equal(result.html, "once");
-  assert.equal(terminated, true);
-});
-
-test("client rejects a WASM result with a different contract version", async () => {
-  const errors = [];
-  const workers = [];
-  class FakeWorker {
-    listeners = new Map();
-    constructor() { workers.push(this); }
-    addEventListener(type, callback) { this.listeners.set(type, callback); }
-    postMessage(message) {
-      if (message.type === "initialize") {
-        queueMicrotask(() => this.listeners.get("message")?.({
-          data: { protocolVersion: WORKER_PROTOCOL_VERSION, type: "ready" },
-        }));
-      }
-      this.lastMessage = message;
-    }
-    terminate() {}
-    publish(data) { this.listeners.get("message")?.({ data }); }
-  }
-  const client = new AdocWeaveClient({
-    workerUrl: "worker.mjs", moduleUrl: "wasm.js", wasmUrl: "wasm.wasm",
-    Worker: FakeWorker, sharedCancellation: false,
-    onError: (error) => errors.push(error),
-  });
-  const analysis = client.analyze({ version: 1, source: "text" });
-  const rejected = assert.rejects(
-    analysis,
-    errorWithCode("unsupported-package-version"),
-  );
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  workers.at(-1).publish(responseEnvelope(1, 1, "0.0.1", ""));
-  await rejected;
-  assert.deepEqual(errors, [{
-    code: "unsupported-package-version",
-    message: `expected package version ${BROWSER_PACKAGE_VERSION}`,
-    sourceVersion: 1,
-    generation: 1,
-  }]);
-  client.dispose();
-});
-
-test("client rejects result identities which disagree with the worker envelope", async () => {
-  const workers = [];
-  class FakeWorker {
-    listeners = new Map();
-    constructor() { workers.push(this); }
-    addEventListener(type, callback) { this.listeners.set(type, callback); }
-    postMessage(message) {
-      if (message.type === "initialize") {
-        queueMicrotask(() => this.listeners.get("message")?.({
-          data: { protocolVersion: WORKER_PROTOCOL_VERSION, type: "ready" },
-        }));
-      }
-    }
-    terminate() {}
-    publish(data) { this.listeners.get("message")?.({ data }); }
-  }
-
-  for (const field of ["version", "generation"]) {
-    const errors = [];
-    const client = new AdocWeaveClient({
-      workerUrl: "worker.mjs", moduleUrl: "wasm.js", wasmUrl: "wasm.wasm",
-      Worker: FakeWorker, sharedCancellation: false,
-      onError: (error) => errors.push(error),
-    });
-    const analysis = client.analyze({ version: 1, source: "text" });
-    const rejected = assert.rejects(analysis, errorWithCode("invalid-worker-response"));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    const response = responseEnvelope(1, 1, BROWSER_PACKAGE_VERSION, "");
-    response.result[field] = 2;
-    workers.at(-1).publish(response);
-    await rejected;
-    assert.equal(errors.at(-1).code, "invalid-worker-response", field);
-    client.dispose();
   }
 });
 
-test("client rejects result and error versions which disagree with the request", async () => {
-  const workers = [];
-  class FakeWorker {
-    listeners = new Map();
-    constructor() { workers.push(this); }
-    addEventListener(type, callback) { this.listeners.set(type, callback); }
-    postMessage(message) {
-      if (message.type === "initialize") {
-        queueMicrotask(() => this.listeners.get("message")?.({
-          data: { protocolVersion: WORKER_PROTOCOL_VERSION, type: "ready" },
-        }));
-      }
-    }
-    terminate() {}
-    publish(data) { this.listeners.get("message")?.({ data }); }
-  }
-
-  for (const response of [
-    () => responseEnvelope(2, 1, BROWSER_PACKAGE_VERSION, ""),
-    () => ({
-      protocolVersion: WORKER_PROTOCOL_VERSION,
-      type: "error",
-      version: 2,
-      generation: 1,
-      error: { code: "cancelled", message: "cancelled" },
-    }),
-  ]) {
-    const client = new AdocWeaveClient({
-      workerUrl: "worker.mjs", moduleUrl: "wasm.js", wasmUrl: "wasm.wasm",
-      Worker: FakeWorker, sharedCancellation: false,
-    });
-    const analysis = client.analyze({ version: 1, source: "text" });
-    const rejected = assert.rejects(analysis, errorWithCode("invalid-worker-response"));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    workers.at(-1).publish(response());
-    await rejected;
-    client.dispose();
+test("public lifecycle union matches the runtime type guard", async () => {
+  const source = await readFile(new URL("./client.mjs", import.meta.url), "utf8");
+  const runtimeBlock = source.match(/const LIFECYCLE_ERROR_CODES = new Set\(\[([\s\S]*?)\]\)/);
+  const types = await readFile(new URL("./index.d.mts", import.meta.url), "utf8");
+  const typeBlock = types.match(/export type AdocWeaveClientLifecycleErrorCode =([\s\S]*?);/);
+  assert.ok(runtimeBlock);
+  assert.ok(typeBlock);
+  const codes = (block) => [...block.matchAll(/"([a-z-]+)"/g)]
+    .map((match) => match[1]).sort();
+  assert.deepEqual(codes(runtimeBlock[1]), codes(typeBlock[1]));
+  for (const code of codes(runtimeBlock[1])) {
+    assert.equal(isAdocWeaveClientLifecycleError(
+      new AdocWeaveClientError({ code, message: code }),
+    ), true);
   }
 });
-
-test("stale responses cannot disturb the current request version contract", async () => {
-  const results = [];
-  const errors = [];
-  let worker;
-  class FakeWorker {
-    listeners = new Map();
-    constructor() { worker = this; }
-    addEventListener(type, callback) { this.listeners.set(type, callback); }
-    postMessage(message) {
-      if (message.type === "initialize") {
-        queueMicrotask(() => this.listeners.get("message")?.({
-          data: { protocolVersion: WORKER_PROTOCOL_VERSION, type: "ready" },
-        }));
-      }
-    }
-    terminate() {}
-    publish(data) { this.listeners.get("message")?.({ data }); }
-  }
-  const client = new AdocWeaveClient({
-    workerUrl: "worker.mjs", moduleUrl: "wasm.js", wasmUrl: "wasm.wasm",
-    Worker: FakeWorker, sharedCancellation: true,
-    onResult: (result) => results.push(result),
-    onError: (error) => errors.push(error),
-  });
-  assert.equal(client.update({ version: 1, source: "old" }), 1);
-  assert.equal(client.update({ version: 2, source: "current" }), 2);
-  await new Promise((resolve) => setTimeout(resolve, 0));
-
-  worker.publish(responseEnvelope(99, 1, BROWSER_PACKAGE_VERSION, "stale"));
-  worker.publish(responseEnvelope(2, 2, BROWSER_PACKAGE_VERSION, "current"));
-
-  assert.equal(results[0].html, "current");
-  assert.equal(results[0].sourceVersion, 2);
-  assert.equal(results.length, 1);
-  assert.deepEqual(errors, []);
-  client.dispose();
-});
-
-test("client rejects and terminates an obsolete worker protocol during initialization", async () => {
-  const errors = [];
-  const messages = [];
-  class FakeWorker {
-    listeners = new Map();
-    terminated = false;
-    addEventListener(type, callback) { this.listeners.set(type, callback); }
-    postMessage(message) {
-      messages.push(message);
-      if (message.type === "initialize") {
-        queueMicrotask(() => this.listeners.get("message")?.({
-          data: { protocolVersion: WORKER_PROTOCOL_VERSION - 1, type: "ready" },
-        }));
-      }
-    }
-    terminate() { this.terminated = true; }
-  }
-  const worker = new FakeWorker();
-  const client = new AdocWeaveClient({
-    workerUrl: "worker.mjs",
-    moduleUrl: "wasm.js",
-    wasmUrl: "wasm.wasm",
-    Worker: class {
-      constructor() { return worker; }
-    },
-    sharedCancellation: true,
-    onError: (error) => errors.push(error),
-  });
-  const analysis = client.analyze({ version: 1, source: "text" });
-  const rejected = assert.rejects(
-    analysis,
-    errorWithCode("unsupported-worker-protocol"),
-  );
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  await rejected;
-
-  assert.equal(worker.terminated, true);
-  assert.equal(messages.length, 1);
-  assert.deepEqual(errors, [{
-    code: "unsupported-worker-protocol",
-    message: `expected worker protocol ${WORKER_PROTOCOL_VERSION}`,
-    sourceVersion: null,
-    generation: 1,
-  }]);
-  client.dispose();
-});
-
-function responseEnvelope(version, generation, packageVersion, html) {
-  return {
-    protocolVersion: WORKER_PROTOCOL_VERSION,
-    type: "result",
-    version,
-    generation,
-    result: {
-      packageVersion,
-      version,
-      generation,
-      products: {
-        syntax: false,
-        canonicalAst: false,
-        html: true,
-        attributeOccurrences: false,
-        attributeQueries: false,
-        resourceQueries: false,
-        diagnostics: true,
-        symbols: false,
-        projection: false,
-      },
-      parse: {
-        blockCount: 0,
-        nodeCount: 0,
-        referenceCount: 0,
-      },
-      syntax: "",
-      ast: "",
-      html,
-      attributeOccurrences: [],
-      attributeQueries: { bindings: [], references: [] },
-      resourceQueries: [],
-      diagnostics: [],
-      renderDiagnostics: [],
-      symbols: [],
-      projection: null,
-    },
-  };
-}
 
 function errorWithCode(code) {
-  return (error) => error instanceof AdocWeaveClientError && error.code === code;
+  return (value) => value instanceof AdocWeaveClientError && value.code === code;
 }
-
-test("公開する判定用unionは実行時の判定集合と一致する", async () => {
-  // 判定集合と公開unionは別々の手書きです。実行時にだけ足された符号は、
-  // 型ガードを通した利用者から見えません。分岐へ書くと型errorになり、
-  // 書かないまま網羅したつもりになります。wasm-trappedがその状態でした。
-  const client = await readFile(new URL("./client.mjs", import.meta.url), "utf8");
-  const runtimeBlock = client.match(
-    /const LIFECYCLE_ERROR_CODES = new Set\(\[([\s\S]*?)\]\)/,
-  );
-  assert.ok(runtimeBlock, "実行時の判定集合を読み取れません");
-  const runtime = [...runtimeBlock[1].matchAll(/"([a-z-]+)"/g)].map((match) => match[1]).sort();
-
-  const types = await readFile(new URL("./index.d.mts", import.meta.url), "utf8");
-  const typeBlock = types.match(
-    /export type AdocWeaveClientLifecycleErrorCode =([\s\S]*?);/,
-  );
-  assert.ok(typeBlock, "公開unionを読み取れません");
-  const declared = [...typeBlock[1].matchAll(/"([a-z-]+)"/g)].map((match) => match[1]).sort();
-
-  assert.notEqual(runtime.length, 0);
-  assert.deepEqual(declared, runtime);
-});
-
-test("公開unionのすべての符号を型ガードが受け入れる", async () => {
-  const types = await readFile(new URL("./index.d.mts", import.meta.url), "utf8");
-  const typeBlock = types.match(
-    /export type AdocWeaveClientLifecycleErrorCode =([\s\S]*?);/,
-  );
-  const declared = [...typeBlock[1].matchAll(/"([a-z-]+)"/g)].map((match) => match[1]);
-
-  for (const code of declared) {
-    assert.equal(
-      isAdocWeaveClientLifecycleError(new AdocWeaveClientError({ code, message: code })),
-      true,
-      code,
-    );
-  }
-  assert.equal(
-    isAdocWeaveClientLifecycleError(
-      new AdocWeaveClientError({ code: "not-a-lifecycle-code", message: "" }),
-    ),
-    false,
-  );
-});
-
-test("配布READMEはschema versionの番号を転記しない", async () => {
-  // READMEはbrowser packageへ同梱されます。番号を本文へ書くと正本の更新から
-  // 取り残され、配布物が誤った版数を案内します。実際にschema 6と案内したまま
-  // 正本が9になっていました。番号は生成物のPROTOCOL_SCHEMA_VERSIONが持ちます。
-  const readme = await readFile(new URL("./README.adoc", import.meta.url), "utf8");
-  const transcribed = [...readme.matchAll(/schema\s*(?:version)?\s*[0-9]+/gi)].map(
-    (match) => match[0],
-  );
-  assert.deepEqual(transcribed, [], `READMEへ転記されたschema version: ${transcribed}`);
-});
+function isAbortError(value) {
+  return value instanceof DOMException && value.name === "AbortError";
+}

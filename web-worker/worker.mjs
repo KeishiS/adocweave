@@ -1,15 +1,19 @@
-import { createController, WORKER_PROTOCOL_VERSION } from "./controller.mjs";
-import { PROTOCOL_SCHEMA_VERSION, validateWorkerMessage } from "./worker-protocol.mjs";
+import {
+  PROTOCOL_SCHEMA_VERSION,
+  WORKER_PROTOCOL_VERSION,
+  validateWorkerMessage,
+} from "./worker-protocol.mjs";
 
-let controller;
-let currentGeneration = 0;
+let process = null;
+let closed = false;
 
 self.onmessage = async ({ data }) => {
+  if (closed) return;
   if (!validateWorkerMessage(data, "requests")) {
     throw new Error("invalid AdocWeave worker request");
   }
-  if (data?.type === "initialize") {
-    if (data.protocolVersion !== WORKER_PROTOCOL_VERSION) {
+  if (data.type === "init") {
+    if (data.protocolVersion !== WORKER_PROTOCOL_VERSION || process !== null) {
       throw new Error("invalid AdocWeave worker initialization");
     }
     const wasm = await import(data.moduleUrl);
@@ -17,34 +21,92 @@ self.onmessage = async ({ data }) => {
     if (wasm.protocolSchemaVersion?.() !== PROTOCOL_SCHEMA_VERSION) {
       throw new Error("incompatible AdocWeave WASM protocol schema");
     }
-    const cancellation = data.cancellationBuffer === null
-      ? null
-      : new Int32Array(data.cancellationBuffer);
-    controller = createController({
-      process: wasm.process,
-      publish,
-      isCurrent: (generation) => cancellation === null
-        ? currentGeneration === generation
-        : Atomics.load(cancellation, 0) === generation,
-      debounceMs: data.debounceMs,
-    });
+    process = wasm.process;
     publish({
       protocolVersion: WORKER_PROTOCOL_VERSION,
       type: "ready",
     });
     return;
   }
-  if (data?.type === "analyze") {
-    // A fallback worker receives one current request. Its termination is the
-    // cancellation boundary, while this value handles debounce consistently.
-    currentGeneration = data.generation;
+
+  const { requestId } = data;
+  if (data.protocolVersion !== WORKER_PROTOCOL_VERSION || process === null) {
+    fatal(requestId, {
+      code: data.protocolVersion !== WORKER_PROTOCOL_VERSION
+        ? "unsupported-worker-protocol"
+        : "worker-failed",
+      message: data.protocolVersion !== WORKER_PROTOCOL_VERSION
+        ? `expected protocol ${WORKER_PROTOCOL_VERSION}`
+        : "AdocWeave worker was not initialized",
+    });
+    return;
   }
-  controller?.submit(data);
+
+  try {
+    const result = process(data.payload);
+    publish({
+      protocolVersion: WORKER_PROTOCOL_VERSION,
+      type: "result",
+      requestId,
+      result,
+    });
+  } catch (cause) {
+    const wasmError = parseWasmError(cause);
+    if (wasmError !== null) {
+      publish({
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        type: "error",
+        requestId,
+        error: wasmError,
+      });
+      return;
+    }
+    fatal(requestId, normalizeFatal(cause));
+  }
 };
+
+function fatal(requestId, error) {
+  closed = true;
+  try {
+    publish({
+      protocolVersion: WORKER_PROTOCOL_VERSION,
+      type: "fatal",
+      requestId,
+      error,
+    });
+  } finally {
+    self.close();
+  }
+}
 
 function publish(message) {
   if (!validateWorkerMessage(message, "responses")) {
     throw new Error("invalid AdocWeave worker response");
   }
   self.postMessage(message);
+}
+
+function parseWasmError(cause) {
+  if (typeof cause !== "string") return null;
+  try {
+    const value = JSON.parse(cause);
+    return typeof value === "object" && value !== null &&
+      typeof value.code === "string" && typeof value.message === "string"
+      ? { code: value.code, message: value.message }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeFatal(cause) {
+  const message = cause instanceof Error ? cause.message : String(cause);
+  if (
+    typeof WebAssembly !== "undefined" &&
+    typeof WebAssembly.RuntimeError === "function" &&
+    cause instanceof WebAssembly.RuntimeError
+  ) {
+    return { code: "wasm-trapped", message };
+  }
+  return { code: "worker-failed", message };
 }

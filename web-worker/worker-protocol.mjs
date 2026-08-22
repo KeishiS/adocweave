@@ -1,37 +1,27 @@
-// Worker envelopeの定数と形の検査。
-//
-// 中身(WasmRequestとWasmResponse)の検査はWebAssembly側のserdeが行います。requestは
-// 未知fieldを拒否して構造化errorを返し、responseは同じ境界が生成します。ここでは、
-// workerとclientがやり取りする封筒の形だけを確かめます。
+// Workerの封筒では、解析要求を内部requestId一つだけで識別します。
+// payloadとresultのschemaはWebAssembly境界で検査します。
 
-export const PROTOCOL_SCHEMA_VERSION = 14;
-export const WORKER_PROTOCOL_VERSION = 2;
+export const PROTOCOL_SCHEMA_VERSION = 15;
+export const WORKER_PROTOCOL_VERSION = 3;
+// 配布metadata用の値であり、WASMとの通信には使用しません。
 export const PACKAGE_VERSION = "0.46.2";
 
 const string = (value) => typeof value === "string";
 const u32 = (value) => Number.isInteger(value) && value >= 0 && value <= 4294967295;
-const number = (value) => typeof value === "number" && Number.isFinite(value);
 const object = (value) =>
   typeof value === "object" && value !== null && !Array.isArray(value);
-const nullableU32 = (value) => value === null || u32(value);
-const cancellationBuffer = (value) =>
-  value === null ||
-  (typeof SharedArrayBuffer === "function" && value instanceof SharedArrayBuffer);
+const error = (value) => object(value) && string(value.code) && string(value.message);
 
-/// 各封筒が持つfieldと、その値の検査。
 const ENVELOPES = {
   requests: {
-    initialize: {
+    init: {
       protocolVersion: u32,
       moduleUrl: string,
       wasmUrl: string,
-      debounceMs: number,
-      cancellationBuffer,
     },
     analyze: {
       protocolVersion: u32,
-      version: u32,
-      generation: u32,
+      requestId: u32,
       payload: object,
     },
   },
@@ -39,27 +29,22 @@ const ENVELOPES = {
     ready: { protocolVersion: u32 },
     result: {
       protocolVersion: u32,
-      version: u32,
-      generation: u32,
+      requestId: u32,
       result: object,
     },
     error: {
       protocolVersion: u32,
-      version: u32,
-      generation: u32,
-      error: (value) => object(value) && string(value.code) && string(value.message),
+      requestId: u32,
+      error,
+    },
+    fatal: {
+      protocolVersion: u32,
+      requestId: u32,
+      error,
     },
   },
 };
 
-const CLIENT_ERROR = {
-  code: string,
-  message: string,
-  sourceVersion: nullableU32,
-  generation: u32,
-};
-
-/// 封筒ごとのfield名。testが送信messageの形を照合するために使います。
 export const WORKER_MESSAGE_FIELDS = Object.fromEntries(
   Object.entries(ENVELOPES).flatMap(([direction, variants]) =>
     Object.entries(variants).map(([variant, fields]) => [
@@ -81,8 +66,4 @@ export function validateWorkerMessage(value, direction) {
   if (variants === undefined || !object(value) || typeof value.type !== "string") return false;
   const fields = variants[value.type];
   return fields !== undefined && matches(value, fields);
-}
-
-export function validateClientError(value) {
-  return matches(value, CLIENT_ERROR);
 }
