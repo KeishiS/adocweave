@@ -151,12 +151,11 @@ node tools/sync-release-version.mjs --check
 '''
 
 [tasks.semver-check]
-description = "Compare the candidate public Rust API and Release Notes claims against the previous stable tag"
+description = "Compare the candidate public Rust API against the previous stable tag and verify the recorded differences"
 script_runner = "@shell"
 script = '''
-node --test tools/semver-gate.test.mjs tools/release-claims.test.mjs
+node --test tools/semver-gate.test.mjs
 node tools/semver-gate.mjs
-node tools/release-claims.mjs
 '''
 
 [tasks.dependency-governance]

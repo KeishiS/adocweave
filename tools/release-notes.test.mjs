@@ -3,13 +3,11 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
-  CLAIMABLE_CONTRACTS,
   RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION,
   RELEASE_NOTES_SOURCE,
   RELEASE_NOTES_TITLE,
   RELEASE_NOTES_VERSION,
   REQUIRED_RELEASE_NOTE_HEADINGS,
-  UNCHANGED_CONTRACTS,
   breakingContractNotes,
   breakingMigrationNotes,
   buildReleaseNotes,
@@ -30,7 +28,7 @@ function sampleSource(version = RELEASE_NOTES_VERSION, overrides = {}) {
   const bodies = {
     "## 主な変更": "- 変更の要点です。",
     "## 対応環境": "配布するtargetは次のとおりです。",
-    "## 公開契約と破壊的変更": "公開契約は変更していません。",
+    "## 公開契約と破壊的変更": "公開仕様の変更点を説明します。",
     [`## v${version}への移行`]: "配布物を入れ替えてください。",
     "## 更新とロールバック": "以前のdirectoryへ戻します。",
     "## 既知の制約": "- 既知の制約です。",
@@ -159,7 +157,6 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の人の文章と機械生成部
   assert.match(notes, new RegExp(`Rust toolchainは${escape(manifest.rustVersion)}`));
   assert.match(notes, new RegExp(`Node\\.jsは${escape(manifest.nodeVersion)}`));
   assert.match(notes, /Rust APIの破壊的変更：/);
-  assert.match(notes, /は変更していません。/);
   assert.match(notes, new RegExp(escape(textlintContract.compatibility.nodeEngine)));
   assert.match(notes, new RegExp(escape(textlintContract.compatibility.textlintVersion)));
   assert.match(notes, new RegExp(`## v${escape(RELEASE_NOTES_VERSION)}への移行`));
@@ -173,7 +170,11 @@ test("機械生成部分は人の文章の後ろへ、見出しの順序を保�
   const environment = parsed.sections[1].lines.join("\n");
   assert.ok(environment.indexOf("配布するtargetは次のとおりです。") < environment.indexOf("x86_64-unknown-linux-musl"));
   const contracts = parsed.sections[2].lines.join("\n");
-  assert.ok(contracts.indexOf("公開契約は変更していません。") < contracts.indexOf("統一package version"));
+  const authored = contracts.indexOf("公開仕様の変更点を説明します。");
+  const generated = contracts.indexOf("統一package version");
+  assert.notEqual(authored, -1);
+  assert.notEqual(generated, -1);
+  assert.ok(authored < generated);
   const constraints = parsed.sections[5].lines.join("\n");
   assert.ok(constraints.indexOf("- 既知の制約です。") < constraints.indexOf("textlint用Processorの対応範囲"));
 });
@@ -183,21 +184,17 @@ test("破壊的変更が無いreleaseでは定型文を記録から生成する"
   assert.deepEqual(breakingMigrationNotes([]), []);
 });
 
-test("変更していないと述べる契約は、この版の宣言だけから決まる", () => {
-  // v0.27.2は設定schemaを変えた版で「変更していません」と述べました。件の
-  // 一覧をcodeへ固定すると、option一つ足した版でも同じ三つを述べてしまいます。
-  const declaration = JSON.parse(
-    readFileSync(new URL("../release/unchanged-contracts.json", import.meta.url), "utf8"),
-  );
-  assert.equal(declaration.schemaVersion, 1);
-  assert.equal(declaration.releaseVersion, RELEASE_NOTES_VERSION);
-  assert.deepEqual(
-    UNCHANGED_CONTRACTS,
-    CLAIMABLE_CONTRACTS.filter((name) => declaration.unchanged.includes(name)),
-  );
-  for (const name of UNCHANGED_CONTRACTS) {
-    assert.ok(CLAIMABLE_CONTRACTS.includes(name), name);
-  }
+test("公開仕様の変更説明へ未検査の変更なし宣言を追加しない", () => {
+  const notes = renderReleaseNotes(sampleSource(RELEASE_NOTES_VERSION, {
+    "## 公開契約と破壊的変更":
+      "workspace-scan-incomplete診断を廃止し、window/showMessageへ移します。",
+    [`## v${RELEASE_NOTES_VERSION}への移行`]:
+      "診断の処理をwindow/showMessageの受信へ切り替えてください。",
+  }));
+
+  assert.match(notes, /workspace-scan-incomplete/);
+  assert.match(notes, /window\/showMessage/);
+  assert.doesNotMatch(notes, /変更していません/);
 });
 
 test("Release Notesは別release trainのtagを拒否する", () => {

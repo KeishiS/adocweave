@@ -2,6 +2,9 @@
 
 :status: accepted
 
+公開仕様の正本を生成TypeScript宣言へ移す決定は維持します。``release-claims``によるtag間比較の決定は、
+xref:0026-no-unverified-release-claims.adoc[ADR 0026]で改訂しました。
+
 == 文脈
 
 Browser向けWASMとJavaScriptがやり取りするJSONの形は、``protocol/public-api.json``(851行)を正本として

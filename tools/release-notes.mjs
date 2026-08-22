@@ -66,69 +66,6 @@ export function breakingMigrationNotes(changes) {
   return changes.map((change) => change.migration).filter((migration) => migration !== undefined);
 }
 
-/// Public contracts a release can state are unchanged since the previous tag.
-export const CLAIMABLE_CONTRACTS = ["CLI引数", "Language Server protocol", "設定schema"];
-
-/// The contracts this release states are unchanged, read from a release file.
-///
-/// The sentence in the notes is built from this list rather than written beside
-/// it. v0.27.2 announced that the configuration schema had not changed while the
-/// same release changed it: the claim was prose, so nothing compared it with the
-/// diff. `tools/release-claims.mjs` reads this list and checks every entry that
-/// has a single machine-readable source of truth.
-///
-/// The list belongs to the release rather than to this file, because a release
-/// that adds a command-line option cannot claim the same three contracts as one
-/// that does not. Naming them per release keeps the sentence true and keeps the
-/// check pointed at what the notes actually say.
-function loadUnchangedContracts() {
-  const declaration = JSON.parse(
-    readFileSync(new URL("release/unchanged-contracts.json", ROOT), "utf8"),
-  );
-  const keys = Object.keys(declaration).sort();
-  if (
-    keys.join(",") !== "releaseVersion,schemaVersion,unchanged" ||
-    declaration.schemaVersion !== 1
-  ) {
-    throw new Error("変更していない契約の宣言のschemaが未対応です");
-  }
-  if (declaration.releaseVersion !== RELEASE_NOTES_VERSION) {
-    throw new Error(
-      `変更していない契約の宣言のversionがrelease manifestと一致しません：${declaration.releaseVersion}`,
-    );
-  }
-  if (!Array.isArray(declaration.unchanged)) {
-    throw new Error("変更していない契約の宣言はarrayである必要があります");
-  }
-  const unknown = declaration.unchanged.filter((name) => !CLAIMABLE_CONTRACTS.includes(name));
-  if (unknown.length > 0) {
-    throw new Error(`宣言できない契約名です：${unknown.join("、")}`);
-  }
-  if (new Set(declaration.unchanged).size !== declaration.unchanged.length) {
-    throw new Error("変更していない契約の宣言が重複しています");
-  }
-  // The order follows the claimable list so the sentence reads the same way in
-  // every release, whichever subset a release declares.
-  return CLAIMABLE_CONTRACTS.filter((name) => declaration.unchanged.includes(name));
-}
-
-export const UNCHANGED_CONTRACTS = loadUnchangedContracts();
-
-/// The file that decides whether a named contract changed.
-///
-/// A contract without an entry here is stated but not checked: CLI arguments and
-/// the Language Server protocol are spread across the sources that implement
-/// them, and a file diff would report every unrelated edit. The tool names the
-/// unchecked contracts in its output so the reader knows how far the check goes.
-export const CONTRACT_SOURCES = {
-  "WASM protocol": "web-worker/protocol.d.mts",
-  設定schema: "config/adocweave.schema.json",
-  "textlint Processorパッケージ契約": "release/textlint-plugin-package-contract.json",
-};
-
-/// Fields that carry the release version rather than the contract's shape.
-export const CONTRACT_VERSION_FIELDS = ["packageVersion"];
-
 function markdownList(items) {
   return items.map((item) => `- ${item}`).join("\n");
 }
@@ -169,9 +106,6 @@ const GENERATED_SECTIONS = {
       `release manifest schema version：${manifest.schemaVersion}（3製品共通schema）、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
       `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${WORKER_PROTOCOL_VERSION}。`,
       ...breakingContractNotes(breakingRustApi.changes),
-      ...(UNCHANGED_CONTRACTS.length === 0
-        ? []
-        : [`${UNCHANGED_CONTRACTS.join("、")}は変更していません。`]),
     ]),
   ],
   [`## v${RELEASE_NOTES_VERSION}への移行`]: () => {
