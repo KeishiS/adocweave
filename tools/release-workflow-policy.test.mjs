@@ -225,11 +225,12 @@ function sourceAndCandidateWorkflow() {
       "main-gate": {
         if: "github.event_name == 'push' && github.ref == 'refs/heads/main'",
         needs: ["source"],
-        steps: [{ run: "nix develop .#ci -c cargo make main-gate" }],
+        steps: [{ run: "nix develop .#ci-fuzz -c cargo make main-gate" }],
       },
       "candidate-plan": {
+        if: "github.event_name == 'push' && github.ref == 'refs/heads/main'",
         needs: ["source", "main-gate"],
-        steps: [{ run: "node tools/product-candidate-plan.mjs $GITHUB_OUTPUT" }],
+        steps: [{ run: 'node tools/product-candidate-plan.mjs "$GITHUB_OUTPUT"' }],
       },
       "build-native": {
         needs: ["candidate-plan"],
@@ -241,7 +242,7 @@ function sourceAndCandidateWorkflow() {
       },
       "build-global": {
         needs: ["candidate-plan"],
-        steps: [{ run: "cargo make test-global-product-candidate" }],
+        steps: [{ run: "nix develop .#ci-browser -c cargo make test-global-product-candidate" }],
       },
       "verify-native-candidate": {
         needs: ["native-smoke"],
@@ -277,6 +278,7 @@ test("Pull Requestはpath条件なしで標準source gateを1回だけ直接実�
     (workflow) => { workflow.jobs.source.needs = ["main-gate"]; },
     (workflow) => { workflow.jobs.source.strategy = { matrix: { shard: [1, 2] } }; },
     (workflow) => { workflow.jobs.source.uses = "./.github/workflows/quality.yml"; },
+    (workflow) => { workflow.jobs.source.steps[0].run += " || true"; },
     (workflow) => { workflow.jobs["main-gate"].steps.push({ run: "cargo make source-gate" }); },
   ]) {
     const workflow = sourceAndCandidateWorkflow();
@@ -324,11 +326,13 @@ test("main candidate planはsourceとmain gateの成功後に製品計画を1回
     (workflow) => { workflow.jobs["main-gate"].if += " || github.event_name == 'pull_request'"; },
     (workflow) => { workflow.jobs["main-gate"].if = `failure() && ${workflow.jobs["main-gate"].if}`; },
     (workflow) => { workflow.jobs["main-gate"].steps = []; },
+    (workflow) => { workflow.jobs["main-gate"].steps[0].run += " || true"; },
     (workflow) => { workflow.jobs.source.steps.push({ run: "cargo make main-gate" }); },
+    (workflow) => { workflow.jobs["candidate-plan"].if = "failure()"; },
   ]) {
     const workflow = sourceAndCandidateWorkflow();
     mutate(workflow);
-    assert.throws(() => validateSourceAndCandidateWorkflow(workflow), /candidate-plan|main-gate/);
+    assert.throws(() => validateSourceAndCandidateWorkflow(workflow), /source|candidate-plan|main-gate/);
   }
 
   const reordered = sourceAndCandidateWorkflow();
@@ -354,7 +358,7 @@ test("成果物のbuild、smoke、installationおよびcandidate処理をmainへ
 
 test("global成果物は製品別の完成candidate taskで検査する", () => {
   const workflow = sourceAndCandidateWorkflow();
-  workflow.jobs["build-global"].steps[0].run = "cargo make browser-runtime-check";
+  workflow.jobs["build-global"].steps[0].run += " || true";
   assert.throws(
     () => validateSourceAndCandidateWorkflow(workflow),
     /製品別の完成candidate task/,

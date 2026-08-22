@@ -172,6 +172,14 @@ function jobRuns(job) {
     .join("\n");
 }
 
+function hasOnlyRun(job, expected) {
+  const commands = (job?.steps ?? [])
+    .map((step) => step.run)
+    .filter((run) => typeof run === "string")
+    .map((run) => run.trim().replace(/\s+/g, " "));
+  return commands.length === 1 && commands[0] === expected;
+}
+
 function needs(job) {
   if (typeof job?.needs === "string") return [job.needs];
   return Array.isArray(job?.needs) ? job.needs : [];
@@ -315,7 +323,7 @@ export function validateStandardSourceAndCandidateGates(workflows, sources = {})
   }
   const workflowRuns = Object.values(jobs).map(jobRuns).join("\n");
   if (occurrences(workflowRuns, "cargo make source-gate") !== 1 ||
-      !jobRuns(source).includes("cargo make source-gate")) {
+      !hasOnlyRun(source, "nix develop .#ci -c cargo make source-gate")) {
     fail("source jobは標準source-gateを1回だけ直接実行してください");
   }
 
@@ -334,16 +342,17 @@ export function validateStandardSourceAndCandidateGates(workflows, sources = {})
   const mainGate = jobs["main-gate"];
   if (!mainGate || !hasMainCondition(mainGate) ||
       occurrences(workflowRuns, "cargo make main-gate") !== 1 ||
-      !jobRuns(mainGate).includes("cargo make main-gate")) {
+      !hasOnlyRun(mainGate, "nix develop .#ci-fuzz -c cargo make main-gate")) {
     fail("main-gateはmainへのpushだけで実行してください");
   }
   const candidatePlan = jobs["candidate-plan"];
   const candidatePlanNeeds = new Set(needs(candidatePlan));
   if (!candidatePlan ||
+      !hasMainCondition(candidatePlan) ||
       candidatePlanNeeds.size !== 2 ||
       !candidatePlanNeeds.has("source") ||
       !candidatePlanNeeds.has("main-gate") ||
-      occurrences(jobRuns(candidatePlan), "product-candidate-plan.mjs") !== 1 ||
+      !hasOnlyRun(candidatePlan, 'node tools/product-candidate-plan.mjs "$GITHUB_OUTPUT"') ||
       !isMainOnly(jobs, "candidate-plan")) {
     fail("candidate-planはsourceとmain-gateに依存し、製品別candidate planを1回生成してください");
   }
@@ -369,7 +378,10 @@ export function validateStandardSourceAndCandidateGates(workflows, sources = {})
       fail(`成果物job ${jobName}はmain candidate経路だけで実行してください`);
     }
   }
-  if (occurrences(jobRuns(jobs["build-global"]), "cargo make test-global-product-candidate") !== 1) {
+  if (!hasOnlyRun(
+    jobs["build-global"],
+    "nix develop .#ci-browser -c cargo make test-global-product-candidate",
+  )) {
     fail("build-globalは製品別の完成candidate taskを1回実行してください");
   }
 }
