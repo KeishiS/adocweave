@@ -779,6 +779,18 @@ impl LocalFilesystemSession {
             .map_err(ResourceError::from)
     }
 
+    pub(crate) fn inspect_target_outcome(
+        &mut self,
+        source_id: LogicalSourceId,
+        base: &Path,
+        target: &str,
+    ) -> Result<FilesystemInspectOutcome, ResourceError> {
+        self.invalidate_active_draft();
+        self.mutation_cursor()
+            .inspect_target(source_id, base, target)
+            .map_err(ResourceError::from)
+    }
+
     /// Reopens an absolute path while retaining this session's shared budget.
     pub fn reread_utf8(
         &mut self,

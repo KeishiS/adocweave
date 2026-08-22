@@ -30,20 +30,18 @@ impl Drop for TestDir {
     }
 }
 
-fn resources(root: &Path) -> (LocalFilesystemSession, IncludeFilesystem) {
-    let policy = LocalFilesystemPolicy::new(
+fn session(root: &Path, max_total_bytes: u64) -> LocalFilesystemSession {
+    LocalFilesystemPolicy::new(
         [root.to_owned()],
         FilesystemReadLimits {
             max_files: 16,
-            max_total_bytes: 1_024,
+            max_total_bytes,
             max_resource_bytes: 512,
         },
     )
-    .expect("policy");
-    (
-        policy.session().expect("filesystem session"),
-        IncludeFilesystem::new().expect("include filesystem"),
-    )
+    .expect("policy")
+    .session()
+    .expect("filesystem session")
 }
 
 fn source_id(value: &str) -> LogicalSourceId {
@@ -54,24 +52,21 @@ fn request(id: &str, base: &Path, target: &str) -> IncludeFilesystemRequest {
     IncludeFilesystemRequest::new(source_id(id), base, target)
 }
 
-fn owner(value: &str) -> IncludeFilesystemOwner {
-    IncludeFilesystemOwner::new(value).expect("include owner")
+fn path_request(id: &str, path: &Path) -> IncludeFilesystemPathRequest {
+    IncludeFilesystemPathRequest::new(source_id(id), path)
 }
 
 #[test]
-fn found_and_missing_results_expose_only_verified_watch_paths() {
-    let root = TestDir::new("outcomes");
+fn transaction_returns_content_provenance_binding_and_safe_watch_paths() {
+    let root = TestDir::new("outcome");
     let found = root.path().join("found.adoc");
     fs::write(&found, "included").expect("source");
-    let (mut session, mut filesystem) = resources(root.path());
-    let mut transaction = filesystem
-        .transaction(&session, FilesystemJobLimits::unbounded())
-        .expect("transaction");
-
-    let IncludeFilesystemOutcome::Found(loaded) = transaction.read(
-        owner("document"),
-        request("found", root.path(), "found.adoc"),
-    ) else {
+    let mut session = session(root.path(), 1_024);
+    let job = IncludeFilesystemJob::new(FilesystemJobLimits::unbounded()).expect("job");
+    let mut transaction = job.transaction(&session).expect("transaction");
+    let IncludeFilesystemOutcome::Found(loaded) =
+        transaction.read(request("found", root.path(), "found.adoc"))
+    else {
         panic!("expected found source");
     };
     assert_eq!(loaded.source(), "included");
@@ -84,259 +79,197 @@ fn found_and_missing_results_expose_only_verified_watch_paths() {
             .collect::<Vec<_>>(),
         [found.as_path()]
     );
-
-    let IncludeFilesystemOutcome::NotFound(missing) = transaction.read(
-        owner("document"),
-        request("missing", root.path(), "missing.adoc"),
-    ) else {
-        panic!("expected missing source");
-    };
-    assert_eq!(
-        missing.watch_candidate().path(),
-        root.path().join("missing.adoc")
-    );
-    let committed = transaction
-        .commit(&mut session, &mut filesystem)
-        .expect("commit");
-    assert_eq!(committed.usage().read_operations, 2);
-    assert_eq!(committed.watch_candidates().len(), 2);
+    transaction.commit(&mut session).expect("commit");
+    assert_eq!(job.finish().expect("finish").read_operations, 1);
 }
 
 #[test]
-fn dropping_a_transaction_preserves_live_budget_and_bindings() {
+fn dropping_a_transaction_preserves_live_state() {
     let root = TestDir::new("drop");
-    fs::write(root.path().join("source.adoc"), "a").expect("source");
-    let (mut session, mut filesystem) = resources(root.path());
-    let mut initial = filesystem
-        .transaction(&session, FilesystemJobLimits::unbounded())
-        .expect("initial transaction");
+    fs::write(root.path().join("source.adoc"), "old").expect("source");
+    let mut session = session(root.path(), 1_024);
+    let first_job = IncludeFilesystemJob::new(FilesystemJobLimits::unbounded()).expect("job");
+    let mut first = first_job.transaction(&session).expect("transaction");
     assert!(matches!(
-        initial.read(
-            owner("document"),
-            request("include", root.path(), "source.adoc")
-        ),
+        first.read(request("source", root.path(), "source.adoc")),
         IncludeFilesystemOutcome::Found(_)
     ));
-    initial
-        .commit(&mut session, &mut filesystem)
-        .expect("initial commit");
-    assert_eq!(session.budget().bytes(), 1);
+    first.commit(&mut session).expect("commit");
+    first_job.finish().expect("finish");
+    assert_eq!(session.budget().bytes(), 3);
 
     fs::write(root.path().join("source.adoc"), "replacement").expect("replacement");
-    let mut discarded = filesystem
-        .transaction(&session, FilesystemJobLimits::unbounded())
-        .expect("discarded transaction");
+    let job = IncludeFilesystemJob::new(FilesystemJobLimits::unbounded()).expect("job");
+    let mut discarded = job.transaction(&session).expect("transaction");
     assert!(matches!(
-        discarded.read(
-            owner("document"),
-            request("include", root.path(), "source.adoc")
-        ),
+        discarded.read(request("source", root.path(), "source.adoc")),
         IncludeFilesystemOutcome::Found(_)
     ));
     drop(discarded);
-    assert_eq!(session.budget().bytes(), 1);
-}
-
-#[test]
-fn commit_releases_bindings_not_observed_in_the_new_snapshot() {
-    let root = TestDir::new("binding-reconciliation");
-    fs::write(root.path().join("one.adoc"), "1").expect("one");
-    fs::write(root.path().join("two.adoc"), "22").expect("two");
-    let (mut session, mut filesystem) = resources(root.path());
-    let mut initial = filesystem
-        .transaction(&session, FilesystemJobLimits::unbounded())
-        .expect("initial transaction");
-    assert!(matches!(
-        initial.read(owner("document"), request("one", root.path(), "one.adoc")),
-        IncludeFilesystemOutcome::Found(_)
-    ));
-    assert!(matches!(
-        initial.read(owner("document"), request("two", root.path(), "two.adoc")),
-        IncludeFilesystemOutcome::Found(_)
-    ));
-    initial
-        .commit(&mut session, &mut filesystem)
-        .expect("initial commit");
+    job.finish().expect("finish");
     assert_eq!(session.budget().bytes(), 3);
-
-    let mut replacement = filesystem
-        .transaction(&session, FilesystemJobLimits::unbounded())
-        .expect("replacement transaction");
-    assert!(matches!(
-        replacement.read(owner("document"), request("one", root.path(), "one.adoc")),
-        IncludeFilesystemOutcome::Found(_)
-    ));
-    replacement
-        .commit(&mut session, &mut filesystem)
-        .expect("replacement commit");
-    assert_eq!(session.budget().bytes(), 1);
 }
 
 #[test]
-fn job_read_limit_is_a_typed_failure_and_cannot_be_committed() {
-    let root = TestDir::new("job-limit");
-    fs::write(root.path().join("source.adoc"), "three").expect("source");
-    let (mut session, mut filesystem) = resources(root.path());
-    let limits = FilesystemJobLimits {
-        max_read_operations: 1,
-        max_read_bytes: 3,
-        max_read_probe_bytes: 1,
-        max_directory_operations: 1,
-        max_directory_entries: 1,
-        max_directory_probe_entries: 1,
-        max_candidate_changes: 1,
-        max_sessions: 1,
+fn explicit_release_is_generation_safe_when_a_binding_is_stale() {
+    let root = TestDir::new("stale-release");
+    let path = root.path().join("source.adoc");
+    fs::write(&path, "old").expect("source");
+    let mut session = session(root.path(), 1_024);
+    let job = IncludeFilesystemJob::new(FilesystemJobLimits::unbounded()).expect("job");
+    let mut first = job.transaction(&session).expect("transaction");
+    let IncludeFilesystemOutcome::Found(source) =
+        first.read(request("source", root.path(), "source.adoc"))
+    else {
+        panic!("expected source");
     };
-    let mut transaction = filesystem
-        .transaction(&session, limits)
-        .expect("transaction");
-    let IncludeFilesystemOutcome::Failed(failed) = transaction.read(
-        owner("document"),
-        request("include", root.path(), "source.adoc"),
-    ) else {
-        panic!("expected failed source");
+    let stale = source.binding().clone();
+    first.commit(&mut session).expect("commit");
+    job.finish().expect("finish");
+
+    fs::write(&path, "new value").expect("replacement");
+    let job = IncludeFilesystemJob::new(FilesystemJobLimits::unbounded()).expect("job");
+    let mut replacement = job.transaction(&session).expect("transaction");
+    let IncludeFilesystemOutcome::Found(source) =
+        replacement.read(request("source", root.path(), "source.adoc"))
+    else {
+        panic!("expected replacement");
     };
-    assert_eq!(
-        failed.error(),
-        &FilesystemDraftError::Job(FilesystemJobError::Limit(FilesystemJobLimit::ReadBytes {
-            limit: 3
-        }))
-    );
-    assert_eq!(
-        transaction.commit(&mut session, &mut filesystem),
-        Err(FilesystemDraftError::Job(FilesystemJobError::Limit(
-            FilesystemJobLimit::ReadBytes { limit: 3 }
-        )))
-    );
+    let current = source.binding().clone();
+    replacement.commit(&mut session).expect("commit");
+    job.finish().expect("finish");
+
+    let job = IncludeFilesystemJob::new(FilesystemJobLimits::unbounded()).expect("job");
+    let mut release = job.transaction(&session).expect("transaction");
+    release.release(&stale).expect("stale release is harmless");
+    release.commit(&mut session).expect("commit");
+    job.finish().expect("finish");
+    assert_eq!(session.budget().bytes(), 9);
+
+    let job = IncludeFilesystemJob::new(FilesystemJobLimits::unbounded()).expect("job");
+    let mut release = job.transaction(&session).expect("transaction");
+    release.release(&current).expect("current release");
+    release.commit(&mut session).expect("commit");
+    job.finish().expect("finish");
+    assert_eq!(session.budget().bytes(), 0);
 }
 
 #[test]
-fn escaping_target_fails_without_an_unverified_watch_candidate() {
-    let root = TestDir::new("escape");
-    let (mut session, mut filesystem) = resources(root.path());
-    let mut transaction = filesystem
-        .transaction(&session, FilesystemJobLimits::unbounded())
-        .expect("transaction");
-    let outcome = transaction.read(
-        owner("document"),
-        request("escape", root.path(), "../outside.adoc"),
-    );
-    let IncludeFilesystemOutcome::Failed(failed) = outcome else {
-        panic!("expected failed source");
-    };
+fn failed_atomic_operation_is_terminal() {
+    let root = TestDir::new("terminal-failure");
+    fs::write(root.path().join("invalid.adoc"), [0xff]).expect("invalid");
+    fs::write(root.path().join("valid.adoc"), "valid").expect("valid");
+    let mut session = session(root.path(), 1_024);
+    let job = IncludeFilesystemJob::new(FilesystemJobLimits::unbounded()).expect("job");
+    let mut transaction = job.transaction(&session).expect("transaction");
     assert!(matches!(
-        failed.error(),
-        FilesystemDraftError::Resource(ResourceError::OutsideRoots(_))
-    ));
-    assert!(transaction.commit(&mut session, &mut filesystem).is_err());
-}
-
-#[cfg(unix)]
-#[test]
-fn symlink_cannot_escape_the_retained_root() {
-    use std::os::unix::fs::symlink;
-
-    let root = TestDir::new("symlink-root");
-    let outside = TestDir::new("symlink-outside");
-    fs::write(outside.path().join("secret.adoc"), "secret").expect("outside source");
-    symlink(outside.path(), root.path().join("escape")).expect("symlink");
-    let (mut session, mut filesystem) = resources(root.path());
-    let mut transaction = filesystem
-        .transaction(&session, FilesystemJobLimits::unbounded())
-        .expect("transaction");
-    assert!(matches!(
-        transaction.read(
-            owner("document"),
-            request("escape", root.path(), "escape/secret.adoc")
-        ),
+        transaction.read(request("invalid", root.path(), "invalid.adoc")),
         IncludeFilesystemOutcome::Failed(_)
     ));
-    assert!(transaction.commit(&mut session, &mut filesystem).is_err());
-}
-
-#[test]
-fn cancellation_prevents_reads_and_atomic_commit() {
-    let root = TestDir::new("cancel");
-    fs::write(root.path().join("source.adoc"), "source").expect("source");
-    let (mut session, mut filesystem) = resources(root.path());
-    let mut transaction = filesystem
-        .transaction(&session, FilesystemJobLimits::unbounded())
-        .expect("transaction");
-    transaction.cancel().expect("cancel");
-    let IncludeFilesystemOutcome::Failed(failed) = transaction.read(
-        owner("document"),
-        request("include", root.path(), "source.adoc"),
-    ) else {
-        panic!("expected failed source");
-    };
-    assert_eq!(
-        failed.error(),
-        &FilesystemDraftError::Job(FilesystemJobError::Cancelled)
-    );
-    assert_eq!(
-        transaction.commit(&mut session, &mut filesystem),
-        Err(FilesystemDraftError::Job(FilesystemJobError::Cancelled))
-    );
-    assert_eq!(session.budget().bytes(), 0);
-}
-
-#[test]
-fn inspection_accepts_binary_files_without_charging_read_bytes_or_bindings() {
-    let root = TestDir::new("inspect-binary");
-    let asset = root.path().join("asset.png");
-    fs::write(&asset, [0xff, 0x00, 0x80]).expect("binary asset");
-    let (mut session, mut filesystem) = resources(root.path());
-    let mut transaction = filesystem
-        .transaction(&session, FilesystemJobLimits::unbounded())
-        .expect("transaction");
-
-    let IncludeFilesystemInspectionOutcome::Found(inspected) =
-        transaction.inspect(request("asset", root.path(), "asset.png"))
+    let IncludeFilesystemOutcome::Failed(failed) =
+        transaction.read(request("valid", root.path(), "valid.adoc"))
     else {
-        panic!("expected verified asset");
+        panic!("poisoned transaction must fail");
     };
-    assert_eq!(inspected.provenance().canonical_path(), asset);
+    assert_eq!(failed.error(), &FilesystemDraftError::PoisonedDraft);
     assert_eq!(
-        inspected
-            .watch_candidates()
-            .iter()
-            .map(IncludeWatchCandidate::path)
-            .collect::<Vec<_>>(),
-        [asset.as_path()]
+        transaction.commit(&mut session),
+        Err(FilesystemDraftError::PoisonedDraft)
     );
-    let committed = transaction
-        .commit(&mut session, &mut filesystem)
-        .expect("commit");
-    assert_eq!(committed.usage().read_operations, 1);
-    assert_eq!(committed.usage().read_bytes, 0);
     assert_eq!(session.budget().bytes(), 0);
-    assert!(filesystem.bindings.is_empty());
 }
 
 #[test]
-fn inspection_reports_missing_and_obeys_the_shared_operation_limit() {
-    let root = TestDir::new("inspect-limit");
-    let (mut session, mut filesystem) = resources(root.path());
+fn live_failure_does_not_poison_later_relative_or_absolute_reads() {
+    let root = TestDir::new("live-lenient");
+    let invalid = root.path().join("invalid.adoc");
+    fs::write(&invalid, [0xff]).expect("invalid");
+    fs::write(root.path().join("valid.adoc"), "valid").expect("valid");
+    let mut session = session(root.path(), 1_024);
+    let filesystem = IncludeFilesystem::new();
+    assert!(matches!(
+        filesystem.read_utf8(&mut session, path_request("invalid", &invalid)),
+        IncludeFilesystemOutcome::Failed(_)
+    ));
+    assert!(matches!(
+        filesystem.read(&mut session, request("valid", root.path(), "valid.adoc")),
+        IncludeFilesystemOutcome::Found(_)
+    ));
+}
+
+#[test]
+fn absolute_read_reports_budget_exhaustion_without_poisoning() {
+    let root = TestDir::new("absolute-budget");
+    let small = root.path().join("small.adoc");
+    let large = root.path().join("large.adoc");
+    fs::write(&small, "ok").expect("small source");
+    fs::write(&large, "four").expect("large source");
+    let mut session = session(root.path(), 3);
+    let job = IncludeFilesystemJob::new(FilesystemJobLimits::unbounded()).expect("job");
+    let mut transaction = job.transaction(&session).expect("transaction");
+    assert!(matches!(
+        transaction
+            .read_utf8_within_budget(path_request("missing", &root.path().join("missing.adoc"))),
+        IncludeFilesystemBudgetedOutcome::NotFound(_)
+    ));
+    assert!(matches!(
+        transaction.read_utf8_within_budget(path_request("small", &small)),
+        IncludeFilesystemBudgetedOutcome::Found(_)
+    ));
+    assert!(matches!(
+        transaction.read_utf8_within_budget(path_request("large", &large)),
+        IncludeFilesystemBudgetedOutcome::BudgetExhausted { .. }
+    ));
+    transaction.commit(&mut session).expect("commit");
+    assert_eq!(job.finish().expect("finish").read_operations, 3);
+    assert_eq!(session.budget().bytes(), 2);
+}
+
+#[test]
+fn inspection_reads_no_bytes_and_creates_no_binding() {
+    let root = TestDir::new("inspect");
+    let asset = root.path().join("asset.png");
+    fs::write(&asset, [0xff, 0x00, 0x80]).expect("asset");
+    let mut session = session(root.path(), 1_024);
+    let job = IncludeFilesystemJob::new(FilesystemJobLimits::unbounded()).expect("job");
+    let mut transaction = job.transaction(&session).expect("transaction");
+    assert!(matches!(
+        transaction.inspect(request("asset", root.path(), "asset.png")),
+        IncludeFilesystemInspectionOutcome::Found(_)
+    ));
+    transaction.commit(&mut session).expect("commit");
+    let usage = job.finish().expect("finish");
+    assert_eq!(usage.read_bytes, 0);
+    assert_eq!(session.budget().bytes(), 0);
+}
+
+#[test]
+fn one_job_enforces_a_shared_limit_across_sessions() {
+    let first_root = TestDir::new("shared-first");
+    let second_root = TestDir::new("shared-second");
+    fs::write(first_root.path().join("one.adoc"), "1").expect("first");
+    fs::write(second_root.path().join("two.adoc"), "2").expect("second");
+    let mut first_session = session(first_root.path(), 1_024);
+    let mut second_session = session(second_root.path(), 1_024);
     let limits = FilesystemJobLimits {
         max_read_operations: 1,
+        max_sessions: 2,
         ..FilesystemJobLimits::unbounded()
     };
-    let mut transaction = filesystem
-        .transaction(&session, limits)
-        .expect("transaction");
-    let IncludeFilesystemInspectionOutcome::NotFound(missing) =
-        transaction.inspect(request("first", root.path(), "first.png"))
+    let job = IncludeFilesystemJob::new(limits).expect("job");
+    let mut first = job.transaction(&first_session).expect("first transaction");
+    assert!(matches!(
+        first.read(request("one", first_root.path(), "one.adoc")),
+        IncludeFilesystemOutcome::Found(_)
+    ));
+    first.commit(&mut first_session).expect("commit");
+    let mut second = job
+        .transaction(&second_session)
+        .expect("second transaction");
+    let IncludeFilesystemOutcome::Failed(failed) =
+        second.read(request("two", second_root.path(), "two.adoc"))
     else {
-        panic!("expected missing asset");
-    };
-    assert_eq!(
-        missing.watch_candidate().path(),
-        root.path().join("first.png")
-    );
-    let IncludeFilesystemInspectionOutcome::Failed(failed) =
-        transaction.inspect(request("second", root.path(), "second.png"))
-    else {
-        panic!("expected limited inspection");
+        panic!("shared limit must reject second read");
     };
     assert_eq!(
         failed.error(),
@@ -344,90 +277,49 @@ fn inspection_reports_missing_and_obeys_the_shared_operation_limit() {
             FilesystemJobLimit::ReadOperations { limit: 1 }
         ))
     );
-    assert!(transaction.commit(&mut session, &mut filesystem).is_err());
+    assert!(second.commit(&mut second_session).is_err());
+}
+
+#[test]
+fn live_mutation_makes_an_atomic_transaction_stale() {
+    let root = TestDir::new("stale-transaction");
+    let path = root.path().join("source.adoc");
+    fs::write(&path, "source").expect("source");
+    let mut session = session(root.path(), 1_024);
+    let job = IncludeFilesystemJob::new(FilesystemJobLimits::unbounded()).expect("job");
+    let transaction = job.transaction(&session).expect("transaction");
+    assert!(matches!(
+        IncludeFilesystem::new().read_utf8(&mut session, path_request("live", &path)),
+        IncludeFilesystemOutcome::Found(_)
+    ));
+    assert_eq!(
+        transaction.commit(&mut session),
+        Err(FilesystemDraftError::InvalidDraft)
+    );
 }
 
 #[cfg(unix)]
 #[test]
-fn inspection_rejects_a_symlink_escape_without_returning_a_watch_path() {
+fn live_read_and_inspection_reject_symlink_escape() {
     use std::os::unix::fs::symlink;
-
-    let root = TestDir::new("inspect-symlink-root");
-    let outside = TestDir::new("inspect-symlink-outside");
-    fs::write(outside.path().join("asset.png"), "outside").expect("outside asset");
+    let root = TestDir::new("symlink-root");
+    let outside = TestDir::new("symlink-outside");
+    fs::write(outside.path().join("secret.adoc"), "secret").expect("outside");
     symlink(outside.path(), root.path().join("escape")).expect("symlink");
-    let (mut session, mut filesystem) = resources(root.path());
-    let mut transaction = filesystem
-        .transaction(&session, FilesystemJobLimits::unbounded())
-        .expect("transaction");
+    let mut session = session(root.path(), 1_024);
+    let filesystem = IncludeFilesystem::new();
+    fs::write(root.path().join("safe.png"), "safe").expect("safe asset");
+    let escape_request = || request("escape", root.path(), "escape/secret.adoc");
     assert!(matches!(
-        transaction.inspect(request("asset", root.path(), "escape/asset.png")),
+        filesystem.read(&mut session, escape_request()),
+        IncludeFilesystemOutcome::Failed(_)
+    ));
+    assert!(matches!(
+        filesystem.inspect(&mut session, escape_request()),
         IncludeFilesystemInspectionOutcome::Failed(_)
     ));
-    assert!(transaction.commit(&mut session, &mut filesystem).is_err());
-}
-
-#[test]
-fn replacing_one_owner_does_not_release_another_owners_bindings() {
-    let root = TestDir::new("owner-isolation");
-    fs::write(root.path().join("one.adoc"), "1").expect("one");
-    fs::write(root.path().join("two.adoc"), "22").expect("two");
-    let (mut session, mut filesystem) = resources(root.path());
-    let first_owner = owner("first-document");
-    let second_owner = owner("second-document");
-    let mut initial = filesystem
-        .transaction(&session, FilesystemJobLimits::unbounded())
-        .expect("initial transaction");
     assert!(matches!(
-        initial.read(first_owner.clone(), request("one", root.path(), "one.adoc")),
-        IncludeFilesystemOutcome::Found(_)
+        filesystem.inspect(&mut session, request("safe", root.path(), "safe.png")),
+        IncludeFilesystemInspectionOutcome::Found(_)
     ));
-    assert!(matches!(
-        initial.read(
-            second_owner.clone(),
-            request("two", root.path(), "two.adoc")
-        ),
-        IncludeFilesystemOutcome::Found(_)
-    ));
-    initial
-        .commit(&mut session, &mut filesystem)
-        .expect("initial commit");
-
-    let mut replacement = filesystem
-        .transaction(&session, FilesystemJobLimits::unbounded())
-        .expect("replacement transaction");
-    assert!(matches!(
-        replacement.read(first_owner.clone(), request("one", root.path(), "one.adoc")),
-        IncludeFilesystemOutcome::Found(_)
-    ));
-    replacement
-        .commit(&mut session, &mut filesystem)
-        .expect("replacement commit");
-
-    assert_eq!(session.budget().bytes(), 3);
-    assert_eq!(filesystem.bindings[&first_owner].resources.len(), 1);
-    assert_eq!(filesystem.bindings[&second_owner].resources.len(), 1);
-}
-
-#[test]
-fn transaction_rejects_a_different_registry_at_commit() {
-    let root = TestDir::new("foreign-registry");
-    fs::write(root.path().join("source.adoc"), "source").expect("source");
-    let (mut session, filesystem) = resources(root.path());
-    let mut foreign = IncludeFilesystem::new().expect("foreign registry");
-    let mut transaction = filesystem
-        .transaction(&session, FilesystemJobLimits::unbounded())
-        .expect("transaction");
-    assert!(matches!(
-        transaction.read(
-            owner("document"),
-            request("include", root.path(), "source.adoc")
-        ),
-        IncludeFilesystemOutcome::Found(_)
-    ));
-    assert_eq!(
-        transaction.commit(&mut session, &mut foreign),
-        Err(FilesystemDraftError::InvalidDraft)
-    );
-    assert_eq!(session.budget().bytes(), 0);
 }

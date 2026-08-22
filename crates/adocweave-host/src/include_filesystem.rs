@@ -1,13 +1,13 @@
-//! Transactional filesystem boundary for native include drivers.
+//! High-level filesystem boundary for native include drivers.
 //!
-//! The lower-level local-resource API remains available for host internals and
-//! security tests. Include consumers use this module so draft ownership, job
-//! accounting and generation-specific resource bindings cannot be separated.
+//! Atomic transactions own the draft and expose opaque bindings. Consumers
+//! retain those bindings in their existing state and release obsolete values
+//! explicitly. Lenient live operations are separate because one failed
+//! optional target must not poison later CLI validation.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::local_resource::FilesystemInspectOutcome;
 use crate::{
@@ -16,30 +16,11 @@ use crate::{
     LocalFilesystemSession, LogicalSourceId, ResourceError,
 };
 
-/// One authored include lookup.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IncludeFilesystemRequest {
     source_id: LogicalSourceId,
     base: PathBuf,
     target: Arc<str>,
-}
-
-/// Logical namespace which owns one committed set of include bindings.
-///
-/// A workspace root, CLI input or another host run can use a distinct owner so
-/// replacing its include set never releases bindings retained by another
-/// consumer of the same [`LocalFilesystemSession`].
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct IncludeFilesystemOwner(LogicalSourceId);
-
-impl IncludeFilesystemOwner {
-    pub fn new(value: impl Into<Arc<str>>) -> Result<Self, ResourceError> {
-        LogicalSourceId::new(value).map(Self)
-    }
-
-    pub fn as_str(&self) -> &str {
-        self.0.as_str()
-    }
 }
 
 impl IncludeFilesystemRequest {
@@ -68,11 +49,35 @@ impl IncludeFilesystemRequest {
     }
 }
 
-/// A path which was derived through an authorized, normalized lookup.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IncludeFilesystemPathRequest {
+    source_id: LogicalSourceId,
+    path: PathBuf,
+}
+
+impl IncludeFilesystemPathRequest {
+    pub fn new(source_id: LogicalSourceId, path: impl Into<PathBuf>) -> Self {
+        Self {
+            source_id,
+            path: path.into(),
+        }
+    }
+
+    pub fn source_id(&self) -> &LogicalSourceId {
+        &self.source_id
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+/// Generation-specific ownership returned to the consumer.
 ///
-/// Values cannot be constructed by callers. A missing target contributes its
-/// normalized candidate. A found target contributes both that candidate and
-/// its canonical path, with duplicates removed.
+/// This value is intentionally opaque and can only be passed to `release`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IncludeFilesystemBinding(FilesystemResourceBinding);
+
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct IncludeWatchCandidate(PathBuf);
 
@@ -82,7 +87,6 @@ impl IncludeWatchCandidate {
     }
 }
 
-/// Canonical identity of a file opened through the retained root authority.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IncludeFilesystemProvenance {
     canonical_path: PathBuf,
@@ -94,16 +98,37 @@ impl IncludeFilesystemProvenance {
     }
 }
 
-/// A successfully loaded include source.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IncludeFilesystemSource {
     source_id: LogicalSourceId,
     source: Arc<str>,
     provenance: IncludeFilesystemProvenance,
+    binding: IncludeFilesystemBinding,
     watch_candidates: Vec<IncludeWatchCandidate>,
 }
 
-/// A verified local target whose contents were not read.
+impl IncludeFilesystemSource {
+    pub fn source_id(&self) -> &LogicalSourceId {
+        &self.source_id
+    }
+
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
+    pub fn provenance(&self) -> &IncludeFilesystemProvenance {
+        &self.provenance
+    }
+
+    pub fn binding(&self) -> &IncludeFilesystemBinding {
+        &self.binding
+    }
+
+    pub fn watch_candidates(&self) -> &[IncludeWatchCandidate] {
+        &self.watch_candidates
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IncludeFilesystemInspection {
     source_id: LogicalSourceId,
@@ -125,29 +150,6 @@ impl IncludeFilesystemInspection {
     }
 }
 
-impl IncludeFilesystemSource {
-    pub fn source_id(&self) -> &LogicalSourceId {
-        &self.source_id
-    }
-
-    pub fn source(&self) -> &str {
-        &self.source
-    }
-
-    pub fn provenance(&self) -> &IncludeFilesystemProvenance {
-        &self.provenance
-    }
-
-    pub fn watch_candidates(&self) -> &[IncludeWatchCandidate] {
-        &self.watch_candidates
-    }
-
-    pub fn into_parts(self) -> (LogicalSourceId, Arc<str>, IncludeFilesystemProvenance) {
-        (self.source_id, self.source, self.provenance)
-    }
-}
-
-/// An absent include and the normalized path which can safely be watched.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MissingIncludeFilesystemSource {
     source_id: LogicalSourceId,
@@ -164,10 +166,6 @@ impl MissingIncludeFilesystemSource {
     }
 }
 
-/// A failed include lookup.
-///
-/// No watch path is exposed for a failed lookup: path normalization or
-/// confinement may itself be the operation which failed.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FailedIncludeFilesystemSource {
     source_id: LogicalSourceId,
@@ -184,7 +182,6 @@ impl FailedIncludeFilesystemSource {
     }
 }
 
-/// Typed result of one include lookup.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum IncludeFilesystemOutcome {
     Found(IncludeFilesystemSource),
@@ -192,7 +189,14 @@ pub enum IncludeFilesystemOutcome {
     Failed(FailedIncludeFilesystemSource),
 }
 
-/// Typed result of verifying one local target without reading its contents.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum IncludeFilesystemBudgetedOutcome {
+    Found(IncludeFilesystemSource),
+    NotFound(MissingIncludeFilesystemSource),
+    BudgetExhausted { source_id: LogicalSourceId },
+    Failed(FailedIncludeFilesystemSource),
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum IncludeFilesystemInspectionOutcome {
     Found(IncludeFilesystemInspection),
@@ -200,114 +204,18 @@ pub enum IncludeFilesystemInspectionOutcome {
     Failed(FailedIncludeFilesystemSource),
 }
 
-/// Committed observations from one include transaction.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct IncludeFilesystemCommit {
-    usage: FilesystemJobUsage,
-    watch_candidates: Vec<IncludeWatchCandidate>,
-}
-
-impl IncludeFilesystemCommit {
-    pub const fn usage(&self) -> FilesystemJobUsage {
-        self.usage
-    }
-
-    pub fn watch_candidates(&self) -> &[IncludeWatchCandidate] {
-        &self.watch_candidates
-    }
-}
-
-/// Long-lived ownership registry for native include bindings.
-///
-/// Filesystem sessions stay with the host because workspace scans, watch
-/// handling and other native operations can share their root authority and
-/// budget. Include bindings remain private and are partitioned by
-/// [`IncludeFilesystemOwner`].
-#[derive(Debug)]
-pub struct IncludeFilesystem {
-    id: u64,
-    bindings: BTreeMap<IncludeFilesystemOwner, IncludeOwnerBindings>,
-}
-
-#[derive(Clone, Debug, Default)]
-struct IncludeOwnerBindings {
-    revision: u64,
-    resources: BTreeMap<LogicalSourceId, FilesystemResourceBinding>,
-}
-
-static NEXT_INCLUDE_FILESYSTEM_ID: AtomicU64 = AtomicU64::new(1);
+/// Stateless entry point for lenient operations on live session state.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct IncludeFilesystem;
 
 impl IncludeFilesystem {
-    pub fn new() -> Result<Self, ResourceError> {
-        let id = NEXT_INCLUDE_FILESYSTEM_ID
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-                current.checked_add(1)
-            })
-            .map_err(|_| {
-                ResourceError::Unverifiable(
-                    "include filesystem identity space is exhausted".to_owned(),
-                )
-            })?;
-        Ok(Self {
-            id,
-            bindings: BTreeMap::new(),
-        })
+    pub const fn new() -> Self {
+        Self
     }
 
-    /// Starts an owned replacement of include observations in this registry.
-    ///
-    /// The session is borrowed only while its owned draft is created. This lets
-    /// a host release a session lock during parsing and provide the live session
-    /// again at commit. Within every owner passed to [`IncludeFilesystemTransaction::read`],
-    /// a commit releases bindings for logical IDs which were not observed.
-    /// Dropping the transaction leaves the live session and registry unchanged.
-    pub fn transaction(
-        &self,
-        session: &LocalFilesystemSession,
-        limits: FilesystemJobLimits,
-    ) -> Result<IncludeFilesystemTransaction, FilesystemDraftError> {
-        let job = FilesystemJobCoordinator::new(limits)?;
-        let draft = session.draft(&job)?;
-        let candidate_bindings = self
-            .bindings
-            .iter()
-            .map(|(owner, bindings)| (owner.clone(), bindings.resources.clone()))
-            .collect();
-        let base_revisions = self
-            .bindings
-            .iter()
-            .map(|(owner, bindings)| (owner.clone(), bindings.revision))
-            .collect();
-        Ok(IncludeFilesystemTransaction {
-            filesystem_id: self.id,
-            base_revisions,
-            candidate_bindings,
-            seen: BTreeMap::new(),
-            watch_candidates: BTreeSet::new(),
-            draft: Some(draft),
-            job,
-        })
-    }
-}
-
-/// One isolated include-filesystem replacement.
-#[must_use = "an include filesystem transaction must be committed or dropped"]
-pub struct IncludeFilesystemTransaction {
-    filesystem_id: u64,
-    base_revisions: BTreeMap<IncludeFilesystemOwner, u64>,
-    candidate_bindings:
-        BTreeMap<IncludeFilesystemOwner, BTreeMap<LogicalSourceId, FilesystemResourceBinding>>,
-    seen: BTreeMap<IncludeFilesystemOwner, BTreeSet<LogicalSourceId>>,
-    watch_candidates: BTreeSet<IncludeWatchCandidate>,
-    draft: Option<LocalFilesystemDraft>,
-    job: FilesystemJobCoordinator,
-}
-
-impl IncludeFilesystemTransaction {
-    /// Reads one include through the handle-relative, bounded draft API.
     pub fn read(
-        &mut self,
-        owner: IncludeFilesystemOwner,
+        &self,
+        session: &mut LocalFilesystemSession,
         request: IncludeFilesystemRequest,
     ) -> IncludeFilesystemOutcome {
         let IncludeFilesystemRequest {
@@ -315,79 +223,128 @@ impl IncludeFilesystemTransaction {
             base,
             target,
         } = request;
-        self.seen
-            .entry(owner.clone())
-            .or_default()
-            .insert(source_id.clone());
+        let outcome = session.read_target_utf8_outcome(source_id.clone(), &base, &target);
+        map_live_read(source_id, outcome)
+    }
+
+    pub fn read_utf8(
+        &self,
+        session: &mut LocalFilesystemSession,
+        request: IncludeFilesystemPathRequest,
+    ) -> IncludeFilesystemOutcome {
+        let IncludeFilesystemPathRequest { source_id, path } = request;
+        let outcome = session.read_utf8_outcome(source_id.clone(), &path);
+        map_live_read(source_id, outcome)
+    }
+
+    pub fn inspect(
+        &self,
+        session: &mut LocalFilesystemSession,
+        request: IncludeFilesystemRequest,
+    ) -> IncludeFilesystemInspectionOutcome {
+        let IncludeFilesystemRequest {
+            source_id,
+            base,
+            target,
+        } = request;
+        map_inspection(
+            source_id.clone(),
+            session
+                .inspect_target_outcome(source_id, &base, &target)
+                .map_err(FilesystemDraftError::from),
+        )
+    }
+}
+
+/// One job budget shared by transactions from any authorized session.
+#[derive(Debug)]
+pub struct IncludeFilesystemJob {
+    coordinator: FilesystemJobCoordinator,
+}
+
+impl IncludeFilesystemJob {
+    pub fn new(limits: FilesystemJobLimits) -> Result<Self, FilesystemJobError> {
+        Ok(Self {
+            coordinator: FilesystemJobCoordinator::new(limits)?,
+        })
+    }
+
+    /// Creates an owned transaction without retaining the session borrow.
+    pub fn transaction(
+        &self,
+        session: &LocalFilesystemSession,
+    ) -> Result<IncludeFilesystemTransaction, FilesystemDraftError> {
+        Ok(IncludeFilesystemTransaction {
+            draft: Some(session.draft(&self.coordinator)?),
+            coordinator: self.coordinator.clone(),
+        })
+    }
+
+    pub fn usage(&self) -> Result<FilesystemJobUsage, FilesystemJobError> {
+        self.coordinator.usage()
+    }
+
+    pub fn cancel(&self) -> Result<(), FilesystemJobError> {
+        self.coordinator.cancel()
+    }
+
+    pub fn finish(self) -> Result<FilesystemJobUsage, FilesystemJobError> {
+        let usage = self.coordinator.usage()?;
+        self.coordinator.finish()?;
+        Ok(usage)
+    }
+}
+
+/// An isolated atomic filesystem candidate.
+///
+/// Any `Failed` operation is terminal: the draft is poisoned and all later
+/// operations and commit are rejected. Use live methods on
+/// [`IncludeFilesystem`] when optional failures must not stop later work.
+#[must_use = "an include filesystem transaction must be committed or dropped"]
+pub struct IncludeFilesystemTransaction {
+    draft: Option<LocalFilesystemDraft>,
+    coordinator: FilesystemJobCoordinator,
+}
+
+impl IncludeFilesystemTransaction {
+    pub fn read(&mut self, request: IncludeFilesystemRequest) -> IncludeFilesystemOutcome {
+        let IncludeFilesystemRequest {
+            source_id,
+            base,
+            target,
+        } = request;
         let outcome = self
-            .draft
-            .as_mut()
-            .expect("an open include transaction owns its draft")
+            .draft_mut()
             .read_target_utf8_outcome(source_id.clone(), &base, &target);
-        match outcome {
-            Ok(FilesystemReadOutcome::Found(loaded)) => {
-                let canonical_path = loaded.canonical_path().to_owned();
-                let binding = loaded.binding().clone();
-                let candidate_path = binding.candidate_path().to_owned();
-                let previous = self
-                    .candidate_bindings
-                    .entry(owner)
-                    .or_default()
-                    .insert(source_id.clone(), binding);
-                if let Some(previous) = previous
-                    && previous.candidate_path() != candidate_path
-                    && let Err(error) = self.release_binding(&previous)
-                {
-                    return IncludeFilesystemOutcome::Failed(FailedIncludeFilesystemSource {
-                        source_id,
-                        error,
-                    });
+        map_draft_read(source_id, outcome)
+    }
+
+    pub fn read_utf8_within_budget(
+        &mut self,
+        request: IncludeFilesystemPathRequest,
+    ) -> IncludeFilesystemBudgetedOutcome {
+        let IncludeFilesystemPathRequest { source_id, path } = request;
+        match self
+            .draft_mut()
+            .read_utf8_within_budget(source_id.clone(), &path)
+        {
+            Ok(Some(outcome)) => match map_read(outcome) {
+                IncludeFilesystemOutcome::Found(found) => {
+                    IncludeFilesystemBudgetedOutcome::Found(found)
                 }
-                let watch_candidates = watch_candidates([candidate_path, canonical_path.clone()]);
-                self.watch_candidates
-                    .extend(watch_candidates.iter().cloned());
-                let (_, source) = loaded.into_parts();
-                IncludeFilesystemOutcome::Found(IncludeFilesystemSource {
-                    source_id,
-                    source,
-                    provenance: IncludeFilesystemProvenance { canonical_path },
-                    watch_candidates,
-                })
-            }
-            Ok(FilesystemReadOutcome::NotFound {
+                IncludeFilesystemOutcome::NotFound(missing) => {
+                    IncludeFilesystemBudgetedOutcome::NotFound(missing)
+                }
+                IncludeFilesystemOutcome::Failed(_) => unreachable!("successful read mapping"),
+            },
+            Ok(None) => IncludeFilesystemBudgetedOutcome::BudgetExhausted { source_id },
+            Err(error) => IncludeFilesystemBudgetedOutcome::Failed(FailedIncludeFilesystemSource {
                 source_id,
-                candidate_path,
-            }) => {
-                let previous = self
-                    .candidate_bindings
-                    .entry(owner)
-                    .or_default()
-                    .remove(&source_id);
-                if let Some(previous) = previous
-                    && let Err(error) = self.release_binding(&previous)
-                {
-                    return IncludeFilesystemOutcome::Failed(FailedIncludeFilesystemSource {
-                        source_id,
-                        error,
-                    });
-                }
-                let watch_candidate = IncludeWatchCandidate(candidate_path);
-                self.watch_candidates.insert(watch_candidate.clone());
-                IncludeFilesystemOutcome::NotFound(MissingIncludeFilesystemSource {
-                    source_id,
-                    watch_candidate,
-                })
-            }
-            Err(error) => {
-                IncludeFilesystemOutcome::Failed(FailedIncludeFilesystemSource { source_id, error })
-            }
+                error,
+            }),
         }
     }
 
-    /// Verifies a local target through the same authority and job as includes.
-    ///
-    /// Inspection consumes a read-operation and path budget but no read bytes,
-    /// and it does not create or replace an include binding.
     pub fn inspect(
         &mut self,
         request: IncludeFilesystemRequest,
@@ -398,140 +355,113 @@ impl IncludeFilesystemTransaction {
             target,
         } = request;
         let outcome = self
-            .draft
-            .as_mut()
-            .expect("an open include transaction owns its draft")
+            .draft_mut()
             .inspect_target_outcome(source_id.clone(), &base, &target);
-        match outcome {
-            Ok(FilesystemInspectOutcome::Found {
-                source_id,
-                candidate_path,
-                canonical_path,
-            }) => {
-                let watch_candidates = watch_candidates([candidate_path, canonical_path.clone()]);
-                self.watch_candidates
-                    .extend(watch_candidates.iter().cloned());
-                IncludeFilesystemInspectionOutcome::Found(IncludeFilesystemInspection {
-                    source_id,
-                    provenance: IncludeFilesystemProvenance { canonical_path },
-                    watch_candidates,
-                })
-            }
-            Ok(FilesystemInspectOutcome::NotFound {
-                source_id,
-                candidate_path,
-            }) => {
-                let watch_candidate = IncludeWatchCandidate(candidate_path);
-                self.watch_candidates.insert(watch_candidate.clone());
-                IncludeFilesystemInspectionOutcome::NotFound(MissingIncludeFilesystemSource {
-                    source_id,
-                    watch_candidate,
-                })
-            }
-            Err(error) => {
-                IncludeFilesystemInspectionOutcome::Failed(FailedIncludeFilesystemSource {
-                    source_id,
-                    error,
-                })
-            }
-        }
+        map_inspection(source_id, outcome)
+    }
+
+    pub fn release(
+        &mut self,
+        binding: &IncludeFilesystemBinding,
+    ) -> Result<(), FilesystemDraftError> {
+        self.draft_mut().release_binding(&binding.0).map(|_| ())
     }
 
     pub fn usage(&self) -> Result<FilesystemJobUsage, FilesystemJobError> {
-        self.job.usage()
+        self.coordinator.usage()
     }
 
-    /// Cancels this transaction without exposing the coordinator itself.
-    pub fn cancel(&self) -> Result<(), FilesystemJobError> {
-        self.job.cancel()
-    }
-
-    /// Atomically installs the draft and its logical binding ownership.
+    /// Installs this draft. The shared job is finished separately by its owner.
     pub fn commit(
         mut self,
         session: &mut LocalFilesystemSession,
-        filesystem: &mut IncludeFilesystem,
-    ) -> Result<IncludeFilesystemCommit, FilesystemDraftError> {
-        if self.filesystem_id != filesystem.id {
-            return Err(FilesystemDraftError::InvalidDraft);
-        }
-        let owners = self.seen.keys().cloned().collect::<Vec<_>>();
-        for owner in &owners {
-            let seen = self.seen.get(owner).expect("owner was collected from seen");
-            let resources = self.candidate_bindings.entry(owner.clone()).or_default();
-            let unseen = resources
-                .keys()
-                .filter(|source_id| !seen.contains(*source_id))
-                .cloned()
-                .collect::<Vec<_>>();
-            let released = unseen
-                .into_iter()
-                .filter_map(|source_id| resources.remove(&source_id))
-                .collect::<Vec<_>>();
-            for binding in released {
-                self.release_binding(&binding)?;
-            }
-        }
-        let mut next_revisions = BTreeMap::new();
-        for owner in &owners {
-            let expected = self.base_revisions.get(owner).copied().unwrap_or(0);
-            let current = filesystem
-                .bindings
-                .get(owner)
-                .map(|bindings| bindings.revision)
-                .unwrap_or(0);
-            if current != expected {
-                return Err(FilesystemDraftError::InvalidDraft);
-            }
-            next_revisions.insert(
-                owner.clone(),
-                current
-                    .checked_add(1)
-                    .ok_or(FilesystemDraftError::SessionRevisionExhausted)?,
-            );
-        }
-        let usage = self.job.usage()?;
-        let draft = self
-            .draft
+    ) -> Result<(), FilesystemDraftError> {
+        self.draft
             .take()
-            .expect("an open include transaction owns its draft");
-        draft.prepare_commit(session)?.commit()?;
-        for owner in owners {
-            let resources = self.candidate_bindings.remove(&owner).unwrap_or_default();
-            filesystem.bindings.insert(
-                owner.clone(),
-                IncludeOwnerBindings {
-                    revision: next_revisions[&owner],
-                    resources,
-                },
-            );
-        }
-        self.job.finish()?;
-        Ok(IncludeFilesystemCommit {
-            usage,
-            watch_candidates: std::mem::take(&mut self.watch_candidates)
-                .into_iter()
-                .collect(),
-        })
+            .expect("an open include transaction owns its draft")
+            .prepare_commit(session)?
+            .commit()
     }
 
-    fn release_binding(
-        &mut self,
-        binding: &FilesystemResourceBinding,
-    ) -> Result<(), FilesystemDraftError> {
+    fn draft_mut(&mut self) -> &mut LocalFilesystemDraft {
         self.draft
             .as_mut()
             .expect("an open include transaction owns its draft")
-            .release_binding(binding)
-            .map(|_| ())
     }
 }
 
-impl Drop for IncludeFilesystemTransaction {
-    fn drop(&mut self) {
-        if self.draft.is_some() {
-            let _ = self.job.cancel();
+fn map_live_read(
+    source_id: LogicalSourceId,
+    outcome: Result<FilesystemReadOutcome, ResourceError>,
+) -> IncludeFilesystemOutcome {
+    map_draft_read(source_id, outcome.map_err(FilesystemDraftError::from))
+}
+
+fn map_draft_read(
+    source_id: LogicalSourceId,
+    outcome: Result<FilesystemReadOutcome, FilesystemDraftError>,
+) -> IncludeFilesystemOutcome {
+    match outcome {
+        Ok(outcome) => map_read(outcome),
+        Err(error) => {
+            IncludeFilesystemOutcome::Failed(FailedIncludeFilesystemSource { source_id, error })
         }
+    }
+}
+
+fn map_read(outcome: FilesystemReadOutcome) -> IncludeFilesystemOutcome {
+    match outcome {
+        FilesystemReadOutcome::Found(loaded) => {
+            let canonical_path = loaded.canonical_path().to_owned();
+            let candidate_path = loaded.binding().candidate_path().to_owned();
+            let (source_id, source, binding) = loaded.into_parts_with_binding();
+            IncludeFilesystemOutcome::Found(IncludeFilesystemSource {
+                source_id,
+                source,
+                provenance: IncludeFilesystemProvenance {
+                    canonical_path: canonical_path.clone(),
+                },
+                binding: IncludeFilesystemBinding(binding),
+                watch_candidates: watch_candidates([candidate_path, canonical_path]),
+            })
+        }
+        FilesystemReadOutcome::NotFound {
+            source_id,
+            candidate_path,
+        } => IncludeFilesystemOutcome::NotFound(MissingIncludeFilesystemSource {
+            source_id,
+            watch_candidate: IncludeWatchCandidate(candidate_path),
+        }),
+    }
+}
+
+fn map_inspection(
+    source_id: LogicalSourceId,
+    outcome: Result<FilesystemInspectOutcome, FilesystemDraftError>,
+) -> IncludeFilesystemInspectionOutcome {
+    match outcome {
+        Ok(FilesystemInspectOutcome::Found {
+            source_id,
+            candidate_path,
+            canonical_path,
+        }) => IncludeFilesystemInspectionOutcome::Found(IncludeFilesystemInspection {
+            source_id,
+            provenance: IncludeFilesystemProvenance {
+                canonical_path: canonical_path.clone(),
+            },
+            watch_candidates: watch_candidates([candidate_path, canonical_path]),
+        }),
+        Ok(FilesystemInspectOutcome::NotFound {
+            source_id,
+            candidate_path,
+        }) => IncludeFilesystemInspectionOutcome::NotFound(MissingIncludeFilesystemSource {
+            source_id,
+            watch_candidate: IncludeWatchCandidate(candidate_path),
+        }),
+        Err(error) => IncludeFilesystemInspectionOutcome::Failed(FailedIncludeFilesystemSource {
+            source_id,
+            error,
+        }),
     }
 }
 

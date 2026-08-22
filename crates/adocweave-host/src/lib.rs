@@ -17,9 +17,10 @@ pub use filesystem_job::{
 };
 pub use filesystem_limits::FilesystemReadLimits;
 pub use include_filesystem::{
-    FailedIncludeFilesystemSource, IncludeFilesystem, IncludeFilesystemCommit,
-    IncludeFilesystemInspection, IncludeFilesystemInspectionOutcome, IncludeFilesystemOutcome,
-    IncludeFilesystemOwner, IncludeFilesystemProvenance, IncludeFilesystemRequest,
+    FailedIncludeFilesystemSource, IncludeFilesystem, IncludeFilesystemBinding,
+    IncludeFilesystemBudgetedOutcome, IncludeFilesystemInspection,
+    IncludeFilesystemInspectionOutcome, IncludeFilesystemJob, IncludeFilesystemOutcome,
+    IncludeFilesystemPathRequest, IncludeFilesystemProvenance, IncludeFilesystemRequest,
     IncludeFilesystemSource, IncludeFilesystemTransaction, IncludeWatchCandidate,
     MissingIncludeFilesystemSource,
 };
