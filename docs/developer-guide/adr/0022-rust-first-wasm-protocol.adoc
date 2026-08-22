@@ -1,0 +1,66 @@
+= ADR 0022: WASM protocolの型をRust定義から導出する
+
+:status: proposed
+
+== 文脈
+
+Browser向けWASMとJavaScriptがやり取りするJSONの形は、``protocol/public-api.json``(851行)を正本として
+``tools/generate-protocol.mjs``(435行)と``tools/protocol-rust-codegen.mjs``(1,774行)が次を生成しています。
+
+* Rust 7 file、計1,269行。serdeのstructとenumで、既定値、未知fieldの拒否、tagged unionを含みます
+* ``web-worker/protocol.generated.d.mts``(640行、TypeScript宣言)
+* ``web-worker/protocol.generated.mjs``(実行時にworker messageの形を検査するJavaScript)
+
+つまり、このJSONは独自のIDLであり、生成器はそのRust出力器、TypeScript出力器および実行時検証器の
+生成器を兼ねています。合計3,001行の自作codeが、1,967行の出力を作っています。
+
+この構成には二つの負担があります。第一に、型を追加するときはJSONだけでは足りず、生成器の内部にある
+所有型の一覧を手で更新する必要があります。Issue #580〜#598の作業では、この更新漏れでCIが繰り返し
+失敗しました。第二に、Rustのserdeが属性として標準で表現できる意味(``#[serde(default)]``、
+``deny_unknown_fields``、``#[serde(tag = "status")]``)を、JSONの語彙と生成器の分岐で再実装しています。
+
+リポジトリのほかのtoolは標準toolの薄いwrapperです(``html5-check``はvalidator.nu、``semver-gate``は
+cargo-semver-checks、``dependency-governance``はcargo-denyとnpm audit、``workflow-lint``はactionlint)。
+生成器だけが大きな自作物として残っています。
+
+== 決定
+
+Rustの型定義を正本とし、ほかの成果物を既製のlibraryで導出します。
+
+* **Rust**: wire型を``crates/adocweave-wasm``へ手で書きます。既定値、未知fieldの拒否、tagged unionは
+  serdeの属性でそのまま表現します。いま生成している1,269行と同じ内容が手書きへ移ります
+* **TypeScript宣言**: ``ts-rs``の``#[derive(TS)]``でtestとして書き出します。wasm-bindgenと併用する場合は
+  ``tsify``も候補です
+* **機械可読な公開契約**: ``schemars``でJSON Schemaを生成し、``protocol/public-api.json``の後継とします。
+  derive実装が配布するWebAssemblyへ入らないよう、schema生成はfeatureで分離し、別のbinまたはtestで実行します
+* **実行時検証**: JSON Schemaから``ajv``のstandalone出力(依存のない単独JavaScript)を生成します。
+  出力の大きさがbrowser archiveの上限に収まらない場合は、worker messageの検査だけを手書きで残します
+
+移行の安全網として、既存の``fixtures/protocol/request-corpus.json``を使う受理・拒否の検査
+(``protocol-corpus-check``と``protocol-wasm-corpus-check``)をそのまま使います。これらは同じ入力に対する
+受理と拒否の結果を固定しているため、置き換えの前後で挙動が変わらないことを確認できます。
+
+== 検討した代替案
+
+**JSONを正本のまま、既製のgeneratorへ置き換える。** ``protocol/public-api.json``を標準のJSON Schemaへ
+書き換え、``typify``(JSON Schema → Rust)と``json-schema-to-typescript``を使う案です。正本の位置は
+変わりませんが、独自語彙(``browser-default``のような既定値、``safeInteger``のような型名)を標準JSON Schemaへ
+写し替える作業が必要で、生成されるRustの名前と現在の公開APIを一致させる調整も要ります。Rustを正本にすれば
+この写し替え自体が不要になるため、採用しません。
+
+**現状維持。** 生成器は動いており、公開仕様を変えずに済みます。ただし型の追加ごとに生成器を触る負担が
+残り、標準toolで代替できる部分を自作し続けることになります。
+
+== 帰結
+
+* 自作の生成器3,001行が不要になります。手書きへ移るRust 1,269行は現在の生成結果と同じ内容であるため、
+  リポジトリ全体では生成器の分だけ減ります
+* 型の追加はRustの変更だけで完結します。生成器の所有型一覧という、忘れやすい二重管理がなくなります
+* 公開契約の形が``protocol/public-api.json``からJSON Schemaへ変わります。これは公開仕様の変更であり、
+  ``PUBLIC_PROTOCOL_SCHEMA_VERSION``の更新、``release-claims``と``release-contract``の照合先の変更、
+  Release Notesへの記載が必要です
+* 依存が増えます(``ts-rs``または``tsify``、``schemars``、場合により``ajv``)。いずれもMITまたはApache-2.0で、
+  dependency governanceの許可範囲に収まります。配布するWebAssemblyへ入らないよう、schema生成のderiveは
+  featureで分離します
+* 移行の間は、生成器と新しい経路の両方が同じ出力を作ることを確認できません。request corpusの受理・拒否と
+  公開conformance fixtureで、利用者から見た挙動が同じであることを確認します
