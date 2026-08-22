@@ -19,7 +19,7 @@ const COMMON_RELEASE_FILES = new Set([
   "dist-workspace.toml",
   "flake.lock",
   "flake.nix",
-  "release-manifest.json",
+  "toolchains.json",
 ]);
 // THIRD_PARTY_NOTICES.adoc is generated into the working tree and ignored by
 // Git, so classification never sees it: the audit and the CI change list both
@@ -65,7 +65,6 @@ const NON_RELEASE_FILES = new Set([
   "deny.toml",
   "tools/adoc-check.mjs",
   "tools/adoc-check.test.mjs",
-  "tools/breaking-rust-api.mjs",
   "tools/config-schema.test.mjs",
   "tools/dependency-governance.sh",
   "tools/generate-third-party-notices.test.mjs",
@@ -82,8 +81,6 @@ const NON_RELEASE_FILES = new Set([
   "tools/sync-release-version.test.mjs",
   "tools/release-workflow-policy.mjs",
   "tools/release-workflow-policy.test.mjs",
-  "tools/semver-gate.mjs",
-  "tools/semver-gate.test.mjs",
   "tools/verify-cargo-release-metadata.mjs",
   "tools/verify-dependency-boundaries.mjs",
   "tools/verify-dependency-boundaries.test.mjs",
@@ -304,7 +301,7 @@ const DOCUMENT_FILES = new Set([
   "README.adoc",
   "CONTRIBUTING.adoc",
   "fuzz/.adocweave.toml",
-  "release-manifest.json",
+  "toolchains.json",
   "tools/adoc-check.mjs",
   "tools/adoc-check.test.mjs",
   "tools/html5-check.mjs",
@@ -345,7 +342,6 @@ export function qualityScope(paths) {
     dependencies: true,
     fuzz: true,
     nixPackage: true,
-    semver: true,
   };
   if (paths.length === 0) return everything;
   if (
@@ -372,7 +368,6 @@ export function qualityScope(paths) {
     // change to Rust source or its build inputs can change their outcome.
     fuzz: rustSource,
     nixPackage: rustSource,
-    semver: rustSource,
   };
 }
 
@@ -467,7 +462,6 @@ function main() {
       `quality_dependencies=${plan.quality.dependencies}`,
       `quality_fuzz=${plan.quality.fuzz}`,
       `quality_nix_package=${plan.quality.nixPackage}`,
-      `quality_semver=${plan.quality.semver}`,
       "",
     ].join("\n"),
     { flag: "a" },

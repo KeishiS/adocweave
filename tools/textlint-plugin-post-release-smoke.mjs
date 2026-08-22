@@ -9,14 +9,14 @@ import { pathToFileURL } from "node:url";
 import { runTextlintPluginNpxSmoke } from "./textlint-plugin-npx-smoke.mjs";
 import { loadStrictContract } from "./textlint-plugin-npx-smoke.mjs";
 
-const DEFAULT_MANIFEST = new URL("../release-manifest.json", import.meta.url);
+const DEFAULT_MANIFEST = new URL("../packages/textlint-plugin-asciidoc/package.json", import.meta.url);
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   const manifest = JSON.parse(await readFile(DEFAULT_MANIFEST, "utf8"));
   const releaseBaseUrl =
-    `https://github.com/KeishiS/adocweave/releases/download/v${manifest.packageVersion}`;
+    `https://github.com/KeishiS/adocweave/releases/download/adocweave-textlint/v${manifest.version}`;
   await runTextlintPluginPostReleaseSmoke(releaseBaseUrl);
-  process.stdout.write(`textlint plugin post-release smoke passed: v${manifest.packageVersion}\n`);
+  process.stdout.write(`textlint plugin post-release smoke passed: v${manifest.version}\n`);
 }
 
 export async function runTextlintPluginPostReleaseSmoke(
@@ -30,13 +30,13 @@ export async function runTextlintPluginPostReleaseSmoke(
   } = {},
 ) {
   contract ??= await loadStrictContract();
-  version ??= JSON.parse(await readFile(DEFAULT_MANIFEST, "utf8")).packageVersion;
+  version ??= JSON.parse(await readFile(DEFAULT_MANIFEST, "utf8")).version;
   const base = new URL(`${releaseBaseUrl.replace(/\/$/, "")}/`);
   if (base.protocol !== "https:" || base.hostname !== "github.com") {
     throw new Error("post-release smoke requires an HTTPS GitHub Release URL");
   }
   if (typeof version !== "string") {
-    throw new Error("release manifest is missing packageVersion");
+    throw new Error("textlint package manifest is missing version");
   }
   const archiveName = `adocweave-textlint-plugin-asciidoc-${version}.tgz`;
   const archiveUrl = new URL(archiveName, base).href;

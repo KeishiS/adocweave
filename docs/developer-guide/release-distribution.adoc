@@ -100,7 +100,7 @@ devShellのNode.jsを使い、flakeはshellを構築する時点でNixpkgsのNod
 
 ``native-artifact-smoke``はmacOSとWindowsのrunnerでも動くためdevShellを使えず、``setup-node``が
 必要です。このworkflowは``nodeVersion``を読んで``setup-node``へ渡します。バージョンをworkflowへ
-直接書くと、devShellのNode.jsと分かれても誰も気付かないため、必ずmanifestから取得します。
+直接書くと、devShellのNode.jsと分かれても誰も気付かないため、必ずtoolchain manifestから取得します。
 
 VSIXは固定したNode.js依存とlockfileからbundleし、runtimeの``node_modules``とsource mapを同梱しません。
 同梱fileが許可一覧と完全に一致すること、package sizeおよび機械固有pathの不在を確認します。公開するbyte列が
@@ -158,8 +158,9 @@ archive検証および実URLを指定した単発実行を確認します。公�
 link:../../release/distribution-plan.json[配布計画]の``versionSource``と``tagPrefix``で対応付けます。
 配布計画自体はバージョンを重複して保持しません。RustとNode.jsの構築版は``toolchains.json``に記録します。
 Release Notesの本文は``release/notes.md``に人が書き、公開workflowの``tools/release-notes.mjs``が、選択した
-製品、製品バージョンおよびAPI世代との一致を検査します。CLI引数やLanguage Server protocolなどの変更と
-移行方法は人が本文へ記載します。``cargo make release-contract``が、六製品のrouting、製品ごとの成果物集合、
+製品、製品バージョンおよび、その製品が互換性の判断に使うAPI世代との一致を検査します。CLI引数や
+Language Server protocolなどの変更と移行方法は人が本文へ記載します。``cargo make release-contract``が、
+六製品のrouting、製品ごとの成果物集合、
 配布manifestおよびRelease Notesの形を検査します（xref:adr/0026-no-unverified-release-claims.adoc[ADR 0026]、
 xref:adr/0027-product-release-trains.adoc[ADR 0027]）。
 
@@ -236,11 +237,9 @@ cargo make release-check
 
 ``acceptance``は、``verify``に加えて、CIが行う自動受入検証のうち現在のhostで実行できるもの
 （global成果物の実Chromium検査、native smoke、installation E2E）を実行します。
-``release-check``は公開前の完全な検査です。標準の``verify``が行うsourceと公開Rust APIの検査に、配布物および
-導入経路の検査を加えます。``semver-check``は公開Rust APIを前のstable tagと比較し、検出した破壊的変更が
-``release/breaking-rust-api.json``の記録と一致することを検査します。
-GitHub Actionsのsource qualityも、
-変更pathに応じて実際の差分検査または対象外であることの記録を完了した``semver`` jobだけを成功として集約します。
+``release-check``は公開前の完全な検査です。標準の``verify``が行うsource検査に、配布物および導入経路の
+検査を加えます。Rust workspaceのcrateはすべて``publish = false``であり、製品別tagと対応する単一の
+Rust API baselineを持たないため、公開製品のrelease gateではRust APIのSemVer差分を検査しません。
 
 ``platform-contract``は、WindowsとPOSIXのpath計算、実行file名、archive path、Windows DLL許可一覧、
 macOS deployment target、VSIX metadataおよび一時ディレクトリ削除の再試行条件をfixtureで検証します。
@@ -287,47 +286,10 @@ Pull Requestでは変更計画が選択したcandidate familyだけをインス�
 両familyを選択した場合は両方の検証成功を最終gateで要求します。公開候補では、選択した一製品について
 配布仕様が定める成果物だけを要求し、別製品の成果物が混入した場合も失敗させます。
 
-=== 公開Rust APIの互換性
-
-``cargo make semver-check``は、候補の公開Rust APIを直前のstable tagと比較します。compileとtestが
-通っても、利用側が名前で参照している型や関数が消えたことは分かりません。この検査はその差分を列挙します。
-標準の``cargo make verify``からも実行するため、Pull Requestを作成する前にCIと同じ差分を確認できます。
-
-比較の対象は、library targetを持つworkspace memberです。binaryだけを提供するcrateはほかのcrateから
-名前で参照できるRust APIを持たないため対象外とし、その理由を``tools/semver-gate.mjs``に記録します。
-crate名は列挙して渡します。``cargo semver-checks --workspace``はこのリポジトリでは何も検査せずに
-成功するためです。全crateが``publish = false``であり、対象として選ばれません。検査後は、挙げたcrateが
-実際に比較されたかを出力から確認し、一つでも欠けていれば失敗させます。
-
-差分を列挙するため、patch版では``cargo-semver-checks --release-type patch``を使用します。
-minor版とmajor版では``--release-type minor``を使用します。major版でもminorを指定するのは、
-破壊的変更を許容して検査を省略するのではなく、major差分をすべて列挙して記録と照合するためです。
-
-patch版に破壊的変更があれば失敗させます。minor版とmajor版では、検出したすべての破壊的変更が
-``release/breaking-rust-api.json``の``changes``と完全に一致する場合だけ許容します。各記録には
-cargo-semver-checksの出力から決まるcrate、lint名、対象およびsummaryが必要です。利用者向けの説明
-(``description``)と移行方法(``migration``)は任意で、書かない場合はRelease Notesへ機械的な一文を載せ、
-利用者向けの説明は``release/notes.md``の本文で述べます。不足、余分、重複、未知の項目および空の値を
-受理しません。変更が無いreleaseでは``changes``を空にし、「破壊的変更：ありません」という本文を
-自動生成します。この定型文を記録の代わりに書いても、検出した変更は許容されません。
-
-cargo-semver-checksは破壊的変更が無い場合に終了ステータス0、検出した場合に1を返します。破壊的変更がある場合は、
-すべてのfailure blockと対象を解析でき、対象crateがすべて``Finished``行まで到達し、シグナルで終了していない場合だけ
-互換性違反として扱います。診断と終了ステータスが対応しない場合、終了ステータスが0、1以外または不明な場合、
-シグナルで終了した場合、解析できないfailure blockがある場合、比較が完了していないcrateがある場合は、
-ツールの異常として失敗させます。
-
-``ResolvedProjectConfig``は外部の構造体リテラルを引き続き利用できるよう、``#[non_exhaustive]``を付けません。
-この属性を追加すると、将来のフィールド追加を検出しなくなる一方で、既存の外部構造体リテラルを一律に禁止する
-別の破壊的変更になります。今後フィールドを追加する場合も、公開Rust APIの検査、機械可読な記録および移行説明で管理します。
-
-baselineは候補バージョンより前で最も新しいstable tagです。該当するtagが無い場合はfail openせず失敗させます。
-検査に使う``cargo-semver-checks``はflakeで版を固定し、実行時に最新版を取得しません。
-
 === source検査の範囲
 
 Pull Requestでは、変更したpathが到達できるsource検査だけを実行します。文書だけを変更したPull Requestで、
-core crateの再compile、fuzz、Nixパッケージおよび公開Rust APIの差分検査を行っても、結果は変わらないためです。
+core crateの再compile、fuzzおよびNixパッケージ検査を行っても、結果は変わらないためです。
 
 jobは常に起動し、実行するかどうかをstepの条件で決めます。ブランチ保護が要求する検査名は、
 実行しなかった場合も``success``のまま維持する必要があるためです。実行しなかったstepは、その変更が

@@ -20,10 +20,10 @@
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
       forAllPackageSystems = nixpkgs.lib.genAttrs packageSystems;
 
-      # The release manifest is the single record of the versions the release
-      # train is built with. Everything below reads them from there.
-      releaseManifest = builtins.fromJSON (builtins.readFile ./release-manifest.json);
-      inherit (releaseManifest) packageVersion rustVersion nodeVersion;
+      toolchains = builtins.fromJSON (builtins.readFile ./toolchains.json);
+      inherit (toolchains) rustVersion nodeVersion;
+      cliVersion = (builtins.fromTOML (builtins.readFile ./crates/adocweave-cli/Cargo.toml)).package.version;
+      lspVersion = (builtins.fromTOML (builtins.readFile ./crates/adocweave-lsp/Cargo.toml)).package.version;
 
       toolchain = import ./nix/toolchain.nix { inherit nixpkgs rust-overlay; };
       inherit (toolchain) mkPkgs stableRust developmentRust ciRust;
@@ -33,7 +33,7 @@
         adocweave = import ./nix/package.nix {
           pkgs = final;
           src = self;
-          inherit packageVersion rustVersion stableRust;
+          inherit cliVersion rustVersion stableRust;
         };
       };
 
@@ -67,7 +67,7 @@
         system:
         import ./nix/checks.nix {
           pkgs = mkPkgs system;
-          inherit nixpkgs self system packageVersion;
+          inherit nixpkgs self system cliVersion lspVersion;
         }
       );
 

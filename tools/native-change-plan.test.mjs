@@ -65,7 +65,7 @@ test("global archiveへ影響する入力だけを選択する", () => {
     "packages/textlint-plugin-asciidoc/processor.mjs",
     "crates/adocweave-wasm/src/protocol.rs",
     "tools/sync-release-version.mjs",
-    "release-manifest.json",
+    "toolchains.json",
     "crates/adocweave-textlint/src/lib.rs",
     "crates/adocweave-textlint-wasm/src/lib.rs",
     "tools/build-textlint-wasm-node.sh",
@@ -214,7 +214,7 @@ test("通常main pushではrelease candidateを構築しない", () => {
 test("未公開versionへ更新したmain pushでは全targetを検証する", () => {
   const plan = nativeChangePlan(
     "push",
-    ["release-manifest.json", "Cargo.toml"],
+    ["crates/adocweave-cli/Cargo.toml", "Cargo.toml"],
     distributionPlan,
     "refs/heads/main",
     false,
@@ -268,7 +268,6 @@ test("文書だけの変更ではRust sourceの検査を実行しない", () => 
   assert.equal(scope.adapters, false);
   assert.equal(scope.fuzz, false);
   assert.equal(scope.nixPackage, false);
-  assert.equal(scope.semver, false);
   assert.equal(scope.dependencies, false);
 });
 
@@ -276,10 +275,9 @@ test("core crateの変更ではRust sourceとそれに依存する検査を実�
   const scope = qualityScope(["crates/adocweave/src/html.rs"]);
 
   assert.equal(scope.rustSource, true);
-  // fuzz、Nix packageおよびAPI差分検査はいずれもcore crateを構築します。
+  // fuzzとNix packageはいずれもcore crateを構築します。
   assert.equal(scope.fuzz, true);
   assert.equal(scope.nixPackage, true);
-  assert.equal(scope.semver, true);
   assert.equal(scope.documents, true);
 });
 
@@ -296,7 +294,7 @@ test("HTMLを生成する実装だけが文書とHTML5の検査を要求する",
     "tools/html5-check.mjs",
     ".adocweave.toml",
     "fuzz/.adocweave.toml",
-    "release-manifest.json",
+    "toolchains.json",
   ]) {
     assert.equal(qualityScope([pathname]).documents, true, pathname);
   }

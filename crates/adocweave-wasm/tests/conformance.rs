@@ -15,15 +15,15 @@ struct ConformanceConsumers {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct ReleaseManifest {
+struct Toolchains {
     schema_version: u16,
-    product: String,
-    package_version: String,
     rust_version: String,
     node_version: String,
-    release_notes: String,
-    assets: Vec<serde_json::Value>,
-    distribution_plan: String,
+}
+
+#[derive(Deserialize)]
+struct BrowserManifest {
+    version: String,
 }
 
 #[test]
@@ -189,24 +189,19 @@ fn native_adapter_accepts_every_shared_conformance_case() {
 }
 
 #[test]
-fn release_package_version_is_explicit() {
-    let manifest: ReleaseManifest =
-        serde_json::from_str(include_str!("../../../release-manifest.json"))
-            .expect("valid release manifest");
-    assert_eq!(manifest.schema_version, 1, "common release manifest schema");
-    assert_eq!(manifest.product, "adocweave");
-    assert_eq!(manifest.release_notes, "release/notes.md");
+fn browser_version_and_toolchains_have_separate_authorities() {
+    let toolchains: Toolchains = serde_json::from_str(include_str!("../../../toolchains.json"))
+        .expect("valid toolchain manifest");
+    let browser: BrowserManifest =
+        serde_json::from_str(include_str!("../../../web-worker/package.json"))
+            .expect("valid Browser package manifest");
+    assert_eq!(toolchains.schema_version, 1, "toolchain manifest schema");
+    assert_eq!(browser.version, env!("CARGO_PKG_VERSION"));
+    assert_eq!(toolchains.rust_version, env!("CARGO_PKG_RUST_VERSION"));
     assert!(
-        manifest.assets.is_empty(),
-        "AdocWeave assets come from the distribution plan"
-    );
-    assert_eq!(manifest.distribution_plan, "release/distribution-plan.json");
-    assert_eq!(manifest.package_version, env!("CARGO_PKG_VERSION"));
-    assert_eq!(manifest.rust_version, env!("CARGO_PKG_RUST_VERSION"));
-    assert!(
-        manifest.node_version.split('.').count() == 3,
+        toolchains.node_version.split('.').count() == 3,
         "node version must be exact, found {}",
-        manifest.node_version,
+        toolchains.node_version,
     );
 }
 

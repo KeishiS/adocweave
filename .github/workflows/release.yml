@@ -39,7 +39,6 @@ jobs:
       quality_dependencies: ${{ steps.changes.outputs.quality_dependencies }}
       quality_fuzz: ${{ steps.changes.outputs.quality_fuzz }}
       quality_nix_package: ${{ steps.changes.outputs.quality_nix_package }}
-      quality_semver: ${{ steps.changes.outputs.quality_semver }}
       tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -61,19 +60,14 @@ jobs:
           else
             : > changed-paths.txt
           fi
-          version="$(jq -r .packageVersion release-manifest.json)"
-          if git show-ref --verify --quiet "refs/tags/v$version"; then
-            release_tag_exists=true
-          else
-            release_tag_exists=false
-          fi
+          # 製品別tagの選択はproduct releaseのroutingで行います。ここでは単一tagを推測しません。
+          release_tag_exists=false
           node tools/native-change-plan.mjs \
             "$GITHUB_EVENT_NAME" "$GITHUB_REF" "$GITHUB_OUTPUT" "$release_tag_exists" \
             < changed-paths.txt
       - id: version
         run: |
-          tag="v$(jq -r .packageVersion release-manifest.json)"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "tag=" >> "$GITHUB_OUTPUT"
 
   preflight:
     if: needs.changes.outputs.preflight_required == 'true'
@@ -121,7 +115,6 @@ jobs:
       run_adapters: ${{ needs.changes.outputs.quality_adapters == 'true' }}
       run_dependencies: ${{ needs.changes.outputs.quality_dependencies == 'true' }}
       run_fuzz: ${{ needs.changes.outputs.quality_fuzz == 'true' }}
-      run_semver: ${{ needs.changes.outputs.quality_semver == 'true' }}
 
   build-native:
     if: needs.changes.outputs.native_required == 'true'
@@ -171,7 +164,7 @@ jobs:
         if: matrix.build == 'windows'
         shell: pwsh
         run: |
-          $rustVersion = (Get-Content release-manifest.json | ConvertFrom-Json).rustVersion
+          $rustVersion = (Get-Content toolchains.json | ConvertFrom-Json).rustVersion
           $distVersion = (Get-Content release/distribution-plan.json | ConvertFrom-Json).distVersion
           rustup toolchain install $rustVersion --profile minimal --target "${{ matrix.target }}"
           rustup override set $rustVersion
@@ -188,7 +181,7 @@ jobs:
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           prefix-key: native-${{ matrix.target }}
-          key: ${{ hashFiles('release-manifest.json') }}
+          key: ${{ hashFiles('toolchains.json', 'Cargo.lock', 'crates/adocweave-cli/Cargo.toml', 'crates/adocweave-lsp/Cargo.toml') }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Windows host unit tests
         if: matrix.build == 'windows'
@@ -312,7 +305,7 @@ jobs:
           node tools/release-installation-e2e.mjs
           artifacts
           "${{ matrix.target }}"
-          release-manifest.json
+          release/distribution-plan.json
           "native-only"
 
   global-installation-e2e:
@@ -337,7 +330,7 @@ jobs:
           node tools/release-installation-e2e.mjs
           artifacts
           x86_64-unknown-linux-musl
-          release-manifest.json
+          release/distribution-plan.json
           "global-only"
 
   textlint-plugin-installation-e2e:
@@ -377,7 +370,7 @@ jobs:
           REQUESTED_NODE: ${{ matrix.node }}
         run: |
           if [ "$REQUESTED_NODE" = release ]; then
-            value="$(jq -er .nodeVersion release-manifest.json)"
+            value="$(jq -er .nodeVersion toolchains.json)"
           else
             value="$REQUESTED_NODE"
           fi
@@ -389,12 +382,12 @@ jobs:
         shell: bash
         run: >-
           node tools/textlint-plugin-consumer-e2e.mjs
-          "artifacts/adocweave-textlint-plugin-asciidoc-$(jq -r .packageVersion release-manifest.json).tgz"
+          "artifacts/adocweave-textlint-plugin-asciidoc-$(jq -r .version packages/textlint-plugin-asciidoc/package.json).tgz"
       - name: Candidate one-shot npx verification
         shell: bash
         run: >-
           node tools/textlint-plugin-npx-smoke.mjs
-          "artifacts/adocweave-textlint-plugin-asciidoc-$(jq -r .packageVersion release-manifest.json).tgz"
+          "artifacts/adocweave-textlint-plugin-asciidoc-$(jq -r .version packages/textlint-plugin-asciidoc/package.json).tgz"
 
   merge-gate:
     name: verify

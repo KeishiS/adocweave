@@ -1,6 +1,6 @@
 # The released native package: the command-line converter and the Language
 # Server, built from this repository's own Cargo.lock.
-{ pkgs, src, packageVersion, rustVersion, stableRust }:
+{ pkgs, src, cliVersion, rustVersion, stableRust }:
 let
   rust = stableRust pkgs;
   rustPlatform = pkgs.makeRustPlatform {
@@ -8,13 +8,13 @@ let
     rustc = rust;
   };
 in
-# The release manifest names the toolchain the release train is built with.
+# The toolchain manifest names the Rust version used for reproducible builds.
 # nixpkgs moves on its own schedule, so the build stops rather than shipping a
 # package compiled by a version this repository has not declared.
 assert rust.version == rustVersion;
 rustPlatform.buildRustPackage {
   pname = "adocweave";
-  version = packageVersion;
+  version = cliVersion;
   inherit src;
   cargoLock.lockFile = ../Cargo.lock;
   cargoBuildFlags = [

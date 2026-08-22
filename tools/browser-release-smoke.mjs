@@ -33,16 +33,16 @@ async function main() {
   const [archive, chromiumCommand = "chromium"] = process.argv.slice(2);
   if (!archive) throw new Error("usage: browser-release-smoke.mjs ARCHIVE [CHROMIUM]");
   const chromium = await resolveHostExecutable(chromiumCommand);
-  const releaseManifest = JSON.parse(await readFile("release-manifest.json", "utf8"));
+  const browserManifest = JSON.parse(await readFile("web-worker/package.json", "utf8"));
   const root = await mkdtemp(join(tmpdir(), "adocweave-browser-smoke-"));
   try {
-    await runArchiveSmoke(archive, chromium, releaseManifest, root);
+    await runArchiveSmoke(archive, chromium, browserManifest.version, root);
   } finally {
     await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }
 
-async function runArchiveSmoke(archive, chromium, releaseManifest, root) {
+async function runArchiveSmoke(archive, chromium, packageVersion, root) {
   const { stdout: archiveList } = await run("tar", ["-tJf", resolve(archive)]);
   const members = archiveList.trimEnd().split("\n");
   const roots = new Set();
@@ -100,9 +100,9 @@ async function runArchiveSmoke(archive, chromium, releaseManifest, root) {
       if (state.status !== "ready:4:5" || !state.html.includes("Latest browser result") || state.isolated !== isolated) {
         throw new Error(`browser smoke failed (${isolated ? "isolated" : "fallback"}); requests=${requests.join(",")}: ${JSON.stringify(state)}`);
       }
-      if (state.packageVersion !== releaseManifest.packageVersion ||
-          state.resultPackageVersion !== releaseManifest.packageVersion ||
-          state.wasmPackageVersion !== releaseManifest.packageVersion) {
+      if (state.packageVersion !== packageVersion ||
+          state.resultPackageVersion !== packageVersion ||
+          state.wasmPackageVersion !== packageVersion) {
         throw new Error(`browser package version mismatch: ${JSON.stringify(state)}`);
       }
       console.log(`browser release smoke: passed ${context} context`);
