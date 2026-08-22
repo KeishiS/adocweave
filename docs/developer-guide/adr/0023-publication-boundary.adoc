@@ -1,6 +1,6 @@
 = ADR 0023: 公開と配布の境界
 
-:status: accepted; amended by ADR 0027, ADR 0028, and ADR 0030
+:status: accepted; amended by ADR 0027, ADR 0028, ADR 0030, and ADR 0031
 
 == 文脈
 
@@ -48,7 +48,7 @@ Marginalis、Renkanと共通にするのは、外から見える手順と公開�
   ``distributionPlan``が配布計画を指します
 * ``release/notes.md``の題名と7見出し
 * 外向きのtask名``fmt``、``fmt-check``、``verify``、``security-audit``、``acceptance``、``release-check``
-* 必須checkは集約job``verify``の一つ
+* 必須checkは標準source gate``verify``の一つ
 * remote名``upstream``、ブランチ名``agent/<種別>/<目的>``、``main``追従はmerge、統合はsquash方式のauto-merge
 
 検査の中身と、書き込み権限を持つworkflowは各repositoryに置きます。
@@ -64,8 +64,8 @@ OIDCで委任できない公開先(binary cacheとOpen VSX)は、公開後に動
 
 * 公開と配布の方針を変えるとき、読み直すADRはこの1本です
 * 旧ADR 0006、0013、0017、0021は文脈の記録として残ります。決定を引用する場合はこのADRを参照します
-* 公開単位をまとめたままにするため、1か所の修正でも全成果物を作り直します。CIは変更pathで検証範囲を
-  選びますが、公開する版はすべての成果物で同じです
+* Pull Requestには変更pathに依存しない標準source gateを適用し、全targetと全成果物のcandidateは``main``で
+  構築します。この検査境界はxref:0031-path-independent-pull-request-gate.adoc[ADR 0031]で定めます
 * 公開後の人手による受入は任意とし、機械で判定できる範囲(asset集合、checksum、attestation、バージョン、
   binary cacheとOpen VSXへの登録)を自動の検証に委ねます
 

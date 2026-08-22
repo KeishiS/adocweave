@@ -20,9 +20,9 @@ WebAssemblyを構築しますが、文書を自動修正しません。
 cargo make docs-prose-lint
 ----
 
-``cargo make verify``はPull Request用の標準検査であり、``cargo make``の既定taskです。ソース、依存関係、
-Nixパッケージ、browserおよびeditor adapter、HTML5標準適合性、文書をまとめて検査し、fuzz targetが既知の入力で
-落ちないことを確認します。
+``cargo make verify``はPull Request用の標準検査であり、``cargo make``の既定taskです。書式、lint、test、
+生成fileの差分、browserおよびeditor adapter、HTML5標準適合性、人が書いた文書および静的な依存関係境界を
+まとめて検査します。
 
 次のtask名は、並行して開発するMarginalis、Renkanと共通の外向きの名前です。repositoryが変わっても
 同じ名前で同じ意味の検査を実行できます。
@@ -228,33 +228,31 @@ Nix入力はDependabotの対象外であり、``flake.lock``を手動で更新�
 pull requestを作成するときは、link:.github/pull_request_template.md[Pull Request template]を使用します。
 変更の目的、主な変更点、実行した検証を簡潔に記載し、未実施の検証がある場合は理由を記載してください。
 
-CIの必須checkは``verify``の一つだけです。``verify``は、dependency governance、source quality、fuzz、
-Nixパッケージに加え、変更に応じて選択したcandidate build、smoke testおよび
-installation E2Eの結果を``always()``で集約します。個々の検査がskipされた場合も、必要な検査が成功したか
-どうかをこのjobが判定するため、検査のskipを成功と取り違えません。失敗した場合は、該当する``cargo make``
-taskをNix開発環境で再実行し、設定の基準である``.github/workflows``と``Makefile.toml``を確認してください。
+CIの必須checkは``verify``の一つだけです。すべてのPull Requestで変更pathにかかわらず同じsource gateを実行し、
+書式、lint、test、生成fileの差分、人が書いた文書および静的な依存関係境界を検査します。成果物の構築有無を
+pathから判定せず、実行しないjobの``skipped``を別のjobで照合しません。失敗した場合は、Nix開発環境で
+``cargo make verify``を再実行し、設定の基準である``.github/workflows``と``Makefile.toml``を確認してください。
 
-source qualityは、書式や生成ファイルなどの短い検査、Rustワークスペースの検査、WASM・browser・editor adapterの
-検査に分けて並列実行します。
-成果物を構築するPull Requestでは、書式、生成ファイル、workflow、``release-contract``および
-変更pathの分類を``cargo make ci-preflight``で先に確認します。global成果物へ影響する場合は、
-実Chromiumによるarchiveの受入検査もPull Requestで実行します。
-
-``cargo make verify``はsource gate、dependency governance、fuzzおよびNixパッケージ検査を含みますが、
-実Chromiumによる受入検査は含みません。browser、ZedまたはVS Code向けの成果物へ影響する変更では、
-次を実行してCIの``build-global``と同じ範囲を手元で確認してください。
+cross targetの構築、実際のOSやBrowserを使う統合検査、fuzz、Nixパッケージ検査、全配布成果物の構築および
+成果物を使うruntime受入検査は、Pull Requestを``main``へ統合した後に実行します。``main``の検査に失敗したcommitは
+公開candidateとして使用しません。手元で成果物を含む追加の受入検査を行う場合は、次を実行します。
 
 [source,console]
 ----
-cargo make verify-with-global-candidate
+cargo make acceptance
 ----
 
-このtaskは``cargo make verify``に加えて、配布するbrowser、ZedおよびVS Codeのarchiveを構築し、
-cross-origin isolationを使わない静的配信環境およびbundler経由の2経路で実Chromiumから実行します。
-textlint用パッケージは、完成archiveの検証と固定consumerへの導入E2Eをそれぞれ1回実行します。
+このtaskは標準source gateに加えて、現在のhostで実行できる配布成果物を構築し、native smokeと導入・削除、
+Browserの静的配信環境とbundler経由の実Chromium検査、およびtextlint用パッケージの完成archive検証と
+固定consumerへの導入E2Eを実行します。
 
 手元とCIでは、``flake.lock``で固定した開発環境のChromiumを使用します。別のbrowserを確認する場合は
 ``ADOCWEAVE_BROWSER``で実行ファイルを指定できます。
+
+ブランチ保護では、GitHub Actionsが表示する``verify``だけをrequired status checkに設定します。
+従来の集約jobも同じ表示名だったため、``verify``だけを要求しているrulesetの変更は不要です。旧構成の
+``quality``配下のcheckを個別に要求している環境では、新しい``verify``が``main``で成功したことを確認してから、
+required status checkを``verify``一件へ置き換えます。
 
 [#tag]
 == Tag

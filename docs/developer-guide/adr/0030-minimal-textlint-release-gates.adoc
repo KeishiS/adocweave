@@ -1,5 +1,5 @@
 = ADR 0030: textlint境界と配布検査の最小化
-:status: accepted
+:status: accepted; pull request gate amended by ADR 0031
 
 == 文脈
 
