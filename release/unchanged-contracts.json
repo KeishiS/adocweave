@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseVersion": "0.46.0",
+  "unchanged": [
+    "Language Server protocol",
+    "設定schema"
+  ]
+}
