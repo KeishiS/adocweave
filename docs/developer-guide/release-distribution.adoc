@@ -14,9 +14,9 @@ xref:../user-guide/release-installation.adoc[インストールと更新]を参�
 
 == 配布境界
 
-CLI、Language Server、WebAssembly、browser package、Zed拡張、VS Code拡張およびtextlint用AsciiDoc Processorは、
-一つのパッケージバージョンとしてGitHub Releasesへまとめて公開します。GitHubが自動生成するソースarchiveは、
-検証対象のbinary配布物に含めません。
+CLI、Language Server、Browser、Zed拡張、VS Code拡張およびtextlint用AsciiDoc Processorを、独立した
+六つの配布製品とします。各製品は自身のmanifestにバージョンの正本を持ち、一つのGitHub Releaseには
+一製品の成果物だけを公開します。GitHubが自動生成するソースarchiveは、検証対象の配布物に含めません。
 
 VS Code拡張は、GitHub Releaseへ添付したVSIXと同一のfileをOpen VSX Registryへも公開します。Open VSX向けに
 成果物を作り直さず、公開はGitHub Releaseの公開後に行います（xref:adr/0013-vscode-release-boundary.adoc[ADR 0013]）。
@@ -25,9 +25,9 @@ crates.io、npm、Homebrew、WinGet、Visual Studio MarketplaceおよびZed Exte
 textlint用Processorはnpm互換の``.tgz``ですが、npm registryまたはGitHub Packagesへ公開しません。
 パッケージには``private: true``を設定し、GitHub ReleaseのURLを明示した導入だけを対象とします。
 
-公開には``vX.Y.Z``形式のstable tagだけを使用します。tag、対象コミット、release manifestおよび各成果物の
-バージョンが一致しない場合は公開しません。異なるパッケージバージョンの成果物を組み合わせて利用することも
-想定しません。
+公開には``adocweave-<product>/vX.Y.Z``形式のstable tagだけを使用します。tag、対象コミット、製品の
+バージョン正本、配布manifestおよび成果物が一致しない場合は公開しません。変更していない製品の成果物を
+別のReleaseへコピーせず、同じ製品バージョンを再発行しません。
 
 privateリポジトリから取得する場合、利用者が明示的に与えたGitHub認証だけを使用します。credentialを
 archive、manifest、log、ソースコードまたは設定例へ埋め込みません。
@@ -70,7 +70,7 @@ SPDX licenseを列挙します。license情報がないパッケージは受理�
 
 == ブラウザーパッケージとエディター拡張
 
-Browser package、Zed拡張およびVSIXは、Native archiveと同じReleaseへ一度だけ追加します。Browser packageの
+Browser、Zed拡張およびVS Code拡張は、それぞれの製品Releaseへ公開します。Browser packageの
 内容と公開APIはxref:core-profile.adoc#wasm-api[WebAssembly API]、展開と配備は
 xref:../user-guide/release-installation.adoc#browser-library-deployment[Browser libraryの配備]を基準とします。
 Browser packageは展開前のarchiveを2 MiB以下、archive内のraw WASMを1.25 MiB以下とします。
@@ -94,7 +94,7 @@ Chromiumの起動確認は1回20秒、最大3回、合計75秒を上限としま
 
 === Node.jsのバージョン
 
-Node.jsのバージョンは``release-manifest.json``の``nodeVersion``だけが決めます。CIのほとんどのjobは
+Node.jsのバージョンは``toolchains.json``の``nodeVersion``だけが決めます。CIのほとんどのjobは
 devShellのNode.jsを使い、flakeはshellを構築する時点でNixpkgsのNode.jsがこの値と一致することを
 確かめます。一致しない場合、shellは構築できません。
 
@@ -105,20 +105,23 @@ devShellのNode.jsを使い、flakeはshellを構築する時点でNixpkgsのNod
 VSIXは固定したNode.js依存とlockfileからbundleし、runtimeの``node_modules``とsource mapを同梱しません。
 同梱fileが許可一覧と完全に一致すること、package sizeおよび機械固有pathの不在を確認します。公開するbyte列が
 入力だけから決まることは、成果物を公開する経路で同じsourceからもう一度構築してSHA-256を比較して確認します。
-VSIXのmanaged Language Serverは同じバージョンの配布manifestだけを使用します。この判断の背景は
-xref:adr/0013-vscode-release-boundary.adoc[ADR 0013]を参照してください。
+VS Code拡張とZed拡張は、自身の製品バージョン、検証済みLanguage Serverを固定する
+``managedLspVersion``、対応する``lspApiVersion``を別々に持ちます。明示pathと``PATH``上のLanguage Serverは、
+製品バージョンが異なってもAPI世代が対応範囲なら利用できます。managed binaryは固定版の
+``adocweave-lsp/vX.Y.Z`` Releaseだけから取得します。この判断の背景は
+xref:adr/0027-product-release-trains.adoc[ADR 0027]を参照してください。
 
 [#textlint-processor-package]
 == textlint用AsciiDoc Processorパッケージ
 
-``@adocweave/textlint-plugin-asciidoc``は、npmがURLから導入できる``.tgz``として、Native archiveと同じ
-GitHub Releaseへ一度だけ追加します。公開APIはtextlintの``Processor``に限定し、``.adoc``、``.asciidoc``、
+``@adocweave/textlint-plugin-asciidoc``は、npmがURLから導入できる``.tgz``として、textlint製品の
+GitHub Releaseへ公開します。公開APIはtextlintの``Processor``に限定し、``.adoc``、``.asciidoc``、
 ``.asc``および利用者が明示した追加拡張子をTxtASTへ変換します。日本語規則、AdocWeave固有の用語集、
 検査対象一覧および文書検査taskは収録しません。
 
 パッケージにはProcessor、TxtAST adapter、UTF-16位置変換、型定義、README、license、第三者依存の通知、
-``parseText``だけを公開するNode.js向けWebAssemblyとwrapperを収録します。WebAssemblyとパッケージは
-同じ統一バージョンから構築し、別のWebAssemblyへの差し替えは認めません。install時のscript、実行時npm依存、
+``parseText``だけを公開するNode.js向けWebAssemblyとwrapperを収録します。JavaScriptとWebAssemblyの境界は
+``ADAPTER_API_VERSION``で検査し、別のWebAssemblyへの差し替えは認めません。install時のscript、実行時npm依存、
 ``node_modules``、source mapおよび機械固有pathを収録せず、実行時の追加downloadも行いません。
 
 入力は10 MiB、TxtAST planは50 MiB、planのnodeは1,000,000件、``sourceId``は4 KiBを上限とします。
@@ -151,23 +154,20 @@ archive検証および実URLを指定した単発実行を確認します。公�
 
 == 配布メタデータ
 
-``release-manifest.json``は、公開する版と構築に使うtoolchainを宣言する正本です。Marginalis、Renkanと
-共通のschema（``schemaVersion`` 1）に従い、``product``、``packageVersion``、``rustVersion``、``nodeVersion``、
-``releaseNotes``、``assets``を必須項目とします。共通の``assets``はrepository内のfileをそのまま公開する
-一覧であるため、buildで成果物を作るAdocWeaveでは空とし、target、archive、SBOMおよびchecksumは拡張項目
-``distributionPlan``が指す``release/distribution-plan.json``が決めます。Release Notesの本文は
-``releaseNotes``が指す``release/notes.md``に人が書き、公開workflowの``tools/release-notes.mjs``が
-形を検査して機械生成部分を追記します。機械生成するのは、正本から直接決まる現在のversionと対応範囲、
-および``cargo-semver-checks``で検出して記録したRust API差分です。CLI引数やLanguage Server protocolなどの
-変更と移行方法は人が本文へ記載します。``cargo make release-contract``が、manifestの項目、配布計画との
-整合およびRelease Notesの形を検査します（xref:adr/0021-common-development-contract.adoc[ADR 0021]、
-xref:adr/0026-no-unverified-release-claims.adoc[ADR 0026]）。
+各製品バージョンの正本とtag prefixは
+link:../../release/distribution-plan.json[配布計画]の``versionSource``と``tagPrefix``で対応付けます。
+配布計画自体はバージョンを重複して保持しません。RustとNode.jsの構築版は``toolchains.json``に記録します。
+Release Notesの本文は``release/notes.md``に人が書き、公開workflowの``tools/release-notes.mjs``が、選択した
+製品、製品バージョンおよびAPI世代との一致を検査します。CLI引数やLanguage Server protocolなどの変更と
+移行方法は人が本文へ記載します。``cargo make release-contract``が、六製品のrouting、製品ごとの成果物集合、
+配布manifestおよびRelease Notesの形を検査します（xref:adr/0026-no-unverified-release-claims.adoc[ADR 0026]、
+xref:adr/0027-product-release-trains.adoc[ADR 0027]）。
 
 ``tools/release-metadata.mjs``を配布manifest、SPDX SBOMおよびchecksumの生成器とします。target別の成果物を
 一つのcandidateディレクトリへ集約した後、実際に公開するarchiveから次を決定的に生成します。
 
-* 配布manifestへのパッケージバージョン、source commit、archive名、種類、対象環境、byte数およびSHA-256の記録
-* SPDX SBOMへのarchive内のfileと、lockfileから得たRustおよびnpm packageの記録
+* 配布manifestへの製品名、製品バージョン、source commit、archive名、種類、対象環境、byte数およびSHA-256の記録
+* SPDX SBOMへの選択製品のarchive内のfileと、到達するRustおよびnpm packageの記録
 * checksum一覧への公開archive、配布manifestおよびSBOMの名前順での記録
 
 Frontendまたはtextlint用パッケージへruntime dependencyを追加する場合、対応するlockfileからSBOMを生成できるように
@@ -197,15 +197,15 @@ jobごとに``timeout-minutes``を設定し、Pull Requestとmain pushのjobはr
 repository secretを参照しません。書き込み権限を持つ公開workflowは各repositoryに置き、共通のworkflowへ
 集約しません。``release-workflow-policy``がこれらの条件を検査します。
 
-``v*`` tagを作成できる主体を公開jobだけに限る機械的な仕組みはありません。tagの作成経路はEnvironmentの
+``adocweave-*/v*`` tagを作成できる主体を公開jobだけに限る機械的な仕組みはありません。tagの作成経路はEnvironmentの
 制限で間接的に限定されるだけで、repositoryへ書き込める利用者は手元からもtagを作成できます。
 tag rulesetを使わない理由はxref:adr/0006-direct-stable-releases.adoc[ADR 0006]に記載しています。
 
-公開処理は、dispatchで指定したmain先端commitに対する検証済みmain candidateを再利用します。成果物を
+公開処理は、dispatchで指定した製品とmain先端commitに対する検証済みcandidateを再利用します。成果物を
 再構築せず、metadataを再検証してattestationを作成してから、同じSHAへtagを作成します。
 その後private draftへ成果物を追加し、成果物集合が揃った後にstable releaseとして公開します。
 
-公開の成功後、同じrunが``open-vsx-publish.yml``を呼び出し、GitHub Releaseに添付されたVSIXをdownloadして
+VS Code拡張を公開した場合だけ、同じrunが``open-vsx-publish.yml``を呼び出し、GitHub Releaseに添付されたVSIXをdownloadして
 checksumとattestationを検証してからOpen VSX Registryへ公開します。Open VSXのAPIはOIDCによる委任へ対応しないため、
 このworkflowだけがrepository secret``OPEN_VSX_TOKEN``(namespace``adocweave``のpublish token)を参照します。
 書き込み権限を持たず、送信に失敗してもtagとGitHub Releaseへ影響しません。
@@ -214,7 +214,7 @@ checksumとattestationを検証してからOpen VSX Registryへ公開します�
 Open VSXへの送信だけが失敗した場合は、同じtagでこのworkflowを実行して回復します。同じversionの再公開は
 Open VSXが拒否するため、公開済みの版を上書きしません。
 
-公開の成功後、同じrunの``binary-cache`` jobが候補SHAをcheckoutし、x86_64-linuxとaarch64-linuxの
+CLIを公開した場合だけ、同じrunの``binary-cache`` jobが候補SHAをcheckoutし、x86_64-linuxとaarch64-linuxの
 Nixパッケージをbuildしてruntime closureをbinary cache``keishis.cachix.org``へpushします。Cachixへの
 書き込みはOIDCで委任できないため、このjobだけがrepository secret``CACHIX_AUTH_TOKEN``(cacheのwrite token)を
 参照します。参照できるworkflow、jobおよびsecret名は``release-workflow-policy``の許可一覧で固定し、
@@ -284,8 +284,8 @@ installation E2Eを実行せず、最終gateを失敗させます。
 Pull Requestでは変更計画が選択したcandidate familyだけをインストール・削除します。native成果物は
 対象OSのrunner、Browser・Zed・VS Code成果物はUbuntu runner、textlint用パッケージは3対象OSのrunnerで
 個別に検証し、構築していないfamilyを要求しません。
-両familyを選択した場合は両方の検証成功を最終gateで要求します。未公開バージョンの``main`` candidateと
-tagから再利用するcandidateでは、配布仕様に含まれる全assetを引き続き要求します。
+両familyを選択した場合は両方の検証成功を最終gateで要求します。公開候補では、選択した一製品について
+配布仕様が定める成果物だけを要求し、別製品の成果物が混入した場合も失敗させます。
 
 === 公開Rust APIの互換性
 

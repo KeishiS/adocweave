@@ -26,6 +26,8 @@ Processorはそれぞれの配布物にWebAssemblyを同梱します。エディ
 
 各製品は自身のmanifestにバージョンの正本を持ちます。共通のRust crateは実装を共有する内部部品であり、
 配布製品として独立したバージョンを持ちません。内部部品を変更したときは、その変更が届く製品だけを更新します。
+全crateは``publish = false``であり、Rust library自体を配布製品として公開しないため、単一stable tagとの
+``cargo-semver-checks``比較と破壊的変更台帳は廃止します。Rust APIの変更は、影響する製品の試験とRelease Notesで扱います。
 
 tagは``adocweave-<product>/vX.Y.Z``とし、一つのGitHub Releaseには一製品の成果物だけを添付します。
 配布manifestは製品名、製品バージョン、source commitおよびその製品の成果物を記録します。変更していない製品の
@@ -78,3 +80,6 @@ Language Serverだけを変更したreleaseでは、Browserとtextlint用Process
 ADR 0023のうち、単一バージョン、単一``vX.Y.Z`` tag、全成果物を一つのReleaseへまとめる決定、ならびに
 エディター拡張とLanguage Serverの完全一致を要求する決定を本ADRで置き換えます。公開権限、候補SHAの固定、
 検証済み成果物の再利用およびregistryを増やさない決定は維持します。
+
+ADR 0026のうち、``cargo-semver-checks``の結果と破壊的変更台帳からRust API差分をRelease Notesへ生成する決定も
+置き換えます。未検査の変更なし宣言を生成しない決定は維持します。
