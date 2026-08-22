@@ -130,10 +130,25 @@ impl LocalFilesystemView<'_> {
                             }
                         }
                         children.sort_by_key(fs::DirEntry::file_name);
-                        pending.extend(children.into_iter().map(|entry| entry.path()));
                         if truncated {
+                            // The queue is not drained once the walk stops, so
+                            // what this directory already yielded is classified
+                            // here rather than queued and forgotten.
+                            for entry in children {
+                                let child = entry.path();
+                                let Ok(file_type) = entry.file_type() else {
+                                    continue;
+                                };
+                                if file_type.is_file()
+                                    && child.extension().and_then(|value| value.to_str())
+                                        == Some("adoc")
+                                {
+                                    paths.push(child);
+                                }
+                            }
                             break 'walk;
                         }
+                        pending.extend(children.into_iter().map(|entry| entry.path()));
                     } else if path.extension().and_then(|value| value.to_str()) == Some("adoc") {
                         paths.push(path);
                     }
