@@ -21,6 +21,7 @@ pub use service::{HostReferenceIndex, HostReferenceRequest, NoHostReferenceIndex
 
 pub const SERVER_NAME: &str = "adocweave-lsp";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const LSP_API_VERSION: u32 = 1;
 
 pub async fn run<R, W>(input: R, output: W) -> async_lsp::Result<()>
 where

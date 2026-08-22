@@ -25,7 +25,7 @@ use crate::state::{
     WorkspaceProblem,
 };
 use crate::workspace::{WatchedFileKind, WorkspaceResources, WorkspaceScanNotice};
-use crate::{SERVER_NAME, VERSION};
+use crate::{LSP_API_VERSION, SERVER_NAME, VERSION};
 
 const MAX_WORKSPACE_WATCH_ERRORS: usize = 128;
 const MAX_WORKSPACE_WATCH_ERROR_BYTES: usize = 64 * 1024;
@@ -436,6 +436,9 @@ impl LanguageService {
                         file_operations: None,
                     },
                 ),
+                experimental: Some(serde_json::json!({
+                    "lspApiVersion": LSP_API_VERSION,
+                })),
                 ..lsp::ServerCapabilities::default()
             },
             server_info: Some(lsp::ServerInfo {
