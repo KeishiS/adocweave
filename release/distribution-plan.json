@@ -1,8 +1,75 @@
 {
-  "schemaVersion": 2,
-  "packageVersion": "0.46.2",
+  "schemaVersion": 3,
   "distVersion": "0.31.0",
   "repository": "https://github.com/KeishiS/adocweave",
+  "products": [
+    {
+      "product": "cli",
+      "versionSource": "crates/adocweave-cli/Cargo.toml#package.version",
+      "tagPrefix": "adocweave-cli/v",
+      "assetKind": "cli",
+      "assetName": "adocweave-cli-{target}.zip",
+      "archive": "zip",
+      "executable": "adocweave{executableSuffix}",
+      "build": "cargo-dist",
+      "package": "adocweave-cli"
+    },
+    {
+      "product": "lsp",
+      "versionSource": "crates/adocweave-lsp/Cargo.toml#package.version",
+      "tagPrefix": "adocweave-lsp/v",
+      "assetKind": "lsp",
+      "assetName": "adocweave-lsp-{target}.zip",
+      "archive": "zip",
+      "executable": "adocweave-lsp{executableSuffix}",
+      "build": "cargo-dist",
+      "package": "adocweave-lsp"
+    },
+    {
+      "product": "browser",
+      "versionSource": "web-worker/package.json#version",
+      "tagPrefix": "adocweave-browser/v",
+      "assetKind": "browser",
+      "assetName": "adocweave-browser-{version}.tar.xz",
+      "archive": "tar.xz",
+      "executable": null,
+      "build": "script",
+      "buildScript": "tools/package-browser-release.sh"
+    },
+    {
+      "product": "textlint",
+      "versionSource": "packages/textlint-plugin-asciidoc/package.json#version",
+      "tagPrefix": "adocweave-textlint/v",
+      "assetKind": "textlint-plugin",
+      "assetName": "adocweave-textlint-plugin-asciidoc-{version}.tgz",
+      "archive": "tgz",
+      "executable": null,
+      "build": "script",
+      "buildScript": "tools/package-textlint-plugin-release.sh"
+    },
+    {
+      "product": "vscode",
+      "versionSource": "editors/vscode/package.json#version",
+      "tagPrefix": "adocweave-vscode/v",
+      "assetKind": "vscode",
+      "assetName": "adocweave-vscode-{version}.vsix",
+      "archive": "vsix",
+      "executable": null,
+      "build": "script",
+      "buildScript": "tools/package-vscode-release.sh"
+    },
+    {
+      "product": "zed",
+      "versionSource": "editors/zed/extension.toml#version",
+      "tagPrefix": "adocweave-zed/v",
+      "assetKind": "zed",
+      "assetName": "adocweave-zed-{version}.tar.xz",
+      "archive": "tar.xz",
+      "executable": null,
+      "build": "script",
+      "buildScript": "tools/package-zed-release.sh"
+    }
+  ],
   "targets": [
     {
       "archive": "zip",
@@ -43,92 +110,6 @@
       "os": "win32",
       "runner": "windows-2025",
       "triple": "x86_64-pc-windows-msvc"
-    }
-  ],
-  "assets": [
-    {
-      "name": "adocweave-cli-aarch64-unknown-linux-musl.zip",
-      "kind": "cli",
-      "target": "aarch64-unknown-linux-musl",
-      "archive": "zip",
-      "executable": "adocweave"
-    },
-    {
-      "name": "adocweave-cli-aarch64-apple-darwin.zip",
-      "kind": "cli",
-      "target": "aarch64-apple-darwin",
-      "archive": "zip",
-      "executable": "adocweave"
-    },
-    {
-      "name": "adocweave-cli-x86_64-unknown-linux-musl.zip",
-      "kind": "cli",
-      "target": "x86_64-unknown-linux-musl",
-      "archive": "zip",
-      "executable": "adocweave"
-    },
-    {
-      "name": "adocweave-cli-x86_64-pc-windows-msvc.zip",
-      "kind": "cli",
-      "target": "x86_64-pc-windows-msvc",
-      "archive": "zip",
-      "executable": "adocweave.exe"
-    },
-    {
-      "name": "adocweave-lsp-aarch64-unknown-linux-musl.zip",
-      "kind": "lsp",
-      "target": "aarch64-unknown-linux-musl",
-      "archive": "zip",
-      "executable": "adocweave-lsp"
-    },
-    {
-      "name": "adocweave-lsp-aarch64-apple-darwin.zip",
-      "kind": "lsp",
-      "target": "aarch64-apple-darwin",
-      "archive": "zip",
-      "executable": "adocweave-lsp"
-    },
-    {
-      "name": "adocweave-lsp-x86_64-unknown-linux-musl.zip",
-      "kind": "lsp",
-      "target": "x86_64-unknown-linux-musl",
-      "archive": "zip",
-      "executable": "adocweave-lsp"
-    },
-    {
-      "name": "adocweave-lsp-x86_64-pc-windows-msvc.zip",
-      "kind": "lsp",
-      "target": "x86_64-pc-windows-msvc",
-      "archive": "zip",
-      "executable": "adocweave-lsp.exe"
-    },
-    {
-      "name": "adocweave-browser-0.46.2.tar.xz",
-      "kind": "browser",
-      "target": null,
-      "archive": "tar.xz",
-      "executable": null
-    },
-    {
-      "name": "adocweave-zed-0.46.2.tar.xz",
-      "kind": "zed",
-      "target": null,
-      "archive": "tar.xz",
-      "executable": null
-    },
-    {
-      "name": "adocweave-textlint-plugin-asciidoc-0.46.2.tgz",
-      "kind": "textlint-plugin",
-      "target": null,
-      "archive": "tgz",
-      "executable": null
-    },
-    {
-      "name": "adocweave-vscode-0.46.2.vsix",
-      "kind": "vscode",
-      "target": null,
-      "archive": "vsix",
-      "executable": null
     }
   ],
   "releaseMetadata": [
