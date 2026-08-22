@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   validateNoDirectSecretAccess,
   validateProductReleaseRouting,
+  validateTextlintReleaseGates,
 } from "./release-workflow-policy.mjs";
 
 const CACHE_STEP = { uses: "cachix/cachix-action@sha", with: { authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}" } };
@@ -166,5 +167,35 @@ test("product release routing rejects a generic candidate artifact", () => {
   assert.throws(
     () => validateProductReleaseRouting(workflows),
     /download only the selected product candidate/,
+  );
+});
+
+test("textlintのPR検査を完成archiveと固定consumerの各1回に限定する", () => {
+  const workflows = {
+    "release.yml": {
+      jobs: {
+        "global-installation-e2e": {
+          steps: [{
+            name: "Global installation and complete removal",
+            run: "for product in browser vscode zed; do verify $product; done",
+          }],
+        },
+      },
+    },
+  };
+  const makefile = `
+[tasks.release-global-artifacts]
+dependencies = ["test-textlint-plugin-release-package"]
+[tasks.release-global-candidate]
+dependencies = ["release-global-artifacts", "textlint-plugin-release-consumer-e2e"]
+[tasks.release-installation-e2e-host]
+dependencies = ["native-release-smoke-host", "package-browser-release"]
+`;
+  validateTextlintReleaseGates(workflows, makefile);
+
+  workflows["release.yml"].jobs["textlint-plugin-installation-e2e"] = {};
+  assert.throws(
+    () => validateTextlintReleaseGates(workflows, makefile),
+    /must not duplicate the fixed textlint consumer E2E/,
   );
 });

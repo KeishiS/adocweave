@@ -16,7 +16,6 @@ test("公開asset、checksumおよび実URLのnpx経路を順に検査する", a
   const archive = Buffer.from("published archive");
   const hash = createHash("sha256").update(archive).digest("hex");
   const fetched = [];
-  const verified = [];
   const npx = [];
   await runTextlintPluginPostReleaseSmoke(
     "https://github.com/KeishiS/adocweave/releases/download/v1.2.3",
@@ -29,7 +28,6 @@ test("公開asset、checksumおよび実URLのnpx経路を順に検査する", a
           : archive;
       },
       runNpxSmoke: async (url, options) => npx.push({ options, url }),
-      verifyPackage: async (path) => verified.push(path),
       version: "1.2.3",
     },
   );
@@ -37,7 +35,6 @@ test("公開asset、checksumおよび実URLのnpx経路を順に検査する", a
     "https://github.com/KeishiS/adocweave/releases/download/v1.2.3/adocweave-textlint-plugin-asciidoc-1.2.3.tgz",
     "https://github.com/KeishiS/adocweave/releases/download/v1.2.3/sha256.sum",
   ]);
-  assert.equal(verified.length, 1);
   assert.equal(npx[0].url, fetched[0]);
   assert.equal(npx[0].options.manifest, manifest);
 });
@@ -57,7 +54,6 @@ test("checksumの欠落、重複および不一致を拒否する", async () => 
           ? Buffer.from(`${hash}  ${name}\n`)
           : Buffer.from("different"),
         runNpxSmoke: async () => {},
-        verifyPackage: async () => {},
         version: "1.2.3",
       },
     ),

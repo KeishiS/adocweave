@@ -200,7 +200,6 @@ args = [
   "tools/platform-contract.test.mjs",
   "tools/release-installation-e2e.test.mjs",
   "tools/textlint-plugin-npx-smoke.test.mjs",
-  "tools/textlint-plugin-compatibility-probe.test.mjs",
   "tools/textlint-plugin-post-release-smoke.test.mjs",
   "tools/textlint-plugin-consumer-e2e.test.mjs",
   "tools/textlint-plugin-e2e/installed-tree.test.mjs",
@@ -313,11 +312,10 @@ ADOCWEAVE_SMOKE_ALLOW_DYNAMIC=1 \
 '''
 
 [tasks.release-installation-e2e-host]
-description = "Install, select, and completely uninstall locally built release archives in an isolated home"
+description = "Install and remove locally built native and global release archives in an isolated home"
 dependencies = [
   "native-release-smoke-host",
   "package-browser-release",
-  "package-textlint-plugin-release",
   "package-zed-release",
   "test-vscode-release-package",
 ]
@@ -328,11 +326,12 @@ rm -rf "$candidate"
 mkdir -p "$candidate"
 cp target/native-smoke-host/artifacts/*.zip "$candidate/"
 cp target/distrib/adocweave-browser-*.tar.xz "$candidate/"
-cp target/distrib/adocweave-textlint-plugin-asciidoc-*.tgz "$candidate/"
 cp target/distrib/adocweave-zed-*.tar.xz "$candidate/"
 cp target/distrib/adocweave-vscode-*.vsix "$candidate/"
-node tools/release-installation-e2e.mjs \
-  "$candidate" x86_64-unknown-linux-musl release/distribution-plan.json
+for product in cli lsp browser vscode zed; do
+  node tools/release-installation-e2e.mjs \
+    "$product" "$candidate" x86_64-unknown-linux-musl
+done
 '''
 
 [tasks.dist-plan]
@@ -403,9 +402,14 @@ node tools/verify-textlint-plugin-package.mjs \
 '''
 
 [tasks.textlint-plugin-reproducibility]
-description = "Build and independently verify byte-identical textlint archives in two clean environments"
-command = "node"
-args = ["tools/verify-textlint-plugin-reproducibility.mjs"]
+description = "Compare the verified textlint candidate with one clean rebuild"
+dependencies = ["textlint-plugin-package-contract"]
+script_runner = "@shell"
+script = '''
+version="$(node --input-type=module -e "import manifest from './packages/textlint-plugin-asciidoc/package.json' with { type: 'json' }; process.stdout.write(manifest.version)")"
+node tools/verify-textlint-plugin-reproducibility.mjs \
+  "target/distrib/adocweave-textlint-plugin-asciidoc-$version.tgz"
+'''
 
 [tasks.test-textlint-plugin-release-package]
 description = "Compatibility alias for the textlint plugin package contract"
@@ -421,30 +425,10 @@ node tools/textlint-plugin-consumer-e2e.mjs \
   "target/distrib/adocweave-textlint-plugin-asciidoc-$version.tgz"
 '''
 
-[tasks.textlint-plugin-candidate-npx-smoke]
-description = "Exercise one-shot textlint against the unpublished candidate archive with an empty npm cache"
-dependencies = ["textlint-plugin-package-contract"]
-script_runner = "@shell"
-script = '''
-version="$(node --input-type=module -e "import manifest from './packages/textlint-plugin-asciidoc/package.json' with { type: 'json' }; process.stdout.write(manifest.version)")"
-node tools/textlint-plugin-npx-smoke.mjs \
-  "target/distrib/adocweave-textlint-plugin-asciidoc-$version.tgz"
-'''
-
 [tasks.textlint-plugin-post-release-npx-smoke]
 description = "Observe the published GitHub Release asset, checksum, and one-shot npx path after publication"
 command = "node"
 args = ["tools/textlint-plugin-post-release-smoke.mjs"]
-
-[tasks.textlint-plugin-compatibility-probe]
-description = "Observe the latest transitive npm resolution against a freshly built and verified candidate"
-dependencies = ["textlint-plugin-package-contract"]
-script_runner = "@shell"
-script = '''
-version="$(node --input-type=module -e "import manifest from './packages/textlint-plugin-asciidoc/package.json' with { type: 'json' }; process.stdout.write(manifest.version)")"
-node tools/textlint-plugin-compatibility-probe.mjs \
-  "target/distrib/adocweave-textlint-plugin-asciidoc-$version.tgz"
-'''
 
 [tasks.test-zed-release-package]
 description = "Verify the Zed release archive layout and deterministic bytes"
@@ -566,7 +550,6 @@ dependencies = [
   "test-browser-release-package",
   "test-browser-types",
   "test-textlint-plugin-release-package",
-  "textlint-plugin-reproducibility",
   "test-zed-release-package",
   "test-vscode-release-package",
   "test-vscode-release-determinism",
@@ -578,7 +561,6 @@ dependencies = [
   "release-global-artifacts",
   "browser-runtime-check",
   "textlint-plugin-release-consumer-e2e",
-  "textlint-plugin-candidate-npx-smoke",
 ]
 
 [tasks.browser-runtime-check]

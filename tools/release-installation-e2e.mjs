@@ -60,6 +60,10 @@ if (!product || !candidateArgument || !target) {
   process.exit(2);
 }
 
+const installationProducts = new Set(["cli", "lsp", "browser", "vscode", "zed"]);
+if (!installationProducts.has(product)) {
+  throw new Error(`unsupported installation E2E product: ${product}`);
+}
 const distributionPlan = loadDistributionPlan();
 selectProduct(distributionPlan, product);
 const platform = distributionPlan.targets.find(({ triple }) => triple === target);
@@ -264,14 +268,6 @@ function installVSCode() {
   renameSync(extension, vscodeRoot);
 }
 
-function verifyTextlintArchive() {
-  const name = `adocweave-textlint-plugin-asciidoc-${version}.tgz`;
-  const entries = archiveEntries(execFileSync("tar", ["-tzf", archive(name)], { encoding: "utf8" }));
-  if (entries.length === 0 || validateArchiveEntries(entries, "package").length > 0) {
-    throw new Error(`unsafe or unexpected archive path in ${name}`);
-  }
-}
-
 async function verifyBrowserContract() {
   const modulePath = join(browserRoot, "wasm", "adocweave_wasm.js");
   const wasmPath = join(browserRoot, "wasm", "adocweave_wasm_bg.wasm");
@@ -348,7 +344,6 @@ try {
     : product === "lsp" ? `adocweave-lsp${platform.executableSuffix}` : null;
   if (native) installNative(`adocweave-${product}`, executable);
   else if (product === "browser") installBrowser();
-  else if (product === "textlint") verifyTextlintArchive();
   else if (product === "zed") installZed();
   else if (product === "vscode") installVSCode();
   const executables = native ? [executable] : [];

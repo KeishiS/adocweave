@@ -253,31 +253,6 @@ export async function installFixedConsumerAndPlugin({ archive, cwd }) {
   assertConsumerTreeUnchanged(treeBefore, treeAfter);
 }
 
-export async function installLatestCompatibleConsumer({
-  archive,
-  manifest = loadTextlintPluginManifest(),
-  cwd,
-}) {
-  const npm = npmInvocation();
-  const result = await runProcess(npm.command, [
-    ...npm.arguments,
-    "install",
-    "--ignore-scripts",
-    "--no-audit",
-    "--no-fund",
-    "--save-exact",
-    `textlint@${manifest.peerDependencies.textlint}`,
-    archive,
-  ], {
-    cwd,
-    env: {
-      ...process.env,
-      npm_config_cache: join(cwd, ".npm-cache"),
-    },
-  });
-  if (result.code !== 0) throw new Error(diagnosticForUnexpectedExit("npm install", result));
-}
-
 export function npmInvocation({
   environment = process.env,
   executable = process.execPath,

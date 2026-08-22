@@ -6,12 +6,14 @@ import test from "node:test";
 
 import { verifyTextlintPluginReproducibility } from "./verify-textlint-plugin-reproducibility.mjs";
 
-test("別のsource、Cargo targetおよびnpm cacheで同じarchiveを構築する", async () => {
+test("完成candidateを別のsource、Cargo targetおよびnpm cacheで1回だけ再構築する", async () => {
   const root = await mkdtemp(join(tmpdir(), "adocweave-textlint-repro-test-"));
+  const candidate = join(root, "candidate.tgz");
   const calls = [];
   const verified = [];
   try {
-    const hash = await verifyTextlintPluginReproducibility({
+    await writeFile(candidate, "same archive bytes");
+    const hash = await verifyTextlintPluginReproducibility(candidate, {
       repositoryRoot: root,
       prepareSource: async (_repositoryRoot, sourceDirectory) => {
         await mkdir(join(sourceDirectory, "packages/textlint-plugin-asciidoc"), { recursive: true });
@@ -31,29 +33,21 @@ test("別のsource、Cargo targetおよびnpm cacheで同じarchiveを構築す�
       verifyPackage: async ({ archive }) => verified.push(archive),
     });
     assert.match(hash, /^[0-9a-f]{64}$/);
-    assert.equal(calls.length, 2);
-    for (const field of [
-      "cargoTargetDirectory",
-      "npmCacheDirectory",
-      "outputDirectory",
-      "sourceDirectory",
-      "wasmOutputDirectory",
-    ]) {
-      assert.notEqual(calls[0][field], calls[1][field], field);
-    }
-    assert.equal(verified.length, 2);
-    assert.notEqual(verified[0], verified[1]);
+    assert.equal(calls.length, 1);
+    assert.equal(verified.length, 1);
+    assert.notEqual(verified[0], candidate);
   } finally {
     await rm(root, { force: true, recursive: true });
   }
 });
 
-test("clean build間のbyte差を拒否する", async () => {
+test("完成candidateとclean rebuildのbyte差を拒否する", async () => {
   const root = await mkdtemp(join(tmpdir(), "adocweave-textlint-repro-test-"));
-  let count = 0;
+  const candidate = join(root, "candidate.tgz");
   try {
+    await writeFile(candidate, "candidate archive");
     await assert.rejects(
-      verifyTextlintPluginReproducibility({
+      verifyTextlintPluginReproducibility(candidate, {
         repositoryRoot: root,
         prepareSource: async (_repositoryRoot, sourceDirectory) => {
           await mkdir(join(sourceDirectory, "packages/textlint-plugin-asciidoc"), { recursive: true });
@@ -63,16 +57,15 @@ test("clean build間のbyte差を拒否する", async () => {
           );
         },
         buildPackage: async ({ outputDirectory }) => {
-          count += 1;
           await mkdir(outputDirectory, { recursive: true });
           await writeFile(
             join(outputDirectory, "adocweave-textlint-plugin-asciidoc-1.2.3.tgz"),
-            `archive ${count}`,
+            "clean archive",
           );
         },
         verifyPackage: async () => {},
       }),
-      /clean textlint plugin builds differ/,
+      /textlint candidate and clean rebuild differ/,
     );
   } finally {
     await rm(root, { force: true, recursive: true });

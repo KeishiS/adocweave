@@ -17,7 +17,7 @@ const manifest = {
   peerDependencies: { textlint: "15.8.0" },
 };
 
-test("candidate tgzを固定したnpx package引数で検査する", async () => {
+test("指定したpackageを固定したnpx引数で検査する", async () => {
   const root = await mkdtemp(join(tmpdir(), "adocweave-textlint-npx-test-"));
   const archive = join(root, "plugin.tgz");
   let invocation;

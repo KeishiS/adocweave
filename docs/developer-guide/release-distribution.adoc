@@ -143,23 +143,19 @@ link:../../release/textlint-plugin-package-contract.json[`release/textlint-plugi
 一つの物理ファイルだけを診断対象とします。
 
 包装時は配布仕様で定めた許可file一覧、archive内の絶対path、親directory参照、symlinkおよびsizeを検査します。
-再現性検査では、追跡しているsourceを二つの一時ディレクトリへ複製し、別々のCargo target、WebAssembly出力先、
-npm cacheおよびarchive出力先を使います。各archiveを独立した検証器へ渡した後、SHA-256とbyte列の一致を検査します。
-Linux、macOSおよびWindowsのcleanな一時projectへ公開tarballを導入し、
+Pull Requestでは、完成したarchiveを独立した検証器へ1回だけ渡します。続いて、固定したNode.jsとtextlintを持つ
+consumer fixtureへ同じarchiveを1回だけ導入し、
 ``.adoc``、``.asciidoc``、``.asc``、標準入力、LF、CRLF、日本語、結合文字および絵文字について、診断位置と
-``--fix``による非変更を検査します。対応するNode.jsとtextlintの範囲は、この3環境で検証した範囲だけを
-package metadataと利用手順へ記載します。この判断の背景は
-xref:adr/0017-github-release-textlint-package.adoc[ADR 0017]を参照してください。
+``--fix``による非変更を検査します。対応するNode.jsとtextlintの範囲は、固定consumerで検証する値をpackage metadataと
+利用手順へ記載します。
 
-公開前のcandidateでは、固定したconsumer fixtureによる導入検査に加え、ローカルの``.tgz``を``npx --package``と
-同じ経路で実行します。公開後はGitHub Releaseの実URLからarchiveと``sha256.sum``を取得し、checksum、独立した
-archive検証および実URLを指定した単発実行を確認します。公開後の検査は公開処理の後にだけ実行し、公開前gateには
+再現性を手動で調べる場合は、検証済みのcandidateと、追跡しているsourceを一時ディレクトリへ複製して1回だけ
+構築したarchiveのSHA-256とbyte列を比較します。この検査はPull Requestのgateには含めません。
+
+公開後はGitHub Releaseの実URLからarchiveと``sha256.sum``を取得してchecksumを照合し、同じ実URLを指定した
+``npx``の単発実行を確認します。公開後の検査は公開処理の後にだけ実行し、公開前gateには
 含めません。失敗しても既に公開したReleaseを自動で差し戻せないため、結果を公開後の異常として調査します。
-
-定期実行と手動実行の互換性probeでは、現在のcheckoutからパッケージを構築して配布仕様を検証した後、npmがその時点で
-選択する推移的依存を使ってconsumerの受入検査を実行します。この検査は依存先の更新を観測するため、Pull Request、
-``main``、mergeおよびreleaseのgateには含めません。失敗した場合は依存先の変化として調査し、対応範囲や公開済み成果物を
-自動で変更しません。
+この検査境界の理由はxref:adr/0030-minimal-textlint-release-gates.adoc[ADR 0030]を参照してください。
 
 == 配布メタデータ
 
@@ -270,12 +266,10 @@ cargo make native-artifact-smoke
 cargo make installation-e2e
 cargo make textlint-plugin-reproducibility
 cargo make textlint-plugin-release-consumer-e2e
-cargo make textlint-plugin-candidate-npx-smoke
-cargo make textlint-plugin-compatibility-probe
 ----
 
-``textlint-plugin-compatibility-probe``は固定された再現性検査ではありません。ローカルで実行する場合も、現在のcheckoutから
-候補archiveを構築して検証し、npm registryからその時点の推移的依存を解決します。
+``textlint-plugin-reproducibility``は、通常のpackage検証後に同じcandidateをclean rebuildと比較する手動検査です。
+Pull Requestでは実行しません。
 
 このfixtureは、MSVCでのlink、Windowsの実際のfile lock、macOS SDKでのlink、Mach-Oの実行、
 quarantine属性および各OSでのprocess lifecycleを再現しません。これらは対象OSのnative runnerで
@@ -284,8 +278,8 @@ quarantine属性および各OSでのprocess lifecycleを再現しません。こ
 Pull Requestでは、変更pathを``native-change-plan.mjs``で判定します。CLIまたはLanguage Serverの
 Native archiveへ影響する場合はWindowsとmacOSのbuild、native smokeおよびinstallation E2Eを実行します。
 Browser package、Zed拡張、VS Code拡張またはtextlint用パッケージだけに影響する場合はglobal成果物だけを構築します。
-Browser packageには実Chromiumによる受入検査を行い、textlint用パッケージにはLinux、macOSおよびWindowsでの
-導入・実行検査を行います。Gitが追跡するファイルは成果物への影響をすべて明示的に分類し、
+Browser packageには実Chromiumによる受入検査を行い、textlint用パッケージには完成archiveの検証と固定consumerへの
+導入・実行検査をそれぞれ1回行います。Gitが追跡するファイルは成果物への影響をすべて明示的に分類し、
 未分類のpathが追加された場合は事前検査を失敗させます。
 installation E2Eはnative candidateの検証が成功した場合だけ実行し、global成果物など別系統の
 意図的なskipを失敗として継承しません。native candidateの検証が失敗、cancelまたはskipになった場合は

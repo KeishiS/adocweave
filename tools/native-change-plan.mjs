@@ -138,8 +138,6 @@ const GLOBAL_TOOLS = [
   "textlint-plugin-post-release-smoke.mjs",
   "textlint-plugin-post-release-smoke.test.mjs",
   "textlint-plugin-consumer-e2e.mjs",
-  "textlint-plugin-compatibility-probe.mjs",
-  "textlint-plugin-compatibility-probe.test.mjs",
   "textlint-plugin-consumer-e2e.test.mjs",
   "textlint-plugin-package.mjs",
   "verify-textlint-plugin-reproducibility.mjs",
