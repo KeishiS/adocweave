@@ -9,6 +9,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use adocweave::CancellationToken;
+use adocweave::output::diagnostics::{self, Diagnostic};
+use serde::Serialize;
 
 mod dependency;
 mod http;
@@ -19,6 +21,48 @@ use http::{HttpSnapshot, HttpWorkers};
 const ACCEPT_RETRY_INTERVAL: Duration = Duration::from_millis(20);
 const DEPENDENCY_POLL_INTERVAL: Duration = Duration::from_millis(200);
 const DEPENDENCY_FORCE_HASH_INTERVAL: Duration = Duration::from_secs(2);
+
+#[derive(Serialize)]
+#[serde(untagged)]
+pub(crate) enum PreviewDiagnostic {
+    Analysis(Diagnostic),
+    Include {
+        code: String,
+        message: String,
+        target: String,
+    },
+    Build {
+        code: &'static str,
+        message: String,
+    },
+}
+
+impl PreviewDiagnostic {
+    pub(crate) fn analysis(diagnostics: &[Diagnostic]) -> Vec<Self> {
+        let mut diagnostics = diagnostics.to_vec();
+        diagnostics::sort_diagnostics(&mut diagnostics);
+        diagnostics.into_iter().map(Self::Analysis).collect()
+    }
+
+    pub(crate) fn include(code: &str, message: String, target: &str) -> Self {
+        Self::Include {
+            code: code.to_owned(),
+            message,
+            target: target.to_owned(),
+        }
+    }
+
+    fn build(message: &str) -> Self {
+        Self::Build {
+            code: "preview-build",
+            message: message.to_owned(),
+        }
+    }
+}
+
+pub(crate) fn serialize_diagnostics(diagnostics: &[PreviewDiagnostic]) -> String {
+    serde_json::to_string(diagnostics).expect("preview diagnostics are serializable")
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Options {
@@ -328,11 +372,7 @@ pub fn run(
 }
 
 fn failure_diagnostics(message: &str) -> String {
-    serde_json::to_string(&[serde_json::json!({
-        "code": "preview-build",
-        "message": message,
-    })])
-    .expect("preview build diagnostic is serializable")
+    serialize_diagnostics(&[PreviewDiagnostic::build(message)])
 }
 
 fn error_document(message: &str) -> String {
@@ -423,6 +463,66 @@ mod tests {
             serde_json::from_str(&build.diagnostics).expect("JSON diagnostics");
         assert_eq!(diagnostics[0]["code"], "preview-build");
         assert_eq!(diagnostics[0]["message"], "missing include");
+    }
+
+    #[test]
+    fn typed_analysis_diagnostics_preserve_the_core_json_contract() {
+        use adocweave::output::diagnostics::{
+            Applicability, DiagnosticCode, DiagnosticId, Fix, RelatedInformation, Severity,
+            TextEdit,
+        };
+        use adocweave::text::{TextRange, TextSize};
+
+        let range = |start, end| {
+            TextRange::new(
+                TextSize::new(start).expect("small offset"),
+                TextSize::new(end).expect("small offset"),
+            )
+            .expect("ordered range")
+        };
+        let diagnostics = vec![
+            Diagnostic {
+                id: DiagnosticId::new("later"),
+                code: DiagnosticCode::new("z-code"),
+                severity: Severity::Warning,
+                message: "later message".to_owned(),
+                range: range(8, 9),
+                related: Vec::new(),
+                fixes: Vec::new(),
+            },
+            Diagnostic {
+                id: DiagnosticId::new("first"),
+                code: DiagnosticCode::new("a-code"),
+                severity: Severity::Error,
+                message: "first message".to_owned(),
+                range: range(1, 3),
+                related: vec![RelatedInformation {
+                    message: "related".to_owned(),
+                    range: range(4, 6),
+                }],
+                fixes: vec![
+                    Fix::new(
+                        "replace",
+                        Applicability::Maybe,
+                        vec![TextEdit {
+                            range: range(1, 2),
+                            replacement: "x".to_owned(),
+                        }],
+                    )
+                    .expect("valid fix"),
+                ],
+            },
+        ];
+
+        let expected: serde_json::Value =
+            serde_json::from_str(&diagnostics::render_json(&diagnostics))
+                .expect("core diagnostics JSON");
+        let actual: serde_json::Value = serde_json::from_str(&serialize_diagnostics(
+            &PreviewDiagnostic::analysis(&diagnostics),
+        ))
+        .expect("preview diagnostics JSON");
+
+        assert_eq!(actual, expected);
     }
 
     #[test]

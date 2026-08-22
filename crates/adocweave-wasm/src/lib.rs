@@ -994,6 +994,29 @@ mod tests {
     }
 
     #[test]
+    fn wasm_output_limit_accepts_the_exact_serialized_response_size() {
+        let source = "= Title\n\ntext";
+        let mut unrestricted = request(source);
+        unrestricted.output_limits.max_output_bytes = u32::MAX;
+        let response = process_request(unrestricted, &NeverCancel).expect("response");
+        let exact_size = u32::try_from(
+            serde_json::to_vec(&response)
+                .expect("response is serializable")
+                .len(),
+        )
+        .expect("small response size");
+
+        let mut exact = request(source);
+        exact.output_limits.max_output_bytes = exact_size;
+        process_request(exact, &NeverCancel).expect("exact output boundary");
+
+        let mut too_small = request(source);
+        too_small.output_limits.max_output_bytes = exact_size - 1;
+        let error = process_request(too_small, &NeverCancel).expect_err("one byte over limit");
+        assert_eq!(error.code, "limit-exceeded");
+    }
+
+    #[test]
     fn wasm_diagnostic_profile_uses_the_typed_lint_registry() {
         let mut configured = request("text \n");
         configured.analysis_options.diagnostics.rules.insert(

@@ -21,6 +21,7 @@ dependencies = [
  "adocweave-workspace",
  "glob",
  "libc",
+ "serde",
  "serde_json",
  "similar",
  "tempfile",

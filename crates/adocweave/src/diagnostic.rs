@@ -3,9 +3,12 @@
 use std::error::Error;
 use std::fmt::{self, Write as _};
 
+use serde::Serialize;
+
 use crate::source::{PositionEncoding, PositionError, SourceDocument, TextRange};
 
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(transparent)]
 pub struct DiagnosticId(String);
 
 impl DiagnosticId {
@@ -18,7 +21,8 @@ impl DiagnosticId {
     }
 }
 
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(transparent)]
 pub struct DiagnosticCode(String);
 
 impl DiagnosticCode {
@@ -31,7 +35,8 @@ impl DiagnosticCode {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Severity {
     Error,
     Warning,
@@ -59,25 +64,28 @@ impl Applicability {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct RelatedInformation {
-    pub message: String,
+    #[serde(serialize_with = "serialize_range")]
     pub range: TextRange,
+    pub message: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct TextEdit {
+    #[serde(serialize_with = "serialize_range")]
     pub range: TextRange,
     pub replacement: String,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Applicability {
     Always,
     Maybe,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct Fix {
     pub title: String,
     pub applicability: Applicability,
@@ -152,13 +160,14 @@ fn validate_edits(edits: &[TextEdit]) -> Result<(), EditConflict> {
     Ok(())
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct Diagnostic {
     pub id: DiagnosticId,
     pub code: DiagnosticCode,
     pub severity: Severity,
-    pub message: String,
+    #[serde(serialize_with = "serialize_range")]
     pub range: TextRange,
+    pub message: String,
     pub related: Vec<RelatedInformation>,
     pub fixes: Vec<Fix>,
 }
@@ -236,83 +245,24 @@ pub fn render_human(
 pub fn render_json(diagnostics: &[Diagnostic]) -> String {
     let mut diagnostics = diagnostics.to_vec();
     sort_diagnostics(&mut diagnostics);
-    let mut output = String::from("[");
+    serde_json::to_string(&diagnostics).expect("diagnostics are serializable")
+}
 
-    for (index, diagnostic) in diagnostics.iter().enumerate() {
-        if index != 0 {
-            output.push(',');
-        }
-        output.push('{');
-        write_json_field(&mut output, "id", diagnostic.id.as_str());
-        output.push(',');
-        write_json_field(&mut output, "code", diagnostic.code.as_str());
-        output.push_str(",\"severity\":");
-        write_json_string(&mut output, diagnostic.severity.as_str());
-        write!(
-            output,
-            ",\"range\":{{\"start\":{},\"end\":{}}}",
-            diagnostic.range.start().to_u32(),
-            diagnostic.range.end().to_u32()
-        )
-        .expect("writing to a String cannot fail");
-        output.push_str(",\"message\":");
-        write_json_string(&mut output, &diagnostic.message);
-        output.push_str(",\"related\":[");
-        for (related_index, related) in diagnostic.related.iter().enumerate() {
-            if related_index != 0 {
-                output.push(',');
-            }
-            write!(
-                output,
-                "{{\"range\":{{\"start\":{},\"end\":{}}},\"message\":",
-                related.range.start().to_u32(),
-                related.range.end().to_u32()
-            )
-            .expect("writing to a String cannot fail");
-            write_json_string(&mut output, &related.message);
-            output.push('}');
-        }
-        output.push_str("],\"fixes\":[");
-        for (fix_index, fix) in diagnostic.fixes.iter().enumerate() {
-            if fix_index != 0 {
-                output.push(',');
-            }
-            output.push('{');
-            write_json_field(&mut output, "title", &fix.title);
-            output.push_str(",\"applicability\":");
-            write_json_string(&mut output, fix.applicability.as_str());
-            output.push_str(",\"edits\":[");
-            for (edit_index, edit) in fix.edits().iter().enumerate() {
-                if edit_index != 0 {
-                    output.push(',');
-                }
-                write!(
-                    output,
-                    "{{\"range\":{{\"start\":{},\"end\":{}}},\"replacement\":",
-                    edit.range.start().to_u32(),
-                    edit.range.end().to_u32()
-                )
-                .expect("writing to a String cannot fail");
-                write_json_string(&mut output, &edit.replacement);
-                output.push('}');
-            }
-            output.push_str("]}");
-        }
-        output.push_str("]}");
+fn serialize_range<S>(range: &TextRange, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    #[derive(Serialize)]
+    struct Range {
+        start: u32,
+        end: u32,
     }
 
-    output.push(']');
-    output
-}
-
-fn write_json_field(output: &mut String, name: &str, value: &str) {
-    write_json_string(output, name);
-    output.push(':');
-    write_json_string(output, value);
-}
-
-fn write_json_string(output: &mut String, value: &str) {
-    crate::json::write_string(output, value);
+    Range {
+        start: range.start().to_u32(),
+        end: range.end().to_u32(),
+    }
+    .serialize(serializer)
 }
 
 #[cfg(test)]
