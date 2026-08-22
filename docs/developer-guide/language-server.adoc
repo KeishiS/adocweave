@@ -236,7 +236,7 @@ workspaceが走査対象として保持する解析root、open overlayによっ�
 同時に開きません。待機中に古くなった解析はtransactionを開く前に取り消します。ファイル監視による更新は
 進行中の解析transactionを明示的に置き換えられますが、解析worker同士は互いのtransactionを置き換えません。
 
-読込はworkspaceとinclude bindingの候補stateに対して行います。revision、generation、設定の契約および解析が
+読込はworkspaceとinclude bindingの候補stateに対して行います。revision、generation、解析設定および解析結果が
 すべて現在の状態と一致する場合だけ、Workspace draftとinclude transactionを採用します。
 取消し、失敗し、または古くなった解析は両方の候補を破棄するため、エディターが見ているlive stateを変更しません。
 読込対象の探索と前処理は通知handlerでは実行しません。除外したinclude先を解析rootとして登録しない性質も

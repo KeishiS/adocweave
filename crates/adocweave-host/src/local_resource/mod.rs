@@ -1,6 +1,4 @@
 use std::collections::BTreeMap;
-#[cfg(not(target_os = "linux"))]
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
