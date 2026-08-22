@@ -87,6 +87,40 @@ fn document_links_keep_safe_urls_and_xrefs_separate_but_navigable() {
     assert!(targets.contains(&"file:///b.adoc#other"));
 }
 
+#[test]
+fn document_links_keep_exact_target_ranges_and_reject_unsafe_or_invalid_urls() {
+    let source = "😀 https://example.com/path[Safe]\n\
+javascript:alert(1)[Unsafe]\n\
+https://example.com:99999[Invalid port]\n";
+    for (encoding, expected_start) in [("utf-8", 5), ("utf-16", 3)] {
+        let mut service = LanguageService::default();
+        initialize(&mut service, &[encoding]);
+        let document = uri("file:///external-links.adoc");
+        open(&mut service, document.as_str(), 1, source);
+
+        let links = service
+            .document_links(&document)
+            .expect("document links")
+            .expect("links");
+
+        assert_eq!(links.len(), 1, "{encoding}");
+        let link = &links[0];
+        assert_eq!(
+            link.target.as_ref().map(lsp::Url::as_str),
+            Some("https://example.com/path"),
+            "{encoding}"
+        );
+        assert_eq!(
+            link.range,
+            lsp::Range::new(
+                lsp::Position::new(0, expected_start),
+                lsp::Position::new(0, expected_start + 24),
+            ),
+            "{encoding}"
+        );
+    }
+}
+
 #[derive(Debug)]
 struct TestHostIndex {
     complete: bool,

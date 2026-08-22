@@ -1,6 +1,5 @@
 //! Stateless navigation conversion over selected document and workspace analyses.
 
-use adocweave::output::projection::project;
 use adocweave::resolution::ReferenceKey;
 use adocweave::text::SourceDocument;
 use async_lsp::lsp_types as lsp;
@@ -405,12 +404,7 @@ pub(crate) fn document_links(
     cancellation.check_now()?;
     let mut links = Vec::new();
     let mut unresolved = Vec::new();
-    for link in project(
-        &input.document.analysis,
-        &adocweave::resolution::RenderInputs::default(),
-    )
-    .external_links
-    {
+    for link in input.document.analysis.links() {
         cancellation.checkpoint()?;
         if !adocweave::resolution::AuthoredUrlPolicy::default().allows(&link.target) {
             continue;
