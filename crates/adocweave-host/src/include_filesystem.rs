@@ -218,8 +218,12 @@ pub enum IncludeFilesystemInspectionOutcome {
 /// Stateless entry point for lenient operations on live session state.
 ///
 /// A live operation does not poison later live operations. It does invalidate
-/// an outstanding atomic transaction for the same session, so callers must not
-/// mix the two modes within one run.
+/// the commit revision of an outstanding atomic transaction for the same
+/// session, but it does not release that transaction's draft lease. The stale
+/// transaction may continue isolated work until it is dropped, and another
+/// atomic transaction cannot start in the meantime. Use
+/// [`IncludeFilesystemJob::superseding_transaction`] when a replacement must
+/// acquire the lease immediately.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct IncludeFilesystem;
 
@@ -312,6 +316,10 @@ impl IncludeFilesystemJob {
     /// Native watch updates use this when they must remain atomic while an
     /// analysis still owns an unpublished transaction for the same session.
     /// The superseded transaction can neither perform more I/O nor commit.
+    ///
+    /// An error does not guarantee that the older transaction remains valid.
+    /// Invalidating its lease precedes creation of the replacement, and a
+    /// failure in that second step does not restore the old lease.
     pub fn superseding_transaction(
         &self,
         session: &mut LocalFilesystemSession,

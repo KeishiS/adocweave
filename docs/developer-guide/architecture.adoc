@@ -73,15 +73,19 @@ allocationまたは取り込みを始める前に上限を適用します。
 課金範囲はworkspace rootと最も近いproject設定の組で識別し、設定の新設や削除で範囲が変わる場合は、
 旧範囲の課金解放と新範囲への移行を一つの更新として確定します。
 
-Nativeのinclude取得は``adocweave-host::IncludeFilesystem``の高水準な取得境界を使います。
-CLIは失敗後も別の対象を検査できる逐次APIを使い、Language Serverは一回のjobを共有してproject scopeごとの
-sessionからtransactionを開きます。論理的なsource ID、基準pathおよびtargetを含む
+Nativeのinclude取得は``adocweave-host``の高水準な取得境界を使います。
+状態を持たない``IncludeFilesystem``は、失敗後も別の対象を検査するCLI向けの逐次読込・検査を提供します。
+``IncludeFilesystemJob``は一回の処理に参加するsession間の予算を所有し、Language Serverはこのjobから
+project scopeごとの``IncludeFilesystemTransaction``を開きます。transactionはsessionの候補stateと
+handle相対の読込・検査を所有します。論理的なsource ID、基準pathおよびtargetを含む
 ``IncludeFilesystemRequest``を``read``または``inspect``に渡します。結果は本文、不在または失敗を区別する型で返り、
 許可済みの監視候補だけを公開します。処理の採用時はtransaction全体をcommitし、取消しまたは失敗したtransactionは
 live stateを変更しません。
 
-``IncludeFilesystem``がjobの課金、候補state、resource bindingおよびhandle相対の読込・検査を内部で対応付けます。
-CLIとLanguage Serverはこれらの低水準な所有関係を組み立てず、処理のsessionと予算を高水準な取得境界へ渡します。
+読込で得た``IncludeFilesystemBinding``は公開内容を持たない世代付きの所有証明です。
+bindingを世代をまたいで保持する場合は、利用側アプリがその正本を持ち、不要になった値だけを
+transactionの``release``へ渡します。
+``adocweave-host``はconsumer別の所有者台帳を持ちません。
 Linuxではこの境界の内部がrootのディレクトリhandleを起点にfileを開き、path検査後に開き直しません。
 依存関係を監視するadapter以外はcanonical pathを利用せず、診断やsource mapの識別子にも使用しません。
 

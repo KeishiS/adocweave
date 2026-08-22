@@ -149,12 +149,13 @@ filesystem adapter、symlink判定および全rootで共有するファイル数
 直接構築できないprovenanceへ分離しますが、依存関係の監視を行うadapterはaccessorから参照できます。
 相対pathだけを渡して複数rootのどれかを暗黙に選ぶAPIは提供しません。
 
-Includeの取得側は、この低水準APIを直接組み立てません。``IncludeFilesystemJob::transaction``が
-``FilesystemJobCoordinator``、``LocalFilesystemDraft``、世代付きresource bindingおよびhandle相対の読込・検査をまとめます。
+Includeの取得側は、この低水準APIを直接組み立てません。``IncludeFilesystemJob``が一回の処理の予算を所有し、
+``IncludeFilesystemTransaction``が``LocalFilesystemDraft``とhandle相対の読込・検査をまとめます。
 呼出側はsessionと``IncludeFilesystemRequest``を与え、``Found``、``NotFound``または``Failed``の
 型付き結果を受け取ります。``read``は本文と許可済みの監視候補を返し、``inspect``は本文を読まずに同じauthorityの
 対象を検証します。すべての読込みとWorkspace候補の構築が成功した場合だけtransactionをcommitします。
 取消し、失敗し、または古くなったtransactionは破棄し、live stateとWorkspaceが保持するbindingを変更しません。
+読込で得た世代付きbindingの正本はWorkspaceが保持し、不要になったbindingだけをtransactionへ渡して解放します。
 
 内部のcoordinatorは同じ処理に参加する全sessionで、resource取得試行数、取得byte数、directory列挙試行数、
 列挙entry数、候補stateの変更数およびsession数を共有します。fileの読込とdirectory列挙はI/Oの前に残量を予約し、
