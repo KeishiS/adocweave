@@ -44,7 +44,7 @@
   },
   "e2eMatrix": [
     { "runner": "ubuntu-24.04", "node": "22.18.0" },
-    { "runner": "ubuntu-24.04", "node": "24.18.0" },
+    { "runner": "ubuntu-24.04", "node": "24.19.0" },
     { "runner": "ubuntu-24.04", "node": "release" },
     { "runner": "macos-15", "node": "release" },
     { "runner": "windows-2025", "node": "release" }
