@@ -76,7 +76,7 @@ xref:../user-guide/release-installation.adoc#browser-library-deployment[Browser 
 Browser packageは展開前のarchiveを2 MiB以下、archive内のraw WASMを1.25 MiB以下とします。
 公開clientはPromiseを返す一つの解析入口だけを持ち、Worker内部のprotocol versionを公開互換仕様に含めません。
 JavaScriptとWASMの互換性はWASM protocol schemaだけで検査します。
-global成果物へ影響するPull Requestとrelease用main candidateでは公開archiveを展開し、
+``main``のcandidate検査では公開archiveを展開し、
 cross-origin isolationを使わない静的配信環境およびbundlerで構築した経路から同じ公開APIを実行して、
 この性能予算と実行時の互換性を確認します。静的なarchive検査と実行検査は一つのtask graphで行い、
 実行検査後に同じarchiveをcandidateとして保存します。
@@ -143,7 +143,7 @@ WebAssemblyのlinear memory、tarballおよび展開後の内容の上限は、�
 一つの物理ファイルだけを診断対象とします。
 
 包装時は配布仕様で定めた許可file一覧、archive内の絶対path、親directory参照、symlinkおよびsizeを検査します。
-Pull Requestでは、完成したarchiveを独立した検証器へ1回だけ渡します。続いて、固定したNode.jsとtextlintを持つ
+``main``のcandidate検査では、完成したarchiveを独立した検証器へ1回だけ渡します。続いて、固定したNode.jsとtextlintを持つ
 consumer fixtureへ同じarchiveを1回だけ導入し、
 ``.adoc``、``.asciidoc``、``.asc``、標準入力、LF、CRLF、日本語、結合文字および絵文字について、診断位置と
 ``--fix``による非変更を検査します。対応するNode.jsとtextlintの版は、固定consumerで検証する値をpackage metadataと
@@ -275,47 +275,21 @@ Pull Requestでは実行しません。
 quarantine属性および各OSでのprocess lifecycleを再現しません。これらは対象OSのnative runnerで
 ``native-release-smoke``とinstallation E2Eを実行して確認します。
 
-Pull Requestでは、変更pathを``native-change-plan.mjs``で判定します。CLIまたはLanguage Serverの
-Native archiveへ影響する場合はWindowsとmacOSのbuild、native smokeおよびinstallation E2Eを実行します。
-Browser package、Zed拡張、VS Code拡張またはtextlint用パッケージだけに影響する場合はglobal成果物だけを構築します。
-Browser packageには実Chromiumによる受入検査を行い、textlint用パッケージには完成archiveの検証と固定consumerへの
-導入・実行検査をそれぞれ1回行います。Gitが追跡するファイルは成果物への影響をすべて明示的に分類し、
-未分類のpathが追加された場合は事前検査を失敗させます。
-installation E2Eはnative candidateの検証が成功した場合だけ実行し、global成果物など別系統の
-意図的なskipを失敗として継承しません。native candidateの検証が失敗、cancelまたはskipになった場合は
-installation E2Eを実行せず、最終gateを失敗させます。
-Pull Requestでは変更計画が選択したcandidate familyだけをインストール・削除します。native成果物は
-対象OSのrunner、Browser・Zed・VS Code成果物とtextlint用パッケージはUbuntu runnerで検証し、
-構築していないfamilyを要求しません。
-両familyを選択した場合は両方の検証成功を最終gateで要求します。公開候補では、選択した一製品について
-配布仕様が定める成果物だけを要求し、別製品の成果物が混入した場合も失敗させます。
+=== Pull Requestとmainの検査境界
 
-=== source検査の範囲
+Pull Requestでは、変更pathにかかわらず一つの標準source gateを実行します。``cargo make verify``と同じ範囲で、
+書式、lint、test、生成fileの差分、人が書いた文書および静的な依存関係境界を検査します。追跡pathを成果物ごとに
+分類せず、実行しないjobを``skipped``にして最後に組合せを照合する処理も行いません。必須checkの表示名は
+``verify``のまま維持します。
 
-Pull Requestでは、変更したpathが到達できるsource検査だけを実行します。文書だけを変更したPull Requestで、
-core crateの再compile、fuzzおよびNixパッケージ検査を行っても、結果は変わらないためです。
+Pull Requestでは配布candidateを構築しません。``main``へ統合したcommitに対し、WindowsとmacOSを含むcross target、
+実際のOSとBrowserを使う統合検査、fuzz、Nixパッケージ、未公開製品に対応する全成果物の構築、および完成した成果物を使う
+runtime受入検査を実行します。native成果物は対象OSのrunnerで、Browser成果物は実Chromiumで、textlint用パッケージは
+完成archiveと固定consumerで検査します。成果物のmetadata、checksumおよび収録fileも、公開するbyte列に対して確認します。
 
-jobは常に起動し、実行するかどうかをstepの条件で決めます。ブランチ保護が要求する検査名は、
-実行しなかった場合も``success``のまま維持する必要があるためです。実行しなかったstepは、その変更が
-その検査へ到達しないことを記録します。
-
-次の変更はすべての検査を実行します。
-
-* task graph、ツールチェーンの固定、flakeまたはworkflowの変更。これらは、どの検査の結果も変え得ます。
-* 成果物への影響を分類できないpath。分類漏れをすり抜けさせると、検証しないまま公開します。
-* ``main`` push。``main``は独立にreviewされたブランチが初めて出会う場所であり、
-  各ブランチが個別に検査を通っていても全体を検査します。
-
-成果物のbuildと配布計画の生成は、``cargo make ci-preflight``が成功した後に開始します。
-この事前検査では書式、生成file、workflow policy、release contractおよび変更pathの分類を確認します。
-成果物を作らないPull Requestと、公開済みバージョンの通常の``main`` pushでは配布計画を生成しません。
-Pull Requestの必須check``verify``はsource qualityに加え、変更に応じて選択したbuild、smoke test、
-candidate検証およびinstallation E2Eが完了してから成功します。
-
-release manifestのバージョンに対応するtagが存在する通常の``main`` pushではsource quality gateを実行し、
-release candidateを構築しません。未公開versionのmain pushでは、配布計画にある全targetとglobal成果物を構築し、
-metadataとinstallation E2Eを含む完全なcandidateを保存します。candidateが失敗した後の修正コミットでも
-同じ検査を再実行します。
+いずれかの検査に失敗した``main`` commitは公開candidateとして使用しません。修正を``main``へ統合すると、未公開製品の
+全target、実統合および成果物検査を同じ境界で再実行します。公開workflowは、成功した``main`` commitのcandidateだけを再利用します。
+この分離の理由はxref:adr/0031-path-independent-pull-request-gate.adoc[ADR 0031]を参照してください。
 
 公開workflowは、dispatchで指定した候補SHAが開始時点のmain先端と一致すること、同じSHAの成功済みcandidate、
 tagとReleaseが存在しないことを検査します。検査後はこのSHAを公開identityとして固定し、

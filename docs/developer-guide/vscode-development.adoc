@@ -45,7 +45,7 @@ uninstallを確認します。
 
 公開するbyte列が入力だけから決まることは``test-vscode-release-determinism``が確認します。このtaskは同じソースから
 VSIXをもう一度構築してSHA-256を比較するため、構築時間が2倍になります。成果物を公開する経路（``release-check``と
-release candidateの構築）だけで実行し、Pull Requestでは1回だけ構築します。
+release candidateの構築）だけで実行します。Pull RequestではVSIXを構築せず、source、manifestおよびtestを検査します。
 
 これらの構築と検査を行う``editors/vscode/scripts``はTypeScript（``.mts``）で書き、配布物で固定したNode.jsが型注釈を
 取り除いてそのまま実行します（変換や追加の依存はありません）。型検査は``npm run check``（``check-vscode``）の

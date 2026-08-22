@@ -1,0 +1,52 @@
+= ADR 0031: 変更pathに依存しないPull Request検査
+:status: accepted
+
+== 文脈
+
+Pull Requestの検査範囲を狭めるため、Gitが追跡するすべてのpathを自作の分類表へ登録し、
+変更したpathからsource検査と配布candidateへの影響を判定していました。workflowはその判定を多数の真偽値として
+受け取り、実行しないjobを``skipped``にしたうえで、最後のjobが``success``と``skipped``の組合せを照合していました。
+
+この構成では、sourceや文書を追加または移動するたびに、実装とは別に分類表の更新が必要です。分類、jobの条件、
+実行しない場合のstepおよび最後の照合が同じ到達関係を重複して表すため、通常の変更よりCI制御の保守が難しくなっていました。
+個人開発では、Pull Requestごとの計算時間を細かく削る効果より、すべての変更に同じ検査を適用して判断箇所を減らす効果を
+優先します。
+
+== 決定
+
+すべてのPull Requestに、変更pathに依存しない一つの標準source gateを適用します。このgateはローカルの
+``cargo make verify``と同じ検査を実行し、表示するcheck名を``verify``とします。書式、lint、test、生成fileの差分、
+人が書いた文書および静的な依存関係境界の検査を省略しません。
+
+Pull Requestでは配布candidateを構築しません。cross targetの構築、実際のOSやBrowserを使う統合検査、fuzz、
+Nixパッケージ検査、未公開製品の配布成果物の構築および成果物を使うruntime受入検査は、``main``へ統合したcommitで実行します。
+公開workflowは、これらに成功した同じ``main`` commitのcandidateを再利用します。
+
+追跡pathの分類表と分類漏れの監査を設けません。Pull Requestのsource検査条件を真偽値として各jobへ渡す構成、
+実行しない代わりのstep、
+および``success``と``skipped``を最後に照合する集約jobも設けません。Pull Requestの成否は標準source gate自身の
+終了状態で決まります。
+
+ブランチ保護が要求するstatus contextは``verify``の一つとします。従来の集約jobも同じ表示名を使用していたため、
+``verify``だけを要求しているrulesetでは変更が不要です。古い構成の``quality``配下のcheckを個別に要求している環境では、
+新しい``verify``が``main``で成功してstatus contextを作った後に、required status checkを``verify``一件へ置き換えます。
+存在しないcheckを先に要求してPull Requestを統合不能にしません。
+
+== 検討した代替案
+
+**既知のdirectoryだけを大まかに分類する。** 分類表は短くなりますが、新しいdirectoryをどちらへ含めるかという判断と、
+分類漏れを防ぐ監査は残ります。
+
+**高価な検査だけをpathで選ぶ。** source gateとcandidate gateで異なる到達関係を保守する必要があり、
+実行条件と集約jobを削除できません。
+
+**すべての成果物をPull Requestでも構築する。** 構成は単純ですが、複数OS、実Browserおよび全配布物の構築時間を
+すべてのPull Requestへ課します。統合前は決定的なsource検査を行い、環境と成果物を使う検査は``main``へ分離します。
+
+== 帰結
+
+新しいfileやdirectoryを追加しても、CI分類表へ登録する作業は発生しません。すべてのPull Requestが同じsource検査を
+通るため、検査を実行しなかった理由と``skipped``の組合せを調べる必要もなくなります。
+
+一方、cross target、実統合、fuzz、Nixおよび配布candidateの失敗は``main``への統合後に判明します。
+``main``では未公開製品の全targetと全成果物を検査し、失敗したcommitを公開candidateとして使用しません。

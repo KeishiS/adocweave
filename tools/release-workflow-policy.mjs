@@ -165,57 +165,224 @@ export function validateProductReleaseRouting(workflows) {
   }
 }
 
-function taskSection(makefile, task) {
-  const marker = `[tasks.${task}]`;
-  const start = makefile.indexOf(marker);
-  if (start < 0) fail(`Makefile.toml is missing task ${task}`);
-  const end = makefile.indexOf("\n[tasks.", start + marker.length);
-  return makefile.slice(start, end < 0 ? undefined : end);
+function jobRuns(job) {
+  return (job?.steps ?? [])
+    .map((step) => step.run)
+    .filter((run) => typeof run === "string")
+    .join("\n");
+}
+
+function hasOnlyRun(job, expected) {
+  const commands = (job?.steps ?? [])
+    .map((step) => step.run)
+    .filter((run) => typeof run === "string")
+    .map((run) => run.trim().replace(/\s+/g, " "));
+  return commands.length === 1 && commands[0] === expected;
+}
+
+function needs(job) {
+  if (typeof job?.needs === "string") return [job.needs];
+  return Array.isArray(job?.needs) ? job.needs : [];
+}
+
+function hasMainCondition(job) {
+  const condition = job?.if;
+  if (typeof condition !== "string") return false;
+  const normalized = condition
+    .replace(/^\s*\$\{\{\s*/, "")
+    .replace(/\s*\}\}\s*$/, "")
+    .trim()
+    .replace(/\s+/g, " ");
+  return normalized === "github.event_name == 'push' && github.ref == 'refs/heads/main'";
+}
+
+function isMainOnly(jobs, jobName, visiting = new Set()) {
+  if (visiting.has(jobName)) return false;
+  const job = jobs[jobName];
+  if (!job) return false;
+  if (hasMainCondition(job)) return true;
+  visiting.add(jobName);
+  const dependencies = needs(job);
+  const result = dependencies.some((dependency) =>
+    isMainOnly(jobs, dependency, new Set(visiting))
+  );
+  visiting.delete(jobName);
+  return result;
 }
 
 const occurrences = (source, value) => source.split(value).length - 1;
 
-export function validateTextlintReleaseGates(workflows, makefile) {
+const SOURCE_GATE_DEPENDENCIES = [
+  "adoc-check",
+  "check-vscode",
+  "clippy",
+  "clippy-zed",
+  "dependency-governance",
+  "doc-check",
+  "docs-check",
+  "docs-lint",
+  "docs-prose-lint",
+  "fmt-check",
+  "html5-check",
+  "platform-contract",
+  "protocol-generated-check",
+  "release-ci-contract",
+  "test",
+  "test-browser-types",
+  "test-vscode",
+  "test-web-worker",
+  "test-zed",
+  "textlint-plugin-public-js-unit",
+  "zed-query-contract",
+].sort();
+
+const MAIN_GATE_DEPENDENCIES = [
+  "check-wasm",
+  "check-zed-wasm",
+  "cross-native-check",
+  "fuzz",
+  "nix-package-check",
+  "protocol-wasm-corpus-check",
+  "test-profile-release",
+  "test-vscode-extension-host",
+  "textlint-plugin-browser-isolation",
+  "textlint-plugin-wasm-contract",
+].sort();
+
+function makeTaskBody(source, name) {
+  const heading = `[tasks.${name}]`;
+  const start = source.indexOf(heading);
+  if (start < 0) fail(`Makefile.tomlにtask ${name}がありません`);
+  const next = source.indexOf("\n[tasks.", start + heading.length);
+  return source.slice(start + heading.length, next < 0 ? source.length : next);
+}
+
+function makeTaskDependencies(source, name) {
+  const body = makeTaskBody(source, name);
+  const match = /\bdependencies\s*=\s*\[([\s\S]*?)\]/.exec(body);
+  return match ? [...match[1].matchAll(/"([^"]+)"/g)].map((entry) => entry[1]).sort() : [];
+}
+
+export function validateGateTaskContract(makefile) {
+  for (const [name, expected] of [
+    ["source-gate", SOURCE_GATE_DEPENDENCIES],
+    ["main-gate", MAIN_GATE_DEPENDENCIES],
+  ]) {
+    const dependencies = new Set(makeTaskDependencies(makefile, name));
+    const missing = expected.filter((dependency) => !dependencies.has(dependency));
+    if (missing.length > 0) {
+      fail(`${name}に必須の検査依存がありません: ${missing.join(", ")}`);
+    }
+  }
+  const mainDependencies = new Set(makeTaskDependencies(makefile, "main-gate"));
+  for (const candidate of ["release-global-candidate", "release-global-artifacts", "wasm-size"]) {
+    if (mainDependencies.has(candidate)) {
+      fail(`main-gateへ配布成果物task ${candidate}を含めないでください`);
+    }
+  }
+  if (!/^\s*alias\s*=\s*"source-gate"\s*$/m.test(makeTaskBody(makefile, "verify"))) {
+    fail("verifyはsource-gateの別名にしてください");
+  }
+  for (const name of ["acceptance", "release-check"]) {
+    const dependencies = new Set(makeTaskDependencies(makefile, name));
+    if (!dependencies.has("source-gate") || !dependencies.has("main-gate")) {
+      fail(`${name}はsource-gateとmain-gateの両方を含めてください`);
+    }
+  }
+}
+
+const REMOVED_RELEASE_ROUTING = [
+  ["native-change-plan", /native-change-plan/],
+  ["git diffによるpath判定", /\bgit\s+diff\b/],
+  ["Pull Request candidate必要性flag", /\b(?:candidate|preflight)_required\b/],
+  ["quality到達可能性input", /\b(?:common_preflight_scheduled|run_(?:rust_source|documents|adapters|dependencies|fuzz|nix_package)|quality_(?:rust_source|documents|adapters|dependencies|fuzz|nix_package))\b/],
+  ["到達不能用step", /not reachable/i],
+  ["always集約", /\balways\s*\(\s*\)/],
+  ["job結果の手動照合", /\bneeds\.[A-Za-z0-9_-]+\.result\b/],
+  ["Pull Request用candidate分岐", /(?:artifact_key.{0,40}["']local|product.{0,40}["']pr)/],
+];
+
+export function validateStandardSourceAndCandidateGates(workflows, sources = {}) {
   const release = workflows["release.yml"];
-  const productBuild = release?.jobs?.["build-global"]?.steps
-    ?.find((step) => step.name === "Product candidate build and runtime verification")?.run;
-  if (typeof productBuild !== "string" ||
-      !productBuild.includes("textlint) task=verify-textlint-plugin-release-package ;;")) {
-    fail("textlint product build must call the completed archive verifier task");
+  const triggers = release?.on;
+  if (triggers?.pull_request === undefined ||
+      triggers.pull_request?.paths !== undefined ||
+      triggers.pull_request?.["paths-ignore"] !== undefined ||
+      !Array.isArray(triggers?.push?.branches) ||
+      !triggers.push.branches.includes("main") ||
+      triggers.push.paths !== undefined ||
+      triggers.push["paths-ignore"] !== undefined) {
+    fail("release workflowはpath filterなしのPull Requestとmain pushでsource gateを実行してください");
   }
-  if (release?.jobs?.["textlint-plugin-installation-e2e"] !== undefined) {
-    fail("release workflow must not duplicate the fixed textlint consumer E2E");
+
+  const jobs = release.jobs ?? {};
+  const source = jobs.source;
+  if (!source || source.name !== "verify" || source.uses !== undefined || source.if !== undefined ||
+      needs(source).length !== 0 || source.strategy !== undefined) {
+    fail("Pull Requestの必須checkはpath条件のない直接job source（表示名verify）にしてください");
   }
-  const globalInstallation = release?.jobs?.["global-installation-e2e"]?.steps
-    ?.find((step) => step.name === "Global installation and complete removal")?.run;
-  if (typeof globalInstallation !== "string" || /\btextlint\b/.test(globalInstallation)) {
-    fail("generic global installation E2E must not include textlint");
+  const workflowRuns = Object.values(jobs).map(jobRuns).join("\n");
+  if (occurrences(workflowRuns, "cargo make source-gate") !== 1 ||
+      !hasOnlyRun(source, "nix develop .#ci -c cargo make source-gate")) {
+    fail("source jobは標準source-gateを1回だけ直接実行してください");
   }
-  const artifacts = taskSection(makefile, "release-global-artifacts");
-  const candidate = taskSection(makefile, "release-global-candidate");
-  const hostInstallation = taskSection(makefile, "release-installation-e2e-host");
-  const packageBuild = taskSection(makefile, "package-textlint-plugin-release");
-  const packageVerification = taskSection(makefile, "verify-textlint-plugin-release-package");
-  const consumer = taskSection(makefile, "textlint-plugin-release-consumer-e2e");
-  if (occurrences(artifacts, '"verify-textlint-plugin-release-package"') !== 1 ||
-      artifacts.includes("textlint-plugin-reproducibility")) {
-    fail("global artifact gate must run only the completed textlint archive verifier");
+
+  const workflowSource = sources["release.yml"] ?? JSON.stringify(release);
+  for (const [label, pattern] of REMOVED_RELEASE_ROUTING) {
+    if (pattern.test(workflowSource)) {
+      fail(`release workflowに削除済みの${label}を含めないでください`);
+    }
   }
-  if (occurrences(candidate, '"textlint-plugin-release-consumer-e2e"') !== 1 ||
-      candidate.includes("textlint-plugin-candidate-npx-smoke")) {
-    fail("global candidate gate must run only the fixed textlint consumer E2E");
+  for (const removedJob of ["changes", "quality", "merge-gate", "preflight", "release-plan"]) {
+    if (jobs[removedJob] !== undefined) {
+      fail(`release workflowに削除済みjob ${removedJob}を含めないでください`);
+    }
   }
-  if (packageBuild.includes("verify-textlint-plugin-package.mjs") ||
-      occurrences(packageVerification, "verify-textlint-plugin-package.mjs") !== 1 ||
-      occurrences(consumer, '"verify-textlint-plugin-release-package"') !== 1) {
-    fail("textlint archive verifier must have one owner in the candidate task graph");
+
+  const mainGate = jobs["main-gate"];
+  if (!mainGate || !hasMainCondition(mainGate) ||
+      occurrences(workflowRuns, "cargo make main-gate") !== 1 ||
+      !hasOnlyRun(mainGate, "nix develop .#ci-fuzz -c cargo make main-gate")) {
+    fail("main-gateはmainへのpushだけで実行してください");
   }
-  if (makefile.includes("[tasks.textlint-plugin-compatibility-probe]") ||
-      makefile.includes("[tasks.textlint-plugin-candidate-npx-smoke]")) {
-    fail("removed textlint release probes must not return to the task graph");
+  const candidatePlan = jobs["candidate-plan"];
+  const candidatePlanNeeds = new Set(needs(candidatePlan));
+  if (!candidatePlan ||
+      !hasMainCondition(candidatePlan) ||
+      candidatePlanNeeds.size !== 2 ||
+      !candidatePlanNeeds.has("source") ||
+      !candidatePlanNeeds.has("main-gate") ||
+      !hasOnlyRun(candidatePlan, 'node tools/product-candidate-plan.mjs "$GITHUB_OUTPUT"') ||
+      !isMainOnly(jobs, "candidate-plan")) {
+    fail("candidate-planはsourceとmain-gateに依存し、製品別candidate planを1回生成してください");
   }
-  if (/\btextlint\b/.test(hostInstallation)) {
-    fail("generic host installation E2E must not include textlint");
+
+  const candidateJobs = [
+    "build-native",
+    "native-smoke",
+    "build-global",
+    "verify-native-candidate",
+    "verify-global-candidate",
+    "installation-e2e",
+  ];
+  for (const jobName of candidateJobs) {
+    const job = jobs[jobName];
+    if (!job || !isMainOnly(jobs, jobName) || /\b(?:always|failure|cancelled|success)\s*\(/.test(job.if ?? "")) {
+      fail(`成果物job ${jobName}はmain candidate経路だけで実行してください`);
+    }
+  }
+  for (const jobName of Object.keys(jobs)) {
+    if (jobName === "candidate-plan" || candidateJobs.includes(jobName) ||
+        !/(?:^|-)(?:build|smoke|installation|candidate)(?:-|$)/.test(jobName)) continue;
+    if (!isMainOnly(jobs, jobName)) {
+      fail(`成果物job ${jobName}はmain candidate経路だけで実行してください`);
+    }
+  }
+  if (!hasOnlyRun(
+    jobs["build-global"],
+    "nix develop .#ci-browser -c cargo make test-global-product-candidate",
+  )) {
+    fail("build-globalは製品別の完成candidate taskを1回実行してください");
   }
 }
 
@@ -233,12 +400,13 @@ export function loadWorkflowPolicyInputs() {
   };
 }
 
-export function validateReleaseWorkflowPolicy({ makefile, sources, workflows }) {
+export function validateReleaseWorkflowPolicy({ makefile = read("Makefile.toml"), sources, workflows }) {
   validatePinnedActions(workflows);
   validateWritePermissionGrants(workflows);
   validateNoDirectSecretAccess(sources, workflows);
   validateProductReleaseRouting(workflows);
-  validateTextlintReleaseGates(workflows, makefile);
+  validateStandardSourceAndCandidateGates(workflows, sources);
+  validateGateTaskContract(makefile);
 }
 
 export function main() {

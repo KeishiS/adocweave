@@ -174,6 +174,7 @@ script = '''
 node tools/release-workflow-policy.mjs
 node --test \
   tools/browser-release-budget.test.mjs \
+  tools/product-candidate-plan.test.mjs \
   tools/product-release.test.mjs \
   tools/release-readiness.test.mjs \
   tools/release-workflow-policy.test.mjs
@@ -203,8 +204,6 @@ args = [
   "tools/textlint-plugin-post-release-smoke.test.mjs",
   "tools/textlint-plugin-consumer-e2e.test.mjs",
   "tools/verify-textlint-plugin-reproducibility.test.mjs",
-  "tools/native-change-plan.test.mjs",
-  "tools/verify-native-pr-candidate.test.mjs",
   "tools/config-schema.test.mjs",
 ]
 
@@ -334,15 +333,18 @@ done
 '''
 
 [tasks.dist-plan]
-description = "Run the pinned dist release plan without publishing"
+description = "Run each pinned native product dist plan without publishing"
 script_runner = "@shell"
 script = '''
-version="$(node --input-type=module -e "import { readFileSync } from 'node:fs'; const source = readFileSync('./crates/adocweave-cli/Cargo.toml', 'utf8'); process.stdout.write(/^version = \"([^\"]+)\"/m.exec(source)[1])")"
-plan="$(mktemp "${TMPDIR:-/tmp}/adocweave-dist-plan.XXXXXX.json")"
-trap 'rm -f "$plan"' EXIT
 node tools/generate-third-party-notices.mjs THIRD_PARTY_NOTICES.adoc
-dist plan --tag="v$version" --output-format=json > "$plan"
-node tools/verify-dist-plan.mjs "$plan" "v$version"
+root="$(mktemp -d "${TMPDIR:-/tmp}/adocweave-dist-plan.XXXXXX")"
+trap 'rm -rf "$root"' EXIT
+for product in cli lsp; do
+  tag="$(node tools/product-release.mjs "$product" | jq -r .tag)"
+  plan="$root/$product.json"
+  dist plan --tag="$tag" --output-format=json > "$plan"
+  node tools/verify-dist-plan.mjs "$plan" "$tag"
+done
 '''
 
 [tasks.check-wasm]
@@ -551,13 +553,54 @@ dependencies = [
 description = "Build and runtime-test the exact global archives uploaded by candidate CI"
 dependencies = [
   "release-global-artifacts",
-  "browser-runtime-check",
+  "test-browser-release-candidate",
   "textlint-plugin-release-consumer-e2e",
+  "test-zed-release-candidate",
 ]
+
+[tasks.test-global-product-candidate]
+description = "Build and completely verify PRODUCT as one global release candidate"
+script_runner = "@shell"
+script = '''
+case "${PRODUCT:-}" in
+  browser) task=test-browser-release-candidate ;;
+  textlint) task=textlint-plugin-release-consumer-e2e ;;
+  vscode) task=test-vscode-release-determinism ;;
+  zed) task=test-zed-release-candidate ;;
+  *) echo "unsupported global candidate product: ${PRODUCT:-<unset>}" >&2; exit 2 ;;
+esac
+cargo make "$task"
+'''
 
 [tasks.browser-runtime-check]
 description = "Run the release browser archive through static hosting and a package-name bundler import"
-dependencies = ["test-browser-smoke", "test-browser-bundler"]
+dependencies = [
+  "test-browser-release-package",
+  "test-browser-smoke",
+  "test-browser-bundler",
+]
+
+[tasks.test-browser-release-candidate]
+description = "Build, verify, run, install, and remove the Browser release candidate"
+dependencies = ["browser-runtime-check"]
+command = "node"
+args = [
+  "tools/release-installation-e2e.mjs",
+  "browser",
+  "target/distrib",
+  "x86_64-unknown-linux-musl",
+]
+
+[tasks.test-zed-release-candidate]
+description = "Build, verify, install, and remove the Zed release candidate"
+dependencies = ["test-zed-release-package"]
+command = "node"
+args = [
+  "tools/release-installation-e2e.mjs",
+  "zed",
+  "target/distrib",
+  "x86_64-unknown-linux-musl",
+]
 
 [tasks.build-wasm-node]
 description = "Build wasm-bindgen Node.js artifacts for cross-runtime conformance"
@@ -839,7 +882,7 @@ npm run test:vsix-installation --prefix editors/vscode
 
 [tasks.test-vscode-release-determinism]
 description = "Rebuild the VSIX and require the published bytes to be reproducible"
-dependencies = ["vscode-dependencies"]
+dependencies = ["test-vscode-release-package"]
 script_runner = "@shell"
 script = '''
 npm run package --prefix editors/vscode -- --verify-determinism
@@ -933,99 +976,55 @@ nix build \
 nix run . -- --version --json | jq -e --arg version "$version" '.packageVersion == $version' >/dev/null
 '''
 
-[tasks.candidate-path-audit]
-description = "Reject tracked paths without an explicit release candidate impact classification"
-script_runner = "@shell"
-script = '''
-git ls-files | node tools/native-change-plan.mjs --audit
-'''
-
-[tasks.ci-preflight]
-description = "Run inexpensive common checks before release candidate builds"
+[tasks.source-gate]
+description = "Run the same source checks for every pull request"
 dependencies = [
   "fmt-check",
-  "protocol-generated-check",
-  "release-contract",
-  "workflow-lint",
-  "candidate-path-audit",
-]
-
-[tasks.quality-fast]
-description = "Run formatting, generated-file, workflow, release, platform, and repository policy checks"
-dependencies = [
-  "ci-preflight",
-  "quality-fast-after-preflight",
-]
-
-[tasks.quality-fast-after-preflight]
-description = "Run fast source checks not covered by the candidate preflight"
-dependencies = [
-  "platform-contract",
-  "docs-check",
-  "adoc-check-targets",
-]
-
-[tasks.quality-rust]
-description = "Run native Rust compilation, lint, tests, API documentation, and AsciiDoc checks"
-dependencies = [
-  "quality-rust-source",
-  "quality-documents",
-]
-
-[tasks.quality-rust-source]
-description = "Run native Rust compilation, lint, tests, and API documentation"
-dependencies = [
-  "check",
-  "cross-native-check",
   "clippy",
   "test",
+  "protocol-generated-check",
+  "release-ci-contract",
+  "platform-contract",
   "doc-check",
-]
-
-[tasks.quality-documents]
-description = "Check authored AsciiDoc and the HTML it produces"
-dependencies = [
+  "docs-check",
   "adoc-check",
   "docs-lint",
   "docs-prose-lint",
   "html5-check",
-]
-
-[tasks.quality-adapters]
-description = "Run WASM, browser, Zed, and VS Code adapter contracts"
-dependencies = [
-  "check-wasm",
-  "check-zed",
-  "check-zed-wasm",
-  "check-vscode",
-  "clippy-zed",
   "test-web-worker",
-  "protocol-check",
+  "test-browser-types",
+  "zed-query-contract",
+  "clippy-zed",
   "test-zed",
+  "check-vscode",
   "test-vscode",
-  "test-vscode-extension-host",
-  "test-vscode-release-package",
-  "test-cross-runtime",
-  "textlint-plugin-check",
+  "textlint-plugin-public-js-unit",
+  "dependency-governance",
 ]
-
-[tasks.quality]
-description = "Run every merge-time source gate without release-candidate work"
-dependencies = ["quality-fast", "quality-rust", "quality-adapters"]
 
 [tasks.verify]
-description = "Run the canonical local pull request gate"
+description = "Run the canonical pull request source gate"
+alias = "source-gate"
+
+[tasks.main-gate]
+description = "Run the expensive main-only integrations in addition to a separately completed source gate"
 dependencies = [
-  "quality",
-  "dependency-governance",
+  "cross-native-check",
+  "check-wasm",
+  "check-zed-wasm",
+  "protocol-wasm-corpus-check",
+  "test-profile-release",
+  "test-vscode-extension-host",
+  "textlint-plugin-wasm-contract",
+  "textlint-plugin-browser-isolation",
   "fuzz",
   "nix-package-check",
 ]
 
 [tasks.verify-with-global-candidate]
-description = "Run the pull request gate together with the global candidate acceptance CI performs"
+description = "Run the source gate together with a local global candidate acceptance check"
 dependencies = [
-  "verify",
+  "source-gate",
   "release-global-candidate",
 ]
 
@@ -1037,18 +1036,20 @@ description = "Audit dependency sources, licenses, and advisories (common task n
 dependencies = ["dependency-governance"]
 
 [tasks.acceptance]
-description = "Run the pull request gate together with every automated acceptance suite CI performs for the current host"
+description = "Run source and main gates with every candidate acceptance suite available on the current host"
 dependencies = [
+  "source-gate",
+  "main-gate",
   "verify-with-global-candidate",
   "native-artifact-smoke",
   "installation-e2e",
 ]
 
 [tasks.release-check]
-description = "Run the publish gate and report release WASM artifact sizes"
+description = "Run the main gate, build publishable candidates, and report release WASM artifact sizes"
 dependencies = [
-  "verify",
-  "test-profile-release",
+  "source-gate",
+  "main-gate",
   "wasm-size",
   "release-global-candidate",
   "release-installation-e2e-host",

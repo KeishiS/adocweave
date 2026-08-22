@@ -22,120 +22,58 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  changes:
-    if: github.event_name == 'pull_request' || github.event_name == 'push'
+  source:
+    name: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+      - name: Complete source gate
+        run: nix develop .#ci -c cargo make source-gate
+
+  main-gate:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [source]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+      - name: Complete main gate
+        run: nix develop .#ci-fuzz -c cargo make main-gate
+
+  candidate-plan:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [source, main-gate]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
-      candidate_required: ${{ steps.changes.outputs.candidate_required }}
-      global_required: ${{ steps.changes.outputs.global_required }}
-      native_required: ${{ steps.changes.outputs.native_required }}
-      native_matrix: ${{ steps.changes.outputs.native_matrix }}
-      candidate_matrix: ${{ steps.changes.outputs.candidate_matrix }}
-      script_matrix: ${{ steps.changes.outputs.script_matrix }}
-      preflight_required: ${{ steps.changes.outputs.preflight_required }}
-      release_main: ${{ steps.changes.outputs.release_main }}
-      quality_rust_source: ${{ steps.changes.outputs.quality_rust_source }}
-      quality_documents: ${{ steps.changes.outputs.quality_documents }}
-      quality_adapters: ${{ steps.changes.outputs.quality_adapters }}
-      quality_dependencies: ${{ steps.changes.outputs.quality_dependencies }}
-      quality_fuzz: ${{ steps.changes.outputs.quality_fuzz }}
-      quality_nix_package: ${{ steps.changes.outputs.quality_nix_package }}
-      tag: ${{ steps.version.outputs.tag }}
+      global_required: ${{ steps.plan.outputs.global_required }}
+      native_required: ${{ steps.plan.outputs.native_required }}
+      native_matrix: ${{ steps.plan.outputs.native_matrix }}
+      native_candidate_matrix: ${{ steps.plan.outputs.native_candidate_matrix }}
+      script_matrix: ${{ steps.plan.outputs.script_matrix }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           fetch-tags: true
           persist-credentials: false
-      - id: changes
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          BEFORE_SHA: ${{ github.event.before }}
-        run: |
-          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
-            git diff --name-only "$BASE_SHA" "$GITHUB_SHA" > changed-paths.txt
-          elif [ "$GITHUB_REF" = "refs/heads/main" ] &&
-            [ -n "$BEFORE_SHA" ] &&
-            [ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
-            git diff --name-only "$BEFORE_SHA" "$GITHUB_SHA" > changed-paths.txt
-          else
-            : > changed-paths.txt
-          fi
-          # 製品別tagの選択はproduct releaseのroutingで行います。ここでは単一tagを推測しません。
-          release_tag_exists=false
-          node tools/native-change-plan.mjs \
-            "$GITHUB_EVENT_NAME" "$GITHUB_REF" "$GITHUB_OUTPUT" "$release_tag_exists" \
-            < changed-paths.txt
-          if [ "$GITHUB_REF" = refs/heads/main ]; then
-            node tools/product-candidate-plan.mjs "$GITHUB_OUTPUT"
-          else
-            echo 'candidate_matrix={"include":[{"artifact_key":"local","product":"pr"}]}' >> "$GITHUB_OUTPUT"
-            if grep -q '^global_required=true$' "$GITHUB_OUTPUT"; then
-              echo 'script_matrix={"include":[{"artifact_key":"local","product":"pr"}]}' >> "$GITHUB_OUTPUT"
-            else
-              echo 'script_matrix={"include":[]}' >> "$GITHUB_OUTPUT"
-            fi
-          fi
-      - id: version
-        run: |
-          echo "tag=" >> "$GITHUB_OUTPUT"
-
-  preflight:
-    if: needs.changes.outputs.preflight_required == 'true'
-    needs: [changes]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
-      - name: Candidate common preflight
-        run: nix develop .#ci -c cargo make ci-preflight
-
-  release-plan:
-    if: github.event_name == 'pull_request' && needs.changes.outputs.preflight_required == 'true'
-    needs: [changes, preflight]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    outputs:
-      manifest: ${{ steps.plan.outputs.manifest }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
       - id: plan
-        env:
-          CANDIDATE_TAG: ${{ needs.changes.outputs.tag }}
-        run: |
-          args=()
-          if [ -n "$CANDIDATE_TAG" ]; then args+=("--tag=$CANDIDATE_TAG"); fi
-          tools/run-pinned-dist.sh plan "${args[@]}" --output-format=json > plan.json
-          echo "manifest=$(jq -c . plan.json)" >> "$GITHUB_OUTPUT"
-
-  quality:
-    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
-    needs: [changes]
-    uses: ./.github/workflows/quality.yml
-    with:
-      common_preflight_scheduled: ${{ needs.changes.outputs.preflight_required == 'true' }}
-      run_nix_package: ${{ github.event_name == 'pull_request' && needs.changes.outputs.quality_nix_package == 'true' }}
-      save_build_cache: ${{ github.ref == 'refs/heads/main' }}
-      run_rust_source: ${{ needs.changes.outputs.quality_rust_source == 'true' }}
-      run_documents: ${{ needs.changes.outputs.quality_documents == 'true' }}
-      run_adapters: ${{ needs.changes.outputs.quality_adapters == 'true' }}
-      run_dependencies: ${{ needs.changes.outputs.quality_dependencies == 'true' }}
-      run_fuzz: ${{ needs.changes.outputs.quality_fuzz == 'true' }}
+        name: Unpublished product candidate plan
+        run: node tools/product-candidate-plan.mjs "$GITHUB_OUTPUT"
 
   build-native:
-    if: needs.changes.outputs.native_required == 'true'
-    needs: [changes, preflight]
+    if: needs.candidate-plan.outputs.native_required == 'true'
+    needs: [candidate-plan]
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.changes.outputs.native_matrix) }}
+      matrix: ${{ fromJSON(needs.candidate-plan.outputs.native_matrix) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     steps:
@@ -150,27 +88,26 @@ jobs:
       - if: matrix.build == 'nix'
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          prefix-key: native-${{ matrix.target }}
+          prefix-key: native-${{ matrix.product }}-${{ matrix.target }}
           key: ${{ hashFiles('flake.lock') }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: true
       - name: Native build linker installation
         if: startsWith(matrix.runner, 'ubuntu-')
         run: |
           sudo apt-get update
           sudo apt-get install --yes musl-tools
-      - name: Darwin host unit tests
-        if: endsWith(matrix.target, '-apple-darwin')
-        shell: bash
-        run: nix develop .#ci -c cargo test -p adocweave-host --all-features
       - name: Target archive builds
         if: matrix.build == 'nix'
         env:
           MACOSX_DEPLOYMENT_TARGET: '14.0'
-          RELEASE_TAG: ${{ matrix.tag || needs.changes.outputs.tag }}
-        run: |
-          args=()
-          if [ -n "$RELEASE_TAG" ]; then args+=("--tag=$RELEASE_TAG"); fi
-          nix develop .#ci -c tools/run-pinned-dist.sh build "${args[@]}" --artifacts=local --target="${{ matrix.target }}" --output-format=json > dist-manifest.json
+          RELEASE_TAG: ${{ matrix.tag }}
+        run: >-
+          nix develop .#ci -c tools/run-pinned-dist.sh build
+          --tag="$RELEASE_TAG"
+          --artifacts=local
+          --target="${{ matrix.target }}"
+          --output-format=json
+          > dist-manifest.json
       - name: Darwin archive portability normalization
         if: endsWith(matrix.target, '-apple-darwin')
         run: tools/normalize-darwin-archives.sh target/distrib "${{ matrix.target }}"
@@ -194,47 +131,38 @@ jobs:
       - if: matrix.build == 'windows'
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          prefix-key: native-${{ matrix.target }}
+          prefix-key: native-${{ matrix.product }}-${{ matrix.target }}
           key: ${{ hashFiles('toolchains.json', 'Cargo.lock', 'crates/adocweave-cli/Cargo.toml', 'crates/adocweave-lsp/Cargo.toml') }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Windows host unit tests
-        if: matrix.build == 'windows'
-        shell: pwsh
-        run: cargo test -p adocweave-host --all-features
+          save-if: true
       - name: Windows target archive builds
         if: matrix.build == 'windows'
         env:
-          RELEASE_TAG: ${{ matrix.tag || needs.changes.outputs.tag }}
+          RELEASE_TAG: ${{ matrix.tag }}
         shell: pwsh
         run: |
           node tools/generate-third-party-notices.mjs THIRD_PARTY_NOTICES.adoc
-          $arguments = @("build", "--artifacts=local", "--target=${{ matrix.target }}", "--output-format=json")
-          if ($env:RELEASE_TAG) {
-            $arguments += "--tag=$env:RELEASE_TAG"
-          }
-          dist @arguments | Out-File -Encoding utf8 dist-manifest.json
+          dist build --tag=$env:RELEASE_TAG --artifacts=local --target=${{ matrix.target }} --output-format=json |
+            Out-File -Encoding utf8 dist-manifest.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: artifacts-build-${{ matrix.product || 'local' }}-${{ matrix.target }}
+          name: artifacts-build-${{ matrix.product }}-${{ matrix.target }}
           if-no-files-found: error
           retention-days: 7
-          path: |
-            target/distrib/adocweave-cli-${{ matrix.target }}.zip
-            target/distrib/adocweave-lsp-${{ matrix.target }}.zip
+          path: target/distrib/adocweave-${{ matrix.product }}-${{ matrix.target }}.zip
 
   native-smoke:
-    if: github.event_name == 'pull_request' && needs.changes.outputs.native_required == 'true'
-    needs: [changes, build-native]
+    if: needs.candidate-plan.outputs.native_required == 'true'
+    needs: [candidate-plan, build-native]
     uses: ./.github/workflows/native-artifact-smoke.yml
     with:
-      matrix: ${{ needs.changes.outputs.native_matrix }}
+      matrix: ${{ needs.candidate-plan.outputs.native_matrix }}
 
   build-global:
-    if: needs.changes.outputs.global_required == 'true'
-    needs: [changes, preflight]
+    if: needs.candidate-plan.outputs.global_required == 'true'
+    needs: [candidate-plan]
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.changes.outputs.script_matrix) }}
+      matrix: ${{ fromJSON(needs.candidate-plan.outputs.script_matrix) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -242,22 +170,10 @@ jobs:
         with:
           persist-credentials: false
       - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
-      - name: Product candidate build and runtime verification
+      - name: Complete product candidate build and runtime verification
         env:
           PRODUCT: ${{ matrix.product }}
-        run: |
-          if [ "$PRODUCT" = pr ]; then
-            nix develop .#ci-browser -c cargo make release-global-candidate
-          else
-            case "$PRODUCT" in
-              browser) task=test-browser-release-package ;;
-              textlint) task=verify-textlint-plugin-release-package ;;
-              vscode) task=test-vscode-release-package ;;
-              zed) task=test-zed-release-package ;;
-              *) exit 2 ;;
-            esac
-            nix develop .#ci-browser -c cargo make "$task"
-          fi
+        run: nix develop .#ci-browser -c cargo make test-global-product-candidate
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: artifacts-build-${{ matrix.artifact_key }}
@@ -269,12 +185,12 @@ jobs:
             target/distrib/adocweave-zed-*.tar.xz
             target/distrib/adocweave-vscode-*.vsix
 
-  verify-candidate:
-    if: always() && needs.changes.outputs.candidate_required == 'true'
-    needs: [changes, native-smoke, build-global]
+  verify-native-candidate:
+    if: needs.candidate-plan.outputs.native_required == 'true'
+    needs: [candidate-plan, native-smoke]
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.changes.outputs.candidate_matrix) }}
+      matrix: ${{ fromJSON(needs.candidate-plan.outputs.native_candidate_matrix) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -283,30 +199,46 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          pattern: artifacts-build-*${{ matrix.artifact_key }}*
+          pattern: artifacts-build-${{ matrix.artifact_key }}*
           path: artifacts
           merge-multiple: true
       - name: Complete candidate metadata generation and verification
-        if: needs.changes.outputs.release_main == 'true'
         env:
           PRODUCT: ${{ matrix.product }}
         run: |
           node tools/release-metadata.mjs generate "$PRODUCT" artifacts "$GITHUB_SHA"
           node tools/release-metadata.mjs verify "$PRODUCT" artifacts "$GITHUB_SHA"
           node tools/product-release.mjs --verify-candidate "$PRODUCT" artifacts
-      - name: Pull request candidate verification
-        if: github.event_name == 'pull_request'
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-candidate-${{ matrix.product }}
+          if-no-files-found: error
+          retention-days: 14
+          path: artifacts/*
+
+  verify-global-candidate:
+    if: needs.candidate-plan.outputs.global_required == 'true'
+    needs: [candidate-plan, build-global]
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.candidate-plan.outputs.script_matrix) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: artifacts-build-${{ matrix.artifact_key }}
+          path: artifacts
+      - name: Complete candidate metadata generation and verification
         env:
-          GLOBAL_REQUIRED: ${{ needs.changes.outputs.global_required }}
-          NATIVE_REQUIRED: ${{ needs.changes.outputs.native_required }}
+          PRODUCT: ${{ matrix.product }}
         run: |
-          products=()
-          if [ "$NATIVE_REQUIRED" = true ]; then products+=(cli lsp); fi
-          if [ "$GLOBAL_REQUIRED" = true ]; then products+=(browser textlint vscode zed); fi
-          for product in "${products[@]}"; do
-            node tools/verify-native-pr-candidate.mjs \
-              --select "$product" artifacts "$RUNNER_TEMP/candidate-$product"
-          done
+          node tools/release-metadata.mjs generate "$PRODUCT" artifacts "$GITHUB_SHA"
+          node tools/release-metadata.mjs verify "$PRODUCT" artifacts "$GITHUB_SHA"
+          node tools/product-release.mjs --verify-candidate "$PRODUCT" artifacts
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: release-candidate-${{ matrix.product }}
@@ -315,11 +247,11 @@ jobs:
           path: artifacts/*
 
   installation-e2e:
-    if: always() && github.event_name == 'pull_request' && needs.changes.outputs.native_required == 'true' && needs.verify-candidate.result == 'success'
-    needs: [changes, verify-candidate]
+    if: needs.candidate-plan.outputs.native_required == 'true'
+    needs: [candidate-plan, verify-native-candidate]
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.changes.outputs.native_matrix) }}
+      matrix: ${{ fromJSON(needs.candidate-plan.outputs.native_matrix) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     steps:
@@ -328,105 +260,13 @@ jobs:
           persist-credentials: false
       - if: matrix.nix
         uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
-      - name: Nix package build and execution
-        if: matrix.nix
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: release-candidate-${{ matrix.product }}
+          path: artifacts
+      - name: Product installation and complete removal
         run: >-
-          nix build
-          ".#checks.${{ matrix.nixSystem }}.package-smoke"
-          ".#checks.${{ matrix.nixSystem }}.nixos-package-evaluation"
-          --no-link
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: release-candidate-pr
-          path: artifacts
-      - name: Pull request installation and complete removal
-        if: github.event_name == 'pull_request'
-        shell: bash
-        run: |
-          for product in cli lsp; do
-            node tools/release-installation-e2e.mjs \
-              "$product" artifacts "${{ matrix.target }}"
-          done
-
-  global-installation-e2e:
-    if: >-
-      always() &&
-      github.event_name == 'pull_request' &&
-      needs.changes.outputs.global_required == 'true' &&
-      needs.verify-candidate.result == 'success'
-    needs: [changes, verify-candidate]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: release-candidate-pr
-          path: artifacts
-      - name: Global installation and complete removal
-        run: |
-          for product in browser vscode zed; do
-            node tools/release-installation-e2e.mjs \
-              "$product" artifacts x86_64-unknown-linux-musl
-          done
-
-  merge-gate:
-    name: verify
-    if: always() && github.event_name == 'pull_request'
-    needs:
-      - changes
-      - quality
-      - preflight
-      - release-plan
-      - build-native
-      - native-smoke
-      - build-global
-      - verify-candidate
-      - installation-e2e
-      - global-installation-e2e
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - name: Required pull request result aggregation
-        env:
-          BUILD_GLOBAL_RESULT: ${{ needs.build-global.result }}
-          BUILD_NATIVE_RESULT: ${{ needs.build-native.result }}
-          CANDIDATE_REQUIRED: ${{ needs.changes.outputs.candidate_required }}
-          GLOBAL_REQUIRED: ${{ needs.changes.outputs.global_required }}
-          GLOBAL_INSTALLATION_RESULT: ${{ needs.global-installation-e2e.result }}
-          INSTALLATION_RESULT: ${{ needs.installation-e2e.result }}
-          NATIVE_REQUIRED: ${{ needs.changes.outputs.native_required }}
-          NATIVE_SMOKE_RESULT: ${{ needs.native-smoke.result }}
-          PREFLIGHT_RESULT: ${{ needs.preflight.result }}
-          QUALITY_RESULT: ${{ needs.quality.result }}
-          RELEASE_PLAN_RESULT: ${{ needs.release-plan.result }}
-          VERIFY_CANDIDATE_RESULT: ${{ needs.verify-candidate.result }}
-        run: |
-          test "$QUALITY_RESULT" = success
-          if [ "$CANDIDATE_REQUIRED" = true ]; then
-            test "$PREFLIGHT_RESULT" = success
-            test "$RELEASE_PLAN_RESULT" = success
-            test "$VERIFY_CANDIDATE_RESULT" = success
-          else
-            test "$PREFLIGHT_RESULT" = skipped
-            test "$RELEASE_PLAN_RESULT" = skipped
-            test "$VERIFY_CANDIDATE_RESULT" = skipped
-          fi
-          if [ "$GLOBAL_REQUIRED" = true ]; then
-            test "$BUILD_GLOBAL_RESULT" = success
-            test "$GLOBAL_INSTALLATION_RESULT" = success
-          else
-            test "$BUILD_GLOBAL_RESULT" = skipped
-            test "$GLOBAL_INSTALLATION_RESULT" = skipped
-          fi
-          if [ "$NATIVE_REQUIRED" = true ]; then
-            test "$BUILD_NATIVE_RESULT" = success
-            test "$NATIVE_SMOKE_RESULT" = success
-            test "$INSTALLATION_RESULT" = success
-          else
-            test "$BUILD_NATIVE_RESULT" = skipped
-            test "$NATIVE_SMOKE_RESULT" = skipped
-            test "$INSTALLATION_RESULT" = skipped
-          fi
+          node tools/release-installation-e2e.mjs
+          "${{ matrix.product }}"
+          artifacts
+          "${{ matrix.target }}"

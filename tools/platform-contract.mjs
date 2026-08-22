@@ -42,36 +42,6 @@ export function executableNames(executableSuffix) {
   return [`adocweave${executableSuffix}`, `adocweave-lsp${executableSuffix}`];
 }
 
-export function selectedInstallationFamilies(scope = "complete") {
-  if (!["complete", "native-only", "global-only"].includes(scope)) {
-    throw new Error("installation scope must be complete, native-only, or global-only");
-  }
-  return Object.freeze({
-    native: scope !== "global-only",
-    global: scope !== "native-only",
-  });
-}
-
-export function requiredInstallationAssets(scope, target, version, archiveType) {
-  const families = selectedInstallationFamilies(scope);
-  return [
-    ...(families.native
-      ? [
-        `adocweave-cli-${target}.${archiveType}`,
-        `adocweave-lsp-${target}.${archiveType}`,
-      ]
-      : []),
-    ...(families.global
-      ? [
-        `adocweave-browser-${version}.tar.xz`,
-        `adocweave-textlint-plugin-asciidoc-${version}.tgz`,
-        `adocweave-zed-${version}.tar.xz`,
-        `adocweave-vscode-${version}.vsix`,
-      ]
-      : []),
-  ];
-}
-
 export function requiredProductInstallationAssets(product, target, version, archiveType) {
   const names = {
     browser: `adocweave-browser-${version}.tar.xz`,

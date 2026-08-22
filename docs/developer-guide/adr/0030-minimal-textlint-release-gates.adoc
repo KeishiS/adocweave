@@ -1,5 +1,5 @@
 = ADR 0030: textlint境界と配布検査の最小化
-:status: accepted
+:status: accepted; pull request gate amended by ADR 0031
 
 == 文脈
 
@@ -12,8 +12,8 @@ genericなglobal導入検査にもtextlint用のarchive一覧検査があり、�
 
 == 決定
 
-Pull Requestでは、完成した``.tgz``を配布仕様に照らす独立した検証器を1回実行し、その同じarchiveを固定consumerへ
-1回導入します。固定consumerは公開Processor、対応拡張子、標準入力、改行、UTF-16位置および
+``main``で未公開版のcandidateを作るとき、完成した``.tgz``を配布仕様に照らす独立した検証器を1回実行し、
+その同じarchiveを固定consumerへ1回導入します。固定consumerは公開Processor、対応拡張子、標準入力、改行、UTF-16位置および
 ``--fix``による入力の非変更を検査します。
 
 JavaScriptと固定同梱するWebAssemblyの間では、component versionを交換しません。WebAssemblyはnode階層と
@@ -40,9 +40,9 @@ Pull Requestのgateには含めません。
 
 == 帰結
 
-textlint用candidateのPull Request検査は、完成archiveの検証と固定consumer E2Eの二段階になります。
+textlint用candidateの検査は、完成archiveの検証と固定consumer E2Eの二段階になります。
 検査対象のarchiveと責務が一意になり、同じ性質を別のrunnerや入口から繰り返し検査しません。
 
-再現性の追加調査と公開後の取得経路は残りますが、通常のPull Requestから分離します。ADR 0017およびADR 0023のうち、
+再現性の追加調査と公開後の取得経路は残りますが、標準source gateから分離します。ADR 0017およびADR 0023のうち、
 textlint用パッケージの検査回数と実行環境に関する決定を本ADRで置き換えます。GitHub Releaseで``.tgz``を配布し、
 実行時依存を持たせず、checksum、SBOM、第三者依存の通知およびArtifact Attestationを生成する決定は維持します。
