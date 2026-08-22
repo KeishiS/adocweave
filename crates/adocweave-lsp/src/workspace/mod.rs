@@ -11,9 +11,9 @@ use adocweave::preprocess::{
     EffectiveProcessingOptions, PreprocessOptions, ProjectionLimits, SafeMode,
 };
 use adocweave_host::{
-    FilesystemDraftError, FilesystemJobCoordinator, FilesystemJobError, FilesystemJobLimit,
-    FilesystemJobLimits, FilesystemReadLimits, FilesystemReadOutcome, FilesystemResourceBinding,
-    LocalFilesystemDraft, LocalFilesystemPolicy, LocalFilesystemSession, LogicalSourceId,
+    FilesystemDraftError, FilesystemJobCoordinator, FilesystemJobLimits, FilesystemReadLimits,
+    FilesystemReadOutcome, FilesystemResourceBinding, LocalFilesystemDraft, LocalFilesystemPolicy,
+    LocalFilesystemSession, LogicalSourceId,
 };
 use adocweave_workspace::{
     Generation, ResourceId, RetainedLayerCharge, RetainedResourceBudget, RetainedResourceLimits,
@@ -212,6 +212,11 @@ pub struct WorkspaceResources {
     /// been read again.
     resource_bindings: Arc<BTreeMap<ResourceId, FilesystemResourceBinding>>,
     next_disk_version: i64,
+    /// Set when the initial scan stopped at a budget instead of finishing.
+    ///
+    /// The workspace it describes is usable, so this travels with the state
+    /// rather than replacing it, and the service publishes it as a warning.
+    scan_notice: Option<String>,
     last_load_failed_closed: bool,
 }
 
@@ -754,6 +759,7 @@ impl WorkspaceResources {
         paths.dedup();
         after_root_classification();
         let preserve_previous = std::cell::Cell::new(false);
+        let scan_notice = std::cell::Cell::new(None::<String>);
         let load_result = (|| {
             let authority = (!paths.is_empty())
                 .then(|| {
@@ -831,8 +837,8 @@ impl WorkspaceResources {
             let mut candidates = match discovery {
                 Some(session) => {
                     let draft = session.draft(job).map_err(|error| error.to_string())?;
-                    draft
-                        .discover_adoc_paths_with_control(
+                    let (candidates, complete) = draft
+                        .discover_adoc_paths_within_budget(
                             |root, relative| {
                                 let directory = root.join(relative);
                                 let is_nested_workspace_root = directory != root
@@ -844,7 +850,11 @@ impl WorkspaceResources {
                             },
                             || cancellation.is_cancelled(),
                         )
-                        .map_err(describe_scan_failure)?
+                        .map_err(|error| error.to_string())?;
+                    if !complete {
+                        scan_notice.set(Some(incomplete_scan_notice()));
+                    }
+                    candidates
                 }
                 None => Vec::new(),
             };
@@ -989,6 +999,7 @@ impl WorkspaceResources {
             self.directory_roots = directory_roots;
             self.single_file_roots = Arc::new(single_file_roots);
             self.scan_settings = Arc::new(scan_settings);
+            self.scan_notice = scan_notice.take();
             self.filesystem_policy = authority;
             self.filesystems = Arc::new(filesystems);
             self.project_plans = Arc::new(project_plans);
@@ -1031,6 +1042,11 @@ impl WorkspaceResources {
 
     pub(crate) const fn last_load_failed_closed(&self) -> bool {
         self.last_load_failed_closed
+    }
+
+    /// Returns the warning left by a scan that stopped at a budget.
+    pub(crate) fn scan_notice(&self) -> Option<&str> {
+        self.scan_notice.as_deref()
     }
 
     /// Returns the effective text held for one resource, if it is known.
@@ -2400,24 +2416,20 @@ fn config_for_path_typed(
     adocweave_config::discover_and_load_with_policy(path, policy).map_err(ScopeConfigError::Config)
 }
 
-/// Turns a failed initial scan into something the reader can act on.
+/// Says that the scan stopped early, and what to do about it.
 ///
-/// Reaching the entry limit is the one failure a project can resolve by itself,
-/// and the underlying message names only the limit. The rest keep the wording
-/// of the layer that produced them.
-fn describe_scan_failure(error: FilesystemDraftError) -> String {
-    if let FilesystemDraftError::Job(FilesystemJobError::Limit(
-        FilesystemJobLimit::DirectoryEntries { limit },
-    )) = error
-    {
-        return format!(
-            "the initial workspace scan reached its limit of {limit} directory entries. \
-             List the directories to leave out under workspace.scan.exclude in the \
-             .adocweave.toml at the workspace folder root. Documents inside them can \
-             still be opened and included.",
-        );
-    }
-    error.to_string()
+/// Running out of directory budget is not a reason to distrust what the scan
+/// already found, so this is reported beside a working workspace rather than
+/// in place of one. It is also the one scan failure a project can resolve by
+/// itself, so the text names the setting that resolves it.
+fn incomplete_scan_notice() -> String {
+    format!(
+        "the initial workspace scan stopped at its limit of {} directory entries, so some \
+         documents are not registered as analysis roots. List the directories to leave out \
+         under workspace.scan.exclude in the .adocweave.toml at the workspace folder root. \
+         Documents that were not registered can still be opened and included.",
+        LocalFilesystemSession::MAX_SCAN_ENTRIES,
+    )
 }
 
 fn scan_config_for_path(

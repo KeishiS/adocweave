@@ -297,23 +297,33 @@ fn workspace_scan_read_limit_is_shared_across_project_scopes() {
 }
 
 #[test]
-fn workspace_scan_entry_limit_names_the_setting_that_resolves_it() {
+fn workspace_scan_entry_budget_keeps_the_workspace_and_reports_a_notice() {
     let root = TestDirectory::new();
     std::fs::write(root.0.join("root.adoc"), "root\n").expect("root source");
+    std::fs::write(root.0.join("other.adoc"), "other\n").expect("second source");
     let root_uri = Url::from_directory_path(&root.0).expect("root URI");
-    let resources = WorkspaceResources::default();
+    let mut resources = WorkspaceResources::default();
     let job = FilesystemJobCoordinator::new(FilesystemJobLimits {
-        max_directory_entries: 0,
+        max_directory_entries: 1,
+        max_directory_probe_entries: 1,
         ..workspace_scan_job_limits()
     })
     .expect("scan job");
 
     let loaded =
         resources.load_roots_detached_with_job(std::slice::from_ref(&root_uri), &NeverCancel, &job);
+    assert_eq!(loaded.error, None);
+    resources
+        .apply_loaded_roots(loaded, &[])
+        .expect("a budget must not void the load");
 
-    let error = loaded.error.as_deref().expect("scan must fail");
-    assert!(error.contains("workspace.scan.exclude"), "{error}");
-    assert!(error.contains("directory entries"), "{error}");
+    // The workspace stays usable: the roots are installed and the state was not
+    // discarded, so an open document still analyses.
+    assert!(!resources.inner.roots().is_empty());
+    assert!(!resources.last_load_failed_closed());
+    let notice = resources.scan_notice().expect("an incomplete scan reports");
+    assert!(notice.contains("workspace.scan.exclude"), "{notice}");
+    assert!(notice.contains("directory entries"), "{notice}");
 }
 
 #[test]

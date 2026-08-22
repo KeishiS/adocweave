@@ -17,13 +17,25 @@ pub(super) struct LocalFilesystemView<'a> {
     pub(super) job: Option<(LocalFilesystemSessionId, &'a FilesystemJobCoordinator)>,
 }
 
+/// What a walk found, and whether it saw everything.
+#[derive(Debug, Eq, PartialEq)]
+pub(super) struct Discovered {
+    pub(super) paths: Vec<PathBuf>,
+    /// Set when a directory budget stopped the walk before it reached the end.
+    ///
+    /// Running out of budget is not the same as being unable to trust the
+    /// filesystem. The paths already collected are the ones that were there,
+    /// so the caller decides whether an incomplete answer is useful or not.
+    pub(super) truncated: bool,
+}
+
 impl LocalFilesystemView<'_> {
     pub(super) fn discover_adoc_paths_with_control(
         &self,
         scan_entry_limit: usize,
         exclude_directory: impl FnMut(&Path, &Path) -> bool,
         is_cancelled: impl FnMut() -> bool,
-    ) -> Result<Vec<PathBuf>, ResourceError> {
+    ) -> Result<Discovered, ResourceError> {
         #[cfg(target_os = "linux")]
         {
             self.discover_adoc_paths_with_limit_handle_relative(
@@ -38,7 +50,8 @@ impl LocalFilesystemView<'_> {
             let mut is_cancelled = is_cancelled;
             let mut paths = Vec::new();
             let mut scanned_entries = 0_usize;
-            for root in &self.state.roots {
+            let mut truncated = false;
+            'walk: for root in &self.state.roots {
                 let mut pending = VecDeque::from([root.clone()]);
                 while let Some(path) = pending.pop_front() {
                     if is_cancelled() {
@@ -91,6 +104,12 @@ impl LocalFilesystemView<'_> {
                                 }
                                 break;
                             };
+                            // See the handle-relative walk: committing a probed
+                            // entry would end the job the later reads need.
+                            if reservation.as_ref().is_some_and(|entry| entry.is_probe()) {
+                                truncated = true;
+                                break;
+                            }
                             if let Some(reservation) = reservation {
                                 reservation.commit(1).map_err(ResourceError::from)?;
                             }
@@ -106,12 +125,29 @@ impl LocalFilesystemView<'_> {
                             children.push(child);
                             scanned_entries += 1;
                             if scanned_entries > scan_entry_limit {
-                                return Err(ResourceError::ScanEntryLimit {
-                                    limit: scan_entry_limit,
-                                });
+                                truncated = true;
+                                break;
                             }
                         }
                         children.sort_by_key(fs::DirEntry::file_name);
+                        if truncated {
+                            // The queue is not drained once the walk stops, so
+                            // what this directory already yielded is classified
+                            // here rather than queued and forgotten.
+                            for entry in children {
+                                let child = entry.path();
+                                let Ok(file_type) = entry.file_type() else {
+                                    continue;
+                                };
+                                if file_type.is_file()
+                                    && child.extension().and_then(|value| value.to_str())
+                                        == Some("adoc")
+                                {
+                                    paths.push(child);
+                                }
+                            }
+                            break 'walk;
+                        }
                         pending.extend(children.into_iter().map(|entry| entry.path()));
                     } else if path.extension().and_then(|value| value.to_str()) == Some("adoc") {
                         paths.push(path);
@@ -120,7 +156,7 @@ impl LocalFilesystemView<'_> {
             }
             paths.sort();
             paths.dedup();
-            Ok(paths)
+            Ok(Discovered { paths, truncated })
         }
     }
 
@@ -130,7 +166,7 @@ impl LocalFilesystemView<'_> {
         scan_entry_limit: usize,
         mut exclude_directory: impl FnMut(&Path, &Path) -> bool,
         mut is_cancelled: impl FnMut() -> bool,
-    ) -> Result<Vec<PathBuf>, ResourceError> {
+    ) -> Result<Discovered, ResourceError> {
         use std::ffi::OsString;
         use std::os::unix::ffi::OsStringExt;
 
@@ -138,7 +174,8 @@ impl LocalFilesystemView<'_> {
 
         let mut paths = Vec::new();
         let mut scanned_entries = 0_usize;
-        for (root, session) in self.state.roots.iter().zip(&self.state.sessions) {
+        let mut truncated = false;
+        'walk: for (root, session) in self.state.roots.iter().zip(&self.state.sessions) {
             let policy = session.policy();
             let mut pending = VecDeque::from([root.clone()]);
             while let Some(path) = pending.pop_front() {
@@ -184,6 +221,14 @@ impl LocalFilesystemView<'_> {
                         }
                         break;
                     };
+                    // The entry budget is spent and this directory still has
+                    // entries. Committing the probe would end the job, and the
+                    // same job still has to read the files already found, so
+                    // the walk stops here and says the answer is incomplete.
+                    if reservation.as_ref().is_some_and(|entry| entry.is_probe()) {
+                        truncated = true;
+                        break;
+                    }
                     let child = match child {
                         Ok(child) => child,
                         Err(source) => {
@@ -224,9 +269,8 @@ impl LocalFilesystemView<'_> {
                     children.push((name, file_type));
                     scanned_entries = scanned_entries.saturating_add(1);
                     if scanned_entries > scan_entry_limit {
-                        return Err(ResourceError::ScanEntryLimit {
-                            limit: scan_entry_limit,
-                        });
+                        truncated = true;
+                        break;
                     }
                 }
                 children.sort_by(|left, right| left.0.cmp(&right.0));
@@ -243,10 +287,15 @@ impl LocalFilesystemView<'_> {
                         paths.push(child);
                     }
                 }
+                // Entries seen before the budget ran out are kept: they are
+                // what is on disk, and a shorter list is more use than none.
+                if truncated {
+                    break 'walk;
+                }
             }
         }
         paths.sort();
         paths.dedup();
-        Ok(paths)
+        Ok(Discovered { paths, truncated })
     }
 }

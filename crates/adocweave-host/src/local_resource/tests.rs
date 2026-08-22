@@ -2137,7 +2137,7 @@ fn candidate_change_limit_rejects_not_found_without_changing_live_state() {
 }
 
 #[test]
-fn directory_job_probe_distinguishes_exact_boundary_from_excess() {
+fn a_directory_budget_stops_the_walk_and_leaves_the_job_usable() {
     let root = TestDir::new("job-directory-boundary");
     fs::write(root.path().join("a.adoc"), "a").expect("first source");
     fs::write(root.path().join("b.adoc"), "b").expect("second source");
@@ -2146,10 +2146,12 @@ fn directory_job_probe_distinguishes_exact_boundary_from_excess() {
     let exact = session.draft(&exact_job).expect("exact draft");
     assert_eq!(
         exact
-            .discover_adoc_paths_with_control(|_, _| false, || false)
-            .expect("exact discovery")
-            .len(),
-        2
+            .discover_adoc_paths_within_budget(|_, _| false, || false)
+            .expect("exact discovery"),
+        (
+            vec![root.path().join("a.adoc"), root.path().join("b.adoc")],
+            true
+        )
     );
     assert_eq!(exact_job.usage().expect("usage").directory_entries, 2);
     assert_eq!(exact_job.usage().expect("usage").directory_probe_entries, 0);
@@ -2158,16 +2160,42 @@ fn directory_job_probe_distinguishes_exact_boundary_from_excess() {
     fs::write(root.path().join("c.adoc"), "c").expect("third source");
     let excess_job = FilesystemJobCoordinator::new(job_limits(100, 2)).expect("excess job");
     let excess = session.draft(&excess_job).expect("excess draft");
-    assert_eq!(
-        excess.discover_adoc_paths_with_control(|_, _| false, || false),
-        Err(FilesystemDraftError::Job(crate::FilesystemJobError::Limit(
-            crate::FilesystemJobLimit::DirectoryEntries { limit: 2 }
-        )))
-    );
+    let (paths, complete) = excess
+        .discover_adoc_paths_within_budget(|_, _| false, || false)
+        .expect("a budget stops the walk instead of voiding it");
+    assert_eq!(paths.len(), 2);
+    assert!(!complete);
+    // The walk stops at the ordinary limit rather than probing past it, so the
+    // job never reaches its terminal state and the reads that follow still run.
     assert_eq!(
         excess_job.usage().expect("usage").directory_probe_entries,
-        1
+        0
     );
+    assert_eq!(excess_job.usage().expect("usage").directory_entries, 2);
+    drop(excess);
+    let mut reading = session.draft(&excess_job).expect("a usable job");
+    assert!(
+        reading
+            .read_utf8(source_id(), &root.path().join("a.adoc"))
+            .is_ok()
+    );
+}
+
+#[test]
+fn the_legacy_discovery_still_refuses_an_incomplete_walk() {
+    let root = TestDir::new("job-directory-legacy");
+    fs::write(root.path().join("a.adoc"), "a").expect("first source");
+    fs::write(root.path().join("b.adoc"), "b").expect("second source");
+    let session = policy(root.path(), 100).session().expect("session");
+    let job = FilesystemJobCoordinator::new(job_limits(100, 1)).expect("job");
+    let draft = session.draft(&job).expect("draft");
+
+    assert!(matches!(
+        draft.discover_adoc_paths_with_control(|_, _| false, || false),
+        Err(FilesystemDraftError::Resource(
+            ResourceError::ScanEntryLimit { .. }
+        ))
+    ));
 }
 
 #[test]

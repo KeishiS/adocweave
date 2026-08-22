@@ -27,3 +27,4 @@ ADRは、複数の機能に影響する長期的な設計判断と、その理�
 * xref:0022-rust-first-wasm-protocol.adoc[ADR 0022: WASM protocolの型をRust定義から導出する]
 * xref:0023-publication-boundary.adoc[ADR 0023: 公開と配布の境界]
 * xref:0024-include-processing-by-default.adoc[ADR 0024: includeの既定での展開]
+* xref:0025-scan-budget-degrades.adoc[ADR 0025: 走査の上限超過で部分結果を残す]

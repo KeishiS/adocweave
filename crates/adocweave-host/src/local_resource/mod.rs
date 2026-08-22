@@ -645,7 +645,7 @@ impl LocalFilesystemSession {
         exclude_directory: impl FnMut(&Path, &Path) -> bool,
         is_cancelled: impl FnMut() -> bool,
     ) -> Result<Vec<PathBuf>, ResourceError> {
-        LocalFilesystemView {
+        let discovered = LocalFilesystemView {
             state: &self.state,
             job: None,
         }
@@ -653,7 +653,13 @@ impl LocalFilesystemSession {
             Self::MAX_SCAN_ENTRIES,
             exclude_directory,
             is_cancelled,
-        )
+        )?;
+        if discovered.truncated {
+            return Err(ResourceError::ScanEntryLimit {
+                limit: Self::MAX_SCAN_ENTRIES,
+            });
+        }
+        Ok(discovered.paths)
     }
 
     #[cfg(test)]
@@ -663,7 +669,7 @@ impl LocalFilesystemSession {
         exclude_directory: impl FnMut(&Path, &Path) -> bool,
         is_cancelled: impl FnMut() -> bool,
     ) -> Result<Vec<PathBuf>, ResourceError> {
-        LocalFilesystemView {
+        let discovered = LocalFilesystemView {
             state: &self.state,
             job: None,
         }
@@ -671,7 +677,13 @@ impl LocalFilesystemSession {
             scan_entry_limit,
             exclude_directory,
             is_cancelled,
-        )
+        )?;
+        if discovered.truncated {
+            return Err(ResourceError::ScanEntryLimit {
+                limit: scan_entry_limit,
+            });
+        }
+        Ok(discovered.paths)
     }
 }
 
@@ -976,7 +988,7 @@ impl LocalFilesystemMutationCursor<'_> {
         &mut self,
         mut source_id: impl FnMut(&Path) -> Result<LogicalSourceId, ResourceError>,
     ) -> Result<Vec<LoadedFilesystemSource>, FilesystemDraftError> {
-        let paths = LocalFilesystemView {
+        let discovered = LocalFilesystemView {
             state: self.state,
             job: self.job.map(|job| (self.session_id, job)),
         }
@@ -985,6 +997,15 @@ impl LocalFilesystemMutationCursor<'_> {
             |_, _| false,
             || false,
         )?;
+        // Reading every discovered file is all-or-nothing, so an incomplete
+        // walk is an error here rather than a partial result.
+        if discovered.truncated {
+            return Err(ResourceError::ScanEntryLimit {
+                limit: LocalFilesystemSession::MAX_SCAN_ENTRIES,
+            }
+            .into());
+        }
+        let paths = discovered.paths;
         if paths.len() > self.state.limits.max_files {
             return Err(ResourceError::FileLimit {
                 limit: self.state.limits.max_files,
@@ -1517,8 +1538,29 @@ impl LocalFilesystemDraft {
         exclude_directory: impl FnMut(&Path, &Path) -> bool,
         is_cancelled: impl FnMut() -> bool,
     ) -> Result<Vec<PathBuf>, FilesystemDraftError> {
+        let (paths, complete) =
+            self.discover_adoc_paths_within_budget(exclude_directory, is_cancelled)?;
+        if !complete {
+            return Err(FilesystemDraftError::from(ResourceError::ScanEntryLimit {
+                limit: LocalFilesystemSession::MAX_SCAN_ENTRIES,
+            }));
+        }
+        Ok(paths)
+    }
+
+    /// Lists what the walk reached, and whether it reached the end.
+    ///
+    /// A directory budget stops the walk rather than voiding it. What was found
+    /// before the budget ran out is what is on disk, so a caller that can work
+    /// from an incomplete list keeps it and says so, instead of discarding a
+    /// workspace because it is larger than the budget allows.
+    pub fn discover_adoc_paths_within_budget(
+        &self,
+        exclude_directory: impl FnMut(&Path, &Path) -> bool,
+        is_cancelled: impl FnMut() -> bool,
+    ) -> Result<(Vec<PathBuf>, bool), FilesystemDraftError> {
         self.ensure_operation_can_start()?;
-        LocalFilesystemView {
+        let discovered = LocalFilesystemView {
             state: self.candidate(),
             job: Some((self.session_id, &self.job)),
         }
@@ -1527,7 +1569,8 @@ impl LocalFilesystemDraft {
             exclude_directory,
             is_cancelled,
         )
-        .map_err(FilesystemDraftError::from)
+        .map_err(FilesystemDraftError::from)?;
+        Ok((discovered.paths, !discovered.truncated))
     }
 
     pub fn scan_utf8(

@@ -1105,6 +1105,11 @@ impl LanguageService {
                     .or(self.workspace_input_error.as_deref())
                     .map(crate::diagnostics::workspace_error)
                     .into_iter()
+                    .chain(
+                        self.workspace
+                            .scan_notice()
+                            .map(crate::diagnostics::workspace_notice),
+                    )
                     .collect(),
                 None,
             ));
@@ -1140,6 +1145,9 @@ impl LanguageService {
             .collect::<Result<Vec<_>, String>>()?;
         if let Some(error) = &self.workspace_error {
             diagnostics.push(crate::diagnostics::workspace_error(error));
+        }
+        if let Some(notice) = self.workspace.scan_notice() {
+            diagnostics.push(crate::diagnostics::workspace_notice(notice));
         }
         if let Some(error) = &workspace_watch_error {
             diagnostics.push(crate::diagnostics::workspace_error(error));
