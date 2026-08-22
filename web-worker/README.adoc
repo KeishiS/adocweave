@@ -11,7 +11,7 @@
 * `worker/client.mjs`と`worker/worker.mjs`：一つの要求をWeb Workerで実行する内部実装
 * `worker/contracts.mjs`：Browser製品のpackage情報
 * ``worker/protocol.d.mts``：WebAssemblyとやり取りするJSONの型。Rustのwire定義から生成します
-* ``worker/worker-protocol.mjs``と``worker/worker-protocol.d.mts``：clientとWorkerが交換する内部封筒
+* ``worker/worker-protocol.mjs``：clientとWorkerが交換する内部封筒
 * `THIRD_PARTY_NOTICES.adoc`：rootとZedのlockfileから生成したthird-party package一覧
 
 == 最小例

@@ -179,6 +179,13 @@ export class AdocWeaveClient {
     }
 
     if (data.type === "ready") {
+      if (this.#readyReject === null) {
+        this.#failTerminal(new AdocWeaveClientError({
+          code: "invalid-worker-response",
+          message: "worker became ready outside initialization",
+        }), worker);
+        return;
+      }
       if (data.protocolVersion !== WORKER_PROTOCOL_VERSION) {
         this.#failTerminal(new AdocWeaveClientError({
           code: "unsupported-worker-protocol",
@@ -188,6 +195,18 @@ export class AdocWeaveClient {
       }
       this.#readyReject = null;
       resolveReady(worker);
+      return;
+    }
+
+    if (data.type === "initialization-error") {
+      if (this.#readyReject === null) {
+        this.#failTerminal(new AdocWeaveClientError({
+          code: "invalid-worker-response",
+          message: "worker reported initialization failure after becoming ready",
+        }), worker);
+        return;
+      }
+      this.#failTerminal(new AdocWeaveClientError(data.error), worker);
       return;
     }
 

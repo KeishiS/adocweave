@@ -5,32 +5,59 @@ import {
 } from "./worker-protocol.mjs";
 
 let process = null;
-let closed = false;
+let state = "new";
 
 self.onmessage = async ({ data }) => {
-  if (closed) return;
+  if (state === "closed") return;
   if (!validateWorkerMessage(data, "requests")) {
-    throw new Error("invalid AdocWeave worker request");
+    const error = { code: "worker-failed", message: "invalid AdocWeave worker request" };
+    if (
+      state === "ready" && Number.isInteger(data?.requestId) &&
+      data.requestId >= 0 && data.requestId <= 0xffff_ffff
+    ) {
+      fatal(data.requestId, error);
+    } else {
+      failInitialization(error);
+    }
+    return;
   }
   if (data.type === "init") {
-    if (data.protocolVersion !== WORKER_PROTOCOL_VERSION || process !== null) {
-      throw new Error("invalid AdocWeave worker initialization");
+    if (data.protocolVersion !== WORKER_PROTOCOL_VERSION) {
+      failInitialization({
+        code: "unsupported-worker-protocol",
+        message: `expected worker protocol ${WORKER_PROTOCOL_VERSION}`,
+      });
+      return;
     }
-    const wasm = await import(data.moduleUrl);
-    await wasm.default(data.wasmUrl);
-    if (wasm.protocolSchemaVersion?.() !== PROTOCOL_SCHEMA_VERSION) {
-      throw new Error("incompatible AdocWeave WASM protocol schema");
+    if (state !== "new") {
+      failInitialization(new Error("invalid AdocWeave worker initialization"));
+      return;
     }
-    process = wasm.process;
-    publish({
-      protocolVersion: WORKER_PROTOCOL_VERSION,
-      type: "ready",
-    });
+    state = "initializing";
+    try {
+      const wasm = await import(data.moduleUrl);
+      await wasm.default(data.wasmUrl);
+      if (wasm.protocolSchemaVersion?.() !== PROTOCOL_SCHEMA_VERSION) {
+        throw new Error("incompatible AdocWeave WASM protocol schema");
+      }
+      if (typeof wasm.process !== "function") {
+        throw new Error("AdocWeave WASM process export is missing");
+      }
+      if (state !== "initializing") return;
+      process = wasm.process;
+      state = "ready";
+      publish({
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        type: "ready",
+      });
+    } catch (cause) {
+      failInitialization(cause);
+    }
     return;
   }
 
   const { requestId } = data;
-  if (process === null) {
+  if (state !== "ready" || process === null) {
     fatal(requestId, {
       code: "worker-failed",
       message: "AdocWeave worker was not initialized",
@@ -60,12 +87,25 @@ self.onmessage = async ({ data }) => {
 };
 
 function fatal(requestId, error) {
-  closed = true;
+  state = "closed";
   try {
     publish({
       type: "fatal",
       requestId,
       error,
+    });
+  } finally {
+    self.close();
+  }
+}
+
+function failInitialization(cause) {
+  if (state === "closed") return;
+  state = "closed";
+  try {
+    publish({
+      type: "initialization-error",
+      error: normalizeFatal(cause),
     });
   } finally {
     self.close();
@@ -93,6 +133,12 @@ function parseWasmError(cause) {
 }
 
 function normalizeFatal(cause) {
+  if (
+    typeof cause === "object" && cause !== null && !(cause instanceof Error) &&
+    typeof cause.code === "string" && typeof cause.message === "string"
+  ) {
+    return { code: cause.code, message: cause.message };
+  }
   const message = cause instanceof Error ? cause.message : String(cause);
   if (
     typeof WebAssembly !== "undefined" &&

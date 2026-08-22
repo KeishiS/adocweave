@@ -24,6 +24,7 @@ const ENVELOPES = {
   },
   responses: {
     ready: { protocolVersion: u32 },
+    "initialization-error": { error },
     result: {
       requestId: u32,
       result: object,

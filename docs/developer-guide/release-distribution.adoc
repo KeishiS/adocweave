@@ -77,7 +77,7 @@ Browser packageは展開前のarchiveを2 MiB以下、archive内のraw WASMを1.
 公開clientはPromiseを返す一つの解析入口だけを持ち、Worker内部のprotocol versionを公開互換仕様に含めません。
 JavaScriptとWASMの互換性はWASM protocol schemaだけで検査します。
 global成果物へ影響するPull Requestとrelease用main candidateでは公開archiveを展開し、
-分離されたChromium環境、通常のChromium環境およびbundlerで構築した経路から同じ公開APIを実行して、
+cross-origin isolationを使わない静的配信環境およびbundlerで構築した経路から同じ公開APIを実行して、
 この性能予算と実行時の互換性を確認します。静的なarchive検査と実行検査は一つのtask graphで行い、
 実行検査後に同じarchiveをcandidateとして保存します。
 受入検査に使うbrowserは``flake.lock``で固定したChromiumです。CIはこのbrowserを持つdevShellでgateを

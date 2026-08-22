@@ -2,6 +2,7 @@ import {
   AdocWeaveClient,
   AdocWeaveClientError,
   AdocWeaveResult,
+  AnalyzeRequest,
   PROTOCOL_SCHEMA_VERSION,
   defaultAssetUrls,
 } from "../index.mjs";
@@ -60,4 +61,10 @@ const next = client.analyze({
   },
 }, { signal: new AbortController().signal });
 console.log((await next).html);
+const invalidProducts: AnalyzeRequest = {
+  source: "invalid product override",
+  // @ts-expect-error productsを指定する場合は全flagが必要です。
+  products: { html: true },
+};
+console.log(invalidProducts.source);
 client.dispose();

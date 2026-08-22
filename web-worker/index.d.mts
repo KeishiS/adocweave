@@ -15,13 +15,16 @@ type Settings<T> = {
 
 export type AnalyzeRequest = Pick<WasmRequest, "source"> & {
   sourceId?: WasmRequest["sourceId"];
-  preprocess?: WasmRequest["preprocess"];
-} & Settings<
-    Pick<
-      WasmRequest,
-      "products" | "renderInputs" | "analysisOptions" | "renderPolicy" | "outputLimits"
-    >
-  >;
+  preprocess?: {
+    resources?: NonNullable<WasmRequest["preprocess"]>["resources"];
+    options?: Settings<NonNullable<WasmRequest["preprocess"]>["options"]>;
+  } | null;
+  products?: WasmRequest["products"];
+  renderInputs?: Settings<WasmRequest["renderInputs"]>;
+  analysisOptions?: Settings<WasmRequest["analysisOptions"]>;
+  renderPolicy?: Settings<WasmRequest["renderPolicy"]>;
+  outputLimits?: Settings<WasmRequest["outputLimits"]>;
+};
 
 export interface AdocWeaveClientOptions {
   workerUrl: string | URL;

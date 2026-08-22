@@ -94,6 +94,22 @@ async function runArchiveSmoke(archive, chromium, root) {
         `);
         return;
       }
+      if (relative === "example/init-failure-wasm.mjs") {
+        response.end(`
+          export default async function initialize() { throw new Error("browser init failure"); }
+          export function protocolSchemaVersion() { return 15; }
+          export function process() { return {}; }
+        `);
+        return;
+      }
+      if (relative === "example/schema-failure-wasm.mjs") {
+        response.end(`
+          export default async function initialize() {}
+          export function protocolSchemaVersion() { return 0; }
+          export function process() { return {}; }
+        `);
+        return;
+      }
       response.end(await readFile(path));
     } catch (error) {
       response.statusCode = 404;
@@ -114,6 +130,9 @@ async function runArchiveSmoke(archive, chromium, root) {
     }
     if (!state.trapUsesFreshWorker) {
       throw new Error(`trapped WASM instance was reused: ${JSON.stringify(state)}`);
+    }
+    if (!state.initializationFailuresSettled) {
+      throw new Error(`WASM initialization failures did not settle: ${JSON.stringify(state)}`);
     }
     const expectedAssets = [
       "/static/worker/worker.mjs",
@@ -318,6 +337,24 @@ export async function inspectPageAttempt(
             } finally {
               trapClient.dispose();
             }
+            const initializationCodes = [];
+            for (const modulePath of [
+              '/static/example/missing-wasm.mjs',
+              '/static/example/init-failure-wasm.mjs',
+              '/static/example/schema-failure-wasm.mjs',
+            ]) {
+              const failingClient = new api.AdocWeaveClient({
+                ...assets,
+                moduleUrl: new URL(modulePath, location.href),
+              });
+              try {
+                await failingClient.analyze({ source: '= initialization failure' });
+              } catch (error) {
+                initializationCodes.push(error.code);
+              } finally {
+                failingClient.dispose();
+              }
+            }
             resolve({
               status,
               html: document.querySelector('#preview').textContent,
@@ -325,6 +362,8 @@ export async function inspectPageAttempt(
               abortSettled: globalThis.adocweaveAbortSettled === true,
               trapUsesFreshWorker: trapCodes.length === 2
                 && trapCodes.every((code) => code === 'wasm-trapped'),
+              initializationFailuresSettled: initializationCodes.length === 3
+                && initializationCodes.every((code) => code === 'worker-failed'),
               products: response.products,
               diagnosticsAreArrays: Array.isArray(response.diagnostics)
                 && Array.isArray(response.renderDiagnostics),

@@ -8,16 +8,21 @@ import {
   validateWorkerMessage,
 } from "./worker-protocol.mjs";
 
-function moduleUrl(processBody) {
+function moduleUrl(processBody, { initBody = "", schemaVersion = PROTOCOL_SCHEMA_VERSION } = {}) {
   const source = `
-    export default async function init() {}
-    export function protocolSchemaVersion() { return ${PROTOCOL_SCHEMA_VERSION}; }
+    export default async function init() { ${initBody} }
+    export function protocolSchemaVersion() { return ${schemaVersion}; }
     export function process(request) { ${processBody} }
   `;
   return `data:text/javascript,${encodeURIComponent(source)}`;
 }
 
-async function harness(processBody) {
+async function harness(
+  processBody,
+  moduleOptions,
+  wasmModuleUrl = moduleUrl(processBody, moduleOptions),
+  protocolVersion = WORKER_PROTOCOL_VERSION,
+) {
   const previousSelf = globalThis.self;
   const messages = [];
   let closes = 0;
@@ -28,9 +33,9 @@ async function harness(processBody) {
   await import(`./worker.mjs?worker-test=${Date.now()}-${Math.random()}`);
   await globalThis.self.onmessage({
     data: {
-      protocolVersion: WORKER_PROTOCOL_VERSION,
+      protocolVersion,
       type: "init",
-      moduleUrl: moduleUrl(processBody),
+      moduleUrl: wasmModuleUrl,
       wasmUrl: "unused.wasm",
     },
   });
@@ -60,6 +65,9 @@ test("worker envelope has one requestId and exact fields", () => {
       type: "analyze", requestId: 1, payload: {},
     },
     "responses.ready": { type: "ready", protocolVersion: WORKER_PROTOCOL_VERSION },
+    "responses.initialization-error": {
+      type: "initialization-error", error: { code: "worker-failed", message: "failed" },
+    },
     "responses.result": {
       type: "result", requestId: 1, result: {},
     },
@@ -83,6 +91,40 @@ test("worker envelope has one requestId and exact fields", () => {
   }
 });
 
+test("an incompatible Worker protocol rejects initialization explicitly", async () => {
+  const state = await harness(
+    "return {};",
+    undefined,
+    undefined,
+    WORKER_PROTOCOL_VERSION - 1,
+  );
+  try {
+    assert.deepEqual(state.messages, [{
+      type: "initialization-error",
+      error: {
+        code: "unsupported-worker-protocol",
+        message: `expected worker protocol ${WORKER_PROTOCOL_VERSION}`,
+      },
+    }]);
+    assert.equal(state.closes, 1);
+  } finally { state.restore(); }
+});
+
+test("WASM initialization and schema failures publish an error and close the worker", async () => {
+  for (const [moduleOptions, wasmModuleUrl] of [
+    [{ initBody: 'throw new Error("initialization failed");' }, undefined],
+    [{ schemaVersion: PROTOCOL_SCHEMA_VERSION + 1 }, undefined],
+    [undefined, new URL(`./missing-worker-module-${Date.now()}.mjs`, import.meta.url).href],
+  ]) {
+    const state = await harness("return {};", moduleOptions, wasmModuleUrl);
+    try {
+      assert.equal(state.messages[0].type, "initialization-error");
+      assert.equal(state.messages[0].error.code, "worker-failed");
+      assert.equal(state.closes, 1);
+    } finally { state.restore(); }
+  }
+});
+
 test("worker initializes WASM and returns its result unchanged", async () => {
   const state = await harness("return { html: request.source };");
   try {
@@ -97,6 +139,26 @@ test("worker initializes WASM and returns its result unchanged", async () => {
       result: { html: "result" },
     });
     assert.equal(state.closes, 0);
+  } finally { state.restore(); }
+});
+
+test("an invalid analysis envelope fails the active request and closes", async () => {
+  const state = await harness("return {};");
+  try {
+    await globalThis.self.onmessage({
+      data: {
+        type: "analyze",
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        requestId: 11,
+        payload: {},
+      },
+    });
+    assert.deepEqual(state.messages[1], {
+      type: "fatal",
+      requestId: 11,
+      error: { code: "worker-failed", message: "invalid AdocWeave worker request" },
+    });
+    assert.equal(state.closes, 1);
   } finally { state.restore(); }
 });
 

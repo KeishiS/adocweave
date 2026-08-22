@@ -5,9 +5,6 @@ use adocweave::preprocess::{
 };
 use adocweave::{CancellationCheck, NeverCancel, ParseError, SourceId};
 
-/// Package version of this adapter.
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-
 mod preprocess_projection;
 mod preprocess_wire;
 mod protocol;

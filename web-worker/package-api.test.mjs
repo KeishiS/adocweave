@@ -45,6 +45,9 @@ class FakeWorker {
   fail(message = "worker failed") {
     for (const listener of this.listeners.get("error") ?? []) listener({ message });
   }
+  messageFail() {
+    for (const listener of this.listeners.get("messageerror") ?? []) listener({});
+  }
 }
 
 function client(Worker = FakeWorker) {
@@ -218,6 +221,27 @@ test("ordinary WASM errors settle the Promise and reuse the worker", async () =>
   instance.dispose();
 });
 
+test("initialization errors settle the Promise and start fresh next time", async () => {
+  class SlowWorker extends FakeWorker { autoReady = false; }
+  const instance = client(SlowWorker);
+  const failed = instance.analyze({ source: "first" });
+  const oldWorker = FakeWorker.created[0];
+  oldWorker.publish({
+    type: "initialization-error",
+    error: { code: "worker-failed", message: "WASM initialization failed" },
+  });
+  await assert.rejects(failed, errorWithCode("worker-failed"));
+  assert.equal(oldWorker.terminated, true);
+
+  const next = instance.analyze({ source: "next" });
+  const newWorker = FakeWorker.created[1];
+  newWorker.publish({ protocolVersion: WORKER_PROTOCOL_VERSION, type: "ready" });
+  const message = await dispatched(newWorker);
+  newWorker.publish(result(message.requestId));
+  await next;
+  instance.dispose();
+});
+
 test("fatal responses discard the worker and the next request starts fresh", async () => {
   const instance = client();
   const first = instance.analyze({ source: "trap" });
@@ -291,6 +315,25 @@ test("an invalid or obsolete worker response settles and discards the worker", a
   }
 });
 
+test("initialization responses are rejected after analysis starts", async () => {
+  for (const response of [
+    { protocolVersion: WORKER_PROTOCOL_VERSION, type: "ready" },
+    {
+      type: "initialization-error",
+      error: { code: "worker-failed", message: "late initialization failure" },
+    },
+  ]) {
+    const instance = client();
+    const analysis = instance.analyze({ source: "text" });
+    const worker = FakeWorker.created.at(-1);
+    await dispatched(worker);
+    worker.publish(response);
+    await assert.rejects(analysis, errorWithCode("invalid-worker-response"));
+    assert.equal(worker.terminated, true);
+    instance.dispose();
+  }
+});
+
 test("constructor, init postMessage, and worker errors settle the active Promise", async () => {
   const constructorFailure = client(class { constructor() { throw new Error("constructor failed"); } });
   await assert.rejects(constructorFailure.analyze({ source: "text" }), errorWithCode("worker-failed"));
@@ -305,6 +348,26 @@ test("constructor, init postMessage, and worker errors settle the active Promise
   const worker = FakeWorker.created.at(-1);
   await dispatched(worker);
   worker.fail();
+  await assert.rejects(analysis, errorWithCode("worker-failed"));
+  assert.equal(worker.terminated, true);
+});
+
+test("analyze postMessage and message decoding failures settle the active Promise", async () => {
+  class AnalyzePostFailure extends FakeWorker {
+    postMessage(message) {
+      super.postMessage(message);
+      if (message.type === "analyze") throw new Error("analyze postMessage failed");
+    }
+  }
+  const postFailure = client(AnalyzePostFailure);
+  await assert.rejects(postFailure.analyze({ source: "text" }), errorWithCode("worker-failed"));
+  assert.equal(FakeWorker.created.at(-1).terminated, true);
+
+  const decodingFailure = client();
+  const analysis = decodingFailure.analyze({ source: "text" });
+  const worker = FakeWorker.created.at(-1);
+  await dispatched(worker);
+  worker.messageFail();
   await assert.rejects(analysis, errorWithCode("worker-failed"));
   assert.equal(worker.terminated, true);
 });

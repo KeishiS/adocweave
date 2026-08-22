@@ -549,6 +549,9 @@ tar -xJf "$source_archive" -C "$root"
 mkdir -p "$root/consumer/node_modules/@adocweave"
 ln -s "$root/$package" "$root/consumer/node_modules/@adocweave/browser"
 cp web-worker/bundler-entry.mjs "$root/consumer/app.mjs"
+cp web-worker/typecheck/package-usage.mts "$root/consumer/package-usage.mts"
+tsc --noEmit --strict --target ES2022 --module NodeNext --moduleResolution NodeNext \
+  --lib DOM,ES2022 "$root/consumer/package-usage.mts"
 esbuild "$root/consumer/app.mjs" \
   --bundle --format=esm --platform=browser \
   --outfile="$root/$package/example/app.mjs"
