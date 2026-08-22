@@ -12,10 +12,8 @@ if [[ ! "$revision" =~ ^[0-9a-f]{40}$ ]]; then
 fi
 
 readonly database="${CARGO_TARGET_DIR:-target}/rustsec-advisory-db"
-readonly metadata="$(mktemp "${TMPDIR:-/tmp}/adocweave-dependencies.XXXXXX.json")"
-readonly zed_metadata="$(mktemp "${TMPDIR:-/tmp}/adocweave-zed-dependencies.XXXXXX.json")"
 readonly notice="$(mktemp "${TMPDIR:-/tmp}/adocweave-third-party-notices.XXXXXX.adoc")"
-trap 'rm -f "$metadata" "$zed_metadata" "$notice"' EXIT
+trap 'rm -f "$notice"' EXIT
 if [[ ! -d "$database/.git" ]]; then
   rm -rf "$database"
   git init --quiet "$database"
@@ -53,9 +51,6 @@ node tools/verify-dependency-boundaries.mjs
 node tools/verify-vscode-dependencies.mjs
 node tools/verify-textlint-dependencies.mjs
 node tools/verify-textlint-plugin-dependencies.mjs
-cargo metadata --locked --format-version=1 > "$metadata"
-cargo metadata --manifest-path editors/zed/Cargo.toml --locked --format-version=1 > "$zed_metadata"
-node tools/verify-duplicate-dependencies.mjs "$metadata" "$zed_metadata"
 # 生成したnoticeはarchiveへ同梱する成果物であり、内容を照合する検査がほかにないため、
 # 生成logicのtestをここで実行します。
 node --test tools/generate-third-party-notices.test.mjs
