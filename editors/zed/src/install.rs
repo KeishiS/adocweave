@@ -174,7 +174,7 @@ pub fn select_lsp_asset(
     {
         return Err("unsupported distribution manifest schema".to_owned());
     }
-    if root.get("product").and_then(|value| value.as_str()) != Some("adocweave-lsp")
+    if root.get("product").and_then(|value| value.as_str()) != Some("lsp")
         || root.get("productVersion").and_then(|value| value.as_str()) != Some(product_version)
     {
         return Err(format!(
@@ -468,7 +468,7 @@ mod tests {
 
     fn manifest(sha256: &str, byte_size: u64) -> String {
         format!(
-            r#"{{"schemaVersion":3,"product":"adocweave-lsp","productVersion":"0.1.0-rc.1","lspApiVersion":1,"sourceCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","assets":[{{"archive":"zip","byteSize":{byte_size},"executable":"adocweave-lsp","kind":"lsp","name":"adocweave-lsp-x86_64-unknown-linux-musl.zip","sha256":"{sha256}","target":"x86_64-unknown-linux-musl"}}]}}"#
+            r#"{{"schemaVersion":3,"product":"lsp","productVersion":"0.1.0-rc.1","lspApiVersion":1,"sourceCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","assets":[{{"archive":"zip","byteSize":{byte_size},"executable":"adocweave-lsp","kind":"lsp","name":"adocweave-lsp-x86_64-unknown-linux-musl.zip","sha256":"{sha256}","target":"x86_64-unknown-linux-musl"}}]}}"#
         )
     }
 

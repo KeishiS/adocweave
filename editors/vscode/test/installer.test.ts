@@ -99,7 +99,7 @@ function releaseFetcher(
             },
           ],
     lspApiVersion: options.lspApiVersion ?? 1,
-    product: "adocweave-lsp",
+    product: "lsp",
     productVersion: "0.16.0",
     schemaVersion: 3,
     sourceCommit: "a".repeat(40),

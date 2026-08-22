@@ -14,7 +14,7 @@ const fixtureValue = {
   ...legacyFields,
   assets: legacyFields.assets.filter(({ kind }: { kind: string }) => kind === "lsp"),
   lspApiVersion: 1,
-  product: "adocweave-lsp",
+  product: "lsp",
   productVersion: fixtureVersion,
   schemaVersion: 3,
 };

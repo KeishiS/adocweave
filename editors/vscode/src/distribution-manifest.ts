@@ -13,7 +13,7 @@ export interface DistributionAsset {
 export interface DistributionManifest {
   readonly assets: readonly unknown[];
   readonly lspApiVersion: number;
-  readonly product: "adocweave-lsp";
+  readonly product: "lsp";
   readonly productVersion: string;
   readonly schemaVersion: 3;
   readonly sourceCommit: string;
@@ -55,7 +55,7 @@ export function parseDistributionManifest(
   if (!exactKeys(root, manifestKeys)) throw new Error("invalid-manifest:fields");
   if (
     root.schemaVersion !== 3 ||
-    root.product !== "adocweave-lsp" ||
+    root.product !== "lsp" ||
     root.productVersion !== expectedProductVersion ||
     !Number.isSafeInteger(root.lspApiVersion) ||
     (root.lspApiVersion as number) < 1 ||
