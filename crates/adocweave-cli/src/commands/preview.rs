@@ -162,32 +162,6 @@ impl PreviewAuthorities {
     }
 }
 
-struct DependencyObserver<'dependencies, 'authorities> {
-    dependencies: &'dependencies mut BTreeMap<preview::Dependency, preview::Fingerprint>,
-    authorities: &'authorities PreviewAuthorities,
-}
-
-impl local_include::DependencyObserver for DependencyObserver<'_, '_> {
-    fn observe_path(&mut self, path: &Path) {
-        let dependency = preview::Dependency::workspace(path);
-        if !self.dependencies.contains_key(&dependency) {
-            let fingerprint = self
-                .authorities
-                .snapshot(std::slice::from_ref(&dependency))
-                .remove(&dependency)
-                .unwrap_or_else(|| preview::Fingerprint::unavailable("snapshot-missing"));
-            self.dependencies.insert(dependency, fingerprint);
-        }
-    }
-
-    fn observe_loaded(&mut self, path: &Path, source: &str) {
-        self.dependencies.insert(
-            preview::Dependency::workspace(path),
-            preview::Fingerprint::from_loaded_bytes(source.as_bytes()),
-        );
-    }
-}
-
 pub(crate) fn run(request: RunRequest<'_>, shutdown: &AtomicBool) -> Result<(), Error> {
     let authorities = PreviewAuthorities::new(&request)?;
     let canonical_input = authorities.input(request.input_path)?;
@@ -327,23 +301,32 @@ fn build_with_stage_hook(
 
     let (processed, include_diagnostics) = if request.include {
         ensure_active(cancellation)?;
-        let prepared = {
-            let mut observer = DependencyObserver {
-                dependencies,
-                authorities: request.authorities,
-            };
-            local_include::prepare_local_tracking_with_existing_session(
-                source,
-                source_id,
-                request.base_dir,
-                request.base_dir,
-                request.project_root,
-                &request.project.preprocess,
-                &mut observer,
-                &mut filesystem,
-            )
+        let mut include_dependencies = local_include::DependencyJournal::default();
+        let prepared = local_include::prepare_local_tracking_with_existing_session(
+            source,
+            source_id,
+            request.base_dir,
+            request.base_dir,
+            request.project_root,
+            &request.project.preprocess,
+            &mut include_dependencies,
+            &mut filesystem,
+        );
+        for (path, loaded) in include_dependencies.entries() {
+            let dependency = preview::Dependency::workspace(path);
+            let fingerprint = loaded.map_or_else(
+                || {
+                    request
+                        .authorities
+                        .snapshot(std::slice::from_ref(&dependency))
+                        .remove(&dependency)
+                        .unwrap_or_else(|| preview::Fingerprint::unavailable("snapshot-missing"))
+                },
+                |source| preview::Fingerprint::from_loaded_bytes(source.as_bytes()),
+            );
+            dependencies.insert(dependency, fingerprint);
         }
-        .map_err(Error::Include)?;
+        let prepared = prepared.map_err(Error::Include)?;
         crate::validate_resource_plan(prepared.resource_sizes(), plan)
             .map_err(|error| Error::Path(error.to_string()))?;
         stage_hook(BuildStage::IncludesPrepared);
@@ -352,7 +335,6 @@ fn build_with_stage_hook(
             .validation()
             .expect("local preparation has validation context")
             .include_errors()
-            .iter()
             .map(|(target, error)| {
                 preview::PreviewDiagnostic::include(
                     error.diagnostic_code(),
@@ -459,7 +441,6 @@ impl std::fmt::Display for Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::local_include::DependencyObserver as _;
 
     #[test]
     fn preview_build_keeps_typed_diagnostics_until_the_response_boundary() {
@@ -636,34 +617,6 @@ mod tests {
 
         assert!(result.is_err());
         assert!(dependencies.contains_key(&preview::Dependency::workspace(include)));
-    }
-
-    #[test]
-    fn observer_records_the_loaded_snapshot() {
-        let root = tempfile::tempdir().expect("temporary directory");
-        let include = root.path().join("chapter.adoc");
-        std::fs::write(&include, "later snapshot\n").expect("included document");
-        let mut dependencies = BTreeMap::new();
-        let project = adocweave_config::ResolvedProjectConfig::default();
-        let authorities = test_authorities(root.path(), &project, &[]);
-
-        DependencyObserver {
-            dependencies: &mut dependencies,
-            authorities: &authorities,
-        }
-        .observe_loaded(&include, "first snapshot\n");
-
-        let observed = dependencies
-            .get(&preview::Dependency::workspace(&include))
-            .expect("observed dependency");
-        assert_eq!(
-            observed,
-            &preview::Fingerprint::from_loaded_bytes(b"first snapshot\n")
-        );
-        assert_ne!(
-            observed,
-            &preview::Fingerprint::from_loaded_bytes(b"later snapshot\n")
-        );
     }
 
     #[cfg(target_os = "linux")]

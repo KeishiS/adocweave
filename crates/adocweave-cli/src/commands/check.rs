@@ -319,9 +319,9 @@ pub(crate) fn process_preprocessed(
                         source_id.to_owned(),
                     ))
                 })?;
-                if let Some(error) =
-                    directive.and_then(|directive| validation.include_error(&directive.target))
-                {
+                if let Some(error) = directive.and_then(|directive| {
+                    validation.include_error(source_id, directive.range, &directive.target)
+                }) {
                     if optional && matches!(error, adocweave_host::LocalTargetError::Missing(_)) {
                         continue;
                     }

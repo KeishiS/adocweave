@@ -1,19 +1,23 @@
 //! Explicit, bounded local resource provider owned by the CLI binary.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
-use adocweave::SourceId;
 use adocweave::preprocess::{
-    IncludeRequest, PreprocessError, PreprocessErrorKind, PreprocessOptions, PreprocessedDocument,
-    ResourceDocument, ResourceSnapshot, preprocess,
+    EffectiveProcessingOptions, PreprocessError, PreprocessOptions, PreprocessedDocument,
+    discover_includes,
 };
 use adocweave_host::{
-    FilesystemReadLimits, LocalFilesystemPolicy, LocalFilesystemSession, LocalTargetError,
-    LocalTargetPolicy, LocalTargetSession, LogicalSourceId, ResourceError,
+    FilesystemReadLimits, IncludeFilesystem, IncludeFilesystemOutcome, IncludeFilesystemRequest,
+    LocalFilesystemPolicy, LocalFilesystemSession, LocalTargetError, LocalTargetPolicy,
+    LocalTargetSession, LogicalSourceId, ResourceError,
+};
+use adocweave_workspace::{
+    NeverCancelled, ResourceId, Revision, Workspace, WorkspaceIncludeResolution, WorkspaceLimits,
+    WorkspacePreprocessDraft, WorkspacePreprocessStep,
 };
 
 #[derive(Debug)]
@@ -40,33 +44,44 @@ pub struct PreparedInput {
 }
 
 pub struct ProjectionInput {
-    document: PreprocessedDocument,
-    sources: BTreeMap<String, Arc<str>>,
-    source_bases: BTreeMap<String, PathBuf>,
-    include_bases: BTreeMap<String, PathBuf>,
-}
-
-struct ProjectionState {
-    sources: BTreeMap<String, Arc<str>>,
+    draft: WorkspacePreprocessDraft,
+    source_keys: BTreeMap<String, ResourceId>,
     source_bases: BTreeMap<String, PathBuf>,
     include_bases: BTreeMap<String, PathBuf>,
 }
 
 pub struct LocalValidationContext {
     session: LocalTargetSession,
-    include_errors: BTreeMap<String, LocalTargetError>,
+    include_errors: Vec<IncludeFailure>,
 }
 
-pub(crate) trait DependencyObserver {
-    fn observe_path(&mut self, path: &Path);
-    fn observe_loaded(&mut self, path: &Path, source: &str);
+#[derive(Clone, Debug)]
+struct IncludeFailure {
+    source_id: Option<String>,
+    range: adocweave::text::TextRange,
+    target: String,
+    error: LocalTargetError,
 }
 
-struct IgnoreDependencies;
+#[derive(Clone, Debug, Default)]
+pub(crate) struct DependencyJournal {
+    entries: BTreeMap<PathBuf, Option<Arc<str>>>,
+}
 
-impl DependencyObserver for IgnoreDependencies {
-    fn observe_path(&mut self, _: &Path) {}
-    fn observe_loaded(&mut self, _: &Path, _: &str) {}
+impl DependencyJournal {
+    pub(crate) fn entries(&self) -> impl Iterator<Item = (&Path, Option<&str>)> {
+        self.entries
+            .iter()
+            .map(|(path, source)| (path.as_path(), source.as_deref()))
+    }
+
+    fn observe_candidate(&mut self, path: &Path) {
+        self.entries.entry(path.to_owned()).or_default();
+    }
+
+    fn observe_loaded(&mut self, path: &Path, source: Arc<str>) {
+        self.entries.insert(path.to_owned(), Some(source));
+    }
 }
 
 impl PreparedInput {
@@ -89,20 +104,24 @@ impl PreparedInput {
     }
 
     pub(crate) fn resource_entries(&self) -> impl Iterator<Item = (&str, u64)> + '_ {
-        self.projection
-            .sources
-            .iter()
-            .map(|(id, source)| (id.as_str(), source.len() as u64))
+        self.projection.source_keys.iter().filter_map(|(id, key)| {
+            self.projection
+                .draft
+                .source(key)
+                .map(|source| (id.as_str(), source.len() as u64))
+        })
     }
 }
 
 impl ProjectionInput {
     pub fn document(&self) -> &PreprocessedDocument {
-        &self.document
+        self.draft.document()
     }
 
     pub fn source(&self, source_id: &str) -> Option<&str> {
-        self.sources.get(source_id).map(AsRef::as_ref)
+        self.source_keys
+            .get(source_id)
+            .and_then(|key| self.draft.source(key))
     }
 
     pub fn source_base(&self, source_id: &str) -> Option<&Path> {
@@ -114,9 +133,11 @@ impl ProjectionInput {
     }
 
     pub fn resource_lengths(&self) -> impl Iterator<Item = u64> + '_ {
-        self.sources
-            .values()
-            .map(|source| u64::try_from(source.len()).unwrap_or(u64::MAX))
+        self.source_keys.values().filter_map(|key| {
+            self.draft
+                .source(key)
+                .map(|source| u64::try_from(source.len()).unwrap_or(u64::MAX))
+        })
     }
 }
 
@@ -125,69 +146,26 @@ impl LocalValidationContext {
         &mut self.session
     }
 
-    pub fn include_error(&self, target: &str) -> Option<&LocalTargetError> {
-        self.include_errors.get(target)
+    pub fn include_error(
+        &self,
+        source_id: &str,
+        range: adocweave::text::TextRange,
+        target: &str,
+    ) -> Option<&LocalTargetError> {
+        self.include_errors
+            .iter()
+            .find(|failure| {
+                failure.source_id.as_deref() == Some(source_id)
+                    && failure.range == range
+                    && failure.target == target
+            })
+            .map(|failure| &failure.error)
     }
 
-    pub(crate) fn include_errors(&self) -> &BTreeMap<String, LocalTargetError> {
-        &self.include_errors
-    }
-}
-
-/// Filesystem provenance retained outside diagnostics and source maps.
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct LoadedSourceProvenance {
-    logical_target: String,
-    canonical_path: PathBuf,
-}
-
-/// Bytes loaded only after target validation.
-///
-/// Its fields are private so a source identity cannot be combined with bytes
-/// from another filesystem target.
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct LoadedSource {
-    source_id: SourceId,
-    source: Arc<str>,
-    provenance: LoadedSourceProvenance,
-}
-
-struct IncludeLoader<'session> {
-    session: &'session mut LocalFilesystemSession,
-}
-
-impl<'session> IncludeLoader<'session> {
-    fn new(session: &'session mut LocalFilesystemSession) -> Self {
-        Self { session }
-    }
-
-    fn load(
-        &mut self,
-        base: &Path,
-        request: IncludeRequest,
-    ) -> Result<LoadedSource, ResourceError> {
-        let source_id = SourceId::new(include_source_id(&request.target));
-        let loaded = self.session.read_target_utf8(
-            LogicalSourceId::new(source_id.as_str())?,
-            base,
-            &request.target,
-        )?;
-        let canonical_path = loaded.canonical_path().to_owned();
-        let (_, source) = loaded.into_parts();
-        Ok(LoadedSource {
-            source_id,
-            source,
-            provenance: LoadedSourceProvenance {
-                logical_target: request.target,
-                canonical_path,
-            },
-        })
-    }
-}
-
-impl LoadedSource {
-    fn into_parts(self) -> (SourceId, Arc<str>, LoadedSourceProvenance) {
-        (self.source_id, self.source, self.provenance)
+    pub(crate) fn include_errors(&self) -> impl Iterator<Item = (&str, &LocalTargetError)> {
+        self.include_errors
+            .iter()
+            .map(|failure| (failure.target.as_str(), &failure.error))
     }
 }
 
@@ -243,79 +221,226 @@ impl fmt::Display for LocalIncludeError {
 
 impl Error for LocalIncludeError {}
 
-enum ResolvedInclude {
-    Loaded {
-        source_id: SourceId,
-        source: Arc<str>,
-        source_base: PathBuf,
-        include_base: Option<PathBuf>,
+enum IncludeReadMode {
+    General {
+        base: PathBuf,
+        base_policy: LocalTargetPolicy,
+        allowed: Vec<LocalTargetPolicy>,
     },
-    Failed {
-        source_id: SourceId,
-        error: LocalTargetError,
+    Local {
+        root: PathBuf,
     },
 }
 
-fn preprocess_with(
-    source: &str,
-    preprocess_options: PreprocessOptions,
-    mut projection: ProjectionState,
-    mut resolve: impl FnMut(&PreprocessError, &str) -> Result<ResolvedInclude, LocalIncludeError>,
-) -> Result<(ProjectionInput, BTreeMap<String, LocalTargetError>), LocalIncludeError> {
-    let mut snapshot = ResourceSnapshot::default();
-    let mut include_errors = BTreeMap::new();
-    let document = loop {
-        match preprocess(source, &snapshot, &preprocess_options) {
-            Ok(document) => break document,
-            Err(error) if error.kind == PreprocessErrorKind::MissingResource => {
-                let target = error
-                    .target
-                    .clone()
-                    .ok_or_else(|| LocalIncludeError::Preprocess(error.clone()))?;
-                match resolve(&error, &target)? {
-                    ResolvedInclude::Loaded {
-                        source_id,
-                        source,
-                        source_base,
-                        include_base,
-                    } => {
-                        projection
-                            .sources
-                            .insert(source_id.as_str().to_owned(), source.clone());
-                        projection
-                            .source_bases
-                            .insert(source_id.as_str().to_owned(), source_base);
-                        if let Some(include_base) = include_base {
-                            projection
-                                .include_bases
-                                .insert(source_id.as_str().to_owned(), include_base);
-                        }
-                        snapshot.insert(target, ResourceDocument { source_id, source });
-                    }
-                    ResolvedInclude::Failed { source_id, error } => {
-                        include_errors.insert(target.clone(), error);
-                        snapshot.insert(
-                            target,
-                            ResourceDocument {
-                                source_id,
-                                source: String::new().into(),
-                            },
-                        );
-                    }
+impl IncludeReadMode {
+    fn watch_candidate(&self, target: &str) -> Option<PathBuf> {
+        match self {
+            Self::Local { root } => Some(root.join(target)),
+            Self::General { .. } => None,
+        }
+    }
+
+    fn read(
+        &self,
+        filesystem: &mut LocalFilesystemSession,
+        source_id: LogicalSourceId,
+        target: &str,
+    ) -> Result<IncludeFilesystemOutcome, LocalIncludeError> {
+        let provider = IncludeFilesystem::new();
+        match self {
+            Self::General {
+                base,
+                base_policy,
+                allowed,
+            } => {
+                let candidate = base.join(target);
+                let path = if allowed.is_empty() {
+                    base_policy.normalize_candidate(&candidate)
+                } else {
+                    allowed
+                        .iter()
+                        .find_map(|policy| policy.normalize_candidate(&candidate).ok())
+                        .ok_or_else(|| LocalTargetError::OutsideRoot(candidate.clone()))
+                };
+                match path {
+                    Ok(path) => Ok(provider.read_utf8(
+                        filesystem,
+                        adocweave_host::IncludeFilesystemPathRequest::new(source_id, path),
+                    )),
+                    Err(_) => Err(LocalIncludeError::OutsideRoot(candidate)),
                 }
             }
-            Err(error) => return Err(LocalIncludeError::Preprocess(error)),
+            Self::Local { root } => Ok(provider.read(
+                filesystem,
+                IncludeFilesystemRequest::new(source_id, root, target),
+            )),
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_with_driver(
+    source: &str,
+    source_id: String,
+    source_base: PathBuf,
+    include_base: Option<PathBuf>,
+    mut preprocess_options: PreprocessOptions,
+    read_mode: IncludeReadMode,
+    filesystem: &mut LocalFilesystemSession,
+    validation: Option<(LocalTargetPolicy, FilesystemReadLimits)>,
+    dependencies: &mut DependencyJournal,
+) -> Result<PreparedInput, LocalIncludeError> {
+    let root_id = ResourceId::new(source_id.clone())
+        .map_err(|error| LocalIncludeError::Analysis(error.to_string()))?;
+    let mut workspace = Workspace::new(WorkspaceLimits::default());
+    workspace
+        .upsert_disk(root_id.clone(), Revision::new(1), Arc::<str>::from(source))
+        .and_then(|_| workspace.register_root(root_id.clone()))
+        .map_err(|error| LocalIncludeError::Analysis(error.to_string()))?;
+    preprocess_options.enable_includes = true;
+    let options =
+        EffectiveProcessingOptions::new(adocweave::AnalysisOptions::default(), preprocess_options)
+            .map_err(|error| LocalIncludeError::Analysis(error.to_string()))?;
+    let mut source_keys = BTreeMap::from([(source_id.clone(), root_id.clone())]);
+    let mut request_sources = BTreeMap::from([(source_id.clone(), Arc::<str>::from(source))]);
+    let mut source_bases = BTreeMap::from([(source_id.clone(), source_base)]);
+    let mut include_bases = include_base
+        .map(|base| BTreeMap::from([(source_id.clone(), base)]))
+        .unwrap_or_default();
+    let mut failure_errors = BTreeMap::new();
+    let mut step = workspace
+        .snapshot()
+        .preprocess_resumable(&root_id, &options, &NeverCancelled);
+    let draft = loop {
+        match step {
+            WorkspacePreprocessStep::Complete(draft) => break *draft,
+            WorkspacePreprocessStep::NeedResource(suspended) => {
+                let request = suspended.request();
+                let target = request.target().to_owned();
+                let projected_source_id = include_source_id(&target);
+                let logical_id = LogicalSourceId::new(projected_source_id.clone())
+                    .map_err(LocalIncludeError::Host)?;
+                let request_source_id = request.source_id().map(str::to_owned);
+                let request_range = request.range();
+                let authored_target = request_source_id
+                    .as_ref()
+                    .and_then(|source_id| request_sources.get(source_id))
+                    .and_then(|source| {
+                        source.get(request_range.start().to_usize()..request_range.end().to_usize())
+                    })
+                    .and_then(|directive| discover_includes(directive).ok())
+                    .and_then(|mut requests| requests.pop())
+                    .map_or_else(|| target.clone(), |request| request.target);
+                let inspect = validation.as_ref().is_none_or(|_| {
+                    adocweave::LocalTargetReference::from_include(
+                        request_range,
+                        request_range,
+                        &authored_target,
+                    )
+                    .is_some_and(|reference| {
+                        reference.syntax == adocweave::LocalTargetSyntax::Candidate
+                    })
+                });
+                let outcome = if inspect {
+                    if let Some(candidate) = read_mode.watch_candidate(&target) {
+                        dependencies.observe_candidate(&candidate);
+                    }
+                    read_mode.read(filesystem, logical_id, &target)?
+                } else {
+                    let error = LocalTargetError::Unverifiable(target.clone());
+                    failure_errors.insert(target.clone(), error);
+                    let response = request.failed_with_placeholder_as(projected_source_id);
+                    step = suspended.resume(response, &NeverCancelled);
+                    continue;
+                };
+                let response = match outcome {
+                    IncludeFilesystemOutcome::Found(found) => {
+                        let source = Arc::<str>::from(found.source());
+                        for candidate in found.watch_candidates() {
+                            dependencies.observe_candidate(candidate.path());
+                        }
+                        dependencies.observe_loaded(
+                            found.provenance().canonical_path(),
+                            Arc::clone(&source),
+                        );
+                        let key = ResourceId::new(target.clone())
+                            .map_err(|error| LocalIncludeError::Analysis(error.to_string()))?;
+                        source_keys.insert(projected_source_id.clone(), key);
+                        request_sources.insert(projected_source_id.clone(), Arc::clone(&source));
+                        let base = found
+                            .provenance()
+                            .canonical_path()
+                            .parent()
+                            .unwrap_or_else(|| Path::new(""))
+                            .to_owned();
+                        source_bases.insert(projected_source_id.clone(), base.clone());
+                        if validation.is_some() {
+                            include_bases.insert(projected_source_id.clone(), base);
+                        }
+                        request.found_as(projected_source_id, source)
+                    }
+                    IncludeFilesystemOutcome::NotFound(missing) => {
+                        dependencies.observe_candidate(missing.watch_candidate().path());
+                        let error =
+                            LocalTargetError::Missing(missing.watch_candidate().path().to_owned());
+                        if validation.is_none() {
+                            return Err(LocalIncludeError::Host(ResourceError::Missing(
+                                missing.watch_candidate().path().to_owned(),
+                            )));
+                        }
+                        failure_errors.insert(target, error);
+                        request.failed_with_placeholder_as(projected_source_id)
+                    }
+                    IncludeFilesystemOutcome::Failed(failed) => {
+                        let host_error = ResourceError::from(failed.error().clone());
+                        if validation.is_none() {
+                            return Err(LocalIncludeError::Host(host_error));
+                        }
+                        failure_errors.insert(target, include_target_error(host_error));
+                        request.failed_with_placeholder_as(projected_source_id)
+                    }
+                };
+                step = suspended.resume(response, &NeverCancelled);
+            }
+            WorkspacePreprocessStep::Failed(failure) => {
+                return Err(LocalIncludeError::Analysis(failure.error().to_string()));
+            }
+            WorkspacePreprocessStep::Cancelled => {
+                return Err(LocalIncludeError::Analysis(
+                    "include preprocessing was cancelled".to_owned(),
+                ));
+            }
         }
     };
-    Ok((
-        ProjectionInput {
-            document,
-            sources: projection.sources,
-            source_bases: projection.source_bases,
-            include_bases: projection.include_bases,
-        },
+    let include_errors = draft
+        .include_journal()
+        .iter()
+        .filter(|event| event.resolution() == WorkspaceIncludeResolution::Failed)
+        .filter_map(|event| {
+            failure_errors
+                .get(event.target().as_str())
+                .cloned()
+                .map(|error| IncludeFailure {
+                    source_id: event.source_id().map(str::to_owned),
+                    range: event.range(),
+                    target: event.target().to_string(),
+                    error,
+                })
+        })
+        .collect();
+    let validation = validation.map(|(policy, limits)| LocalValidationContext {
+        session: LocalTargetSession::new(policy, limits.max_files, limits),
         include_errors,
-    ))
+    });
+    Ok(PreparedInput {
+        projection: ProjectionInput {
+            draft,
+            source_keys,
+            source_bases,
+            include_bases,
+        },
+        validation,
+    })
 }
 
 pub fn prepare(
@@ -389,58 +514,21 @@ pub(crate) fn prepare_with_session(
                 })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let mut sources = BTreeMap::new();
-    let mut source_bases = BTreeMap::new();
-    if let Some(source_id) = &source_id {
-        sources.insert(source_id.clone(), Arc::from(source));
-        source_bases.insert(source_id.clone(), base_dir.clone());
-    }
-    let mut preprocess_options = preprocess_options.clone();
-    preprocess_options.source_id = source_id.clone().map(SourceId::new);
-    preprocess_options.enable_includes = true;
-    let projection = ProjectionState {
-        sources,
-        source_bases,
-        include_bases: BTreeMap::new(),
-    };
-    let (projection, include_errors) =
-        preprocess_with(source, preprocess_options, projection, |_, target| {
-            let candidate = base_dir.join(target);
-            let path = if allowed_policies.is_empty() {
-                base_policy
-                    .normalize_candidate(&candidate)
-                    .map_err(|_| LocalIncludeError::OutsideRoot(candidate.clone()))?
-            } else {
-                allowed_policies
-                    .iter()
-                    .find_map(|policy| policy.normalize_candidate(&candidate).ok())
-                    .ok_or_else(|| LocalIncludeError::OutsideRoot(candidate.clone()))?
-            };
-            let resource_id = include_source_id(target);
-            let loaded = filesystem
-                .read_utf8(
-                    LogicalSourceId::new(resource_id.clone()).map_err(LocalIncludeError::Host)?,
-                    &path,
-                )
-                .map_err(LocalIncludeError::Host)?;
-            let canonical = loaded.canonical_path().to_owned();
-            let (loaded_id, text) = loaded.into_parts();
-            debug_assert_eq!(loaded_id.as_str(), resource_id);
-            Ok(ResolvedInclude::Loaded {
-                source_id: SourceId::new(resource_id),
-                source: text,
-                source_base: canonical
-                    .parent()
-                    .unwrap_or_else(|| Path::new(""))
-                    .to_owned(),
-                include_base: None,
-            })
-        })?;
-    debug_assert!(include_errors.is_empty());
-    Ok(PreparedInput {
-        projection,
-        validation: None,
-    })
+    prepare_with_driver(
+        source,
+        source_id.unwrap_or_else(|| "<stdin>".to_owned()),
+        base_dir.clone(),
+        None,
+        preprocess_options.clone(),
+        IncludeReadMode::General {
+            base: base_dir,
+            base_policy,
+            allowed: allowed_policies,
+        },
+        filesystem,
+        None,
+        &mut DependencyJournal::default(),
+    )
 }
 
 pub fn prepare_local(
@@ -452,15 +540,19 @@ pub fn prepare_local(
     limits: FilesystemReadLimits,
     preprocess_options: &PreprocessOptions,
 ) -> Result<PreparedInput, LocalIncludeError> {
-    prepare_local_tracking(
+    let filesystem_policy = LocalFilesystemPolicy::new([project_root.to_owned()], limits)
+        .map_err(LocalIncludeError::Host)?;
+    let mut filesystem = filesystem_policy
+        .session()
+        .map_err(LocalIncludeError::Host)?;
+    prepare_local_with_session(
         source,
         source_id,
         base_dir,
         source_base,
         project_root,
-        limits,
         preprocess_options,
-        &mut IgnoreDependencies,
+        &mut filesystem,
     )
 }
 
@@ -481,7 +573,7 @@ pub(crate) fn prepare_local_with_session(
         source_base,
         project_root,
         preprocess_options,
-        &mut IgnoreDependencies,
+        &mut DependencyJournal::default(),
         filesystem_session,
     )
 }
@@ -494,7 +586,7 @@ pub(crate) fn prepare_local_tracking_with_existing_session(
     source_base: &Path,
     project_root: &Path,
     preprocess_options: &PreprocessOptions,
-    observer: &mut dyn DependencyObserver,
+    dependencies: &mut DependencyJournal,
     filesystem_session: &mut LocalFilesystemSession,
 ) -> Result<PreparedInput, LocalIncludeError> {
     let policy = filesystem_session
@@ -506,182 +598,29 @@ pub(crate) fn prepare_local_tracking_with_existing_session(
         .inspect_directory_no_symlinks(base_dir)
         .map_err(|error| LocalIncludeError::Analysis(format!("invalid include base: {error}")))?;
     let root = policy.root().to_owned();
-    prepare_local_tracking_with_session(
-        source,
-        source_id,
-        &base_dir,
-        source_base,
-        policy,
-        &root,
-        preprocess_options,
-        observer,
-        filesystem_session,
-    )
-}
-
-// Keep this adapter parallel to `prepare_local`; the final argument is an
-// out-parameter used by preview to retain dependencies after preprocessing errors.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn prepare_local_tracking(
-    source: &str,
-    source_id: String,
-    base_dir: &Path,
-    source_base: &Path,
-    project_root: &Path,
-    limits: FilesystemReadLimits,
-    preprocess_options: &PreprocessOptions,
-    observer: &mut dyn DependencyObserver,
-) -> Result<PreparedInput, LocalIncludeError> {
-    let filesystem_policy = LocalFilesystemPolicy::new([project_root.to_owned()], limits)
-        .map_err(LocalIncludeError::Host)?;
-    let root = filesystem_policy.roots()[0].clone();
-    let policy = filesystem_policy
-        .root_policy(&root)
-        .expect("filesystem policy retains its root")
-        .clone();
-    let base_dir = policy
-        .inspect_directory_no_symlinks(base_dir)
-        .map_err(|error| LocalIncludeError::Analysis(format!("invalid include base: {error}")))?;
-    let mut filesystem_session = filesystem_policy
-        .session()
-        .map_err(LocalIncludeError::Host)?;
-    prepare_local_tracking_with_session(
-        source,
-        source_id,
-        &base_dir,
-        source_base,
-        policy,
-        &root,
-        preprocess_options,
-        observer,
-        &mut filesystem_session,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn prepare_local_tracking_with_session(
-    source: &str,
-    source_id: String,
-    base_dir: &Path,
-    source_base: &Path,
-    policy: LocalTargetPolicy,
-    root: &Path,
-    preprocess_options: &PreprocessOptions,
-    observer: &mut dyn DependencyObserver,
-    filesystem_session: &mut LocalFilesystemSession,
-) -> Result<PreparedInput, LocalIncludeError> {
     let limits = filesystem_session.limits();
     let base_key = logical_key(
         base_dir
-            .strip_prefix(root)
+            .strip_prefix(&root)
             .expect("base checked below root"),
     );
 
-    let sources = BTreeMap::from([(source_id.clone(), Arc::from(source))]);
     let source_base = policy
         .inspect_directory_no_symlinks(source_base)
         .map_err(|error| LocalIncludeError::Analysis(format!("invalid source base: {error}")))?;
-    let session = LocalTargetSession::new(policy, limits.max_files, limits);
-    let source_bases = BTreeMap::from([(source_id.clone(), source_base)]);
-    let include_bases = BTreeMap::from([(source_id.clone(), base_dir.to_owned())]);
     let mut preprocess_options = preprocess_options.clone();
-    preprocess_options.source_id = Some(SourceId::new(source_id.clone()));
     preprocess_options.base_uri = (!base_key.is_empty()).then_some(base_key);
-    preprocess_options.enable_includes = true;
-    let projection = ProjectionState {
-        sources,
-        source_bases,
-        include_bases,
-    };
-    let (projection, include_errors) =
-        preprocess_with(source, preprocess_options, projection, |error, target| {
-            let requested_target = error.requested_target.as_deref().unwrap_or(target);
-            let resource_id = include_source_id(target);
-            let inspect = adocweave::LocalTargetReference::from_include(
-                error.range,
-                error.range,
-                requested_target,
-            )
-            .is_some_and(|reference| reference.syntax == adocweave::LocalTargetSyntax::Candidate);
-            if !inspect {
-                return Ok(ResolvedInclude::Failed {
-                    source_id: SourceId::new(resource_id),
-                    error: LocalTargetError::Unverifiable(target.to_owned()),
-                });
-            }
-            let request = IncludeRequest {
-                range: error.range,
-                target_range: error.range,
-                target: target.to_owned(),
-                attributes: String::new(),
-            };
-            let candidates = dependency_candidates(root, target);
-            for candidate in &candidates {
-                observer.observe_path(candidate);
-            }
-            let loaded = {
-                IncludeLoader::new(filesystem_session)
-                    .load(root, request)
-                    .map_err(include_target_error)
-            };
-            match loaded {
-                Ok(loaded) => {
-                    let (loaded_source_id, text, provenance) = loaded.into_parts();
-                    debug_assert_eq!(loaded_source_id.as_str(), resource_id);
-                    debug_assert_eq!(provenance.logical_target, target);
-                    observer.observe_loaded(&provenance.canonical_path, &text);
-                    let base = provenance
-                        .canonical_path
-                        .parent()
-                        .unwrap_or_else(|| Path::new(""))
-                        .to_owned();
-                    Ok(ResolvedInclude::Loaded {
-                        source_id: loaded_source_id,
-                        source: text,
-                        source_base: base.clone(),
-                        include_base: Some(base),
-                    })
-                }
-                Err(error) => Ok(ResolvedInclude::Failed {
-                    source_id: SourceId::new(resource_id),
-                    error,
-                }),
-            }
-        })?;
-    Ok(PreparedInput {
-        projection,
-        validation: Some(LocalValidationContext {
-            session,
-            include_errors,
-        }),
-    })
-}
-
-/// Returns the nearest existing canonical in-root path for monitoring a
-/// resource which may not exist yet. Watching the ancestor detects creation
-/// without following an unchecked missing path through a replaceable symlink.
-fn dependency_candidates(root: &Path, target: &str) -> BTreeSet<PathBuf> {
-    let target = Path::new(target);
-    if target.is_absolute()
-        || target.components().any(|component| {
-            matches!(
-                component,
-                Component::ParentDir | Component::RootDir | Component::Prefix(_)
-            )
-        })
-    {
-        return BTreeSet::new();
-    }
-    let mut paths = BTreeSet::from([root.to_owned()]);
-    let mut current = root.to_owned();
-    for component in target.components() {
-        let Component::Normal(component) = component else {
-            break;
-        };
-        current.push(component);
-        paths.insert(current.clone());
-    }
-    paths
+    prepare_with_driver(
+        source,
+        source_id,
+        source_base,
+        Some(base_dir),
+        preprocess_options,
+        IncludeReadMode::Local { root },
+        filesystem_session,
+        Some((policy, limits)),
+        dependencies,
+    )
 }
 
 fn logical_key(path: &Path) -> String {
@@ -733,13 +672,6 @@ mod tests {
             .expect("session")
     }
 
-    fn request(target: &str) -> IncludeRequest {
-        adocweave::preprocess::discover_includes(&format!("include::{target}[]\n"))
-            .expect("include discovery")
-            .pop()
-            .expect("include request")
-    }
-
     #[test]
     fn duplicate_requests_keep_logical_identity_and_share_one_read() {
         let root = TestDirectory::new();
@@ -747,16 +679,23 @@ mod tests {
         let mut session = session(&root.0);
 
         for _ in 0..2 {
-            let loaded = {
-                let mut loader = IncludeLoader::new(&mut session);
-                loader
-                    .load(&root.0, request("part.adoc"))
-                    .expect("loaded source")
+            let loaded = IncludeFilesystem::new().read(
+                &mut session,
+                IncludeFilesystemRequest::new(
+                    LogicalSourceId::new("include:part.adoc").expect("source ID"),
+                    &root.0,
+                    "part.adoc",
+                ),
+            );
+            let IncludeFilesystemOutcome::Found(loaded) = loaded else {
+                panic!("loaded source");
             };
-            let (source_id, source, provenance) = loaded.into_parts();
-            assert_eq!(source_id.as_str(), "include:part.adoc");
-            assert_eq!(source.as_ref(), "part\n");
-            assert_eq!(provenance.logical_target, "part.adoc");
+            assert_eq!(loaded.source_id().as_str(), "include:part.adoc");
+            assert_eq!(loaded.source(), "part\n");
+            assert_eq!(
+                loaded.provenance().canonical_path(),
+                root.0.join("part.adoc")
+            );
         }
         assert_eq!(session.budget().files(), 1);
     }
@@ -765,25 +704,40 @@ mod tests {
     fn failed_common_read_cannot_produce_a_loaded_source() {
         let root = TestDirectory::new();
         let mut session = session(&root.0);
-        let result = IncludeLoader::new(&mut session).load(&root.0, request("missing.adoc"));
-
-        assert!(result.is_err());
+        let result = IncludeFilesystem::new().read(
+            &mut session,
+            IncludeFilesystemRequest::new(
+                LogicalSourceId::new("include:missing.adoc").expect("source ID"),
+                &root.0,
+                "missing.adoc",
+            ),
+        );
+        assert!(matches!(result, IncludeFilesystemOutcome::NotFound(_)));
         assert_eq!(session.budget().files(), 0);
     }
 
     #[test]
-    fn missing_dependency_candidates_stay_inside_root() {
+    fn missing_dependency_journal_stays_inside_root() {
         let root = TestDirectory::new();
-        assert_eq!(
-            dependency_candidates(&root.0, "chapters/new.adoc"),
-            BTreeSet::from([
-                root.0.clone(),
-                root.0.join("chapters"),
-                root.0.join("chapters/new.adoc")
-            ])
-        );
-        assert!(dependency_candidates(&root.0, "../secret.adoc").is_empty());
-        assert!(dependency_candidates(&root.0, "/etc/passwd").is_empty());
+        let mut filesystem = session(&root.0);
+        let mut dependencies = DependencyJournal::default();
+        let prepared = prepare_local_tracking_with_existing_session(
+            "include::chapters/new.adoc[]\n",
+            root.0.join("root.adoc").to_string_lossy().into_owned(),
+            &root.0,
+            &root.0,
+            &root.0,
+            &PreprocessOptions::default(),
+            &mut dependencies,
+            &mut filesystem,
+        )
+        .expect("missing include is a typed validation failure");
+        assert!(prepared.validation().is_some());
+        let paths = dependencies
+            .entries()
+            .map(|(path, _)| path.to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(paths, [root.0.join("chapters/new.adoc")]);
     }
 
     #[cfg(target_os = "linux")]
@@ -879,32 +833,17 @@ mod tests {
             &PreprocessOptions::default(),
         )
         .expect("regular preparation");
-        #[derive(Default)]
-        struct RecordingObserver {
-            paths: BTreeSet<PathBuf>,
-            loaded_lengths: Vec<usize>,
-        }
-        impl DependencyObserver for RecordingObserver {
-            fn observe_path(&mut self, path: &Path) {
-                self.paths.insert(path.to_owned());
-            }
-
-            fn observe_loaded(&mut self, path: &Path, source: &str) {
-                self.paths.insert(path.to_owned());
-                self.loaded_lengths.push(source.len());
-            }
-        }
-
-        let mut observer = RecordingObserver::default();
-        let local = prepare_local_tracking(
+        let mut filesystem = session(&root.0);
+        let mut dependencies = DependencyJournal::default();
+        let local = prepare_local_tracking_with_existing_session(
             source,
             source_id,
             &root.0,
             &root.0,
             &root.0,
-            FilesystemReadLimits::default(),
             &PreprocessOptions::default(),
-            &mut observer,
+            &mut dependencies,
+            &mut filesystem,
         )
         .expect("local preparation");
 
@@ -914,8 +853,10 @@ mod tests {
         );
         assert!(regular.validation.is_none());
         assert!(local.validation.is_some());
-        assert_eq!(observer.loaded_lengths, [5]);
-        assert!(observer.paths.contains(&root.0.join("part.adoc")));
+        let observed = dependencies.entries().collect::<Vec<_>>();
+        assert!(observed.iter().any(|(path, source)| {
+            *path == root.0.join("part.adoc") && *source == Some("part\n")
+        }));
     }
 
     #[cfg(unix)]
@@ -928,27 +869,26 @@ mod tests {
         symlink("part.adoc", root.0.join("alias.adoc")).expect("alias");
         let mut session = session(&root.0);
 
-        let direct = {
-            let mut loader = IncludeLoader::new(&mut session);
-            loader
-                .load(&root.0, request("part.adoc"))
-                .expect("direct load")
+        let read = |session: &mut LocalFilesystemSession, id: &str, target: &str| {
+            let IncludeFilesystemOutcome::Found(found) = IncludeFilesystem::new().read(
+                session,
+                IncludeFilesystemRequest::new(
+                    LogicalSourceId::new(id).expect("source ID"),
+                    &root.0,
+                    target,
+                ),
+            ) else {
+                panic!("loaded source");
+            };
+            found
         };
-        let alias = {
-            let mut loader = IncludeLoader::new(&mut session);
-            loader
-                .load(&root.0, request("alias.adoc"))
-                .expect("alias load")
-        };
-        let (direct_id, _, direct_provenance) = direct.into_parts();
-        let (alias_id, _, alias_provenance) = alias.into_parts();
+        let direct = read(&mut session, "include:part.adoc", "part.adoc");
+        let alias = read(&mut session, "include:alias.adoc", "alias.adoc");
 
-        assert_eq!(direct_id.as_str(), "include:part.adoc");
-        assert_eq!(alias_id.as_str(), "include:alias.adoc");
-        assert_ne!(direct_id, alias_id);
+        assert_ne!(direct.source_id(), alias.source_id());
         assert_eq!(
-            direct_provenance.canonical_path,
-            alias_provenance.canonical_path
+            direct.provenance().canonical_path(),
+            alias.provenance().canonical_path()
         );
         assert_eq!(session.budget().files(), 1);
     }
@@ -963,25 +903,41 @@ mod tests {
         fs::write(outside.0.join("outside.adoc"), "outside\n").expect("outside fixture");
         symlink(outside.0.join("outside.adoc"), root.0.join("escape.adoc")).expect("escape");
         let mut session = session(&root.0);
-        let error = IncludeLoader::new(&mut session)
-            .load(&root.0, request("escape.adoc"))
-            .expect_err("symlink escape");
-
-        assert!(matches!(error, ResourceError::OutsideRoots(_)));
+        let outcome = IncludeFilesystem::new().read(
+            &mut session,
+            IncludeFilesystemRequest::new(
+                LogicalSourceId::new("include:escape.adoc").expect("source ID"),
+                &root.0,
+                "escape.adoc",
+            ),
+        );
+        assert!(matches!(outcome, IncludeFilesystemOutcome::Failed(_)));
         assert_eq!(session.budget().files(), 0);
     }
 
     #[cfg(unix)]
     #[test]
-    fn logical_ancestor_symlink_is_retained_separately_from_target() {
+    fn logical_ancestor_symlink_keeps_a_verified_missing_watch_candidate() {
         use std::os::unix::fs::symlink;
 
         let root = TestDirectory::new();
         fs::create_dir(root.0.join("dir-a")).expect("dir a");
         symlink("dir-a", root.0.join("current")).expect("logical symlink");
-        let dependencies = dependency_candidates(&root.0, "current/part.adoc");
-        assert!(dependencies.contains(&root.0));
-        assert!(dependencies.contains(&root.0.join("current")));
-        assert!(dependencies.contains(&root.0.join("current/part.adoc")));
+        let mut session = session(&root.0);
+        let outcome = IncludeFilesystem::new().read(
+            &mut session,
+            IncludeFilesystemRequest::new(
+                LogicalSourceId::new("include:current/part.adoc").expect("source ID"),
+                &root.0,
+                "current/part.adoc",
+            ),
+        );
+        let IncludeFilesystemOutcome::NotFound(missing) = outcome else {
+            panic!("missing target");
+        };
+        assert_eq!(
+            missing.watch_candidate().path(),
+            root.0.join("current/part.adoc")
+        );
     }
 }
