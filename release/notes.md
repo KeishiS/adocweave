@@ -1,8 +1,8 @@
-# AdocWeave v0.46.1
+# AdocWeave v0.46.2
 
 ## 主な変更
 
-- **プロジェクト設定の読み込み上限で、ワークスペース全体の解析が止まる不具合を修正しました。** ある``.adocweave.toml``の``resources.max-files``が、そのディレクトリ以下の文書数より小さい場合、Language Serverの初期走査が最初の拒否でワークスペース全体の読み込みを失敗させ、無関係なファイルまで解析できなくなっていました。今後は読めなかった文書を飛ばして走査を続け、上限を設けている設定ファイルを名指しした警告(``workspace-scan-incomplete``)を報告します。文書を開いたときの解析では、これらの上限を従来どおり適用します。
+- **走査が終えられなかったことの通知を、文書の診断からエディターへのメッセージに変えました。** v0.46.1では警告を診断として公開していたため、原因のない文書を含めて開いているすべてのファイルの1行目に印が付き、編集では消せない状態が続いていました。今後は``window/showMessage``のWarningとして1回だけ送ります。同じ内容は、再走査が繰り返されても繰り返しません。
 
 ## 対応環境
 
@@ -10,21 +10,23 @@ CLIとLanguage Serverのnative archiveは、次に挙げるLinux、macOSおよ�
 
 ## 公開契約と破壊的変更
 
-v0.46.0からの破壊的変更はありません。この版で変わるのは、初期走査が読み込み上限に達したときのLanguage Serverの状態です。従来はerror(``workspace-resource-error``)でワークスペース全体を破棄していましたが、読めた文書を保持し、警告(``workspace-scan-incomplete``)を報告します。severityとcodeは、v0.46.0で走査の項目数上限に導入したものと同じです。
+**``workspace-scan-incomplete``のcodeを持つ診断を公開しなくなります。** 同じ内容は``window/showMessage``のWarningとして届きます。このcodeはv0.46.1で追加したものです。走査を終えられなかったことはワークスペース全体の事情であり、特定の文書に原因がないため、文書の診断として扱うのをやめました。
 
-WASM protocol schema version（14）とWorker protocol version（2）は、どちらもv0.46.0から変更していません。AsciiDocの解析結果とHTML出力も変更していません。textlint Processorの公開API、TxtASTへの変換結果、自動修正を行わない保証、パッケージの構成および対応するtextlintの版も変更していません。GitHub Release以外のregistryへpackageを公開せず、VS Code拡張だけをOpen VSXへ公開する方針も変わりません。
+権限違反、不正な設定、root外アクセスなどは従来どおりerror診断(``workspace-resource-error``)で報告します。これらは結果を公開しないため、開いている文書に理由を示す必要があります。
+
+WASM protocol schema version（14）とWorker protocol version（2）は、どちらもv0.46.1から変更していません。AsciiDocの解析結果とHTML出力も変更していません。textlint Processorの公開API、TxtASTへの変換結果、自動修正を行わない保証、パッケージの構成および対応するtextlintの版も変更していません。GitHub Release以外のregistryへpackageを公開せず、VS Code拡張だけをOpen VSXへ公開する方針も変わりません。
 
 consumerは記載されたpackage versionを厳密に一致させてください。異なるversionのCLI、LSP、browser、Zed、VS Codeまたはtextlint向け配布物を混在させないでください。
 
-## v0.46.1への移行
+## v0.46.2への移行
 
-- Browser向けWASMのJSON requestを直接構築している場合は、0.46.1のpackageとAPIへ更新し、requestの``packageVersion``も``0.46.1``にそろえてください。``schemaVersion``はrequestの項目ではありません。requestには追加しないでください。保存済みの結果やcacheは、packageが公開する``PROTOCOL_SCHEMA_VERSION = 14``を使って区別してください。
-- CLI、LSP、browser、Zed、VS Codeおよびtextlint向け配布物のversionを0.46.1へそろえてください。バージョンの異なる配布物を混ぜて使えないため、更新する場合はすべてを入れ替えます。
-- v0.46.0でこの不具合に該当していた場合、更新後は該当プロジェクトの文書だけが登録されず、警告で報告されます。すべての文書を登録するには、警告が名指しする``.adocweave.toml``の``resources.max-files``または byte 数の上限を引き上げてください。
+- Browser向けWASMのJSON requestを直接構築している場合は、0.46.2のpackageとAPIへ更新し、requestの``packageVersion``も``0.46.2``にそろえてください。``schemaVersion``はrequestの項目ではありません。requestには追加しないでください。保存済みの結果やcacheは、packageが公開する``PROTOCOL_SCHEMA_VERSION = 14``を使って区別してください。
+- CLI、LSP、browser、Zed、VS Codeおよびtextlint向け配布物のversionを0.46.2へそろえてください。バージョンの異なる配布物を混ぜて使えないため、更新する場合はすべてを入れ替えます。
+- ``workspace-scan-incomplete``の診断を機械的に処理していた場合は、``window/showMessage``の受信へ切り替えてください。
 
 ## 更新とロールバック
 
-native archiveはversion別directoryへ展開し、`--version --json`が`0.46.1`を返すことを確認してから選択先を切り替えてください。
+native archiveはversion別directoryへ展開し、`--version --json`が`0.46.2`を返すことを確認してから選択先を切り替えてください。
 
 VS Codeでは検証済みVSIXを手動導入し、拡張とLanguage Serverのversion一致を確認してください。受入確認が成功するまで以前のVSIXとnative directoryを保持します。
 
@@ -51,7 +53,7 @@ rollback時は以前のversion別directoryまたはVSIXへ戻します。詳細�
 - Language Serverはworkspaceの走査を初期化の応答後に、要求へ応答するthreadの外で行います。走査中もほかの要求へ応答しますが、走査の完了前は、開いた文書の解析にworkspace内のほかの文書が反映されません。走査の完了後に再解析します。
 - Linuxでfilesystemのhandle相対競合耐性を利用するには、``/proc/self/fd``を読み取れる実行環境が必要です。利用できない場合や、開いたfileのpathとidentityを確認できない場合は、安全性の低いpath検査へ切り替えず、``local-target-unverifiable``としてworkspaceの読込を拒否します。macOSとWindowsは、同時変更のない静的なfilesystem snapshotだけを前提とします。
 - 一つのfilesystem policyが保持できるrootは128件までです。読込対象を増やす場合は、設定のrootを必要な上位directoryへまとめてください。
-- Language Serverの初期ワークスペース走査は、複数project scopeの合計で設定と本文の読込10,000回、取得内容50 MiB、directory entry 100,000件、候補変更10,000回、参加session 10,002件までです。project設定のsession単位の上限も別に適用します。directory entryの上限、およびproject設定の``resources``による読み込み上限に達した場合は、そこまでに見つけた文書で動作を続け、警告で報告します。
+- Language Serverの初期ワークスペース走査は、複数project scopeの合計で設定と本文の読込10,000回、取得内容50 MiB、directory entry 100,000件、候補変更10,000回、参加session 10,002件までです。project設定のsession単位の上限も別に適用します。directory entryの上限、およびproject設定の``resources``による読み込み上限に達した場合は、そこまでに見つけた文書で動作を続け、エディターへメッセージで報告します。
 - ``workspace.scan.exclude``はLanguage Serverの初期走査だけに適用します。CLI入力、明示的に開いた文書、file watcherの通知およびinclude先を拒否する設定ではありません。
 
 ## 配布物の検証
