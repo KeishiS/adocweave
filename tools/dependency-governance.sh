@@ -56,4 +56,7 @@ node tools/verify-textlint-plugin-dependencies.mjs
 cargo metadata --locked --format-version=1 > "$metadata"
 cargo metadata --manifest-path editors/zed/Cargo.toml --locked --format-version=1 > "$zed_metadata"
 node tools/verify-duplicate-dependencies.mjs "$metadata" "$zed_metadata"
+# 生成したnoticeはarchiveへ同梱する成果物であり、内容を照合する検査がほかにないため、
+# 生成logicのtestをここで実行します。
+node --test tools/generate-third-party-notices.test.mjs
 node tools/generate-third-party-notices.mjs "$notice"
