@@ -49,7 +49,7 @@ Zedまたは他のLSP client
 
 * local rootのauthority、symlink検証およびhandle相対の読込・検査
 * include取得jobの課金と取消
-* ownerごとの候補state、resource bindingおよびtransactionのcommit
+* sessionごとの候補state、世代付きresource bindingおよびtransactionのcommit
 * 本文、不在と確定したresource、失敗および監視候補の型付き結果
 
 ``adocweave-workspace``は次を所有します。
@@ -228,8 +228,8 @@ workspaceが走査対象として保持する解析root、open overlayによっ�
 ことだけを理由に解析rootへ残しません。
 
 編集中に新しいincludeが追加された場合、解析workerは``WorkspaceSnapshot::preprocess_resumable``を開始します。
-``NeedResource``がsnapshotにないlocal resourceを要求すると、workerは一つの``IncludeFilesystem`` transactionにある
-``read``の型付き結果を応答に変換し、同じ継続を再開します。前処理は先頭からやり直しません。
+``NeedResource``がsnapshotにないlocal resourceを要求すると、workerは同じjobに属するproject scopeごとの
+``IncludeFilesystemTransaction::read``の型付き結果を応答に変換し、同じ継続を再開します。前処理は先頭からやり直しません。
 ``Complete``は前処理済み文書を``WorkspacePreprocessDraft::analyze``へ渡し、前処理を繰り返さずに解析を続けます。
 
 読込はworkspaceとinclude bindingの候補stateに対して行います。revision、generation、設定の契約および解析が

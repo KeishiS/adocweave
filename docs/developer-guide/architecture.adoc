@@ -74,13 +74,14 @@ allocationまたは取り込みを始める前に上限を適用します。
 旧範囲の課金解放と新範囲への移行を一つの更新として確定します。
 
 Nativeのinclude取得は``adocweave-host::IncludeFilesystem``の高水準な取得境界を使います。
-呼出側は``IncludeFilesystemOwner``ごとにtransactionを開き、論理的なsource ID、基準pathおよびtargetを含む
+CLIは失敗後も別の対象を検査できる逐次APIを使い、Language Serverは一回のjobを共有してproject scopeごとの
+sessionからtransactionを開きます。論理的なsource ID、基準pathおよびtargetを含む
 ``IncludeFilesystemRequest``を``read``または``inspect``に渡します。結果は本文、不在または失敗を区別する型で返り、
 許可済みの監視候補だけを公開します。処理の採用時はtransaction全体をcommitし、取消しまたは失敗したtransactionは
 live stateを変更しません。
 
 ``IncludeFilesystem``がjobの課金、候補state、resource bindingおよびhandle相対の読込・検査を内部で対応付けます。
-CLIとLanguage Serverはこれらの低水準な所有関係を組み立てず、処理のsession、ownerと予算を高水準な取得境界へ渡します。
+CLIとLanguage Serverはこれらの低水準な所有関係を組み立てず、処理のsessionと予算を高水準な取得境界へ渡します。
 Linuxではこの境界の内部がrootのディレクトリhandleを起点にfileを開き、path検査後に開き直しません。
 依存関係を監視するadapter以外はcanonical pathを利用せず、診断やsource mapの識別子にも使用しません。
 
