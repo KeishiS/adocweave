@@ -650,6 +650,96 @@ fn a_result_with_superseded_analysis_options_installs_nothing() {
 }
 
 #[test]
+fn superseding_the_later_scope_commits_no_scope_from_one_analysis() {
+    let root = TestDirectory::new();
+    let nested = root.0.join("nested");
+    std::fs::create_dir(&nested).expect("nested project");
+    write_resource_config(&root.0, 16, 4096, 4096, true);
+    write_resource_config(&nested, 16, 4096, 4096, true);
+    let source = root.0.join("root.adoc");
+    let first_include = root.0.join("first.txt");
+    let second_include = nested.join("second.txt");
+    std::fs::write(
+        &source,
+        "include::first.txt[]\ninclude::nested/second.txt[]\n",
+    )
+    .expect("source");
+    std::fs::write(&first_include, "first scope\n").expect("first include");
+    std::fs::write(&second_include, "second scope\n").expect("second include");
+    let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+    let source_uri = Url::from_file_path(&source).expect("source URI");
+    let first_uri = Url::from_file_path(&first_include).expect("first include URI");
+    let second_uri = Url::from_file_path(&second_include).expect("second include URI");
+    let first_id = uri_id(&first_uri).expect("first include ID");
+    let second_id = uri_id(&second_uri).expect("second include ID");
+    let mut resources = WorkspaceResources::default();
+    resources.load_roots(&[root_uri]).expect("load workspace");
+    assert!(resources.get(&first_uri).is_none());
+    assert!(resources.get(&second_uri).is_none());
+    let bindings_before = resources.resource_bindings.clone();
+    let filesystem_scopes_before = resources
+        .filesystems
+        .keys()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+
+    let (input, analyzed) = analyze_root(&mut resources, &source_uri).expect("workspace analysis");
+    let acquisition = analyzed
+        .acquisition
+        .as_ref()
+        .expect("completed include acquisition");
+    assert_eq!(acquisition.transactions.len(), 2);
+    let sessions = acquisition
+        .transactions
+        .iter()
+        .map(|(scope, candidate)| {
+            let session = Arc::clone(&candidate.session);
+            let budget = session.lock().expect("filesystem session").budget();
+            (scope.clone(), session, budget)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(sessions.first().expect("earlier scope").0, input.scope);
+    let (later_scope, later_session, _) = sessions.last().expect("later scope");
+    assert_ne!(later_scope, &input.scope);
+
+    let superseding_job =
+        IncludeFilesystemJob::new(watched_file_job_limits()).expect("superseding filesystem job");
+    let replacement = {
+        let mut session = later_session.lock().expect("later filesystem session");
+        superseding_job
+            .superseding_transaction(&mut session)
+            .expect("supersede later candidate")
+    };
+    drop(replacement);
+    superseding_job.finish().expect("finish superseding job");
+
+    let error = resources
+        .apply_analyzed_root(analyzed, &input, &adocweave::AnalysisOptions::default())
+        .expect_err("one invalid scope rejects the complete acquisition");
+    assert!(error.contains("filesystem draft is stale"), "{error}");
+    assert!(resources.get(&first_uri).is_none());
+    assert!(resources.get(&second_uri).is_none());
+    assert!(!resources.resource_bindings.contains_key(&first_id));
+    assert!(!resources.resource_bindings.contains_key(&second_id));
+    assert_eq!(resources.resource_bindings, bindings_before);
+    assert_eq!(
+        resources
+            .filesystems
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>(),
+        filesystem_scopes_before
+    );
+    for (_, session, budget) in sessions {
+        assert_eq!(
+            session.lock().expect("filesystem session").budget(),
+            budget,
+            "no scope budget may be committed"
+        );
+    }
+}
+
+#[test]
 fn an_analysis_that_is_never_adopted_leaves_no_include_behind() {
     let root = TestDirectory::new();
     let generated = root.0.join("nested/generated");
