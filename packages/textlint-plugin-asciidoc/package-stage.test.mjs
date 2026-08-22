@@ -18,8 +18,10 @@ test("契約からpackage stageを明示的に生成する", async () => {
     const files = await listFiles(stage);
     assert.deepEqual(files, contract.files.map(({ path }) => path).sort());
     const manifest = JSON.parse(await readFile(join(stage, "package.json"), "utf8"));
+    const sourceManifest = JSON.parse(await readFile(new URL("./package.json", import.meta.url), "utf8"));
     assert.deepEqual(Object.keys(manifest).sort(), ["bugs", "description", "engines", "exports", "files", "homepage", "keywords", "license", "main", "name", "peerDependencies", "private", "repository", "type", "types", "version"].sort());
     assert.equal(manifest.name, contract.identity.packageName);
+    assert.equal(manifest.version, sourceManifest.version);
     assert.equal(manifest.engines.node, contract.compatibility.nodeEngine);
     assert.equal(await readFile(join(stage, "THIRD_PARTY_NOTICES.adoc"), "utf8"), "= Notice\n");
   } finally { await rm(root, { recursive: true, force: true }); }

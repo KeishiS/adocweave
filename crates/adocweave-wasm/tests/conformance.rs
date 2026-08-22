@@ -56,7 +56,7 @@ fn native_adapter_accepts_every_shared_conformance_case() {
             continue;
         }
         let response = result.expect(name);
-        assert_eq!(response.package_version, adocweave::VERSION, "{name}");
+        assert_eq!(response.package_version, adocweave_wasm::VERSION, "{name}");
         assert!(!response.syntax.is_empty(), "{name}: syntax tree");
         assert!(!response.ast.is_empty(), "{name}: AST");
         if name == "position-dependent-attribute-queries-with-include-origin" {
@@ -339,7 +339,7 @@ fn request_for(entry: &Value, fixtures: &Path) -> WasmRequest {
         .unwrap_or_else(|| json!({}));
     let preprocess = entry.get("preprocess").cloned().unwrap_or(Value::Null);
     serde_json::from_value(json!({
-        "packageVersion": adocweave::VERSION,
+        "packageVersion": adocweave_wasm::VERSION,
         "sourceId": entry["sourceId"].as_str().map_or_else(
             || format!("conformance:{}", entry["name"].as_str().expect("name")),
             str::to_owned,

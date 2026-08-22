@@ -1,4 +1,6 @@
-use adocweave::{SourceId, VERSION};
+use adocweave::SourceId;
+
+use crate::VERSION;
 use serde::Deserialize;
 
 use crate::{

@@ -17,10 +17,10 @@ test("registryへ公開せずruntime npm依存を持たない", () => {
   assert.deepEqual(manifest.dependencies, undefined);
 });
 
-test("versionとWASMをpackage相対で読み込む", () => {
-  assert.match(bridge, /new URL\("\.\/package\.json", import\.meta\.url\)/);
+test("adapter APIとWASMをpackage内で完結させる", () => {
+  assert.match(bridge, /TEXTLINT_ADAPTER_API_VERSION = 1/);
   assert.match(bridge, /require\("\.\/wasm\/adocweave_textlint_wasm\.cjs"\)/);
-  assert.doesNotMatch(bridge, /release-manifest|target\//);
+  assert.doesNotMatch(bridge, /package\.json|release-manifest|target\//);
 });
 
 test("package境界へプロジェクト固有設定を含めない", () => {

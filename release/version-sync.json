@@ -1,271 +1,114 @@
 {
-  "schemaVersion": 1,
-  "authority": {
-    "type": "literal",
-    "path": "release-manifest.json",
-    "template": "\"packageVersion\": \"{version}\"",
-    "count": 1
-  },
-  "targets": [
+  "schemaVersion": 2,
+  "products": [
     {
-      "type": "literal",
-      "path": "Cargo.toml",
-      "template": "version = \"{version}\"",
-      "count": 1
+      "id": "cli",
+      "authority": {
+        "type": "literal",
+        "path": "crates/adocweave-cli/Cargo.toml",
+        "template": "name = \"adocweave-cli\"\nversion = \"{version}\"",
+        "count": 1
+      },
+      "targets": [
+        { "type": "cargo-lock", "path": "Cargo.lock", "packages": ["adocweave-cli"] }
+      ],
+      "generators": []
     },
     {
-      "type": "cargo-lock",
-      "path": "Cargo.lock",
-      "packages": [
-        "adocweave",
-        "adocweave-cli",
-        "adocweave-config",
-        "adocweave-host",
-        "adocweave-lsp",
-        "adocweave-textlint",
-        "adocweave-textlint-wasm",
-        "adocweave-wasm",
-        "adocweave-workspace"
-      ]
+      "id": "lsp",
+      "authority": {
+        "type": "literal",
+        "path": "crates/adocweave-lsp/Cargo.toml",
+        "template": "name = \"adocweave-lsp\"\nversion = \"{version}\"",
+        "count": 1
+      },
+      "targets": [
+        { "type": "cargo-lock", "path": "Cargo.lock", "packages": ["adocweave-lsp"] }
+      ],
+      "generators": []
     },
     {
-      "type": "cargo-lock",
-      "path": "fuzz/Cargo.lock",
-      "packages": [
-        "adocweave"
-      ]
-    },
-    {
-      "type": "literal",
-      "path": "editors/zed/Cargo.toml",
-      "template": "version = \"{version}\"",
-      "count": 1
-    },
-    {
-      "type": "cargo-lock",
-      "path": "editors/zed/Cargo.lock",
-      "packages": [
-        "adocweave-zed"
-      ]
-    },
-    {
-      "type": "literal",
-      "path": "editors/zed/extension.toml",
-      "template": "version = \"{version}\"",
-      "count": 1
-    },
-    {
-      "type": "literal",
-      "path": "editors/vscode/package.json",
-      "template": "\"version\": \"{version}\"",
-      "count": 1
-    },
-    {
-      "type": "literal",
-      "path": "editors/vscode/package-lock.json",
-      "template": "\"version\": \"{version}\"",
-      "count": 2
-    },
-    {
-      "type": "literal",
-      "path": "web-worker/package.json",
-      "template": "\"version\": \"{version}\"",
-      "count": 1
-    },
-    {
-      "type": "literal",
-      "path": "web-worker/worker-protocol.mjs",
-      "template": "\"{version}\"",
-      "count": 1
-    },
-    {
-      "type": "literal",
-      "path": "release/distribution-plan.json",
-      "template": "\"packageVersion\": \"{version}\"",
-      "count": 1
-    },
-    {
-      "type": "literal",
-      "path": "release/notes.md",
-      "template": "{version}",
-      "count": "all"
-    },
-    {
-      "type": "literal",
-      "path": "fixtures/protocol/request-corpus.json",
-      "template": "\"packageVersion\": \"{version}\"",
-      "count": 1
-    },
-    {
-      "type": "literal",
-      "path": "release/breaking-rust-api.json",
-      "template": "\"releaseVersion\": \"{version}\"",
-      "count": 1
-    },
-    {
-      "type": "literal",
-      "path": "release/distribution-plan.json",
-      "template": "adocweave-browser-{version}.tar.xz",
-      "count": 1
-    },
-    {
-      "type": "literal",
-      "path": "release/distribution-plan.json",
-      "template": "adocweave-zed-{version}.tar.xz",
-      "count": 1
-    },
-    {
-      "type": "literal",
-      "path": "release/distribution-plan.json",
-      "template": "adocweave-vscode-{version}.vsix",
-      "count": 1
-    },
-    {
-      "type": "literal",
-      "path": "release/distribution-plan.json",
-      "template": "adocweave-textlint-plugin-asciidoc-{version}.tgz",
-      "count": 1
-    },
-    {
-      "type": "literal",
-      "path": "dist-workspace.toml",
-      "template": "adocweave-browser-{version}.tar.xz",
-      "count": 1
-    },
-    {
-      "type": "literal",
-      "path": "dist-workspace.toml",
-      "template": "adocweave-zed-{version}.tar.xz",
-      "count": 1
-    },
-    {
-      "type": "literal",
-      "path": "dist-workspace.toml",
-      "template": "adocweave-vscode-{version}.vsix",
-      "count": 1
-    },
-    {
-      "type": "literal",
-      "path": "dist-workspace.toml",
-      "template": "adocweave-textlint-plugin-asciidoc-{version}.tgz",
-      "count": 1
-    },
-    {
-      "type": "literal",
-      "path": "release/adocweave-dist-manifest.fixture.json",
-      "template": "\"packageVersion\": \"{version}\"",
-      "count": 1
-    },
-    {
-      "type": "literal",
-      "path": "release/adocweave-dist-manifest.fixture.json",
-      "template": "adocweave-browser-{version}.tar.xz",
-      "count": 1
-    },
-    {
-      "type": "literal",
-      "path": "release/adocweave-dist-manifest.fixture.json",
-      "template": "adocweave-zed-{version}.tar.xz",
-      "count": 1
-    },
-    {
-      "type": "literal",
-      "path": "release/adocweave-dist-manifest.fixture.json",
-      "template": "adocweave-vscode-{version}.vsix",
-      "count": 1
-    },
-    {
-      "type": "literal",
-      "path": "release/adocweave-dist-manifest.fixture.json",
-      "template": "adocweave-textlint-plugin-asciidoc-{version}.tgz",
-      "count": 1
-    }
-  ],
-  "generators": [
-    {
-      "id": "protocol",
-      "outputs": [
+      "id": "browser",
+      "authority": {
+        "type": "literal",
+        "path": "web-worker/package.json",
+        "template": "\"name\": \"@adocweave/browser\",\n  \"version\": \"{version}\"",
+        "count": 1
+      },
+      "targets": [
+        { "type": "literal", "path": "crates/adocweave-wasm/Cargo.toml", "template": "name = \"adocweave-wasm\"\nversion = \"{version}\"", "count": 1 },
+        { "type": "cargo-lock", "path": "Cargo.lock", "packages": ["adocweave-wasm"] },
+        { "type": "literal", "path": "web-worker/worker-protocol.mjs", "template": "\"{version}\"", "count": 1 },
+        { "type": "literal", "path": "fixtures/protocol/request-corpus.json", "template": "\"packageVersion\": \"{version}\"", "count": 1 }
+      ],
+      "generators": [
         {
-          "path": "web-worker/protocol.d.mts"
+          "id": "protocol",
+          "outputs": [{ "path": "web-worker/protocol.d.mts" }]
+        },
+        {
+          "id": "public-conformance",
+          "outputs": [
+            { "path": "fixtures/public-conformance/document-structure.html" },
+            { "path": "fixtures/public-conformance/document-structure.projection.json" },
+            { "path": "fixtures/public-conformance/document-structure.diagnostics.json" },
+            { "path": "fixtures/public-conformance/document-structure.render-diagnostics.json" },
+            { "path": "fixtures/public-conformance/source-block.html" },
+            { "path": "fixtures/public-conformance/source-block.projection.json" },
+            { "path": "fixtures/public-conformance/source-block.diagnostics.json" },
+            { "path": "fixtures/public-conformance/source-block.render-diagnostics.json" },
+            { "path": "fixtures/public-conformance/formulas.html" },
+            { "path": "fixtures/public-conformance/formulas.projection.json" },
+            { "path": "fixtures/public-conformance/formulas.diagnostics.json" },
+            { "path": "fixtures/public-conformance/formulas.render-diagnostics.json" },
+            { "path": "fixtures/public-conformance/blocks.html" },
+            { "path": "fixtures/public-conformance/blocks.projection.json" },
+            { "path": "fixtures/public-conformance/blocks.diagnostics.json" },
+            { "path": "fixtures/public-conformance/blocks.render-diagnostics.json" }
+          ]
         }
       ]
     },
     {
-      "id": "public-conformance",
-      "outputs": [
-        {
-          "path": "fixtures/public-conformance/document-structure.html"
-        },
-        {
-          "path": "fixtures/public-conformance/document-structure.projection.json"
-        },
-        {
-          "path": "fixtures/public-conformance/document-structure.diagnostics.json"
-        },
-        {
-          "path": "fixtures/public-conformance/document-structure.render-diagnostics.json"
-        },
-        {
-          "path": "fixtures/public-conformance/source-block.html"
-        },
-        {
-          "path": "fixtures/public-conformance/source-block.projection.json"
-        },
-        {
-          "path": "fixtures/public-conformance/source-block.diagnostics.json"
-        },
-        {
-          "path": "fixtures/public-conformance/source-block.render-diagnostics.json"
-        },
-        {
-          "path": "fixtures/public-conformance/formulas.html"
-        },
-        {
-          "path": "fixtures/public-conformance/formulas.projection.json"
-        },
-        {
-          "path": "fixtures/public-conformance/formulas.diagnostics.json"
-        },
-        {
-          "path": "fixtures/public-conformance/formulas.render-diagnostics.json"
-        },
-        {
-          "path": "fixtures/public-conformance/blocks.html"
-        },
-        {
-          "path": "fixtures/public-conformance/blocks.projection.json"
-        },
-        {
-          "path": "fixtures/public-conformance/blocks.diagnostics.json"
-        },
-        {
-          "path": "fixtures/public-conformance/blocks.render-diagnostics.json"
-        },
-        {
-          "path": "fixtures/public-conformance/diagnostics.html"
-        },
-        {
-          "path": "fixtures/public-conformance/diagnostics.projection.json"
-        },
-        {
-          "path": "fixtures/public-conformance/diagnostics.diagnostics.json"
-        },
-        {
-          "path": "fixtures/public-conformance/diagnostics.render-diagnostics.json"
-        },
-        {
-          "path": "fixtures/public-conformance/unsupported-source-option.html"
-        },
-        {
-          "path": "fixtures/public-conformance/unsupported-source-option.projection.json"
-        },
-        {
-          "path": "fixtures/public-conformance/unsupported-source-option.diagnostics.json"
-        },
-        {
-          "path": "fixtures/public-conformance/unsupported-source-option.render-diagnostics.json"
-        }
-      ]
+      "id": "textlint",
+      "authority": {
+        "type": "literal",
+        "path": "packages/textlint-plugin-asciidoc/package.json",
+        "template": "\"name\": \"adocweave-textlint-plugin-development\",\n  \"version\": \"{version}\"",
+        "count": 1
+      },
+      "targets": [
+        { "type": "literal", "path": "crates/adocweave-textlint-wasm/Cargo.toml", "template": "name = \"adocweave-textlint-wasm\"\nversion = \"{version}\"", "count": 1 },
+        { "type": "cargo-lock", "path": "Cargo.lock", "packages": ["adocweave-textlint-wasm"] }
+      ],
+      "generators": []
+    },
+    {
+      "id": "vscode",
+      "authority": {
+        "type": "literal",
+        "path": "editors/vscode/package.json",
+        "template": "\"name\": \"adocweave-vscode\",\n  \"displayName\": \"AdocWeave\",\n  \"description\": \"AdocWeave Language Server client and AsciiDoc syntax highlighting\",\n  \"version\": \"{version}\"",
+        "count": 1
+      },
+      "targets": [
+        { "type": "literal", "path": "editors/vscode/package-lock.json", "template": "\"version\": \"{version}\"", "count": 2 }
+      ],
+      "generators": []
+    },
+    {
+      "id": "zed",
+      "authority": {
+        "type": "literal",
+        "path": "editors/zed/extension.toml",
+        "template": "version = \"{version}\"",
+        "count": 1
+      },
+      "targets": [
+        { "type": "literal", "path": "editors/zed/Cargo.toml", "template": "name = \"adocweave-zed\"\nversion = \"{version}\"", "count": 1 },
+        { "type": "cargo-lock", "path": "editors/zed/Cargo.lock", "packages": ["adocweave-zed"] }
+      ],
+      "generators": []
     }
   ]
 }

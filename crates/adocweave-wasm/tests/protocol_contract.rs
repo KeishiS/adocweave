@@ -38,7 +38,7 @@ fn latex_wire_value_remains_distinct_from_the_asciidoc_name() {
 
 fn base_request(corpus: &Value) -> Value {
     let mut request = corpus["defaultRequest"].clone();
-    request["packageVersion"] = Value::String(adocweave::VERSION.to_owned());
+    request["packageVersion"] = Value::String(adocweave_wasm::VERSION.to_owned());
     request
 }
 
@@ -383,7 +383,7 @@ fn generated_preprocess_wire_keeps_the_public_api_and_schema_defaults() {
         options: options.clone(),
     };
     let request = WasmPreprocessRequest {
-        package_version: adocweave::VERSION.to_owned(),
+        package_version: adocweave_wasm::VERSION.to_owned(),
         source_id: None,
         source: "include::chapter.adoc[]".to_owned(),
         resources: analysis.resources,
@@ -393,7 +393,7 @@ fn generated_preprocess_wire_keeps_the_public_api_and_schema_defaults() {
     serde_json::from_value::<WasmPreprocessRequest>(serialized)
         .expect("round-tripped preprocess request");
     let response = WasmPreprocessResponse {
-        package_version: adocweave::VERSION.to_owned(),
+        package_version: adocweave_wasm::VERSION.to_owned(),
         source: "expanded".to_owned(),
         source_map: vec![WasmSourceMapSegment {
             output_start: 0,
@@ -909,12 +909,12 @@ fn stable_typed_products_use_explicit_disabled_sentinels() {
 fn preprocess_wire_contract_round_trips_and_rejects_drift() {
     let corpus = corpus();
     let mut value = corpus["preprocessRequest"].clone();
-    value["packageVersion"] = Value::String(adocweave::VERSION.to_owned());
+    value["packageVersion"] = Value::String(adocweave_wasm::VERSION.to_owned());
     let request: WasmPreprocessRequest =
         serde_json::from_value(value.clone()).expect("preprocess request");
     serde_json::to_value(&request).expect("serialized preprocess request");
     let defaults: WasmPreprocessRequest = serde_json::from_value(json!({
-        "packageVersion": adocweave::VERSION,
+        "packageVersion": adocweave_wasm::VERSION,
         "source": "text"
     }))
     .expect("default preprocess request");

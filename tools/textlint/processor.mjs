@@ -1,14 +1,10 @@
 import { createRequire } from "node:module";
-import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { createParseText } from "../../packages/textlint-plugin-asciidoc/bridge.mjs";
 import { createProcessorClass } from "../../packages/textlint-plugin-asciidoc/processor.mjs";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
-const releaseManifest = JSON.parse(
-  readFileSync(new URL("../../release-manifest.json", import.meta.url), "utf8")
-);
 const require = createRequire(import.meta.url);
 
 let bridge;
@@ -20,8 +16,7 @@ function loadBridge() {
 }
 
 const parseText = createParseText({
-  bridgeLoader: loadBridge,
-  componentVersion: releaseManifest.packageVersion
+  bridgeLoader: loadBridge
 });
 
 // リポジトリ内の検査でも、配布するProcessorとTxtAST adapterをそのまま使います。

@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { PACKAGE_VERSION } from "./worker-protocol.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -18,14 +19,13 @@ const manifest = JSON.parse(
 const require = createRequire(import.meta.url);
 const wasm = require(resolve(root, "target/adocweave-wasm-node/adocweave_wasm.js"));
 const native = resolve(root, "target/debug/adocweave-conformance-native");
-const release = JSON.parse(readFileSync(resolve(root, "release-manifest.json"), "utf8"));
 
 function requestFor(entry) {
   const source = entry.sourceFile
     ? readFileSync(resolve(fixtureRoot, entry.sourceFile), "utf8")
     : entry.source;
   return {
-    packageVersion: release.packageVersion,
+    packageVersion: PACKAGE_VERSION,
     sourceId: entry.sourceId ?? `conformance:${entry.name}`,
     version: 1,
     generation: 1,

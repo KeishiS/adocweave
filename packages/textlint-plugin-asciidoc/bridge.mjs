@@ -1,8 +1,7 @@
-import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const manifest = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
+export const TEXTLINT_ADAPTER_API_VERSION = 1;
 
 let bundledBridge;
 
@@ -39,14 +38,10 @@ function normalizeError(cause) {
   return error;
 }
 
-export function createParseText({ bridgeLoader, componentVersion }) {
+export function createParseText({ bridgeLoader }) {
   if (typeof bridgeLoader !== "function") {
     throw new TypeError("bridgeLoaderは関数で指定してください。");
   }
-  if (typeof componentVersion !== "string" || componentVersion.length === 0) {
-    throw new TypeError("componentVersionは空でない文字列で指定してください。");
-  }
-
   return (source, sourceId) => {
     if (typeof source !== "string") {
       throw new TypeError("AsciiDocの入力は文字列で指定してください。");
@@ -68,8 +63,12 @@ export function createParseText({ bridgeLoader, componentVersion }) {
         error.code = "wasm-initialization-failed";
         throw error;
       }
+      if (loaded.adapterApiVersion?.() !== TEXTLINT_ADAPTER_API_VERSION) {
+        const error = new Error("AdocWeave WebAssemblyのtextlint adapter APIに互換性がありません。");
+        error.code = "wasm-initialization-failed";
+        throw error;
+      }
       return loaded.parseText({
-        componentVersion,
         sourceId: sourceId ?? null,
         source
       });
@@ -80,6 +79,5 @@ export function createParseText({ bridgeLoader, componentVersion }) {
 }
 
 export const parseText = createParseText({
-  bridgeLoader: loadBundledBridge,
-  componentVersion: manifest.version
+  bridgeLoader: loadBundledBridge
 });

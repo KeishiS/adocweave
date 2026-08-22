@@ -4,7 +4,7 @@ set -euo pipefail
 readonly root="${ADOCWEAVE_SOURCE_ROOT:-$(git rev-parse --show-toplevel)}"
 cd "$root"
 
-readonly version="$(node --input-type=module -e "import manifest from './release-manifest.json' with { type: 'json' }; process.stdout.write(manifest.packageVersion)")"
+readonly version="$(node --input-type=module -e "import manifest from './packages/textlint-plugin-asciidoc/package.json' with { type: 'json' }; process.stdout.write(manifest.version)")"
 readonly archive_name="adocweave-textlint-plugin-asciidoc-$version.tgz"
 readonly output_directory="${ADOCWEAVE_TEXTLINT_PLUGIN_OUTPUT_DIRECTORY:-target/distrib}"
 readonly archive="$output_directory/$archive_name"

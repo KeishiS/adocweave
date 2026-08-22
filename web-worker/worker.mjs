@@ -1,5 +1,5 @@
 import { createController, WORKER_PROTOCOL_VERSION } from "./controller.mjs";
-import { validateWorkerMessage } from "./worker-protocol.mjs";
+import { PROTOCOL_SCHEMA_VERSION, validateWorkerMessage } from "./worker-protocol.mjs";
 
 let controller;
 let currentGeneration = 0;
@@ -14,6 +14,9 @@ self.onmessage = async ({ data }) => {
     }
     const wasm = await import(data.moduleUrl);
     await wasm.default(data.wasmUrl);
+    if (wasm.protocolSchemaVersion?.() !== PROTOCOL_SCHEMA_VERSION) {
+      throw new Error("incompatible AdocWeave WASM protocol schema");
+    }
     const cancellation = data.cancellationBuffer === null
       ? null
       : new Int32Array(data.cancellationBuffer);
