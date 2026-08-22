@@ -1193,47 +1193,14 @@ impl WorkspacePreprocessFailure {
     }
 }
 
-/// Result of starting or resuming workspace analysis.
-///
-/// These four outcomes are the whole protocol between a caller and one analysis
-/// run, so the enum is deliberately exhaustive. A caller must decide what to do
-/// about each of them, and a new outcome should break callers rather than
-/// disappear into a catch-all arm that quietly does the wrong thing.
+/// Result of analyzing and projecting a completed preprocessing draft.
 pub enum WorkspaceAnalysisStep {
-    /// Preprocessing, core analysis, and origin projection completed once.
+    /// Core analysis and origin projection completed once.
     Complete(Box<WorkspaceAnalysisDraft>),
-    /// The host must answer one include request before processing can continue.
-    NeedResource(Box<SuspendedWorkspaceAnalysis>),
     /// Processing failed without publishing a partial result.
     Failed(WorkspaceError),
     /// Cooperative cancellation discarded all unpublished state.
     Cancelled,
-}
-
-/// Opaque, single-use continuation for suspended workspace analysis.
-pub struct SuspendedWorkspaceAnalysis {
-    preprocessing: SuspendedWorkspacePreprocess,
-    projection_limits: ProjectionLimits,
-}
-
-impl SuspendedWorkspaceAnalysis {
-    /// Returns the one resource request that must be answered.
-    pub const fn request(&self) -> &WorkspaceResourceRequest {
-        self.preprocessing.request()
-    }
-
-    /// Consumes this continuation and resumes without rebuilding its snapshot.
-    pub fn resume(
-        self,
-        response: WorkspaceResourceResponse,
-        cancellation: &impl Cancellation,
-    ) -> WorkspaceAnalysisStep {
-        analysis_step_from_preprocess(
-            self.preprocessing.resume(response, cancellation),
-            self.projection_limits,
-            cancellation,
-        )
-    }
 }
 
 /// Opaque, single-use continuation for suspended workspace preprocessing.
@@ -1632,26 +1599,6 @@ fn completed_include_journal(
         .collect()
 }
 
-fn analysis_step_from_preprocess(
-    step: WorkspacePreprocessStep,
-    projection_limits: ProjectionLimits,
-    cancellation: &impl Cancellation,
-) -> WorkspaceAnalysisStep {
-    match step {
-        WorkspacePreprocessStep::Complete(draft) => draft.analyze(projection_limits, cancellation),
-        WorkspacePreprocessStep::NeedResource(preprocessing) => {
-            WorkspaceAnalysisStep::NeedResource(Box::new(SuspendedWorkspaceAnalysis {
-                preprocessing: *preprocessing,
-                projection_limits,
-            }))
-        }
-        WorkspacePreprocessStep::Failed(failure) => {
-            WorkspaceAnalysisStep::Failed(failure.into_error())
-        }
-        WorkspacePreprocessStep::Cancelled => WorkspaceAnalysisStep::Cancelled,
-    }
-}
-
 /// Unstamped analysis awaiting validation against live workspace state.
 #[derive(Debug)]
 pub struct WorkspaceAnalysisDraft {
@@ -1879,33 +1826,6 @@ impl WorkspaceSnapshot {
                 .options
                 .preprocess_resumable(&root_resource.text, &state.lookup, cancellation);
         state.advance(step)
-    }
-
-    /// Starts analysis that suspends at the first resource absent from this snapshot.
-    ///
-    /// The returned continuation retains this immutable lookup and resumes from
-    /// the exact include directive without rebuilding or rescanning the snapshot.
-    /// The resulting draft records this snapshot generation and the exact
-    /// effective-options instance so an integration layer can strictly reject
-    /// non-canonical work before calling [`Workspace::finalize_draft`].
-    ///
-    /// This compatibility entry returns only [`WorkspaceError`] on failure.
-    /// Adapters that update dependencies after a failed run must drive
-    /// [`Self::preprocess_resumable`] and read
-    /// [`WorkspacePreprocessFailure::dependencies`] before continuing a
-    /// completed draft with [`WorkspacePreprocessDraft::analyze`].
-    pub fn analyze_resumable(
-        &self,
-        root: &ResourceId,
-        options: &EffectiveProcessingOptions,
-        projection_limits: ProjectionLimits,
-        cancellation: &impl Cancellation,
-    ) -> WorkspaceAnalysisStep {
-        analysis_step_from_preprocess(
-            self.preprocess_resumable(root, options, cancellation),
-            projection_limits,
-            cancellation,
-        )
     }
 
     /// Preprocesses, analyzes, and projects one registered root.
@@ -2715,7 +2635,8 @@ mod tests {
         assert_send_sync::<WorkspaceAnalysis>();
         assert_send_sync::<WorkspaceAnalysisDraft>();
         assert_send_sync::<WorkspaceAnalysisStep>();
-        assert_send_sync::<SuspendedWorkspaceAnalysis>();
+        assert_send_sync::<WorkspacePreprocessDraft>();
+        assert_send_sync::<SuspendedWorkspacePreprocess>();
         assert_send_sync::<WorkspaceResourceRequest>();
         assert_send_sync::<WorkspaceResourceResponse>();
         assert_send_sync::<WorkspaceIncludeEvent>();
@@ -2845,8 +2766,17 @@ mod tests {
             .expect("effective options")
     }
 
+    fn analyze_preprocessed(draft: Box<WorkspacePreprocessDraft>) -> Box<WorkspaceAnalysisDraft> {
+        let WorkspaceAnalysisStep::Complete(analysis) =
+            draft.analyze(ProjectionLimits::default(), &NeverCancelled)
+        else {
+            panic!("analysis must complete");
+        };
+        analysis
+    }
+
     #[test]
-    fn resumable_workspace_analysis_uses_each_stage_once_and_finalizes_evidence() {
+    fn resumable_preprocessing_then_analysis_uses_each_stage_once_and_finalizes_evidence() {
         RESUMABLE_STAGE_RUNS.with(|runs| runs.set([0; 4]));
         let mut workspace = Workspace::default();
         let root = id("file:///book/root.adoc");
@@ -2867,30 +2797,32 @@ mod tests {
         let snapshot = workspace.snapshot();
         let canonical_options = effective_options();
 
-        let WorkspaceAnalysisStep::NeedResource(loaded_continuation) = snapshot.analyze_resumable(
-            &root,
-            &canonical_options,
-            ProjectionLimits::default(),
-            &NeverCancelled,
-        ) else {
-            panic!("missing loaded resource must suspend analysis");
+        let WorkspacePreprocessStep::NeedResource(loaded_continuation) =
+            snapshot.preprocess_resumable(&root, &canonical_options, &NeverCancelled)
+        else {
+            panic!("missing loaded resource must suspend preprocessing");
         };
         assert_eq!(loaded_continuation.request().target(), loaded.as_str());
         let loaded_text = Arc::<str>::from("loaded\n");
         let loaded_response = loaded_continuation
             .request()
             .found(Arc::clone(&loaded_text));
-        let WorkspaceAnalysisStep::NeedResource(missing_continuation) =
+        let WorkspacePreprocessStep::NeedResource(missing_continuation) =
             loaded_continuation.resume(loaded_response, &NeverCancelled)
         else {
-            panic!("optional missing resource must suspend analysis");
+            panic!("optional missing resource must suspend preprocessing");
         };
         assert_eq!(missing_continuation.request().target(), missing.as_str());
         let missing_response = missing_continuation.request().not_found();
-        let WorkspaceAnalysisStep::Complete(draft) =
+        let WorkspacePreprocessStep::Complete(preprocessed) =
             missing_continuation.resume(missing_response, &NeverCancelled)
         else {
-            panic!("authoritative absence must complete analysis");
+            panic!("authoritative absence must complete preprocessing");
+        };
+        let WorkspaceAnalysisStep::Complete(draft) =
+            preprocessed.analyze(ProjectionLimits::default(), &NeverCancelled)
+        else {
+            panic!("analysis must complete");
         };
 
         assert_eq!(
@@ -3219,19 +3151,21 @@ mod tests {
             .upsert_disk(root.clone(), Revision::new(1), "include::loaded.adoc[]\n")
             .expect("root");
         workspace.register_root(root.clone()).expect("root");
-        let WorkspaceAnalysisStep::NeedResource(continuation) =
-            workspace.snapshot().analyze_resumable(
-                &root,
-                &effective_options(),
-                ProjectionLimits::default(),
-                &NeverCancelled,
-            )
+        let WorkspacePreprocessStep::NeedResource(continuation) = workspace
+            .snapshot()
+            .preprocess_resumable(&root, &effective_options(), &NeverCancelled)
         else {
-            panic!("analysis must suspend");
+            panic!("preprocessing must suspend");
         };
         let acquired = Arc::<str>::from("same bytes\n");
         let response = continuation.request().found(Arc::clone(&acquired));
-        let WorkspaceAnalysisStep::Complete(draft) = continuation.resume(response, &NeverCancelled)
+        let WorkspacePreprocessStep::Complete(preprocessed) =
+            continuation.resume(response, &NeverCancelled)
+        else {
+            panic!("preprocessing must complete");
+        };
+        let WorkspaceAnalysisStep::Complete(draft) =
+            preprocessed.analyze(ProjectionLimits::default(), &NeverCancelled)
         else {
             panic!("analysis must complete");
         };
@@ -3299,20 +3233,18 @@ mod tests {
             .expect("base");
         workspace.register_root(root.clone()).expect("root");
         let snapshot = workspace.snapshot();
-        let WorkspaceAnalysisStep::NeedResource(continuation) = snapshot.analyze_resumable(
-            &root,
-            &effective_options(),
-            ProjectionLimits::default(),
-            &NeverCancelled,
-        ) else {
-            panic!("analysis must suspend");
+        let WorkspacePreprocessStep::NeedResource(continuation) =
+            snapshot.preprocess_resumable(&root, &effective_options(), &NeverCancelled)
+        else {
+            panic!("preprocessing must suspend");
         };
         let response = continuation.request().not_found();
-        let WorkspaceAnalysisStep::Complete(missing_draft) =
+        let WorkspacePreprocessStep::Complete(preprocessed) =
             continuation.resume(response, &NeverCancelled)
         else {
-            panic!("analysis must complete");
+            panic!("preprocessing must complete");
         };
+        let missing_draft = analyze_preprocessed(preprocessed);
         workspace
             .upsert_disk(missing, Revision::new(1), "now present\n")
             .expect("appeared resource");
@@ -3324,20 +3256,18 @@ mod tests {
             WorkspaceErrorCode::StaleGeneration
         );
 
-        let WorkspaceAnalysisStep::NeedResource(continuation) = snapshot.analyze_resumable(
-            &root,
-            &effective_options(),
-            ProjectionLimits::default(),
-            &NeverCancelled,
-        ) else {
-            panic!("analysis must suspend again");
+        let WorkspacePreprocessStep::NeedResource(continuation) =
+            snapshot.preprocess_resumable(&root, &effective_options(), &NeverCancelled)
+        else {
+            panic!("preprocessing must suspend again");
         };
         let response = continuation.request().not_found();
-        let WorkspaceAnalysisStep::Complete(base_draft) =
+        let WorkspacePreprocessStep::Complete(preprocessed) =
             continuation.resume(response, &NeverCancelled)
         else {
-            panic!("analysis must complete again");
+            panic!("preprocessing must complete again");
         };
+        let base_draft = analyze_preprocessed(preprocessed);
         workspace
             .upsert_disk(base, Revision::new(2), "changed base\n")
             .expect("changed base");
@@ -3349,20 +3279,18 @@ mod tests {
             WorkspaceErrorCode::StaleRevision
         );
 
-        let WorkspaceAnalysisStep::NeedResource(continuation) = snapshot.analyze_resumable(
-            &root,
-            &effective_options(),
-            ProjectionLimits::default(),
-            &NeverCancelled,
-        ) else {
-            panic!("analysis must suspend for root validation");
+        let WorkspacePreprocessStep::NeedResource(continuation) =
+            snapshot.preprocess_resumable(&root, &effective_options(), &NeverCancelled)
+        else {
+            panic!("preprocessing must suspend for root validation");
         };
         let response = continuation.request().not_found();
-        let WorkspaceAnalysisStep::Complete(root_draft) =
+        let WorkspacePreprocessStep::Complete(preprocessed) =
             continuation.resume(response, &NeverCancelled)
         else {
-            panic!("analysis must complete for root validation");
+            panic!("preprocessing must complete for root validation");
         };
+        let root_draft = analyze_preprocessed(preprocessed);
         workspace
             .upsert_disk(root, Revision::new(2), "changed root\n")
             .expect("changed root");
@@ -3384,7 +3312,7 @@ mod tests {
     }
 
     #[test]
-    fn resumable_analysis_discards_analysis_projection_and_pre_draft_cancellation() {
+    fn draft_analysis_discards_cancelled_projection_and_unpublished_state() {
         let mut workspace = Workspace::default();
         let root = id("file:///book/root.adoc");
         workspace
@@ -3395,13 +3323,15 @@ mod tests {
 
         for stage in 1..=3 {
             RESUMABLE_STAGE_RUNS.with(|runs| runs.set([0; 4]));
+            let WorkspacePreprocessStep::Complete(draft) = snapshot.preprocess_resumable(
+                &root,
+                &effective_options(),
+                &CancelAtResumableStage(stage),
+            ) else {
+                panic!("preprocessing must complete");
+            };
             assert!(matches!(
-                snapshot.analyze_resumable(
-                    &root,
-                    &effective_options(),
-                    ProjectionLimits::default(),
-                    &CancelAtResumableStage(stage),
-                ),
+                draft.analyze(ProjectionLimits::default(), &CancelAtResumableStage(stage)),
                 WorkspaceAnalysisStep::Cancelled
             ));
             RESUMABLE_STAGE_RUNS.with(|runs| {
@@ -3441,28 +3371,24 @@ mod tests {
             .expect("second root");
         let snapshot = workspace.snapshot();
         let options = effective_options();
-        let WorkspaceAnalysisStep::NeedResource(first) = snapshot.analyze_resumable(
-            &first_root,
-            &options,
-            ProjectionLimits::default(),
-            &NeverCancelled,
-        ) else {
+        let WorkspacePreprocessStep::NeedResource(first) =
+            snapshot.preprocess_resumable(&first_root, &options, &NeverCancelled)
+        else {
             panic!("first run must suspend");
         };
-        let WorkspaceAnalysisStep::NeedResource(second) = snapshot.analyze_resumable(
-            &second_root,
-            &options,
-            ProjectionLimits::default(),
-            &NeverCancelled,
-        ) else {
+        let WorkspacePreprocessStep::NeedResource(second) =
+            snapshot.preprocess_resumable(&second_root, &options, &NeverCancelled)
+        else {
             panic!("second run must suspend");
         };
         let foreign_response = first.request().found("foreign\n");
         RESUMABLE_EVIDENCE_RECORDS.with(|records| records.set(0));
-        let WorkspaceAnalysisStep::Failed(error) = second.resume(foreign_response, &NeverCancelled)
+        let WorkspacePreprocessStep::Failed(failure) =
+            second.resume(foreign_response, &NeverCancelled)
         else {
             panic!("foreign response must fail");
         };
+        let error = failure.error();
         assert_eq!(error.code, WorkspaceErrorCode::Preprocess);
         assert_eq!(
             error.host_resource_kind(),
@@ -3471,48 +3397,42 @@ mod tests {
         assert_eq!(error.diagnostic_code(), "host-resource-response-mismatch");
         RESUMABLE_EVIDENCE_RECORDS.with(|records| assert_eq!(records.get(), 0));
 
-        let WorkspaceAnalysisStep::NeedResource(same_run_first) = snapshot.analyze_resumable(
-            &first_root,
-            &options,
-            ProjectionLimits::default(),
-            &NeverCancelled,
-        ) else {
+        let WorkspacePreprocessStep::NeedResource(same_run_first) =
+            snapshot.preprocess_resumable(&first_root, &options, &NeverCancelled)
+        else {
             panic!("same target first run must suspend");
         };
-        let WorkspaceAnalysisStep::NeedResource(same_run_second) = snapshot.analyze_resumable(
-            &first_root,
-            &options,
-            ProjectionLimits::default(),
-            &NeverCancelled,
-        ) else {
+        let WorkspacePreprocessStep::NeedResource(same_run_second) =
+            snapshot.preprocess_resumable(&first_root, &options, &NeverCancelled)
+        else {
             panic!("same target second run must suspend");
         };
         let stale_response = same_run_first.request().found("stale\n");
         RESUMABLE_EVIDENCE_RECORDS.with(|records| records.set(0));
-        let WorkspaceAnalysisStep::Failed(error) =
+        let WorkspacePreprocessStep::Failed(failure) =
             same_run_second.resume(stale_response, &NeverCancelled)
         else {
             panic!("response from another run must fail");
         };
+        let error = failure.error();
         assert_eq!(
             error.host_resource_kind(),
             Some(WorkspaceHostResourceErrorKind::ResponseMismatch)
         );
         RESUMABLE_EVIDENCE_RECORDS.with(|records| assert_eq!(records.get(), 0));
 
-        let WorkspaceAnalysisStep::NeedResource(load) = snapshot.analyze_resumable(
-            &first_root,
-            &options,
-            ProjectionLimits::default(),
-            &NeverCancelled,
-        ) else {
+        let WorkspacePreprocessStep::NeedResource(load) =
+            snapshot.preprocess_resumable(&first_root, &options, &NeverCancelled)
+        else {
             panic!("load failure run must suspend");
         };
         let target = id(load.request().target());
         let response = load.request().load_failed("permission denied");
-        let WorkspaceAnalysisStep::Failed(error) = load.resume(response, &NeverCancelled) else {
+        let WorkspacePreprocessStep::Failed(failure) = load.resume(response, &NeverCancelled)
+        else {
             panic!("load failure must remain typed");
         };
+        let error = failure.error();
         assert_eq!(error.code, WorkspaceErrorCode::Preprocess);
         assert_eq!(
             error.host_resource_kind(),
@@ -3540,20 +3460,19 @@ mod tests {
         workspace.register_root(root.clone()).expect("root");
         let snapshot = workspace.snapshot();
         let canonical_options = effective_options();
-        let WorkspaceAnalysisStep::NeedResource(continuation) = snapshot.analyze_resumable(
-            &root,
-            &canonical_options,
-            ProjectionLimits::default(),
-            &NeverCancelled,
-        ) else {
+        let WorkspacePreprocessStep::NeedResource(continuation) =
+            snapshot.preprocess_resumable(&root, &canonical_options, &NeverCancelled)
+        else {
             panic!("loaded resource must suspend");
         };
         let loaded_text = Arc::<str>::from("loaded\n");
         let response = continuation.request().found(Arc::clone(&loaded_text));
-        let WorkspaceAnalysisStep::Complete(draft) = continuation.resume(response, &NeverCancelled)
+        let WorkspacePreprocessStep::Complete(preprocessed) =
+            continuation.resume(response, &NeverCancelled)
         else {
-            panic!("analysis must complete");
+            panic!("preprocessing must complete");
         };
+        let draft = analyze_preprocessed(preprocessed);
         let base_generation = draft.base_generation();
 
         workspace
@@ -3581,14 +3500,13 @@ mod tests {
             ResourceLayer::Overlay
         );
 
-        let WorkspaceAnalysisStep::Complete(root_draft) = workspace.snapshot().analyze_resumable(
-            &root,
-            &canonical_options,
-            ProjectionLimits::default(),
-            &NeverCancelled,
-        ) else {
-            panic!("all resources are ready");
+        let WorkspacePreprocessStep::Complete(preprocessed) = workspace
+            .snapshot()
+            .preprocess_resumable(&root, &canonical_options, &NeverCancelled)
+        else {
+            panic!("all resources must be ready");
         };
+        let root_draft = analyze_preprocessed(preprocessed);
         workspace
             .upsert_disk(root, Revision::new(2), Arc::clone(&root_text))
             .expect("root revision changes with shared text");

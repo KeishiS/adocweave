@@ -1969,12 +1969,6 @@ impl WorkspaceResources {
                             (None, AnalyzedRootOutcome::Failed(error))
                         }
                         WorkspaceAnalysisStep::Cancelled => (None, AnalyzedRootOutcome::Cancelled),
-                        WorkspaceAnalysisStep::NeedResource(_) => {
-                            return Err(
-                                "analysis requested a resource after preprocessing completed"
-                                    .to_owned(),
-                            );
-                        }
                     };
                     return Ok(AnalyzedRoot {
                         acquisition: candidate,
