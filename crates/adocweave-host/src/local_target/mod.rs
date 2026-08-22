@@ -16,6 +16,18 @@ pub use error::LocalTargetError;
 #[cfg(target_os = "linux")]
 use path::classify_errno;
 use path::{classify_io, decode_relative_path, normalize_below_root};
+
+pub(crate) fn normalize_authored_candidate(
+    root: &Path,
+    base: &Path,
+    target: &str,
+) -> Result<PathBuf, LocalTargetError> {
+    if !base.starts_with(root) {
+        return Err(LocalTargetError::OutsideRoot(base.to_owned()));
+    }
+    let relative = decode_relative_path(target)?;
+    normalize_below_root(root, base, &relative)
+}
 #[cfg(not(target_os = "linux"))]
 use path::{
     ensure_existing_ancestor_is_inside, reject_dangling_symlink_escape, reject_symlink_components,
@@ -593,11 +605,7 @@ impl LocalTargetPolicy {
         base: &Path,
         target: &str,
     ) -> Result<PathBuf, LocalTargetError> {
-        if !base.starts_with(&self.root) {
-            return Err(LocalTargetError::OutsideRoot(base.to_owned()));
-        }
-        let relative = decode_relative_path(target)?;
-        normalize_below_root(&self.root, base, &relative)
+        normalize_authored_candidate(&self.root, base, target)
     }
 
     #[cfg(target_os = "linux")]
@@ -1554,6 +1562,10 @@ impl LocalTargetSession {
 
     pub fn inspected_paths(&self) -> usize {
         self.inspections.len()
+    }
+
+    pub(crate) fn has_inspection(&self, candidate: &Path) -> bool {
+        self.inspections.contains_key(candidate)
     }
 
     pub(crate) fn candidate_rollback(&self, candidate: &Path) -> LocalTargetCandidateRollback {

@@ -1940,7 +1940,7 @@ fn local_target_permission_failure_has_stable_cli_contract() {
 fn local_target_inspection_limit_has_stable_cli_contract() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/local-target/permission-limit/limit");
-    let run = |json| {
+    let run = |json: bool, include: bool| {
         let mut command = adocweave();
         command.current_dir(&root).args([
             "check",
@@ -1950,6 +1950,9 @@ fn local_target_inspection_limit_has_stable_cli_contract() {
             "--project-root",
             ".",
         ]);
+        if !include {
+            command.arg("--no-include");
+        }
         if json {
             command.arg("--json");
         }
@@ -1959,31 +1962,79 @@ fn local_target_inspection_limit_has_stable_cli_contract() {
             .expect("inspection limit fixture")
     };
 
-    let human = run(false);
+    let human = run(false, true);
     assert!(!human.status.success());
     assert!(human.stderr.is_empty());
     assert_eq!(
         human.stdout,
-        b"root.adoc:2:6: error[local-target-limit-exceeded]: local target inspection limit exceeded (target: second.adoc)\n"
+        b"root.adoc:1:6: error[local-target-limit-exceeded]: local target inspection limit exceeded (target: first.adoc)\nroot.adoc:2:6: error[local-target-limit-exceeded]: local target inspection limit exceeded (target: second.adoc)\n"
     );
 
-    let json = run(true);
+    let without_include = run(false, false);
+    assert_eq!(without_include.status, human.status);
+    assert_eq!(without_include.stderr, human.stderr);
+    assert_eq!(without_include.stdout, human.stdout);
+
+    let mut stdin = adocweave();
+    let mut stdin = stdin
+        .current_dir(&root)
+        .args([
+            "check",
+            "--config",
+            ".adocweave.toml",
+            "--no-include",
+            "--local-targets",
+            "--project-root",
+            ".",
+            "-",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("stdin inspection limit command");
+    stdin
+        .stdin
+        .take()
+        .expect("piped stdin")
+        .write_all(b"xref:first.adoc[first]\nxref:second.adoc[second]\n")
+        .expect("stdin source");
+    let stdin = stdin.wait_with_output().expect("stdin inspection limit");
+    assert!(!stdin.status.success());
+    assert!(stdin.stderr.is_empty());
+    assert_eq!(
+        stdin.stdout,
+        b"<stdin>:2:6: error[local-target-limit-exceeded]: local target inspection limit exceeded (target: second.adoc)\n"
+    );
+
+    let json = run(true, true);
     assert!(!json.status.success());
     assert!(json.stderr.is_empty());
     let diagnostics: serde_json::Value =
         serde_json::from_slice(&json.stdout).expect("inspection limit JSON");
-    assert_eq!(diagnostics.as_array().expect("array").len(), 1);
+    assert_eq!(diagnostics.as_array().expect("array").len(), 2);
     assert_eq!(
         diagnostics[0]["id"],
-        "local-target-limit-exceeded@root.adoc:28:39"
+        "local-target-limit-exceeded@root.adoc:5:15"
     );
     assert_eq!(diagnostics[0]["code"], "local-target-limit-exceeded");
     assert_eq!(diagnostics[0]["sourceId"], "root.adoc");
     assert_eq!(
         diagnostics[0]["range"],
+        serde_json::json!({ "start": 5, "end": 15 })
+    );
+    assert_eq!(diagnostics[0]["target"], "first.adoc");
+    assert_eq!(
+        diagnostics[1]["id"],
+        "local-target-limit-exceeded@root.adoc:28:39"
+    );
+    assert_eq!(diagnostics[1]["code"], "local-target-limit-exceeded");
+    assert_eq!(diagnostics[1]["sourceId"], "root.adoc");
+    assert_eq!(
+        diagnostics[1]["range"],
         serde_json::json!({ "start": 28, "end": 39 })
     );
-    assert_eq!(diagnostics[0]["target"], "second.adoc");
+    assert_eq!(diagnostics[1]["target"], "second.adoc");
 }
 
 #[test]
@@ -2189,6 +2240,61 @@ fn local_target_check_rejects_symlink_escape_and_keeps_duplicate_positions() {
 
     std::fs::remove_dir_all(root).expect("root cleanup");
     std::fs::remove_dir_all(outside).expect("outside cleanup");
+}
+
+#[test]
+fn local_target_check_uses_the_explicit_project_root_for_parent_targets() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let parent = std::env::temp_dir().join(format!("adocweave-local-parent-{unique}"));
+    let project = parent.join("project");
+    let docs = project.join("docs");
+    std::fs::create_dir_all(&docs).expect("docs");
+    std::fs::write(project.join("asset.png"), "asset").expect("project asset");
+    std::fs::write(parent.join("secret.png"), "secret").expect("outside asset");
+    std::fs::write(
+        docs.join("root.adoc"),
+        "image::../asset.png[]\nimage::../../secret.png[]\n",
+    )
+    .expect("source");
+
+    let output = adocweave()
+        .current_dir(&project)
+        .args([
+            "check",
+            "--local-targets",
+            "--project-root",
+            ".",
+            "--json",
+            "docs/root.adoc",
+        ])
+        .output()
+        .expect("local target check");
+    let diagnostics: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("JSON diagnostics");
+    let local = diagnostics
+        .as_array()
+        .expect("array")
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic["code"]
+                .as_str()
+                .is_some_and(|code| code.starts_with("local-target-"))
+        })
+        .collect::<Vec<_>>();
+    assert!(!output.status.success());
+    assert_eq!(
+        local.len(),
+        1,
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(local[0]["code"], "local-target-outside-root");
+    assert_eq!(local[0]["target"], "../../secret.png");
+
+    std::fs::remove_dir_all(parent).expect("cleanup");
 }
 
 #[test]

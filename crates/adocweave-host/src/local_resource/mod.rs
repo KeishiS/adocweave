@@ -1,6 +1,4 @@
 use std::collections::BTreeMap;
-#[cfg(not(target_os = "linux"))]
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -89,6 +87,19 @@ pub struct LoadedFilesystemSource {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FilesystemReadOutcome {
     Found(LoadedFilesystemSource),
+    NotFound {
+        source_id: LogicalSourceId,
+        candidate_path: PathBuf,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum FilesystemInspectOutcome {
+    Found {
+        source_id: LogicalSourceId,
+        candidate_path: PathBuf,
+        canonical_path: PathBuf,
+    },
     NotFound {
         source_id: LogicalSourceId,
         candidate_path: PathBuf,
@@ -237,15 +248,14 @@ pub struct LocalFilesystemSession {
 #[derive(Debug)]
 struct LocalFilesystemState {
     roots: Vec<PathBuf>,
+    /// Root-local caches whose combined inspection count is the session-wide
+    /// path budget. Draft clones copy the caches; detached jobs separately
+    /// retain attempted-I/O charges when a draft is discarded.
     sessions: Vec<LocalTargetSession>,
     limits: FilesystemReadLimits,
     budget: ResourceBudget,
     charged: BTreeMap<PathBuf, FilesystemCharge>,
     candidates: BTreeMap<PathBuf, FilesystemCandidateBinding>,
-    /// Shared with every [`LocalTargetSession`] above and with any draft cloned
-    /// from this state, so discovery and reads land in one set of counters and a
-    /// discarded draft does not un-count the work it performed.
-
     #[cfg(test)]
     clone_count: Arc<AtomicU64>,
 }
@@ -476,7 +486,10 @@ impl LocalFilesystemPolicy {
             .map(|policy| {
                 LocalTargetSession::new(
                     policy,
-                    self.limits.max_files,
+                    // The enclosing session enforces one path limit across
+                    // every root. Per-root limits would create independent
+                    // allowances for nested authorities.
+                    usize::MAX,
                     FilesystemReadLimits {
                         max_files: usize::MAX,
                         max_total_bytes: u64::MAX,
@@ -766,6 +779,31 @@ impl LocalFilesystemSession {
             .map_err(ResourceError::from)
     }
 
+    pub(crate) fn inspect_target_outcome(
+        &mut self,
+        source_id: LogicalSourceId,
+        base: &Path,
+        target: &str,
+    ) -> Result<FilesystemInspectOutcome, ResourceError> {
+        self.invalidate_active_draft();
+        self.mutation_cursor()
+            .inspect_target(source_id, base, target)
+            .map_err(ResourceError::from)
+    }
+
+    pub(crate) fn inspect_target_within_outcome(
+        &mut self,
+        source_id: LogicalSourceId,
+        authority: &Path,
+        base: &Path,
+        target: &str,
+    ) -> Result<FilesystemInspectOutcome, ResourceError> {
+        self.invalidate_active_draft();
+        self.mutation_cursor()
+            .inspect_target_within(source_id, authority, base, target)
+            .map_err(ResourceError::from)
+    }
+
     /// Reopens an absolute path while retaining this session's shared budget.
     pub fn reread_utf8(
         &mut self,
@@ -810,6 +848,19 @@ impl LocalFilesystemSession {
         {
             self.revision = revision;
         }
+    }
+
+    pub(crate) fn supersede_active_draft(&mut self) -> Result<(), FilesystemDraftError> {
+        if self.active_draft.load(Ordering::Acquire) == 0 {
+            return Ok(());
+        }
+        let revision = self
+            .revision
+            .checked_add(1)
+            .ok_or(FilesystemDraftError::SessionRevisionExhausted)?;
+        self.revision = revision;
+        self.active_draft.store(0, Ordering::Release);
+        Ok(())
     }
 
     #[cfg(test)]
@@ -1075,6 +1126,56 @@ impl LocalFilesystemMutationCursor<'_> {
         )
     }
 
+    fn inspect_target(
+        &mut self,
+        source_id: LogicalSourceId,
+        base: &Path,
+        target: &str,
+    ) -> Result<FilesystemInspectOutcome, FilesystemDraftError> {
+        let _permit = self.begin_read()?;
+        let index = self.root_index(base)?;
+        let candidate_path = self.state.sessions[index]
+            .candidate(base, target)
+            .map_err(ResourceError::from)?;
+        self.ensure_path_request_allowed(index, &candidate_path)?;
+        match self.state.sessions[index].inspect(base, target) {
+            Ok(canonical_path) => Ok(FilesystemInspectOutcome::Found {
+                source_id,
+                candidate_path,
+                canonical_path,
+            }),
+            Err(LocalTargetError::Missing(_)) => Ok(FilesystemInspectOutcome::NotFound {
+                source_id,
+                candidate_path,
+            }),
+            Err(error) => Err(ResourceError::from(error).into()),
+        }
+    }
+
+    fn inspect_target_within(
+        &mut self,
+        source_id: LogicalSourceId,
+        authority: &Path,
+        base: &Path,
+        target: &str,
+    ) -> Result<FilesystemInspectOutcome, FilesystemDraftError> {
+        let _permit = self.begin_read()?;
+        let (index, candidate_path) = self.target_root_index(authority, base, target)?;
+        self.ensure_path_request_allowed(index, &candidate_path)?;
+        match self.state.sessions[index].inspect(base, target) {
+            Ok(canonical_path) => Ok(FilesystemInspectOutcome::Found {
+                source_id,
+                candidate_path,
+                canonical_path,
+            }),
+            Err(LocalTargetError::Missing(_)) => Ok(FilesystemInspectOutcome::NotFound {
+                source_id,
+                candidate_path,
+            }),
+            Err(error) => Err(ResourceError::from(error).into()),
+        }
+    }
+
     fn read_target_utf8_preserving_missing(
         &mut self,
         source_id: LogicalSourceId,
@@ -1101,6 +1202,7 @@ impl LocalFilesystemMutationCursor<'_> {
         let candidate = self.state.sessions[index]
             .candidate(base, target)
             .map_err(ResourceError::from)?;
+        self.ensure_path_request_allowed(index, &candidate)?;
         let candidate_rollback = (missing == MissingDisposition::PreserveLegacyState
             && self.state.candidates.contains_key(&candidate))
         .then(|| self.state.sessions[index].candidate_rollback(&candidate));
@@ -1177,6 +1279,7 @@ impl LocalFilesystemMutationCursor<'_> {
     ) -> Result<FilesystemReadOutcome, FilesystemDraftError> {
         let mut permit = self.begin_read()?;
         let index = self.root_index(path)?;
+        self.ensure_path_request_allowed(index, path)?;
         let candidate_rollback = self.state.sessions[index].candidate_rollback(path);
         let binding_generation = self.reserve_binding_generation()?;
         let budget = self.state.budget;
@@ -1271,6 +1374,7 @@ impl LocalFilesystemMutationCursor<'_> {
         if candidate == self.state.roots[index] {
             return Err(ResourceError::NotRegularFile(candidate).into());
         }
+        self.ensure_path_request_allowed(index, &candidate)?;
         let candidate_rollback = (missing == MissingDisposition::PreserveLegacyState
             && self.state.candidates.contains_key(&candidate))
         .then(|| self.state.sessions[index].candidate_rollback(&candidate));
@@ -1335,6 +1439,55 @@ impl LocalFilesystemMutationCursor<'_> {
             .max_by_key(|(_, root)| root.components().count())
             .map(|(index, _)| index)
             .ok_or_else(|| ResourceError::OutsideRoots(path.to_owned()).into())
+    }
+
+    fn target_root_index(
+        &self,
+        authority: &Path,
+        base: &Path,
+        target: &str,
+    ) -> Result<(usize, PathBuf), FilesystemDraftError> {
+        if !authority.is_absolute() {
+            return Err(ResourceError::PathNotAbsolute(authority.to_owned()).into());
+        }
+        if !self.state.roots.iter().any(|root| root == authority) {
+            return Err(ResourceError::OutsideRoots(authority.to_owned()).into());
+        }
+        let candidate = crate::local_target::normalize_authored_candidate(authority, base, target)
+            .map_err(ResourceError::from)?;
+        self.state
+            .roots
+            .iter()
+            .enumerate()
+            .filter(|(_, root)| {
+                root.starts_with(authority) && base.starts_with(root) && candidate.starts_with(root)
+            })
+            .max_by_key(|(_, root)| root.components().count())
+            .map(|(index, _)| (index, candidate))
+            .ok_or_else(|| ResourceError::OutsideRoots(base.to_owned()).into())
+    }
+
+    fn ensure_path_request_allowed(
+        &self,
+        index: usize,
+        candidate: &Path,
+    ) -> Result<(), FilesystemDraftError> {
+        if self.state.sessions[index].has_inspection(candidate) {
+            return Ok(());
+        }
+        let inspected = self
+            .state
+            .sessions
+            .iter()
+            .map(LocalTargetSession::inspected_paths)
+            .sum::<usize>();
+        if inspected >= self.state.limits.max_files {
+            return Err(ResourceError::FileLimit {
+                limit: self.state.limits.max_files,
+            }
+            .into());
+        }
+        Ok(())
     }
 
     fn finish_read(
@@ -1500,6 +1653,9 @@ impl LocalFilesystemDraft {
     /// starts keeps that waste out of the counters, and keeps the draft from
     /// taking binding generations that no commit will ever justify.
     fn ensure_operation_can_start(&self) -> Result<(), FilesystemDraftError> {
+        if self.lease.active.load(Ordering::Acquire) != self.lease.token {
+            return Err(FilesystemDraftError::InvalidDraft);
+        }
         if self.poisoned {
             return Err(FilesystemDraftError::PoisonedDraft);
         }
@@ -1709,6 +1865,21 @@ impl LocalFilesystemDraft {
         self.record(result)
     }
 
+    /// Resolves one authored target without reading its contents or retaining
+    /// an include binding.
+    pub(crate) fn inspect_target_outcome(
+        &mut self,
+        source_id: LogicalSourceId,
+        base: &Path,
+        target: &str,
+    ) -> Result<FilesystemInspectOutcome, FilesystemDraftError> {
+        self.ensure_operation_can_start()?;
+        let result = self
+            .mutation_cursor()
+            .inspect_target(source_id, base, target);
+        self.record(result)
+    }
+
     /// Gives up this draft's claim on a resource it acquired earlier.
     ///
     /// Releasing performs no filesystem work, but it is still refused on a
@@ -1727,7 +1898,10 @@ impl LocalFilesystemDraft {
     }
 
     /// Verifies that this draft can be installed into `live` without mutation.
-    fn validate(&self, live: &LocalFilesystemSession) -> Result<(), FilesystemDraftError> {
+    pub(crate) fn validate(
+        &self,
+        live: &LocalFilesystemSession,
+    ) -> Result<(), FilesystemDraftError> {
         self.job.ensure_active_job()?;
         if self.poisoned {
             return Err(FilesystemDraftError::PoisonedDraft);

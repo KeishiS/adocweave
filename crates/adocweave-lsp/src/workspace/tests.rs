@@ -29,16 +29,20 @@ impl Drop for TestDirectory {
 ///
 /// The reads happen on a copy, so `resources` is unchanged until the result
 /// is installed with [`WorkspaceResources::apply_analyzed_root`].
-fn analyze_root(resources: &mut WorkspaceResources, root: &Url) -> Result<AnalyzedRoot, String> {
+fn analyze_root(
+    resources: &mut WorkspaceResources,
+    root: &Url,
+) -> Result<(WorkspaceInput, AnalyzedRoot), String> {
     let input = resources.input(root)?;
-    let job = FilesystemJobCoordinator::new(document_analysis_job_limits())
+    let job = IncludeFilesystemJob::new(document_analysis_job_limits())
         .map_err(|error| error.to_string())?;
-    resources.analyze_root_detached(
+    let analyzed = resources.analyze_root_detached(
         &input,
         &adocweave::AnalysisOptions::default(),
         &NeverCancel,
-        &job,
-    )
+        job,
+    )?;
+    Ok((input, analyzed))
 }
 
 /// Analyses one root and installs the result, as the server does on completion.
@@ -46,8 +50,8 @@ fn analyze_and_apply(
     resources: &mut WorkspaceResources,
     root: &Url,
 ) -> Result<Option<WorkspaceAnalysis>, String> {
-    let analyzed = analyze_root(resources, root)?;
-    resources.apply_analyzed_root(analyzed)
+    let (input, analyzed) = analyze_root(resources, root)?;
+    resources.apply_analyzed_root(analyzed, &input, &adocweave::AnalysisOptions::default())
 }
 
 fn write_resource_config(
@@ -583,7 +587,24 @@ fn a_result_from_an_older_generation_installs_nothing() {
     let included_uri = Url::from_file_path(&included).expect("included URI");
     let mut resources = WorkspaceResources::default();
     resources.load_roots(&[root_uri]).expect("load workspace");
-    let analyzed = analyze_root(&mut resources, &source_uri).expect("workspace analysis");
+    let source_id = uri_id(&source_uri).expect("source ID");
+    let scope = resources.resource_projects[&source_id].clone();
+    let filesystem = Arc::clone(&resources.filesystems[&scope]);
+    let retained_before_analysis = filesystem
+        .lock()
+        .expect("filesystem session")
+        .budget()
+        .bytes();
+    let (input, analyzed) = analyze_root(&mut resources, &source_uri).expect("workspace analysis");
+    assert_eq!(
+        filesystem
+            .lock()
+            .expect("filesystem session")
+            .budget()
+            .bytes(),
+        retained_before_analysis,
+        "detached analysis must not commit include bytes before adoption"
+    );
 
     // The workspace moves on before the result comes back.
     std::fs::write(&unrelated, "unrelated\n").expect("unrelated source");
@@ -594,7 +615,7 @@ fn a_result_from_an_older_generation_installs_nothing() {
 
     assert!(
         resources
-            .apply_analyzed_root(analyzed)
+            .apply_analyzed_root(analyzed, &input, &adocweave::AnalysisOptions::default())
             .expect("apply a superseded analysis")
             .is_none()
     );
@@ -603,6 +624,120 @@ fn a_result_from_an_older_generation_installs_nothing() {
         resources.get(&included_uri).is_none(),
         "a superseded result must not install the include it acquired"
     );
+}
+
+#[test]
+fn a_result_with_superseded_analysis_options_installs_nothing() {
+    let root = TestDirectory::new();
+    let source = root.0.join("root.adoc");
+    std::fs::write(&source, "= Title\n").expect("source");
+    let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+    let source_uri = Url::from_file_path(&source).expect("source URI");
+    let mut resources = WorkspaceResources::default();
+    resources.load_roots(&[root_uri]).expect("load workspace");
+    let (input, analyzed) = analyze_root(&mut resources, &source_uri).expect("workspace analysis");
+    let generation = resources.generation();
+    let mut current_options = adocweave::AnalysisOptions::default();
+    current_options.syntax.syntax_mode = adocweave::SyntaxMode::Strict;
+
+    assert!(
+        resources
+            .apply_analyzed_root(analyzed, &input, &current_options)
+            .expect("reject superseded options")
+            .is_none()
+    );
+    assert_eq!(resources.generation(), generation);
+}
+
+#[test]
+fn superseding_the_later_scope_commits_no_scope_from_one_analysis() {
+    let root = TestDirectory::new();
+    let nested = root.0.join("nested");
+    std::fs::create_dir(&nested).expect("nested project");
+    write_resource_config(&root.0, 16, 4096, 4096, true);
+    write_resource_config(&nested, 16, 4096, 4096, true);
+    let source = root.0.join("root.adoc");
+    let first_include = root.0.join("first.txt");
+    let second_include = nested.join("second.txt");
+    std::fs::write(
+        &source,
+        "include::first.txt[]\ninclude::nested/second.txt[]\n",
+    )
+    .expect("source");
+    std::fs::write(&first_include, "first scope\n").expect("first include");
+    std::fs::write(&second_include, "second scope\n").expect("second include");
+    let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+    let source_uri = Url::from_file_path(&source).expect("source URI");
+    let first_uri = Url::from_file_path(&first_include).expect("first include URI");
+    let second_uri = Url::from_file_path(&second_include).expect("second include URI");
+    let first_id = uri_id(&first_uri).expect("first include ID");
+    let second_id = uri_id(&second_uri).expect("second include ID");
+    let mut resources = WorkspaceResources::default();
+    resources.load_roots(&[root_uri]).expect("load workspace");
+    assert!(resources.get(&first_uri).is_none());
+    assert!(resources.get(&second_uri).is_none());
+    let bindings_before = resources.resource_bindings.clone();
+    let filesystem_scopes_before = resources
+        .filesystems
+        .keys()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+
+    let (input, analyzed) = analyze_root(&mut resources, &source_uri).expect("workspace analysis");
+    let acquisition = analyzed
+        .acquisition
+        .as_ref()
+        .expect("completed include acquisition");
+    let root_scope = acquisition.root_scope.clone();
+    assert_eq!(acquisition.transactions.len(), 2);
+    let sessions = acquisition
+        .transactions
+        .iter()
+        .map(|(scope, candidate)| {
+            let session = Arc::clone(&candidate.session);
+            let budget = session.lock().expect("filesystem session").budget();
+            (scope.clone(), session, budget)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(sessions.first().expect("earlier scope").0, root_scope);
+    let (later_scope, later_session, _) = sessions.last().expect("later scope");
+    assert_ne!(later_scope, &root_scope);
+
+    let superseding_job =
+        IncludeFilesystemJob::new(watched_file_job_limits()).expect("superseding filesystem job");
+    let replacement = {
+        let mut session = later_session.lock().expect("later filesystem session");
+        superseding_job
+            .superseding_transaction(&mut session)
+            .expect("supersede later candidate")
+    };
+    drop(replacement);
+    superseding_job.finish().expect("finish superseding job");
+
+    let error = resources
+        .apply_analyzed_root(analyzed, &input, &adocweave::AnalysisOptions::default())
+        .expect_err("one invalid scope rejects the complete acquisition");
+    assert!(error.contains("filesystem draft is stale"), "{error}");
+    assert!(resources.get(&first_uri).is_none());
+    assert!(resources.get(&second_uri).is_none());
+    assert!(!resources.resource_bindings.contains_key(&first_id));
+    assert!(!resources.resource_bindings.contains_key(&second_id));
+    assert_eq!(resources.resource_bindings, bindings_before);
+    assert_eq!(
+        resources
+            .filesystems
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>(),
+        filesystem_scopes_before
+    );
+    for (_, session, budget) in sessions {
+        assert_eq!(
+            session.lock().expect("filesystem session").budget(),
+            budget,
+            "no scope budget may be committed"
+        );
+    }
 }
 
 #[test]
@@ -630,7 +765,7 @@ fn an_analysis_that_is_never_adopted_leaves_no_include_behind() {
     resources.load_roots(&[root_uri]).expect("load workspace");
     let before = resources.generation();
 
-    let analyzed = analyze_root(&mut resources, &source_uri).expect("workspace analysis");
+    let (_, analyzed) = analyze_root(&mut resources, &source_uri).expect("workspace analysis");
     drop(analyzed);
 
     assert!(
@@ -739,10 +874,10 @@ fn failed_initial_include_read_keeps_a_bounded_watch_interest() {
     let mut resources = WorkspaceResources::default();
     resources.load_roots(&[root_uri]).expect("load workspace");
 
-    let analyzed = analyze_root(&mut resources, &source_uri).expect("workspace analysis");
+    let (input, analyzed) = analyze_root(&mut resources, &source_uri).expect("workspace analysis");
     assert!(
         resources
-            .apply_analyzed_root(analyzed)
+            .apply_analyzed_root(analyzed, &input, &adocweave::AnalysisOptions::default())
             .expect("apply failed analysis")
             .is_none(),
         "an unreadable include must not produce a published analysis"
@@ -797,9 +932,9 @@ fn created_excluded_adoc_include_recovers_without_a_scan_root_role() {
     let mut resources = WorkspaceResources::default();
     resources.load_roots(&[root_uri]).expect("load workspace");
 
-    let analyzed = analyze_root(&mut resources, &source_uri).expect("workspace analysis");
+    let (input, analyzed) = analyze_root(&mut resources, &source_uri).expect("workspace analysis");
     resources
-        .apply_analyzed_root(analyzed)
+        .apply_analyzed_root(analyzed, &input, &adocweave::AnalysisOptions::default())
         .expect("apply analysis with a missing include");
     assert!(
         resources.get(&included_uri).is_none(),
@@ -1391,7 +1526,7 @@ fn configless_multi_root_input_excludes_an_include_from_another_scope() {
     assert!(input.options.enable_includes);
     assert_eq!(input.snapshot.resources().count(), 1);
     assert!(input.snapshot.get(&second_id).is_none());
-    let analyzed = analyze_root(&mut resources, &first_uri).expect("workspace analysis");
+    let (_, analyzed) = analyze_root(&mut resources, &first_uri).expect("workspace analysis");
 
     // The include is refused by the root's authority, so the run answers
     // that the resource is absent rather than leaving the preprocessor to

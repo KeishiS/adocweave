@@ -338,6 +338,7 @@ struct IncludePreparation<'request> {
     project_root: Option<&'request Path>,
     allowed_roots: &'request [PathBuf],
     limits: adocweave_host::FilesystemReadLimits,
+    analysis: &'request AnalysisOptions,
     preprocess: &'request adocweave::preprocess::PreprocessOptions,
     filesystem: Option<&'request mut adocweave_host::LocalFilesystemSession>,
 }
@@ -355,6 +356,7 @@ fn prepare_includes(
             request.source_base,
             project_root,
             request.preprocess,
+            request.analysis,
             filesystem,
         )
     } else if let Some(project_root) = request.project_root {
@@ -366,6 +368,7 @@ fn prepare_includes(
             project_root,
             request.limits,
             request.preprocess,
+            request.analysis,
         )
     } else if let Some(filesystem) = request.filesystem.as_deref_mut() {
         local_include::prepare_with_session(
@@ -374,6 +377,7 @@ fn prepare_includes(
             request.base_dir,
             request.allowed_roots,
             request.preprocess,
+            request.analysis,
             filesystem,
         )
     } else {
@@ -384,6 +388,7 @@ fn prepare_includes(
             request.allowed_roots,
             request.limits,
             request.preprocess,
+            request.analysis,
         )
     }
 }
@@ -398,29 +403,18 @@ fn process_check(
         &std::path::Path,
         &std::path::Path,
         &str,
-        &adocweave_host::LocalFilesystemSession,
+        &mut adocweave_host::LocalFilesystemSession,
     )>,
 ) -> Result<CheckOutcome, CliError> {
-    let local = local
-        .map(|(base, root, source_id, filesystem)| {
-            let policy = filesystem
-                .policy_for_path(root)
-                .ok_or_else(|| {
-                    CliError::Path(format!(
-                        "local target root is outside its retained filesystem authority: {}",
-                        root.display()
-                    ))
-                })?
-                .derive_confined_directory(root)
-                .map_err(CliError::LocalTarget)?;
-            let limits = filesystem.limits();
-            Ok(commands::check::LocalContext {
+    let local =
+        local.map(
+            |(authority, base, source_id, filesystem)| commands::check::LocalContext {
+                authority,
                 base,
                 source_id,
-                session: adocweave_host::LocalTargetSession::new(policy, limits.max_files, limits),
-            })
-        })
-        .transpose()?;
+                session: filesystem,
+            },
+        );
     commands::check::process(
         input,
         check,
@@ -988,6 +982,7 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                         base_dir,
                         allowed_roots,
                         &config.preprocess,
+                        &config.analysis,
                         filesystem,
                     )
                     .map_err(CliError::Include)?;
@@ -1143,7 +1138,7 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                 }
                 let local_context = project_root
                     .as_ref()
-                    .map(|root| (source_base.as_path(), root.as_path(), source_id.as_ref()));
+                    .map(|root| (root.as_path(), source_base.as_path(), source_id.as_ref()));
                 let outcome = if include {
                     let source = decode_input(&checked)?;
                     let base_dir = cli_base_dir.as_deref().unwrap_or(source_base.as_path());
@@ -1155,6 +1150,7 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                         project_root: project_root.as_deref(),
                         allowed_roots,
                         limits: config.resources.limit_plan.filesystem_reads,
+                        analysis: &config.analysis,
                         preprocess: &config.preprocess,
                         filesystem: Some(filesystem),
                     })
@@ -1168,7 +1164,7 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                             .map(|(id, bytes)| (id.to_owned(), bytes)),
                         retained_limits,
                     )?;
-                    check_preprocessed(&mut prepared, check, &config.analysis)?
+                    check_preprocessed(&mut prepared, check, &config.analysis, Some(filesystem))?
                 } else {
                     validate_resource_plan([checked.len() as u64], config.resources.limit_plan)?;
                     let retained_limits = config.resources.limit_plan.retained_layers;
@@ -1183,8 +1179,9 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                         &source_id,
                         &config.analysis,
                         &config.preprocess,
-                        local_context
-                            .map(|(base, root, source_id)| (base, root, source_id, &*filesystem)),
+                        local_context.map(|(authority, base, source_id)| {
+                            (authority, base, source_id, &mut *filesystem)
+                        }),
                     )?
                 };
                 counts.merge(outcome.counts);
@@ -1421,7 +1418,7 @@ fn run() -> Result<ExitCode, CliError> {
                     .as_deref()
                     .and_then(std::path::Path::parent)
                     .map_or_else(|| project_root.clone(), PathBuf::from);
-                (base, project_root.clone(), source_id.clone())
+                (base, source_id.clone())
             });
             let primary_base = canonical_input
                 .as_deref()
@@ -1458,7 +1455,7 @@ fn run() -> Result<ExitCode, CliError> {
             {
                 let base = local_context
                     .as_ref()
-                    .map(|(base, _, _)| base.clone())
+                    .map(|(base, _)| base.clone())
                     .unwrap_or_else(|| project_root.to_owned());
                 let (confined_roots, independent_roots) = processing_filesystem_roots(
                     &authority_root,
@@ -1518,7 +1515,7 @@ fn run() -> Result<ExitCode, CliError> {
                 }
                 let source_base = local_context
                     .as_ref()
-                    .map(|(base, _, _)| base.as_path())
+                    .map(|(base, _)| base.as_path())
                     .unwrap_or(&base_dir);
                 let include_input = prepare_includes(IncludePreparation {
                     source,
@@ -1531,6 +1528,7 @@ fn run() -> Result<ExitCode, CliError> {
                         .as_ref()
                         .expect("include processing has a filesystem session")
                         .limits(),
+                    analysis: &project_config.analysis,
                     preprocess: &project_config.preprocess,
                     filesystem: primary_filesystem.as_mut(),
                 })
@@ -1570,7 +1568,12 @@ fn run() -> Result<ExitCode, CliError> {
             };
             let (output, exit_code) = if let CommandOptions::Check(check) = &arguments.command {
                 let outcome = if let Some(prepared) = prepared.as_mut() {
-                    check_preprocessed(prepared, check, &project_config.analysis)
+                    check_preprocessed(
+                        prepared,
+                        check,
+                        &project_config.analysis,
+                        primary_filesystem.as_mut(),
+                    )
                 } else {
                     process_check(
                         &processed,
@@ -1578,14 +1581,11 @@ fn run() -> Result<ExitCode, CliError> {
                         &source_id,
                         &project_config.analysis,
                         &project_config.preprocess,
-                        local_context.as_ref().and_then(|(base, root, source_id)| {
-                            primary_filesystem.as_ref().map(|filesystem| {
-                                (
-                                    base.as_path(),
-                                    root.as_path(),
-                                    source_id.as_str(),
-                                    filesystem,
-                                )
+                        local_context.as_ref().and_then(|(base, source_id)| {
+                            project_root.as_deref().and_then(|authority| {
+                                primary_filesystem.as_mut().map(|filesystem| {
+                                    (authority, base.as_path(), source_id.as_str(), filesystem)
+                                })
                             })
                         }),
                     )
@@ -1677,8 +1677,10 @@ fn check_preprocessed(
     prepared: &mut local_include::PreparedInput,
     check: &CheckOptions,
     analysis_options: &AnalysisOptions,
+    filesystem: Option<&mut adocweave_host::LocalFilesystemSession>,
 ) -> Result<CheckOutcome, CliError> {
-    commands::check::process_preprocessed(prepared, check, analysis_options).map_err(check_error)
+    commands::check::process_preprocessed(prepared, check, analysis_options, filesystem)
+        .map_err(check_error)
 }
 
 fn main() -> ExitCode {

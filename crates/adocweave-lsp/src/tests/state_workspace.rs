@@ -766,32 +766,33 @@ fn stale_analysis_cannot_load_a_new_include_resource() {
     fs::remove_dir_all(root).expect("cleanup");
 }
 
-#[test]
-fn concurrent_missing_includes_converge_on_the_current_workspace_generation() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn different_project_scopes_sharing_an_include_converge_on_the_current_generation() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock")
         .as_nanos();
     let root = std::env::temp_dir().join(format!("adocweave-concurrent-include-{unique}"));
-    let excluded = root.join("generated");
-    fs::create_dir_all(&excluded).expect("workspace directory");
-    fs::write(
-        root.join(adocweave_config::FILE_NAME),
-        concat!(
-            "schema-version = 1\n",
-            "[resources]\ninclude = true\nroots = [\".\"]\n",
-            "[workspace.scan]\nexclude = [\"generated\"]\n",
-        ),
-    )
-    .expect("configuration");
-    let first_path = root.join("first.adoc");
-    let second_path = root.join("second.adoc");
-    let first_source = "include::generated/first-part.adoc[]\n";
-    let second_source = "include::generated/second-part.adoc[]\n";
+    let first_project = root.clone();
+    let second_project = root.join("nested");
+    let shared = second_project.join("shared");
+    fs::create_dir_all(&second_project).expect("second project");
+    fs::create_dir_all(&shared).expect("shared directory");
+    for (project, max_files) in [(&first_project, 64), (&second_project, 65)] {
+        fs::write(
+            project.join(adocweave_config::FILE_NAME),
+            format!(
+                "schema-version = 1\n[resources]\ninclude = true\nroots = [\".\"]\nmax-files = {max_files}\n"
+            ),
+        )
+        .expect("project configuration");
+    }
+    let first_path = first_project.join("root.adoc");
+    let second_path = second_project.join("root.adoc");
+    let first_source = "include::nested/shared/part.adoc[]\n";
+    let second_source = "include::shared/part.adoc[]\n";
     fs::write(&first_path, first_source).expect("first root");
     fs::write(&second_path, second_source).expect("second root");
-    fs::write(excluded.join("first-part.adoc"), "first marker\n").expect("first include");
-    fs::write(excluded.join("second-part.adoc"), "second marker\n").expect("second include");
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
     let first_uri = lsp::Url::from_file_path(&first_path).expect("first URI");
     let second_uri = lsp::Url::from_file_path(&second_path).expect("second URI");
@@ -826,18 +827,77 @@ fn concurrent_missing_includes_converge_on_the_current_workspace_generation() {
         })))
         .pop()
         .expect("second job");
+    // Both immutable inputs were captured while the shared target was absent.
+    // The workers must therefore acquire the same target-scope filesystem
+    // session rather than reusing a resource from either snapshot.
+    fs::write(shared.join("part.adoc"), "shared marker\n").expect("shared include");
 
     let first_job = service
         .refresh_stale_workspace(&first_job)
-        .expect("first job follows the generation changed by opening the second document");
-    // Each analysis acquires its own include. Adopting the first advances the
-    // workspace generation, so the second job has to follow it before it runs.
-    adopt(&mut service, first_job);
-    let second_current = service
-        .refresh_stale_workspace(&second_job)
-        .expect("second job follows the generation changed by the first include");
+        .unwrap_or(first_job);
+    let first_config = first_job
+        .workspace
+        .as_ref()
+        .expect("first workspace input")
+        .config_sha256;
+    let second_config = second_job
+        .workspace
+        .as_ref()
+        .expect("second workspace input")
+        .config_sha256;
+    assert_ne!(first_config, second_config);
+    let gate = Arc::new(tokio::sync::Semaphore::new(1));
+    let (sender, mut receiver) = tokio::sync::mpsc::channel(2);
+    for job in [first_job, second_job] {
+        let sender = sender.clone();
+        let gate =
+            crate::backend::workspace_analysis_gate(&job, &gate).expect("workspace analysis gate");
+        let workspace = service.workspace_copy();
+        tokio::spawn(async move {
+            let permit = gate.acquire_owned().await.expect("workspace permit");
+            let completed = tokio::task::spawn_blocking(move || {
+                let analysis = job
+                    .request
+                    .analyze(job.cancellation.as_ref())
+                    .expect("document analysis");
+                let workspace_analysis = crate::backend::analyze_workspace_root(
+                    &workspace,
+                    &job,
+                    job.workspace.as_ref().expect("workspace input"),
+                );
+                (permit, job, analysis, workspace_analysis)
+            })
+            .await
+            .expect("analysis worker");
+            sender.send(completed).await.expect("completion receiver");
+        });
+    }
+    drop(sender);
 
-    adopt(&mut service, second_current);
+    let (first_permit, first_job, first_analysis, first_workspace) =
+        receiver.recv().await.expect("first completion");
+    assert!(service.refresh_stale_workspace(&first_job).is_none());
+    assert_eq!(service.adopt(&first_job, first_analysis), Adoption::Adopted);
+    let first_workspace = first_workspace.expect("first workspace analysis");
+    assert!(
+        !service
+            .adopt_analyzed_workspace(&first_job, first_workspace)
+            .is_empty()
+    );
+    drop(first_permit);
+
+    let (second_permit, second_job, _, second_workspace) =
+        receiver.recv().await.expect("second completion");
+    assert!(
+        second_workspace.is_ok(),
+        "the serialized worker must not expose DraftBusy"
+    );
+    let retry = service
+        .refresh_stale_workspace(&second_job)
+        .expect("completion automatically queues the current workspace generation");
+    drop(second_workspace);
+    drop(second_permit);
+    adopt(&mut service, retry);
     assert!(
         service
             .documents
@@ -847,7 +907,7 @@ fn concurrent_missing_includes_converge_on_the_current_workspace_generation() {
             .expect("first analysis")
             .analysis
             .source()
-            .contains("first marker")
+            .contains("shared marker")
     );
     assert!(
         service
@@ -858,7 +918,7 @@ fn concurrent_missing_includes_converge_on_the_current_workspace_generation() {
             .expect("second analysis")
             .analysis
             .source()
-            .contains("second marker")
+            .contains("shared marker")
     );
     fs::remove_dir_all(root).expect("cleanup");
 }

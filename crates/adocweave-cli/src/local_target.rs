@@ -4,7 +4,10 @@ use std::path::Path;
 
 use adocweave::text::{PositionEncoding, SourceDocument};
 use adocweave::{LocalTargetReference, LocalTargetSyntax};
-use adocweave_host::{LocalTargetError, LocalTargetSession};
+use adocweave_host::{
+    IncludeFilesystem, IncludeFilesystemInspectionOutcome, IncludeFilesystemRequest,
+    LocalFilesystemSession, LocalTargetError, LogicalSourceId, ResourceError,
+};
 
 #[derive(Clone, Debug)]
 pub struct HostDiagnostic {
@@ -19,10 +22,11 @@ pub struct HostDiagnostic {
 
 pub fn validate_with_session(
     targets: &[LocalTargetReference],
+    authority: &Path,
     base: &Path,
     source_id: &str,
     source: &str,
-    session: &mut LocalTargetSession,
+    session: &mut LocalFilesystemSession,
 ) -> Vec<HostDiagnostic> {
     targets
         .iter()
@@ -30,8 +34,8 @@ pub fn validate_with_session(
             let error = if target.syntax == LocalTargetSyntax::Unverifiable {
                 LocalTargetError::Unverifiable(target.target.clone())
             } else {
-                match session.inspect(base, &target.path) {
-                    Ok(_) => return None,
+                match inspect_with_session(source_id, authority, base, &target.path, session) {
+                    Ok(()) => return None,
                     Err(error) => error,
                 }
             };
@@ -47,6 +51,30 @@ pub fn validate_with_session(
             })
         })
         .collect()
+}
+
+pub(crate) fn inspect_with_session(
+    source_id: &str,
+    authority: &Path,
+    base: &Path,
+    target: &str,
+    session: &mut LocalFilesystemSession,
+) -> Result<(), LocalTargetError> {
+    let source = LogicalSourceId::new(source_id.to_owned())
+        .map_err(|error| LocalTargetError::Unverifiable(error.to_string()))?;
+    match IncludeFilesystem::new().inspect_within(
+        session,
+        authority,
+        IncludeFilesystemRequest::new(source, base, target),
+    ) {
+        IncludeFilesystemInspectionOutcome::Found(_) => Ok(()),
+        IncludeFilesystemInspectionOutcome::NotFound(missing) => Err(LocalTargetError::Missing(
+            missing.watch_candidate().path().to_owned(),
+        )),
+        IncludeFilesystemInspectionOutcome::Failed(failed) => Err(
+            crate::local_include::include_target_error(ResourceError::from(failed.error().clone())),
+        ),
+    }
 }
 
 pub fn diagnostic_from_error(

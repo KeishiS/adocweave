@@ -771,6 +771,7 @@ struct ResourceCorrelation;
 #[derive(Clone, Debug)]
 pub struct ResourceRequest {
     target: String,
+    authored_target: String,
     optional: bool,
     source_id: Option<SourceId>,
     range: TextRange,
@@ -780,6 +781,7 @@ pub struct ResourceRequest {
 impl PartialEq for ResourceRequest {
     fn eq(&self, other: &Self) -> bool {
         self.target == other.target
+            && self.authored_target == other.authored_target
             && self.optional == other.optional
             && self.source_id == other.source_id
             && self.range == other.range
@@ -793,6 +795,11 @@ impl ResourceRequest {
     /// Returns the resolved snapshot key.
     pub fn target(&self) -> &str {
         &self.target
+    }
+
+    /// Returns the expanded target before base URI resolution.
+    pub fn authored_target(&self) -> &str {
+        &self.authored_target
     }
 
     /// Returns whether the include declared the resource optional.
