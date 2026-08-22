@@ -185,8 +185,9 @@ GitHub Actionsから生成された来歴を示します。いずれも、成果
 [source,console]
 ----
 VERSION=X.Y.Z
+RELEASE_URL="https://github.com/KeishiS/adocweave/releases/download/adocweave-textlint%2Fv$VERSION"
 npm install --save-dev textlint@15.8.0 \
-  "https://github.com/KeishiS/adocweave/releases/download/adocweave-textlint%2Fv$VERSION/adocweave-textlint-plugin-asciidoc-$VERSION.tgz"
+  "$RELEASE_URL/adocweave-textlint-plugin-asciidoc-$VERSION.tgz"
 ----
 
 対応環境はNode.js 22.18.0以上27未満とtextlint 15.8.0です。パッケージの``engines``と
