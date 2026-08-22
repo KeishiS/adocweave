@@ -103,7 +103,6 @@ test("JSONとTOMLのversionSourceから製品tagとcandidate名を一意に解�
     const cli = productIdentity("cli", { root });
     assert.equal(cli.version, "1.2.3");
     assert.equal(cli.tag, "adocweave-cli/v1.2.3");
-    assert.equal(cli.candidateArtifact, "release-candidate-cli");
     assert.deepEqual(cli.assetNames, [
       "adocweave-cli-a-target.zip",
       "adocweave-cli-b-target.zip",

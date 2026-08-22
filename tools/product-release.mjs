@@ -216,7 +216,6 @@ export function productIdentity(product, { root = ROOT, plan = loadDistributionP
   return {
     assetKind: entry.assetKind,
     assetNames: productAssets(entry, plan, version),
-    candidateArtifact: `release-candidate-${product}`,
     entry,
     product,
     tag: productTag(entry, version),

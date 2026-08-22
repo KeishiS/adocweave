@@ -130,3 +130,31 @@ test("製品assetの空fileと余分なfileを拒否する", () => {
     rmSync(second.root, { recursive: true, force: true });
   }
 });
+
+test("metadata生成後のarchive改変を拒否する", () => {
+  const { artifacts, assets, root } = fixture("browser");
+  try {
+    writeMetadata(artifacts, commit(), "browser", plan);
+    const archiveRoot = assets[0].name.replace(/\.tar\.xz$/, "");
+    writeFileSync(join(root, archiveRoot, "index.mjs"), "改変済み\n");
+    execFileSync("tar", ["--sort=name", "--mtime=@0", "--owner=0", "--group=0", "--numeric-owner",
+      "-cJf", join(artifacts, assets[0].name), "-C", root, archiveRoot]);
+    assert.throws(() => verifyMetadata(artifacts, commit(), "browser", plan), /metadata|checksum|mismatch/i);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("manifestのsource commit改変を拒否する", () => {
+  const { artifacts, root } = fixture("browser");
+  try {
+    writeMetadata(artifacts, commit(), "browser", plan);
+    const path = join(artifacts, "adocweave-dist-manifest.json");
+    const manifest = JSON.parse(readFileSync(path, "utf8"));
+    manifest.sourceCommit = "0".repeat(40);
+    writeFileSync(path, `${JSON.stringify(manifest, null, 2)}\n`);
+    assert.throws(() => verifyMetadata(artifacts, commit(), "browser", plan), /metadata|sourceCommit|mismatch/i);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

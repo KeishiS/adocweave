@@ -1,0 +1,75 @@
+name: Binary cache publication
+
+# 公開済みCLI Releaseと同じcommitからNix package closureを構築し、Cachixへ送信する。
+# GitHub Release公開後の呼び出しと、同じtagを指定した単独再実行の両方に対応する。
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Published stable CLI tag
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published stable CLI tag
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: binary-cache-publish-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            nixSystem: x86_64-linux
+          - runner: ubuntu-24.04-arm
+            nixSystem: aarch64-linux
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - name: Published CLI candidate verification
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          release="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")"
+          test "$(jq -r .tag_name <<<"$release")" = "$RELEASE_TAG"
+          test "$(jq -r .draft <<<"$release")" = false
+          test "$(jq -r .prerelease <<<"$release")" = false
+          test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)"
+          node tools/release-contract.mjs --product=cli "--tag=$RELEASE_TAG"
+          mkdir -p artifacts
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir artifacts
+          node tools/product-release.mjs --verify-candidate cli artifacts
+          node tools/release-metadata.mjs verify cli artifacts "$(git rev-parse HEAD)"
+          for file in artifacts/*; do
+            gh attestation verify "$file" --repo "$GITHUB_REPOSITORY"
+          done
+      - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+      - uses: cachix/cachix-action@5f2d7c5294214f71b873db4b969586b980625e71 # v17
+        with:
+          name: keishis
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          skipPush: true
+      - name: Release package closure build and push
+        env:
+          NIX_SYSTEM: ${{ matrix.nixSystem }}
+        run: |
+          package="$(nix build ".#packages.${NIX_SYSTEM}.default" --no-link --print-out-paths)"
+          test -n "$package"
+          cachix push keishis "$package"

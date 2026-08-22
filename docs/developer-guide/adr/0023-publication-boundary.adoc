@@ -1,6 +1,6 @@
 = ADR 0023: 公開と配布の境界
 
-:status: accepted; amended by ADR 0027, ADR 0028, ADR 0030, and ADR 0031
+:status: accepted; amended by ADR 0027, ADR 0028, ADR 0030, ADR 0031, and ADR 0032
 
 == 文脈
 
@@ -71,4 +71,5 @@ OIDCで委任できない公開先(binary cacheとOpen VSX)は、公開後に動
 
 公開製品を一つにまとめる決定はxref:0027-product-release-trains.adoc[ADR 0027]、エディター拡張がLanguage Serverを
 配布して完全一致を要求する決定はxref:0028-editor-language-server-boundary.adoc[ADR 0028]で置き換えます。
-公開先、候補SHA、成果物の再利用および権限境界の決定は維持します。
+公開先と権限境界の決定は維持します。候補SHAと過去candidateの再利用は
+xref:0032-same-run-release-publication.adoc[ADR 0032]で置き換えます。

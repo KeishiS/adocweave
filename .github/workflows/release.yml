@@ -5,6 +5,19 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      product:
+        description: Product to publish from this main commit
+        required: true
+        type: choice
+        options:
+          - cli
+          - lsp
+          - browser
+          - textlint
+          - vscode
+          - zed
 
 permissions:
   actions: read
@@ -18,8 +31,8 @@ env:
   npm_config_fetch_timeout: "120000"
 
 concurrency:
-  group: ci-release-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-release-${{ github.event_name }}-${{ github.ref }}-${{ inputs.product || 'source' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   source:
@@ -27,6 +40,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
+      - name: Protected main release guard
+        if: github.event_name == 'workflow_dispatch'
+        run: test "$GITHUB_REF" = refs/heads/main
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -35,7 +51,7 @@ jobs:
         run: nix develop .#ci -c cargo make source-gate
 
   main-gate:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     needs: [source]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -48,7 +64,7 @@ jobs:
         run: nix develop .#ci-fuzz -c cargo make main-gate
 
   candidate-plan:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     needs: [source, main-gate]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -58,6 +74,8 @@ jobs:
       native_matrix: ${{ steps.plan.outputs.native_matrix }}
       native_candidate_matrix: ${{ steps.plan.outputs.native_candidate_matrix }}
       script_matrix: ${{ steps.plan.outputs.script_matrix }}
+      product: ${{ steps.plan.outputs.product }}
+      tag: ${{ steps.plan.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -65,8 +83,8 @@ jobs:
           fetch-tags: true
           persist-credentials: false
       - id: plan
-        name: Unpublished product candidate plan
-        run: node tools/product-candidate-plan.mjs "$GITHUB_OUTPUT"
+        name: Selected product candidate plan
+        run: node tools/product-candidate-plan.mjs "$GITHUB_OUTPUT" "${{ inputs.product }}"
 
   build-native:
     if: needs.candidate-plan.outputs.native_required == 'true'
@@ -213,7 +231,7 @@ jobs:
         with:
           name: release-candidate-${{ matrix.product }}
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
           path: artifacts/*
 
   verify-global-candidate:
@@ -243,7 +261,7 @@ jobs:
         with:
           name: release-candidate-${{ matrix.product }}
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
           path: artifacts/*
 
   installation-e2e:
@@ -270,3 +288,54 @@ jobs:
           "${{ matrix.product }}"
           artifacts
           "${{ matrix.target }}"
+
+  publish-native:
+    if: needs.candidate-plan.outputs.native_required == 'true'
+    needs: [candidate-plan, installation-e2e]
+    uses: ./.github/workflows/release-publish.yml
+    with:
+      product: ${{ needs.candidate-plan.outputs.product }}
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+
+  publish-global:
+    if: needs.candidate-plan.outputs.global_required == 'true'
+    needs: [candidate-plan, verify-global-candidate]
+    uses: ./.github/workflows/release-publish.yml
+    with:
+      product: ${{ needs.candidate-plan.outputs.product }}
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+
+  textlint-plugin-post-release-smoke:
+    if: needs.candidate-plan.outputs.product == 'textlint'
+    needs: [candidate-plan, publish-global]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+      - name: Published textlint asset, checksum, and one-shot npx observation
+        run: nix develop .#ci -c cargo make textlint-plugin-post-release-npx-smoke
+
+  open-vsx:
+    if: needs.candidate-plan.outputs.product == 'vscode'
+    needs: [candidate-plan, publish-global]
+    uses: ./.github/workflows/open-vsx-publish.yml
+    with:
+      tag: ${{ needs.candidate-plan.outputs.tag }}
+    secrets: inherit
+
+  binary-cache:
+    if: needs.candidate-plan.outputs.product == 'cli'
+    needs: [candidate-plan, publish-native]
+    uses: ./.github/workflows/binary-cache-publish.yml
+    with:
+      tag: ${{ needs.candidate-plan.outputs.tag }}
+    secrets: inherit
