@@ -16,12 +16,14 @@ const COMMON_RELEASE_FILES = new Set([
   "LICENSE-MIT",
   "Makefile.toml",
   "README.adoc",
-  "THIRD_PARTY_NOTICES.adoc",
   "dist-workspace.toml",
   "flake.lock",
   "flake.nix",
   "release-manifest.json",
 ]);
+// THIRD_PARTY_NOTICES.adoc is generated into the working tree and ignored by
+// Git, so classification never sees it: the audit and the CI change list both
+// come from tracked paths.
 const NATIVE_ROOTS = [
   "crates/adocweave-cli/",
   "crates/adocweave-config/",
@@ -303,7 +305,6 @@ const DOCUMENT_FILES = new Set([
   ".adocweave.toml",
   "README.adoc",
   "CONTRIBUTING.adoc",
-  "THIRD_PARTY_NOTICES.adoc",
   "fuzz/.adocweave.toml",
   "release-manifest.json",
   "tools/adoc-check.mjs",

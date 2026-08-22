@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { readFileSync, readdirSync } from "node:fs";
 import distributionPlan from "../release/distribution-plan.json" with { type: "json" };
 import {
   affectsGlobalCandidate,
@@ -112,9 +113,14 @@ test("tracked path監査は未分類pathを具体的に報告する", () => {
   ]);
 });
 
-test("file単位で名指しした分類対象はすべて実在する", () => {
-  const missing = namedClassifiedPaths().filter((pathname) => !existsSync(pathname));
-  assert.deepEqual(missing, [], "削除したfileが分類表に残っています");
+test("file単位で名指しした分類対象はすべてGitの追跡下にある", () => {
+  // 追跡下のpathだけが分類にかかります。監査もCIの変更一覧もgit由来のため、
+  // 生成物や作業tree上の一時fileを名指ししても永久に一致しません。
+  const tracked = new Set(
+    execFileSync("git", ["ls-files"], { encoding: "utf8" }).split("\n").filter(Boolean),
+  );
+  const missing = namedClassifiedPaths().filter((pathname) => !tracked.has(pathname));
+  assert.deepEqual(missing, [], "追跡していないfileが分類表に残っています");
 });
 
 test("Browser実行補助はglobalだけ、repository metadataはcandidate対象外に分類する", () => {
