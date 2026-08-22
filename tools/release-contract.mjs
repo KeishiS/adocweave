@@ -1,6 +1,13 @@
 import { readFileSync } from "node:fs";
 import process from "node:process";
 
+import {
+  productAssetContracts,
+  productTag,
+  productVersion,
+  selectProduct,
+} from "./product-release.mjs";
+
 const ROOT = new URL("../", import.meta.url);
 const read = (path) => readFileSync(new URL(path, ROOT), "utf8");
 const json = (path) => JSON.parse(read(path));
@@ -34,30 +41,11 @@ export function canonicalJson(value) {
 }
 
 function productRoute(plan, product) {
-  const route = plan.products.find((entry) => entry.product === product);
-  return route ?? fail(`unknown distribution product: ${product}`);
+  return selectProduct(plan, product);
 }
 
 function assetsForProduct(product, productVersion, targets, plan) {
-  const route = productRoute(plan, product);
-  if (route.build === "cargo-dist") {
-    return targets.map((target) => ({
-      name: route.assetName
-        .replace("{target}", target.triple)
-        .replace("{version}", productVersion),
-      kind: route.assetKind,
-      target: target.triple,
-      archive: target.archive,
-      executable: route.executable.replace("{executableSuffix}", target.executableSuffix),
-    }));
-  }
-  return [{
-    name: route.assetName.replace("{version}", productVersion),
-    kind: route.assetKind,
-    target: null,
-    archive: route.archive,
-    executable: null,
-  }];
+  return productAssetContracts(productRoute(plan, product), { ...plan, targets }, productVersion);
 }
 
 export function expectedAssets(product, productVersion, targets) {
@@ -77,7 +65,7 @@ export function validateReleaseIdentity(product, productVersion, tag, plan) {
   if (tagged.product !== product || tagged.productVersion !== productVersion) {
     fail(`release tag does not identify ${product} ${productVersion}`);
   }
-  if (tag !== `${route.tagPrefix}${productVersion}`) fail(`release tag does not use ${product} tag prefix`);
+  if (tag !== productTag(route, productVersion)) fail(`release tag does not use ${product} tag prefix`);
 }
 
 export function validateDistPlan(distPlan, plan, product, productVersion, tag) {
@@ -173,33 +161,8 @@ function tomlValue(source, key) {
   return match?.[1] ?? fail(`missing TOML field: ${key}`);
 }
 
-function valueFromVersionSource(versionSource) {
-  const [path, selector, ...rest] = versionSource.split("#");
-  if (!path || !selector || rest.length > 0) fail(`invalid version source: ${versionSource}`);
-  const source = read(path);
-  if (path.endsWith(".json")) {
-    const value = selector.split(".").reduce((entry, key) => entry?.[key], JSON.parse(source));
-    return value ?? fail(`missing version source value: ${versionSource}`);
-  }
-  if (path.endsWith(".toml")) {
-    const parts = selector.split(".");
-    const key = parts.pop();
-    const section = parts.join(".");
-    const escaped = section.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const body = section
-      ? source.match(new RegExp(`^\\[${escaped}\\]\\s*$([\\s\\S]*?)(?=^\\[|(?![\\s\\S]))`, "m"))?.[1]
-      : source;
-    return body ? tomlValue(body, key) : fail(`missing TOML section: ${section}`);
-  }
-  fail(`unsupported version source: ${versionSource}`);
-}
-
 export function productVersions(plan) {
-  return Object.fromEntries(plan.products.map((route) => {
-    const version = valueFromVersionSource(route.versionSource);
-    if (!/^\d+\.\d+\.\d+$/.test(version)) fail(`invalid ${route.product} version source value: ${version}`);
-    return [route.product, version];
-  }));
+  return Object.fromEntries(plan.products.map((route) => [route.product, productVersion(route)]));
 }
 
 function verifyRepository() {
@@ -309,9 +272,13 @@ function verifyRepository() {
 export function main(args) {
   const { plan, versions } = verifyRepository();
   const tagArg = args.find((arg) => arg.startsWith("--tag="));
+  const productArg = args.find((arg) => arg.startsWith("--product="));
   if (tagArg) {
     const tag = tagArg.slice(6);
     const { product, productVersion } = releaseFromTag(tag);
+    if (productArg && productArg.slice(10) !== product) {
+      fail(`tag does not identify requested product: ${productArg.slice(10)}`);
+    }
     validateReleaseIdentity(product, productVersion, tag, plan);
     if (versions[product] !== productVersion) fail(`tag version does not match ${product} version source ${versions[product]}`);
   }

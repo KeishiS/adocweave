@@ -15,7 +15,7 @@ import {
   validateArchiveEntries,
   vscodePackageContract,
 } from "./platform-contract.mjs";
-import { loadDistributionPlan, selectProduct } from "./product-release-plan.mjs";
+import { loadDistributionPlan, selectProduct } from "./product-release.mjs";
 
 const runtime = createRuntimeAdapters({
   fileSystem: nodeFileSystem,

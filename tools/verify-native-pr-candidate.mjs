@@ -5,14 +5,14 @@ import { fileURLToPath } from "node:url";
 
 import {
   loadDistributionPlan,
-  plannedProductAssets,
+  productAssetContracts,
   productVersion,
   selectProduct,
-} from "./product-release-plan.mjs";
+} from "./product-release.mjs";
 
 export function expectedPullRequestAssets(plan, product) {
   const selected = selectProduct(plan, product);
-  const assets = plannedProductAssets(plan, selected, productVersion(selected));
+  const assets = productAssetContracts(selected, plan, productVersion(selected));
   if (selected.build !== "cargo-dist") return assets.map(({ name }) => name);
   const pullRequestTargets = new Set(
     plan.targets.filter(({ os }) => os === "darwin" || os === "win32").map(({ triple }) => triple),

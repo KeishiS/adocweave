@@ -19,7 +19,7 @@ import {
   removeNativeSmokeDirectory,
   smokeLsp,
 } from "./native-lsp-smoke.mjs";
-import { loadDistributionPlan, selectProduct } from "./product-release-plan.mjs";
+import { loadDistributionPlan, selectProduct } from "./product-release.mjs";
 
 const runtime = createRuntimeAdapters({
   fileSystem: nodeFileSystem,

@@ -51,7 +51,7 @@ jobs:
           git diff --cached --exit-code
           printf '%s' "$PLAN" | node tools/product-release.mjs --verify-publication "$PRODUCT" artifacts
           node tools/release-contract.mjs "--product=$PRODUCT" "--tag=$tag"
-          node tools/release-metadata.mjs verify artifacts "$CANDIDATE_SHA"
+          node tools/release-metadata.mjs verify "$PRODUCT" artifacts "$CANDIDATE_SHA"
           releases="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100")"
           existing="$(jq --arg tag "$tag" -r '.[][] | select(.tag_name == $tag) | .id' <<<"$releases")"
           if [ -n "$existing" ]; then

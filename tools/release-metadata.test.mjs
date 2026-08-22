@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { plannedProductAssets, productVersion, selectProduct } from "./product-release-plan.mjs";
+import { productAssetContracts, productVersion, selectProduct } from "./product-release.mjs";
 import { verifyMetadata, writeMetadata } from "./release-metadata.mjs";
 
 const metadataFiles = [
@@ -51,7 +51,7 @@ function fixture(product) {
   const artifacts = join(root, "artifacts");
   mkdirSync(artifacts);
   const selected = selectProduct(plan, product);
-  const assets = plannedProductAssets(plan, selected, productVersion(selected));
+  const assets = productAssetContracts(selected, plan, productVersion(selected));
   for (const asset of assets) {
     const archiveRoot = asset.name.replace(/\.(?:tar\.xz|zip)$/, "");
     const stage = join(root, archiveRoot);

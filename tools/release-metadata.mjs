@@ -6,11 +6,10 @@ import { basename, join, resolve } from "node:path";
 import { cargoTreePackageKeys } from "./generate-third-party-notices.mjs";
 import {
   loadDistributionPlan,
-  plannedProductAssets,
-  productIdentity,
+  productAssetContracts,
   productVersion,
   selectProduct,
-} from "./product-release-plan.mjs";
+} from "./product-release.mjs";
 import { loadTextlintPluginPackageContract } from "./textlint-plugin-package-contract.mjs";
 
 export const RELEASE_METADATA_TOOL_VERSION = 2;
@@ -219,7 +218,7 @@ export function buildMetadata(directory, sourceCommit, product, plan = loadDistr
   if (!/^[0-9a-f]{40}$/.test(sourceCommit)) fail("source commit must be a lowercase 40-character Git commit");
   const selectedProduct = selectProduct(plan, product);
   const version = productVersion(selectedProduct);
-  const plannedAssets = plannedProductAssets(plan, selectedProduct, version);
+  const plannedAssets = productAssetContracts(selectedProduct, plan, version);
   const assets = plannedAssets.map((planned) => {
     const path = join(directory, planned.name);
     let bytes;
@@ -239,7 +238,7 @@ export function buildMetadata(directory, sourceCommit, product, plan = loadDistr
 
   const distributionManifest = {
     assets: assets.map(({ path: _path, ...asset }) => asset),
-    product: productIdentity(product),
+    product,
     productVersion: version,
     schemaVersion: 3,
     sourceCommit,
@@ -348,7 +347,8 @@ export function verifyMetadata(directory, sourceCommit, product, plan = loadDist
   const actual = new Set(entries.map((entry) => entry.name));
   const selectedProduct = selectProduct(plan, product);
   const expectedNames = new Set([
-    ...plannedProductAssets(plan, selectedProduct, productVersion(selectedProduct)).map((asset) => asset.name),
+    ...productAssetContracts(selectedProduct, plan, productVersion(selectedProduct))
+      .map((asset) => asset.name),
     ...plan.releaseMetadata.map((entry) => entry.name),
   ]);
   if (actual.size !== expectedNames.size || [...actual].some((name) => !expectedNames.has(name))) {

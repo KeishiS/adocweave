@@ -143,7 +143,7 @@ export function productTag(entry, version) {
   return `${entry.tagPrefix}${version}`;
 }
 
-export function productAssets(entry, plan, version) {
+export function productAssetContracts(entry, plan, version) {
   const targets = entry.assetName.includes("{target}") ? plan.targets : [undefined];
   if (!Array.isArray(targets) || targets.length === 0) {
     fail(`product ${entry.product} のtargetがありません`);
@@ -155,8 +155,20 @@ export function productAssets(entry, plan, version) {
     if (name.includes("{") || name.includes("}") || basename(name) !== name || !SAFE_PATH.test(name)) {
       fail(`product ${entry.product} のasset名を解決できません：${name}`);
     }
-    return name;
-  }).sort();
+    return {
+      archive: target?.archive ?? entry.archive,
+      executable: target
+        ? entry.executable?.replaceAll("{executableSuffix}", target.executableSuffix)
+        : null,
+      kind: entry.assetKind,
+      name,
+      target: target?.triple ?? null,
+    };
+  }).sort((left, right) => left.name.localeCompare(right.name));
+}
+
+export function productAssets(entry, plan, version) {
+  return productAssetContracts(entry, plan, version).map((asset) => asset.name);
 }
 
 export function productIdentity(product, { root = ROOT, plan = loadDistributionPlan(root) } = {}) {
@@ -278,7 +290,7 @@ async function main(args = process.argv.slice(2)) {
     return;
   }
   if (args.length === 1) {
-    process.stdout.write(`${JSON.stringify(resolveProductRelease(args[0]))}\n`);
+    process.stdout.write(`${JSON.stringify(productIdentity(args[0]))}\n`);
     return;
   }
   fail("使用方法：node tools/product-release.mjs PRODUCT | --publication-plan PRODUCT | --verify-candidate PRODUCT DIRECTORY | --verify-publication PRODUCT DIRECTORY");
