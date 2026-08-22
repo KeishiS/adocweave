@@ -997,6 +997,16 @@ impl WorkspaceResourceRequest {
         self.inner.is_optional()
     }
 
+    /// Returns the source containing the include directive.
+    pub fn source_id(&self) -> Option<&str> {
+        self.inner.source_id().map(SourceId::as_str)
+    }
+
+    /// Returns the source range of the include directive.
+    pub const fn range(&self) -> adocweave::text::TextRange {
+        self.inner.range()
+    }
+
     /// Supplies immutable UTF-8 text acquired for this request.
     pub fn found(&self, text: impl Into<Arc<str>>) -> WorkspaceResourceResponse {
         let text = text.into();
@@ -1021,9 +1031,29 @@ impl WorkspaceResourceRequest {
 
     /// Reports a terminal host loading failure.
     pub fn load_failed(&self, message: impl Into<String>) -> WorkspaceResourceResponse {
+        let id = ResourceId::new(self.target()).expect("preprocessor returned a valid target");
         WorkspaceResourceResponse {
             inner: self.inner.load_failed(message),
-            evidence: WorkspaceResourceEvidence::Failed,
+            evidence: WorkspaceResourceEvidence::Failed(id),
+        }
+    }
+
+    /// Continues preprocessing with an empty placeholder after a host failure.
+    ///
+    /// The journal still records [`WorkspaceIncludeResolution::Failed`]. This
+    /// is intended for a host such as a command-line checker that reports its
+    /// own typed loading diagnostic while continuing to analyze the remainder
+    /// of the document. A host that cannot publish a partial result should use
+    /// [`Self::load_failed`] instead.
+    pub fn failed_with_placeholder(&self) -> WorkspaceResourceResponse {
+        let id = ResourceId::new(self.target()).expect("preprocessor returned a valid target");
+        let text = Arc::<str>::from("");
+        WorkspaceResourceResponse {
+            inner: self.inner.found(ResourceDocument {
+                source_id: SourceId::new(id.to_string()),
+                source: Arc::clone(&text),
+            }),
+            evidence: WorkspaceResourceEvidence::FailedWithPlaceholder { id, text },
         }
     }
 }
@@ -1039,7 +1069,77 @@ pub struct WorkspaceResourceResponse {
 enum WorkspaceResourceEvidence {
     Found { id: ResourceId, text: Arc<str> },
     Missing(ResourceId),
-    Failed,
+    Failed(ResourceId),
+    FailedWithPlaceholder { id: ResourceId, text: Arc<str> },
+}
+
+/// Result of starting or resuming preprocessing for one workspace root.
+///
+/// This is the shared, I/O-independent include protocol used by native
+/// adapters. A synchronous caller may answer `NeedResource` in a loop, while
+/// an asynchronous caller may retain the single-use continuation.
+pub enum WorkspacePreprocessStep {
+    /// Preprocessing completed once without running analysis or projection.
+    Complete(Box<WorkspacePreprocessDraft>),
+    /// The host must answer one include request before processing can continue.
+    NeedResource(Box<SuspendedWorkspacePreprocess>),
+    /// Processing failed without publishing a partial result.
+    Failed(WorkspacePreprocessFailure),
+    /// Cooperative cancellation discarded all unpublished state.
+    Cancelled,
+}
+
+/// A preprocessing failure together with answered include requests.
+#[derive(Debug)]
+pub struct WorkspacePreprocessFailure {
+    error: WorkspaceError,
+    include_journal: Vec<WorkspaceIncludeEvent>,
+    snapshot_dependencies: BTreeSet<ResourceId>,
+    sources: BTreeMap<ResourceId, Arc<str>>,
+}
+
+impl WorkspacePreprocessFailure {
+    /// Returns the stable workspace failure.
+    pub const fn error(&self) -> &WorkspaceError {
+        &self.error
+    }
+
+    /// Returns host requests answered before preprocessing failed.
+    ///
+    /// Snapshot-ready includes are reported separately by
+    /// [`Self::snapshot_dependencies`], because core preprocessing does not
+    /// expose a partial executed-directive list on failure.
+    pub fn include_journal(&self) -> &[WorkspaceIncludeEvent] {
+        &self.include_journal
+    }
+
+    /// Returns resources read from the immutable starting snapshot before failure.
+    pub fn snapshot_dependencies(&self) -> &BTreeSet<ResourceId> {
+        &self.snapshot_dependencies
+    }
+
+    /// Returns all snapshot and host-request dependencies observed before failure.
+    pub fn dependencies(&self) -> BTreeSet<ResourceId> {
+        self.snapshot_dependencies
+            .iter()
+            .cloned()
+            .chain(
+                self.include_journal
+                    .iter()
+                    .map(|event| event.target().clone()),
+            )
+            .collect()
+    }
+
+    /// Returns source text observed before preprocessing failed.
+    pub fn source(&self, id: &ResourceId) -> Option<&str> {
+        self.sources.get(id).map(AsRef::as_ref)
+    }
+
+    /// Consumes this failure and returns its workspace error.
+    pub fn into_error(self) -> WorkspaceError {
+        self.error
+    }
 }
 
 /// Result of starting or resuming workspace analysis.
@@ -1061,12 +1161,38 @@ pub enum WorkspaceAnalysisStep {
 
 /// Opaque, single-use continuation for suspended workspace analysis.
 pub struct SuspendedWorkspaceAnalysis {
-    continuation: EffectiveSuspendedPreprocess,
-    state: WorkspaceAnalysisRun,
-    request: WorkspaceResourceRequest,
+    preprocessing: SuspendedWorkspacePreprocess,
+    projection_limits: ProjectionLimits,
 }
 
 impl SuspendedWorkspaceAnalysis {
+    /// Returns the one resource request that must be answered.
+    pub const fn request(&self) -> &WorkspaceResourceRequest {
+        self.preprocessing.request()
+    }
+
+    /// Consumes this continuation and resumes without rebuilding its snapshot.
+    pub fn resume(
+        self,
+        response: WorkspaceResourceResponse,
+        cancellation: &impl Cancellation,
+    ) -> WorkspaceAnalysisStep {
+        analysis_step_from_preprocess(
+            self.preprocessing.resume(response, cancellation),
+            self.projection_limits,
+            cancellation,
+        )
+    }
+}
+
+/// Opaque, single-use continuation for suspended workspace preprocessing.
+pub struct SuspendedWorkspacePreprocess {
+    continuation: EffectiveSuspendedPreprocess,
+    state: WorkspacePreprocessRun,
+    request: WorkspaceResourceRequest,
+}
+
+impl SuspendedWorkspacePreprocess {
     /// Returns the one resource request that must be answered.
     pub const fn request(&self) -> &WorkspaceResourceRequest {
         &self.request
@@ -1077,11 +1203,11 @@ impl SuspendedWorkspaceAnalysis {
         self,
         response: WorkspaceResourceResponse,
         cancellation: &impl Cancellation,
-    ) -> WorkspaceAnalysisStep {
+    ) -> WorkspacePreprocessStep {
         let Self {
             continuation,
             mut state,
-            request: _,
+            request,
         } = self;
         let WorkspaceResourceResponse { inner, evidence } = response;
         let step = continuation.resume(inner, &state.lookup, cancellation);
@@ -1090,9 +1216,9 @@ impl SuspendedWorkspaceAnalysis {
             EffectivePreprocessStep::HostError(error)
                 if error.kind() == HostResourceErrorKind::ResponseMismatch
         ) {
-            state.record_evidence(evidence);
+            state.record_evidence(&request, evidence);
         }
-        state.advance(step, cancellation)
+        state.advance(step)
     }
 }
 
@@ -1125,111 +1251,33 @@ impl ResourceLookup for StableWorkspaceLookup {
     }
 }
 
-struct WorkspaceAnalysisRun {
+struct WorkspacePreprocessRun {
     base_generation: Generation,
     root: ResourceId,
     root_revision: Revision,
     root_text: Arc<str>,
     options: EffectiveProcessingOptions,
     canonical_options: EffectiveProcessingOptions,
-    projection_limits: ProjectionLimits,
     lookup: StableWorkspaceLookup,
     found: BTreeMap<ResourceId, Arc<str>>,
     missing: BTreeSet<ResourceId>,
+    failed: BTreeSet<ResourceId>,
+    include_journal: Vec<WorkspaceIncludeEvent>,
 }
 
-impl WorkspaceAnalysisRun {
-    fn advance(
-        self,
-        step: EffectivePreprocessStep,
-        cancellation: &impl Cancellation,
-    ) -> WorkspaceAnalysisStep {
+impl WorkspacePreprocessRun {
+    fn advance(self, step: EffectivePreprocessStep) -> WorkspacePreprocessStep {
         match step {
             EffectivePreprocessStep::Complete(prepared) => {
-                #[cfg(test)]
-                record_resumable_stage(1);
-                let preprocessed = match self.options.analyze_preprocessed(
+                let include_journal = completed_include_journal(
+                    prepared.document(),
+                    &self.found,
+                    &self.missing,
+                    &self.failed,
+                );
+                WorkspacePreprocessStep::Complete(Box::new(WorkspacePreprocessDraft {
+                    state: self,
                     prepared,
-                    PreprocessInputs {
-                        cancellation: Some(cancellation),
-                    },
-                ) {
-                    Ok(preprocessed) => preprocessed,
-                    Err(error) => return prepared_analysis_error_step(error),
-                };
-                if adocweave::CancellationCheck::is_cancelled(cancellation) {
-                    return WorkspaceAnalysisStep::Cancelled;
-                }
-                let dependencies = actual_dependencies(&preprocessed.document, &self.root);
-                let include_journal = preprocessed
-                    .document
-                    .directives
-                    .iter()
-                    .filter(|directive| directive.kind == DirectiveKind::Include)
-                    .map(|directive| {
-                        let target = ResourceId::new(&directive.target)
-                            .expect("preprocessor returned a valid target");
-                        let resolution = if self.found.contains_key(&target) {
-                            WorkspaceIncludeResolution::DeferredFound
-                        } else if self.missing.contains(&target) {
-                            WorkspaceIncludeResolution::AuthoritativeMissing
-                        } else {
-                            WorkspaceIncludeResolution::SnapshotReady
-                        };
-                        WorkspaceIncludeEvent {
-                            target,
-                            resolution,
-                            optional: directive.optional,
-                        }
-                    })
-                    .collect();
-                #[cfg(test)]
-                record_resumable_stage(2);
-                let projection = match preprocessed
-                    .project_origins_cancellable(self.projection_limits, cancellation)
-                {
-                    Ok(projection) => projection,
-                    Err(ProjectionFailure::Cancelled) => return WorkspaceAnalysisStep::Cancelled,
-                    Err(error) => {
-                        return WorkspaceAnalysisStep::Failed(WorkspaceError::new(
-                            WorkspaceErrorCode::Projection,
-                            error.to_string(),
-                        ));
-                    }
-                };
-                #[cfg(test)]
-                record_resumable_stage(3);
-                if adocweave::CancellationCheck::is_cancelled(cancellation) {
-                    return WorkspaceAnalysisStep::Cancelled;
-                }
-                let counts = DiagnosticCounts::from_projection(&projection);
-                let base = self
-                    .lookup
-                    .observed
-                    .into_inner()
-                    .expect("workspace lookup evidence lock")
-                    .into_iter()
-                    .filter_map(|id| {
-                        self.lookup
-                            .resources
-                            .get(&id)
-                            .map(|resource| (id, Arc::clone(&resource.text)))
-                    })
-                    .collect();
-                WorkspaceAnalysisStep::Complete(Box::new(WorkspaceAnalysisDraft {
-                    base_generation: self.base_generation,
-                    canonical_options: self.canonical_options,
-                    root: self.root,
-                    root_revision: self.root_revision,
-                    root_text: self.root_text,
-                    dependencies,
-                    document: Arc::new(preprocessed.document),
-                    analysis: Arc::new(preprocessed.analysis),
-                    projection: Arc::new(projection),
-                    counts,
-                    base,
-                    found: self.found,
-                    missing: self.missing,
                     include_journal,
                 }))
             }
@@ -1238,45 +1286,292 @@ impl WorkspaceAnalysisRun {
                     inner: continuation.request().clone(),
                 };
                 if ResourceId::new(request.target()).is_err() {
-                    return WorkspaceAnalysisStep::Failed(WorkspaceError::new(
+                    return self.failed(WorkspaceError::new(
                         WorkspaceErrorCode::InvalidResourceId,
                         request.target(),
                     ));
                 }
-                WorkspaceAnalysisStep::NeedResource(Box::new(SuspendedWorkspaceAnalysis {
+                WorkspacePreprocessStep::NeedResource(Box::new(SuspendedWorkspacePreprocess {
                     continuation: *continuation,
                     state: self,
                     request,
                 }))
             }
             EffectivePreprocessStep::Failed(error) => {
-                WorkspaceAnalysisStep::Failed(preprocess_workspace_error(error))
+                self.failed(preprocess_workspace_error(error))
             }
             EffectivePreprocessStep::HostError(error) => {
-                WorkspaceAnalysisStep::Failed(host_resource_workspace_error(error))
+                self.failed(host_resource_workspace_error(error))
             }
-            EffectivePreprocessStep::Cancelled => WorkspaceAnalysisStep::Cancelled,
-            _ => WorkspaceAnalysisStep::Failed(WorkspaceError::new(
+            EffectivePreprocessStep::Cancelled => WorkspacePreprocessStep::Cancelled,
+            _ => self.failed(WorkspaceError::new(
                 WorkspaceErrorCode::Preprocess,
                 "unsupported preprocessing suspension state",
             )),
         }
     }
 
-    fn record_evidence(&mut self, evidence: WorkspaceResourceEvidence) {
+    fn failed(self, error: WorkspaceError) -> WorkspacePreprocessStep {
+        let snapshot_dependencies = self
+            .lookup
+            .observed
+            .into_inner()
+            .expect("workspace lookup evidence lock");
+        let mut sources = snapshot_dependencies
+            .iter()
+            .filter_map(|id| {
+                self.lookup
+                    .resources
+                    .get(id)
+                    .map(|resource| (id.clone(), Arc::clone(&resource.text)))
+            })
+            .collect::<BTreeMap<_, _>>();
+        sources.insert(self.root.clone(), Arc::clone(&self.root_text));
+        sources.extend(
+            self.found
+                .iter()
+                .map(|(id, text)| (id.clone(), Arc::clone(text))),
+        );
+        WorkspacePreprocessStep::Failed(WorkspacePreprocessFailure {
+            error,
+            include_journal: self.include_journal,
+            snapshot_dependencies,
+            sources,
+        })
+    }
+
+    fn record_evidence(
+        &mut self,
+        request: &WorkspaceResourceRequest,
+        evidence: WorkspaceResourceEvidence,
+    ) {
         #[cfg(test)]
         RESUMABLE_EVIDENCE_RECORDS.with(|records| records.set(records.get() + 1));
-        match evidence {
+        let (target, resolution) = match evidence {
             WorkspaceResourceEvidence::Found { id, text } => {
                 self.missing.remove(&id);
-                self.found.insert(id, text);
+                self.failed.remove(&id);
+                self.found.insert(id.clone(), text);
+                (id, WorkspaceIncludeResolution::DeferredFound)
             }
             WorkspaceResourceEvidence::Missing(id) => {
                 self.found.remove(&id);
-                self.missing.insert(id);
+                self.failed.remove(&id);
+                self.missing.insert(id.clone());
+                (id, WorkspaceIncludeResolution::AuthoritativeMissing)
             }
-            WorkspaceResourceEvidence::Failed => {}
+            WorkspaceResourceEvidence::Failed(id) => (id, WorkspaceIncludeResolution::Failed),
+            WorkspaceResourceEvidence::FailedWithPlaceholder { id, text } => {
+                self.missing.remove(&id);
+                self.failed.insert(id.clone());
+                self.found.insert(id.clone(), text);
+                (id, WorkspaceIncludeResolution::Failed)
+            }
+        };
+        self.include_journal.push(WorkspaceIncludeEvent {
+            target,
+            resolution,
+            optional: request.is_optional(),
+            source_id: request.source_id().map(ToOwned::to_owned),
+            range: request.range(),
+        });
+    }
+}
+
+/// Completed preprocessing and the immutable workspace evidence it observed.
+///
+/// The value may be inspected by a preprocessing-only consumer or consumed by
+/// [`Self::analyze`] to continue the normal workspace analysis pipeline.
+pub struct WorkspacePreprocessDraft {
+    state: WorkspacePreprocessRun,
+    prepared: adocweave::preprocess::PreparedPreprocessedDocument,
+    include_journal: Vec<WorkspaceIncludeEvent>,
+}
+
+impl WorkspacePreprocessDraft {
+    /// Returns the preprocessed root identity.
+    pub fn root(&self) -> &ResourceId {
+        &self.state.root
+    }
+
+    /// Returns the preprocessed document and source map.
+    pub fn document(&self) -> &adocweave::preprocess::PreprocessedDocument {
+        self.prepared.document()
+    }
+
+    /// Returns includes in execution order, preserving repetitions and outcomes.
+    pub fn include_journal(&self) -> &[WorkspaceIncludeEvent] {
+        &self.include_journal
+    }
+
+    /// Returns every resource named by an executed include.
+    pub fn dependencies(&self) -> BTreeSet<ResourceId> {
+        self.include_journal
+            .iter()
+            .map(|event| event.target().clone())
+            .collect()
+    }
+
+    /// Returns root, snapshot, or deferred source text by logical identity.
+    pub fn source(&self, id: &ResourceId) -> Option<&str> {
+        if id == &self.state.root {
+            return Some(&self.state.root_text);
         }
+        self.state.found.get(id).map(AsRef::as_ref).or_else(|| {
+            self.state
+                .lookup
+                .resources
+                .get(id)
+                .map(|resource| resource.text.as_ref())
+        })
+    }
+
+    /// Returns the immutable workspace generation used to start preprocessing.
+    pub const fn base_generation(&self) -> Generation {
+        self.state.base_generation
+    }
+
+    /// Applies the strict generation and configuration gate required by an integration layer.
+    pub fn matches_canonical_context(
+        &self,
+        generation: Generation,
+        options: &EffectiveProcessingOptions,
+    ) -> bool {
+        self.state.base_generation == generation
+            && self.state.canonical_options.same_contract(options)
+    }
+
+    /// Continues with core analysis and origin projection without preprocessing again.
+    pub fn analyze(
+        self,
+        projection_limits: ProjectionLimits,
+        cancellation: &impl Cancellation,
+    ) -> WorkspaceAnalysisStep {
+        let Self {
+            state,
+            prepared,
+            include_journal,
+        } = self;
+        #[cfg(test)]
+        record_resumable_stage(1);
+        let preprocessed = match state.options.analyze_preprocessed(
+            prepared,
+            PreprocessInputs {
+                cancellation: Some(cancellation),
+            },
+        ) {
+            Ok(preprocessed) => preprocessed,
+            Err(error) => return prepared_analysis_error_step(error),
+        };
+        if adocweave::CancellationCheck::is_cancelled(cancellation) {
+            return WorkspaceAnalysisStep::Cancelled;
+        }
+        let dependencies = actual_dependencies(&preprocessed.document, &state.root);
+        #[cfg(test)]
+        record_resumable_stage(2);
+        let projection =
+            match preprocessed.project_origins_cancellable(projection_limits, cancellation) {
+                Ok(projection) => projection,
+                Err(ProjectionFailure::Cancelled) => return WorkspaceAnalysisStep::Cancelled,
+                Err(error) => {
+                    return WorkspaceAnalysisStep::Failed(WorkspaceError::new(
+                        WorkspaceErrorCode::Projection,
+                        error.to_string(),
+                    ));
+                }
+            };
+        #[cfg(test)]
+        record_resumable_stage(3);
+        if adocweave::CancellationCheck::is_cancelled(cancellation) {
+            return WorkspaceAnalysisStep::Cancelled;
+        }
+        let counts = DiagnosticCounts::from_projection(&projection);
+        let base = state
+            .lookup
+            .observed
+            .into_inner()
+            .expect("workspace lookup evidence lock")
+            .into_iter()
+            .filter_map(|id| {
+                state
+                    .lookup
+                    .resources
+                    .get(&id)
+                    .map(|resource| (id, Arc::clone(&resource.text)))
+            })
+            .collect();
+        WorkspaceAnalysisStep::Complete(Box::new(WorkspaceAnalysisDraft {
+            base_generation: state.base_generation,
+            canonical_options: state.canonical_options,
+            root: state.root,
+            root_revision: state.root_revision,
+            root_text: state.root_text,
+            dependencies,
+            document: Arc::new(preprocessed.document),
+            analysis: Arc::new(preprocessed.analysis),
+            projection: Arc::new(projection),
+            counts,
+            base,
+            found: state.found,
+            missing: state.missing,
+            include_journal,
+        }))
+    }
+}
+
+fn completed_include_journal(
+    document: &adocweave::preprocess::PreprocessedDocument,
+    found: &BTreeMap<ResourceId, Arc<str>>,
+    missing: &BTreeSet<ResourceId>,
+    failed: &BTreeSet<ResourceId>,
+) -> Vec<WorkspaceIncludeEvent> {
+    document
+        .directives
+        .iter()
+        .filter(|directive| directive.kind == DirectiveKind::Include)
+        .map(|directive| {
+            let target =
+                ResourceId::new(&directive.target).expect("preprocessor returned a valid target");
+            let resolution = if failed.contains(&target) {
+                WorkspaceIncludeResolution::Failed
+            } else if found.contains_key(&target) {
+                WorkspaceIncludeResolution::DeferredFound
+            } else if missing.contains(&target) {
+                WorkspaceIncludeResolution::AuthoritativeMissing
+            } else {
+                WorkspaceIncludeResolution::SnapshotReady
+            };
+            WorkspaceIncludeEvent {
+                target,
+                resolution,
+                optional: directive.optional,
+                source_id: directive
+                    .source_id
+                    .as_ref()
+                    .map(|source_id| source_id.as_str().to_owned()),
+                range: directive.range,
+            }
+        })
+        .collect()
+}
+
+fn analysis_step_from_preprocess(
+    step: WorkspacePreprocessStep,
+    projection_limits: ProjectionLimits,
+    cancellation: &impl Cancellation,
+) -> WorkspaceAnalysisStep {
+    match step {
+        WorkspacePreprocessStep::Complete(draft) => draft.analyze(projection_limits, cancellation),
+        WorkspacePreprocessStep::NeedResource(preprocessing) => {
+            WorkspaceAnalysisStep::NeedResource(Box::new(SuspendedWorkspaceAnalysis {
+                preprocessing: *preprocessing,
+                projection_limits,
+            }))
+        }
+        WorkspacePreprocessStep::Failed(failure) => {
+            WorkspaceAnalysisStep::Failed(failure.into_error())
+        }
+        WorkspacePreprocessStep::Cancelled => WorkspaceAnalysisStep::Cancelled,
     }
 }
 
@@ -1312,6 +1607,8 @@ pub enum WorkspaceIncludeResolution {
     DeferredFound,
     /// The host authoritatively established that the resource was absent.
     AuthoritativeMissing,
+    /// The host found the resource but could not load it.
+    Failed,
 }
 
 /// One executed include in source execution order.
@@ -1322,6 +1619,8 @@ pub struct WorkspaceIncludeEvent {
     target: ResourceId,
     resolution: WorkspaceIncludeResolution,
     optional: bool,
+    source_id: Option<String>,
+    range: adocweave::text::TextRange,
 }
 
 impl WorkspaceIncludeEvent {
@@ -1338,6 +1637,16 @@ impl WorkspaceIncludeEvent {
     /// Returns whether the include declared the resource optional.
     pub const fn is_optional(&self) -> bool {
         self.optional
+    }
+
+    /// Returns the source containing the include directive.
+    pub fn source_id(&self) -> Option<&str> {
+        self.source_id.as_deref()
+    }
+
+    /// Returns the source range of the include directive.
+    pub const fn range(&self) -> adocweave::text::TextRange {
+        self.range
     }
 }
 
@@ -1428,45 +1737,47 @@ impl WorkspaceSnapshot {
         }
     }
 
-    /// Starts analysis that suspends at the first resource absent from this snapshot.
+    /// Starts preprocessing that suspends at the first resource absent from this snapshot.
     ///
-    /// The returned continuation retains this immutable lookup and resumes from
+    /// The returned continuation retains the immutable lookup and resumes from
     /// the exact include directive without rebuilding or rescanning the snapshot.
-    /// The resulting draft records this snapshot generation and the exact
-    /// effective-options instance so an integration layer can strictly reject
-    /// non-canonical work before calling [`Workspace::finalize_draft`].
-    pub fn analyze_resumable(
+    pub fn preprocess_resumable(
         &self,
         root: &ResourceId,
         options: &EffectiveProcessingOptions,
-        projection_limits: ProjectionLimits,
         cancellation: &impl Cancellation,
-    ) -> WorkspaceAnalysisStep {
+    ) -> WorkspacePreprocessStep {
         if adocweave::CancellationCheck::is_cancelled(cancellation) {
-            return WorkspaceAnalysisStep::Cancelled;
+            return WorkspacePreprocessStep::Cancelled;
         }
         if !self.roots.contains(root) {
-            return WorkspaceAnalysisStep::Failed(WorkspaceError::new(
-                WorkspaceErrorCode::MissingResource,
-                "analysis root is not registered",
-            ));
+            return WorkspacePreprocessStep::Failed(WorkspacePreprocessFailure {
+                error: WorkspaceError::new(
+                    WorkspaceErrorCode::MissingResource,
+                    "analysis root is not registered",
+                ),
+                include_journal: Vec::new(),
+                snapshot_dependencies: BTreeSet::new(),
+                sources: BTreeMap::new(),
+            });
         }
         let Some(root_resource) = self.resources.get(root) else {
-            return WorkspaceAnalysisStep::Failed(WorkspaceError::new(
-                WorkspaceErrorCode::MissingResource,
-                root.to_string(),
-            ));
+            return WorkspacePreprocessStep::Failed(WorkspacePreprocessFailure {
+                error: WorkspaceError::new(WorkspaceErrorCode::MissingResource, root.to_string()),
+                include_journal: Vec::new(),
+                snapshot_dependencies: BTreeSet::new(),
+                sources: BTreeMap::new(),
+            });
         };
         let canonical_options = options.clone();
         let options = options
             .clone()
             .with_source_id(Some(SourceId::new(root.to_string())));
-        let state = WorkspaceAnalysisRun {
+        let state = WorkspacePreprocessRun {
             base_generation: self.generation,
             root: root.clone(),
             root_revision: root_resource.revision,
             root_text: Arc::clone(&root_resource.text),
-            projection_limits,
             lookup: StableWorkspaceLookup {
                 resources: Arc::clone(&self.resources),
                 root: root.clone(),
@@ -1476,6 +1787,8 @@ impl WorkspaceSnapshot {
             canonical_options,
             found: BTreeMap::new(),
             missing: BTreeSet::new(),
+            failed: BTreeSet::new(),
+            include_journal: Vec::new(),
         };
         #[cfg(test)]
         record_resumable_stage(0);
@@ -1483,7 +1796,34 @@ impl WorkspaceSnapshot {
             state
                 .options
                 .preprocess_resumable(&root_resource.text, &state.lookup, cancellation);
-        state.advance(step, cancellation)
+        state.advance(step)
+    }
+
+    /// Starts analysis that suspends at the first resource absent from this snapshot.
+    ///
+    /// The returned continuation retains this immutable lookup and resumes from
+    /// the exact include directive without rebuilding or rescanning the snapshot.
+    /// The resulting draft records this snapshot generation and the exact
+    /// effective-options instance so an integration layer can strictly reject
+    /// non-canonical work before calling [`Workspace::finalize_draft`].
+    ///
+    /// This compatibility entry returns only [`WorkspaceError`] on failure.
+    /// Adapters that update dependencies after a failed run must drive
+    /// [`Self::preprocess_resumable`] and read
+    /// [`WorkspacePreprocessFailure::dependencies`] before continuing a
+    /// completed draft with [`WorkspacePreprocessDraft::analyze`].
+    pub fn analyze_resumable(
+        &self,
+        root: &ResourceId,
+        options: &EffectiveProcessingOptions,
+        projection_limits: ProjectionLimits,
+        cancellation: &impl Cancellation,
+    ) -> WorkspaceAnalysisStep {
+        analysis_step_from_preprocess(
+            self.preprocess_resumable(root, options, cancellation),
+            projection_limits,
+            cancellation,
+        )
     }
 
     /// Preprocesses, analyzes, and projects one registered root.
@@ -2473,33 +2813,37 @@ mod tests {
         };
 
         assert_eq!(
-            draft.include_journal(),
-            &[
-                WorkspaceIncludeEvent {
-                    target: base,
-                    resolution: WorkspaceIncludeResolution::SnapshotReady,
-                    optional: false,
-                },
-                WorkspaceIncludeEvent {
-                    target: loaded.clone(),
-                    resolution: WorkspaceIncludeResolution::DeferredFound,
-                    optional: false,
-                },
-                WorkspaceIncludeEvent {
-                    target: id("file:///book/base.adoc"),
-                    resolution: WorkspaceIncludeResolution::SnapshotReady,
-                    optional: false,
-                },
-                WorkspaceIncludeEvent {
-                    target: loaded.clone(),
-                    resolution: WorkspaceIncludeResolution::DeferredFound,
-                    optional: false,
-                },
-                WorkspaceIncludeEvent {
-                    target: missing,
-                    resolution: WorkspaceIncludeResolution::AuthoritativeMissing,
-                    optional: true,
-                },
+            draft
+                .include_journal()
+                .iter()
+                .map(|event| (
+                    event.target().clone(),
+                    event.resolution(),
+                    event.is_optional(),
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                (base, WorkspaceIncludeResolution::SnapshotReady, false),
+                (
+                    loaded.clone(),
+                    WorkspaceIncludeResolution::DeferredFound,
+                    false
+                ),
+                (
+                    id("file:///book/base.adoc"),
+                    WorkspaceIncludeResolution::SnapshotReady,
+                    false
+                ),
+                (
+                    loaded.clone(),
+                    WorkspaceIncludeResolution::DeferredFound,
+                    false
+                ),
+                (
+                    missing,
+                    WorkspaceIncludeResolution::AuthoritativeMissing,
+                    true
+                ),
             ]
         );
         RESUMABLE_STAGE_RUNS.with(|runs| assert_eq!(runs.get(), [1, 1, 1, 1]));
@@ -2513,6 +2857,182 @@ mod tests {
         assert_eq!(analysis.generation(), workspace.generation());
         assert_eq!(analysis.resource_revisions[&loaded], Revision::new(3));
         workspace.accept(&analysis).expect("accepted analysis");
+    }
+
+    #[test]
+    fn preprocessing_driver_completes_without_running_analysis_and_retains_ordered_journal() {
+        RESUMABLE_STAGE_RUNS.with(|runs| runs.set([0; 4]));
+        let mut workspace = Workspace::default();
+        let root = id("file:///book/root.adoc");
+        let base = id("file:///book/base.adoc");
+        let loaded = id("file:///book/loaded.adoc");
+        workspace
+            .upsert_disk(
+                root.clone(),
+                Revision::new(1),
+                "include::base.adoc[]\ninclude::loaded.adoc[]\ninclude::base.adoc[]\ninclude::loaded.adoc[]\n",
+            )
+            .expect("root");
+        workspace
+            .upsert_disk(base.clone(), Revision::new(2), "base\n")
+            .expect("base");
+        workspace.register_root(root.clone()).expect("root");
+        let snapshot = workspace.snapshot();
+        let options = effective_options();
+
+        let WorkspacePreprocessStep::NeedResource(continuation) =
+            snapshot.preprocess_resumable(&root, &options, &NeverCancelled)
+        else {
+            panic!("missing resource must suspend preprocessing");
+        };
+        assert_eq!(continuation.request().target(), loaded.as_str());
+        let response = continuation.request().found("loaded\n");
+        let WorkspacePreprocessStep::Complete(draft) =
+            continuation.resume(response, &NeverCancelled)
+        else {
+            panic!("resource response must complete preprocessing");
+        };
+
+        assert!(
+            draft
+                .document()
+                .source
+                .contains("base\nloaded\nbase\nloaded\n")
+        );
+        assert_eq!(draft.base_generation(), snapshot.generation());
+        assert!(draft.matches_canonical_context(snapshot.generation(), &options));
+        assert!(
+            !draft.matches_canonical_context(
+                Generation::new(snapshot.generation().get() + 1),
+                &options
+            )
+        );
+        assert!(!draft.matches_canonical_context(snapshot.generation(), &effective_options()));
+        assert_eq!(draft.root(), &root);
+        assert_eq!(
+            draft.source(&root),
+            Some(
+                "include::base.adoc[]\ninclude::loaded.adoc[]\ninclude::base.adoc[]\ninclude::loaded.adoc[]\n"
+            )
+        );
+        assert_eq!(draft.source(&base), Some("base\n"));
+        assert_eq!(draft.source(&loaded), Some("loaded\n"));
+        assert_eq!(
+            draft.dependencies(),
+            BTreeSet::from([base.clone(), loaded.clone()])
+        );
+        assert_eq!(
+            draft
+                .include_journal()
+                .iter()
+                .map(|event| (event.target().clone(), event.resolution()))
+                .collect::<Vec<_>>(),
+            vec![
+                (base.clone(), WorkspaceIncludeResolution::SnapshotReady),
+                (loaded.clone(), WorkspaceIncludeResolution::DeferredFound),
+                (base, WorkspaceIncludeResolution::SnapshotReady),
+                (loaded, WorkspaceIncludeResolution::DeferredFound),
+            ]
+        );
+        assert!(
+            draft
+                .include_journal()
+                .iter()
+                .all(|event| event.source_id() == Some(root.as_str()) && !event.range().is_empty())
+        );
+        RESUMABLE_STAGE_RUNS.with(|runs| assert_eq!(runs.get(), [1, 0, 0, 0]));
+    }
+
+    #[test]
+    fn preprocessing_failure_keeps_missing_and_failed_request_evidence() {
+        for (load_failed, expected) in [
+            (false, WorkspaceIncludeResolution::AuthoritativeMissing),
+            (true, WorkspaceIncludeResolution::Failed),
+        ] {
+            let mut workspace = Workspace::default();
+            let root = id("file:///book/root.adoc");
+            let base = id("file:///book/base.adoc");
+            let missing = id("file:///book/missing.adoc");
+            workspace
+                .upsert_disk(
+                    root.clone(),
+                    Revision::new(1),
+                    "include::base.adoc[]\ninclude::missing.adoc[]\n",
+                )
+                .expect("root");
+            workspace
+                .upsert_disk(base.clone(), Revision::new(2), "base\n")
+                .expect("base");
+            workspace.register_root(root.clone()).expect("root");
+            let snapshot = workspace.snapshot();
+            let WorkspacePreprocessStep::NeedResource(continuation) =
+                snapshot.preprocess_resumable(&root, &effective_options(), &NeverCancelled)
+            else {
+                panic!("missing resource must suspend preprocessing");
+            };
+            let response = if load_failed {
+                continuation.request().load_failed("read failed")
+            } else {
+                continuation.request().not_found()
+            };
+            let WorkspacePreprocessStep::Failed(failure) =
+                continuation.resume(response, &NeverCancelled)
+            else {
+                panic!("required missing resource must fail preprocessing");
+            };
+            let [event] = failure.include_journal() else {
+                panic!("one answered request must be retained");
+            };
+            assert_eq!(event.target(), &missing);
+            assert_eq!(event.resolution(), expected);
+            assert!(!event.is_optional());
+            assert_eq!(event.source_id(), Some(root.as_str()));
+            assert!(!event.range().is_empty());
+            assert_eq!(
+                failure.snapshot_dependencies(),
+                &BTreeSet::from([base.clone()])
+            );
+            assert_eq!(failure.dependencies(), BTreeSet::from([base, missing]));
+            assert_eq!(
+                failure.source(&root),
+                Some("include::base.adoc[]\ninclude::missing.adoc[]\n")
+            );
+        }
+    }
+
+    #[test]
+    fn host_may_record_failure_and_continue_with_a_placeholder() {
+        let mut workspace = Workspace::default();
+        let root = id("file:///book/root.adoc");
+        let missing = id("file:///book/missing.adoc");
+        workspace
+            .upsert_disk(
+                root.clone(),
+                Revision::new(1),
+                "before\ninclude::missing.adoc[]\nafter\n",
+            )
+            .expect("root");
+        workspace.register_root(root.clone()).expect("root");
+        let snapshot = workspace.snapshot();
+        let WorkspacePreprocessStep::NeedResource(continuation) =
+            snapshot.preprocess_resumable(&root, &effective_options(), &NeverCancelled)
+        else {
+            panic!("missing resource must suspend preprocessing");
+        };
+        let response = continuation.request().failed_with_placeholder();
+        let WorkspacePreprocessStep::Complete(draft) =
+            continuation.resume(response, &NeverCancelled)
+        else {
+            panic!("placeholder must let preprocessing complete");
+        };
+
+        let [event] = draft.include_journal() else {
+            panic!("failed include must remain in the completed journal");
+        };
+        assert_eq!(event.target(), &missing);
+        assert_eq!(event.resolution(), WorkspaceIncludeResolution::Failed);
+        assert_eq!(draft.source(&missing), Some(""));
+        assert!(draft.document().source.contains("before\nafter\n"));
     }
 
     #[test]
