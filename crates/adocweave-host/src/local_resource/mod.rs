@@ -1609,6 +1609,32 @@ impl LocalFilesystemDraft {
         self.record(result)
     }
 
+    /// Reads one absolute path, reporting a spent read budget as `None`.
+    ///
+    /// A refusal by `max_files` or the byte limits changes no candidate state:
+    /// the read never started, so this draft is still exactly what it was and
+    /// can still be committed. Poisoning it would throw away every document
+    /// already read for the sake of one the project does not allow. Every other
+    /// failure poisons the draft as usual.
+    pub fn read_utf8_within_budget(
+        &mut self,
+        source_id: LogicalSourceId,
+        path: &Path,
+    ) -> Result<Option<FilesystemReadOutcome>, FilesystemDraftError> {
+        self.ensure_operation_can_start()?;
+        let result = self.mutation_cursor().read_utf8(source_id, path);
+        match result {
+            Ok(outcome) => Ok(Some(outcome)),
+            Err(FilesystemDraftError::Resource(
+                ResourceError::FileLimit { .. } | ResourceError::ByteLimit,
+            )) => Ok(None),
+            Err(error) => {
+                self.poisoned = true;
+                Err(error)
+            }
+        }
+    }
+
     /// Reads one absolute path while rejecting every symbolic link.
     ///
     /// This form is intended for policy-bearing files. `NotFound` keeps the

@@ -382,7 +382,7 @@ impl IncludeAcquisition<'_> {
         }
         let read = self
             .draft_for(&scope, plan)
-            .and_then(|draft| read_scan_candidate(draft, &path));
+            .and_then(|draft| read_scan_candidate(draft, &path).map_err(ScanReadError::message));
         let candidate = match read {
             Ok(Some(candidate)) => candidate,
             Ok(None) => return Ok(AcquiredInclude::NotFound),
@@ -852,7 +852,7 @@ impl WorkspaceResources {
                         )
                         .map_err(|error| error.to_string())?;
                     if !complete {
-                        scan_notice.set(Some(incomplete_scan_notice()));
+                        note_scan(&scan_notice, incomplete_scan_notice());
                     }
                     candidates
                 }
@@ -929,11 +929,29 @@ impl WorkspaceResources {
                         })
                     }
                 };
-                let Some(read) = read_scan_candidate(
+                let read = match read_scan_candidate(
                     filesystem.draft.as_mut().expect("draft is active"),
                     &path,
-                )?
-                else {
+                ) {
+                    Ok(read) => read,
+                    // This project allows fewer reads than its documents need.
+                    // The ones already read are registered, and the rest are
+                    // reported rather than voiding every other project too.
+                    Err(ScanReadError::Budget(_)) => {
+                        note_scan(
+                            &scan_notice,
+                            incomplete_scan_read_notice(
+                                scope
+                                    .config_path
+                                    .as_deref()
+                                    .unwrap_or(&scope.workspace_root),
+                            ),
+                        );
+                        continue;
+                    }
+                    Err(ScanReadError::Other(message)) => return Err(message),
+                };
+                let Some(read) = read else {
                     continue;
                 };
                 next_disk_version = next_disk_version.saturating_add(1);
@@ -2224,18 +2242,50 @@ struct ReadCandidate {
     binding: FilesystemResourceBinding,
 }
 
+/// Why one discovered document could not be read.
+#[derive(Debug)]
+enum ScanReadError {
+    /// A project read budget is spent.
+    ///
+    /// `resources.max-files` and the byte limits bound what one project scope
+    /// may read. Reaching them says the scan asked for more than the project
+    /// allows, not that the filesystem cannot be trusted. The initial scan skips
+    /// the document, while analysing one still fails on the same limits, because
+    /// a document analysed without its includes is a different document.
+    Budget(String),
+    /// The read cannot be trusted or the request itself is invalid.
+    Other(String),
+}
+
+impl ScanReadError {
+    fn message(self) -> String {
+        match self {
+            Self::Budget(message) | Self::Other(message) => message,
+        }
+    }
+}
+
 fn read_scan_candidate(
     filesystem: &mut LocalFilesystemDraft,
     path: &Path,
-) -> Result<Option<ReadCandidate>, String> {
-    let uri = Url::from_file_path(path)
-        .map_err(|()| format!("cannot convert workspace path to URI: {}", path.display()))?;
+) -> Result<Option<ReadCandidate>, ScanReadError> {
+    let uri = Url::from_file_path(path).map_err(|()| {
+        ScanReadError::Other(format!(
+            "cannot convert workspace path to URI: {}",
+            path.display()
+        ))
+    })?;
+    let source_id = LogicalSourceId::new(uri.to_string())
+        .map_err(|error| ScanReadError::Other(error.to_string()))?;
     let outcome = filesystem
-        .read_utf8_outcome(
-            LogicalSourceId::new(uri.to_string()).map_err(|error| error.to_string())?,
-            path,
-        )
-        .map_err(|error| error.to_string())?;
+        .read_utf8_within_budget(source_id, path)
+        .map_err(|error| ScanReadError::Other(error.to_string()))?
+        .ok_or_else(|| {
+            ScanReadError::Budget(format!(
+                "the project read budget is spent before {}",
+                path.display()
+            ))
+        })?;
     Ok(match outcome {
         FilesystemReadOutcome::Found(file) => {
             let (source_id, text, binding) = file.into_parts_with_binding();
@@ -2248,7 +2298,6 @@ fn read_scan_candidate(
         FilesystemReadOutcome::NotFound { .. } => None,
     })
 }
-
 const fn adapter_managed_workspace_limits() -> WorkspaceLimits {
     WorkspaceLimits {
         resources: RetainedResourceLimits {
@@ -2430,6 +2479,25 @@ fn incomplete_scan_notice() -> String {
          Documents that were not registered can still be opened and included.",
         LocalFilesystemSession::MAX_SCAN_ENTRIES,
     )
+}
+
+/// Says that a project allows fewer reads than its own documents need.
+fn incomplete_scan_read_notice(project: &Path) -> String {
+    format!(
+        "the initial workspace scan reached the resource limits of {}, so some documents under \
+         it are not registered as analysis roots. Raise resources.max-files or the byte limits \
+         there. Documents that were not registered can still be opened and included.",
+        project.display(),
+    )
+}
+
+/// Keeps the first notice a scan produced.
+///
+/// A budget that runs out explains every skip after it, so repeating the later
+/// ones would only bury the reason.
+fn note_scan(notice: &std::cell::Cell<Option<String>>, message: String) {
+    let existing = notice.take();
+    notice.set(Some(existing.unwrap_or(message)));
 }
 
 fn scan_config_for_path(
