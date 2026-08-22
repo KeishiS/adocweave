@@ -21,7 +21,7 @@ export async function findOnPath(
         await access(candidate, os === "win32" ? constants.F_OK : constants.X_OK);
         return candidate;
       } catch {
-        // 次の候補を確認します。
+        // Try the next candidate.
       }
     }
   }

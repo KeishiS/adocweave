@@ -530,14 +530,14 @@ Managed binaryは配布manifest、archive byte数、SHA-256、展開後binaryお
 自動取得を無効にする場合は``adocweave.server.download``を``false``にし、互換binaryを明示設定または``PATH``へ
 配置します。
 
-拡張の再起動には``AdocWeave: Language Serverを再起動``、managed キャッシュだけの削除には
-``AdocWeave: 管理対象Language Serverを削除``を使用します。後者はLanguage Serverを停止してから
+拡張の再起動には``AdocWeave: Restart Language Server``、managed キャッシュだけの削除には
+``AdocWeave: Remove Managed Language Server``を使用します（拡張のコマンド名は英語です）。後者はLanguage Serverを停止してから
 AdocWeave拡張のglobal storage内にあるmanaged server専用ディレクトリだけを削除します。
 
 == 削除
 
 Zedでは最初にExtension GalleryからAdocWeave dev extensionを削除し、Zedを終了します。VS Codeでは先に
-``AdocWeave: 管理対象Language Serverを削除``を実行し、Extensions viewまたは次のcommandで拡張を削除して
+``AdocWeave: Remove Managed Language Server``を実行し、Extensions viewまたは次のcommandで拡張を削除して
 VS Codeを終了します。
 
 [source,console]

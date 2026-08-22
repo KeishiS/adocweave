@@ -13,6 +13,13 @@ managed binaryの取得を担当します。解析、診断、整形および意
 TextMate grammarはLanguage Server起動前の基本色付けを担当します。Semantic Tokensはlink、xref、anchor、
 literalなどの意味的な補足を担当し、見出しの基本色付けを置き換えません。
 
+== アイコン
+
+拡張画面と拡張registryへ表示するアイコンは``editors/vscode/resources/icon.png``です。VSIXへ同梱するのは
+128×128のこのfileだけで、元画像``resources/icon-source.png``(1254×1254)は同梱しません。元画像はChatGPTの
+画像生成で作成したもので、このリポジトリの成果物として扱います。図案を変更する場合は元画像を差し替え、
+同じ縦横比のまま128×128へ縮小して``icon.png``を更新します。
+
 == 自動検証
 
 Nix開発環境で次を実行します。
@@ -101,7 +108,7 @@ Managed binaryは配布manifestの対象コミット、バージョン、target�
 == 清掃
 
 Extension Development Hostを終了するとLanguage Clientへ``shutdown``と``exit``を送り、期限内に終了しない
-processを停止します。コマンド``AdocWeave: 管理対象Language Serverを削除``はLanguage Serverを停止してから、
+processを停止します。コマンド``AdocWeave: Remove Managed Language Server``はLanguage Serverを停止してから、
 この拡張のglobal storage内にあるmanaged server専用ディレクトリだけを削除します。
 
 自動testの隔離profileはtest runnerが削除します。通常profile全体、共有extensionディレクトリまたは親キャッシュを
