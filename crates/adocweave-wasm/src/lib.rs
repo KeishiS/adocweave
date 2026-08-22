@@ -43,6 +43,7 @@ pub use request_wire::{
     WasmResourceCapabilities, WasmRuleSettings, WasmSourceLanguagePolicy, WasmStylesheet,
     WasmSyntaxOptions,
 };
+use response_conversion::wasm_document_projection;
 use response_projection::{ResponseProducts, enforce_output_limit, project_response};
 pub use response_wire::*;
 pub use shared_wire::{WasmMathLanguage, WasmSeverity};
@@ -173,7 +174,7 @@ fn execute_request(
             .then(|| adocweave::semantic::document_symbols(analysis.document())),
         projection: requested
             .projection
-            .then(|| adocweave::output::projection::project(analysis, &render_inputs)),
+            .then(|| wasm_document_projection(analysis, &render_inputs)),
     };
     if cancellation.is_cancelled() {
         return Err(cancelled_error());
