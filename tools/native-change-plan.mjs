@@ -20,6 +20,8 @@ const COMMON_RELEASE_FILES = new Set([
   "flake.lock",
   "flake.nix",
   "toolchains.json",
+  "tools/product-candidate-plan.mjs",
+  "tools/product-release.mjs",
 ]);
 // THIRD_PARTY_NOTICES.adoc is generated into the working tree and ignored by
 // Git, so classification never sees it: the audit and the CI change list both
@@ -72,12 +74,15 @@ const NON_RELEASE_FILES = new Set([
   "tools/native-change-plan.test.mjs",
   "tools/platform-contract.mjs",
   "tools/platform-contract.test.mjs",
+  "tools/product-candidate-plan.test.mjs",
+  "tools/product-release.test.mjs",
   "tools/release-contract.test.mjs",
   "tools/release-installation-e2e.test.mjs",
   "tools/release-notes.mjs",
   "tools/release-notes.test.mjs",
   "tools/release-policy.mjs",
   "tools/release-readiness.mjs",
+  "tools/release-readiness.test.mjs",
   "tools/sync-release-version.test.mjs",
   "tools/release-workflow-policy.mjs",
   "tools/release-workflow-policy.test.mjs",
