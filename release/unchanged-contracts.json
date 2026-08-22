@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "releaseVersion": "0.46.1",
+  "releaseVersion": "0.46.2",
   "unchanged": [
     "CLI引数",
     "Language Server protocol",
