@@ -7,7 +7,7 @@ import { runTextlintPluginCompatibilityProbe } from "./textlint-plugin-compatibi
 test("検証済みcontractのidentityと対応版でlatest依存を観測する", async () => {
   const contract = {
     compatibility: {
-      nodeEngine: ">=20.18.0 <25",
+      nodeEngine: ">=22.18.0 <27",
       textlintTypesVersion: "15.8.0",
       textlintVersion: "15.8.0",
     },

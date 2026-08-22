@@ -202,6 +202,28 @@ export function validatePublicClientReleaseContract(version, vscodePackage, vsco
   }
 }
 
+/// The `runner`/`node` pairs a workflow job schedules in its matrix.
+///
+/// The textlint package contract declares which runners and Node.js versions
+/// the installation E2E covers, and the workflow repeats them. Reading the
+/// workflow back keeps the declaration from outliving what CI actually runs.
+export function workflowMatrix(source, jobName) {
+  const job = source.match(new RegExp(`(?:^|\\n)  ${jobName}:\\n([\\s\\S]*?)(?=\\n  [a-z-]+:\\n|$)`));
+  if (!job) fail(`workflow job not found: ${jobName}`);
+  const entries = [];
+  for (const line of job[1].split("\n")) {
+    const runner = line.match(/^\s*- runner: (\S+)$/);
+    if (runner) entries.push({ runner: runner[1], node: "" });
+    const node = line.match(/^\s*node: '?([^'\s]+)'?$/);
+    if (node) {
+      const last = entries.at(-1);
+      if (!last || last.node !== "") fail(`workflow job ${jobName} has a matrix entry without a runner`);
+      last.node = node[1];
+    }
+  }
+  return entries;
+}
+
 function tomlValue(source, key) {
   const match = source.match(new RegExp(`^${key.replaceAll("-", "\\-")}\\s*=\\s*"([^"]+)"`, "m"));
   return match?.[1] ?? fail(`missing TOML field: ${key}`);
@@ -363,6 +385,15 @@ function verifyRepository() {
   if (!nativeSmokeWorkflow.includes("matrix: ${{ fromJSON(inputs.matrix) }}") ||
       !releaseWorkflow.includes("node tools/native-change-plan.mjs")) {
     fail("native smoke workflow must consume the locally verified target plan");
+  }
+  const pair = (entry) => [entry.runner, entry.node].join(" on Node.js ");
+  const declared = textlintContract.e2eMatrix.map(pair);
+  const scheduled = workflowMatrix(releaseWorkflow, "textlint-plugin-installation-e2e").map(pair);
+  if (JSON.stringify(declared) !== JSON.stringify(scheduled)) {
+    fail(
+      "textlint plugin installation E2E matrix must match the package contract: " +
+        `contract=[${declared.join("; ")}] workflow=[${scheduled.join("; ")}]`,
+    );
   }
   for (const runner of [
     'global = "ubuntu-24.04"',
