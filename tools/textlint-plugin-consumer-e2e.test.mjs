@@ -149,7 +149,7 @@ async function writeManifest(cwd) {
   }));
   await writeFile(
     wrapper,
-    "module.exports = { parseText() {} };\n",
+    "module.exports = { adapterApiVersion() { return 1; }, parseText() {} };\n",
   );
   await writeFile(join(textlint, "package.json"), JSON.stringify({
     version: packageContract.compatibility.textlintVersion,

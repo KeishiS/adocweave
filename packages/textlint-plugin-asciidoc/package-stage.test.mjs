@@ -11,7 +11,10 @@ test("契約からpackage stageを明示的に生成する", async () => {
   const wasm = join(root, "wasm"); const stage = join(root, "stage"); const notice = join(root, "notice.adoc");
   try {
     await mkdir(wasm);
-    await writeFile(join(wasm, "adocweave_textlint_wasm.js"), "module.exports = { parseText() {} };\n");
+    await writeFile(
+      join(wasm, "adocweave_textlint_wasm.js"),
+      "module.exports = { adapterApiVersion() { return 1; }, parseText() {} };\n",
+    );
     await writeFile(join(wasm, "adocweave_textlint_wasm_bg.wasm"), Buffer.from([0, 97, 115, 109]));
     await writeFile(notice, "= Notice\n");
     const { contract } = await stageTextlintPluginPackage(stage, wasm, notice);
