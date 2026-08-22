@@ -3,37 +3,42 @@ import {
   AdocWeaveClientError,
   AdocWeaveResult,
   PROTOCOL_SCHEMA_VERSION,
-  analyzeOnce,
   defaultAssetUrls,
-  isAdocWeaveClientLifecycleError,
 } from "../index.mjs";
 
 const client = new AdocWeaveClient({
-  ...defaultAssetUrls(),
-  onResult(result: AdocWeaveResult) {
-    const html: string = result.html;
-    const version: number = result.sourceVersion;
-    const formulaSource: string | undefined =
-      result.projection?.formulas[0]?.source;
-    console.log(html, version, formulaSource);
-  },
+  ...defaultAssetUrls(new URL("../worker/index.mjs", import.meta.url)),
 });
-await client.ready;
-try {
-  const result: AdocWeaveResult = await client.analyze({
-    version: 2,
-    source: "= Promise",
-  });
-  console.log(result.html);
-} catch (error) {
-  if (isAdocWeaveClientLifecycleError(error)) console.error(error.code);
+let sourceRevision = 0;
+let debounce: ReturnType<typeof setTimeout> | undefined;
+let active: AbortController | undefined;
+
+function schedule(source: string) {
+  const revision = ++sourceRevision;
+  active?.abort();
+  active = new AbortController();
+  const cancellation = active;
+  clearTimeout(debounce);
+  debounce = setTimeout(async () => {
+    try {
+      const result: AdocWeaveResult = await client.analyze(
+        { source },
+        { signal: cancellation.signal },
+      );
+      if (revision !== sourceRevision) return;
+      const formulaSource: string | undefined = result.projection?.formulas[0]?.source;
+      console.log(result.html, formulaSource);
+    } catch (error) {
+      if (error instanceof AdocWeaveClientError) console.error(error.code);
+      else if (error instanceof DOMException && error.name === "AbortError") console.error(error.message);
+    }
+  }, 40);
 }
-const once = await analyzeOnce(defaultAssetUrls(), { version: 3, source: "= Once" });
-console.log(once.html, AdocWeaveClientError);
+
+schedule("= Promise");
 const protocolSchemaVersion: number = PROTOCOL_SCHEMA_VERSION;
 console.log(protocolSchemaVersion);
-client.update({
-  version: 1,
+const next = client.analyze({
   source: "= Typed",
   analysisOptions: {
     syntax: {
@@ -53,6 +58,6 @@ client.update({
       { kind: "external", url: "https://example.com/theme.css" },
     ],
   },
-});
-client.cancel();
+}, { signal: new AbortController().signal });
+console.log((await next).html);
 client.dispose();

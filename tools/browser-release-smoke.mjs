@@ -33,16 +33,15 @@ async function main() {
   const [archive, chromiumCommand = "chromium"] = process.argv.slice(2);
   if (!archive) throw new Error("usage: browser-release-smoke.mjs ARCHIVE [CHROMIUM]");
   const chromium = await resolveHostExecutable(chromiumCommand);
-  const browserManifest = JSON.parse(await readFile("web-worker/package.json", "utf8"));
   const root = await mkdtemp(join(tmpdir(), "adocweave-browser-smoke-"));
   try {
-    await runArchiveSmoke(archive, chromium, browserManifest.version, root);
+    await runArchiveSmoke(archive, chromium, root);
   } finally {
     await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }
 
-async function runArchiveSmoke(archive, chromium, packageVersion, root) {
+async function runArchiveSmoke(archive, chromium, root) {
   const { stdout: archiveList } = await run("tar", ["-tJf", resolve(archive)]);
   const members = archiveList.trimEnd().split("\n");
   const roots = new Set();
@@ -72,16 +71,28 @@ async function runArchiveSmoke(archive, chromium, packageVersion, root) {
       requests.push(url.pathname);
       const requested = decodeURIComponent(url.pathname).replace(/^\/+/, "");
       const [context, ...segments] = requested.split("/");
-      if (context !== "isolated" && context !== "fallback") throw new Error("missing browser context prefix");
+      if (context !== "static") throw new Error("missing browser context prefix");
       const relative = segments.join("/") || "example/index.html";
       const path = normalize(join(packageRoot, relative));
       if (!path.startsWith(`${normalize(packageRoot)}${sep}`)) throw new Error("unsafe path");
       const types = { ".html": "text/html", ".mjs": "text/javascript", ".js": "text/javascript", ".wasm": "application/wasm" };
       response.setHeader("Content-Type", types[extname(path)] ?? "application/octet-stream");
       response.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; connect-src 'self'");
-      if (context === "isolated") {
-        response.setHeader("Cross-Origin-Opener-Policy", "same-origin");
-        response.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
+      if (relative === "example/trap-wasm.mjs") {
+        response.end(`
+          import { PROTOCOL_SCHEMA_VERSION } from "../worker/worker-protocol.mjs";
+          let trapped = false;
+          export default async function initialize() {}
+          export function protocolSchemaVersion() { return PROTOCOL_SCHEMA_VERSION; }
+          export function process() {
+            if (!trapped) {
+              trapped = true;
+              throw new WebAssembly.RuntimeError("browser smoke trap");
+            }
+            return {};
+          }
+        `);
+        return;
       }
       response.end(await readFile(path));
     } catch (error) {
@@ -92,38 +103,44 @@ async function runArchiveSmoke(archive, chromium, packageVersion, root) {
   await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
   const { port } = server.address();
   try {
-    for (const isolated of [false, true]) {
-      const context = isolated ? "isolated" : "fallback";
-      const url = `http://127.0.0.1:${port}/${context}/example/index.html?smoke=1`;
-      console.log(`browser release smoke: starting ${context} context with ${chromium}`);
-      const state = await inspectPage(chromium, url, root);
-      if (state.status !== "ready:4:5" || !state.html.includes("Latest browser result") || state.isolated !== isolated) {
-        throw new Error(`browser smoke failed (${isolated ? "isolated" : "fallback"}); requests=${requests.join(",")}: ${JSON.stringify(state)}`);
-      }
-      if (state.packageVersion !== packageVersion ||
-          state.resultPackageVersion !== packageVersion ||
-          state.wasmPackageVersion !== packageVersion) {
-        throw new Error(`browser package version mismatch: ${JSON.stringify(state)}`);
-      }
-      const expectedProducts = {
-        syntax: false,
-        canonicalAst: false,
-        html: true,
-        attributeOccurrences: false,
-        attributeQueries: false,
-        resourceQueries: true,
-        diagnostics: true,
-        symbols: false,
-        projection: true,
-      };
-      if (Object.keys(state.products).length !== Object.keys(expectedProducts).length ||
-          Object.entries(expectedProducts).some(([name, enabled]) => state.products[name] !== enabled) ||
-          !state.diagnosticsAreArrays || state.projectionTitle !== "Latest browser result" ||
-          state.projectionHeadingTitle !== "Latest browser result") {
-        throw new Error(`browser result products mismatch: ${JSON.stringify(state)}`);
-      }
-      console.log(`browser release smoke: passed ${context} context`);
+    const url = `http://127.0.0.1:${port}/static/example/index.html?smoke=1`;
+    console.log(`browser release smoke: starting non-isolated context with ${chromium}`);
+    const state = await inspectPage(chromium, url, root);
+    if (state.status !== "ready:2" || !state.html.includes("Latest browser result") || state.isolated) {
+      throw new Error(`browser smoke failed; requests=${requests.join(",")}: ${JSON.stringify(state)}`);
     }
+    if (!state.abortSettled) {
+      throw new Error(`aborted analysis did not settle: ${JSON.stringify(state)}`);
+    }
+    if (!state.trapUsesFreshWorker) {
+      throw new Error(`trapped WASM instance was reused: ${JSON.stringify(state)}`);
+    }
+    const expectedAssets = [
+      "/static/worker/worker.mjs",
+      "/static/wasm/adocweave_wasm.js",
+      "/static/wasm/adocweave_wasm_bg.wasm",
+    ];
+    if (expectedAssets.some((asset) => !requests.includes(asset))) {
+      throw new Error(`browser assets were not requested: ${requests.join(",")}`);
+    }
+    const expectedProducts = {
+      syntax: false,
+      canonicalAst: false,
+      html: true,
+      attributeOccurrences: false,
+      attributeQueries: false,
+      resourceQueries: true,
+      diagnostics: true,
+      symbols: false,
+      projection: true,
+    };
+    if (Object.keys(state.products).length !== Object.keys(expectedProducts).length ||
+        Object.entries(expectedProducts).some(([name, enabled]) => state.products[name] !== enabled) ||
+        !state.diagnosticsAreArrays || state.projectionTitle !== "Latest browser result" ||
+        state.projectionHeadingTitle !== "Latest browser result") {
+      throw new Error(`browser result products mismatch: ${JSON.stringify(state)}`);
+    }
+    console.log("browser release smoke: passed non-isolated context");
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));
   }
@@ -274,17 +291,40 @@ export async function inspectPageAttempt(
     const evaluated = await withTimeout(call("Runtime.evaluate", {
       expression: `new Promise((resolve, reject) => {
         const deadline = Date.now() + 15000;
-        const wait = () => {
+        const wait = async () => {
           const status = document.querySelector('#status').value;
           if (status.startsWith('ready:') || status.startsWith('error:')) {
             const response = globalThis.adocweaveLastResult;
+            const api = await import('/static/worker/index.mjs');
+            const assets = api.defaultAssetUrls(
+              new URL('/static/worker/index.mjs', location.href),
+            );
+            const trapClient = new api.AdocWeaveClient({
+              ...assets,
+              moduleUrl: new URL('/static/example/trap-wasm.mjs', location.href),
+            });
+            const trapCodes = [];
+            try {
+              for (let attempt = 0; attempt < 2; attempt += 1) {
+                try {
+                  await trapClient.analyze(
+                    { source: '= trap' },
+                    { signal: new AbortController().signal },
+                  );
+                } catch (error) {
+                  trapCodes.push(error.code);
+                }
+              }
+            } finally {
+              trapClient.dispose();
+            }
             resolve({
               status,
               html: document.querySelector('#preview').textContent,
               isolated: crossOriginIsolated,
-              packageVersion: globalThis.adocweavePackageVersion,
-              resultPackageVersion: response.packageVersion,
-              wasmPackageVersion: response.packageVersion,
+              abortSettled: globalThis.adocweaveAbortSettled === true,
+              trapUsesFreshWorker: trapCodes.length === 2
+                && trapCodes.every((code) => code === 'wasm-trapped'),
               products: response.products,
               diagnosticsAreArrays: Array.isArray(response.diagnostics)
                 && Array.isArray(response.renderDiagnostics),
@@ -293,9 +333,9 @@ export async function inspectPageAttempt(
             });
           } else if (Date.now() >= deadline) {
             reject(new Error('result timeout: ' + status));
-          } else setTimeout(wait, 25);
+          } else setTimeout(() => wait().catch(reject), 25);
         };
-        wait();
+        wait().catch(reject);
       })`,
       awaitPromise: true,
       returnByValue: true,
