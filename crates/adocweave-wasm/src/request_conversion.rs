@@ -19,15 +19,15 @@ use adocweave::{
 
 use crate::WasmError;
 use crate::preprocess_wire::{resource_snapshot, to_core_options};
-use crate::protocol_generated::WasmProductSet;
+use crate::protocol::WasmProductSet;
 use crate::render_input_normalization::NormalizedRenderInputs;
-use crate::request_enum_generated::{
+use crate::request_enums::{
     WasmDocumentMode, WasmSyntaxMode, WasmUnknownRole, WasmUnknownSourceLanguage,
     WasmUnresolvedReferencePresentation,
 };
 use crate::request_normalization::NormalizedRequest;
 use crate::request_wire::{WasmLimits, WasmStylesheet};
-use crate::shared_wire_generated::{WasmMathLanguage, WasmSeverity};
+use crate::shared_wire::{WasmMathLanguage, WasmSeverity};
 
 pub(crate) enum ProcessingExecution {
     Standalone {

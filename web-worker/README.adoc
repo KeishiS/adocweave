@@ -11,7 +11,9 @@
   ``PROTOCOL_SCHEMA_VERSION``の公開入口
 * `worker/client.mjs`、`worker/controller.mjs`、`worker/worker.mjs`：最新generationだけを採用する内部実装
 * `worker/contracts.mjs`：公開パッケージ版
-* ``worker/protocol.generated.mjs``と``worker/protocol.generated.d.mts``：生成済みの公開型とschema versionの正本
+* ``worker/protocol.d.mts``：WebAssemblyとやり取りするJSONの型。Rustのwire定義から生成します
+* ``worker/worker-protocol.mjs``と``worker/worker-protocol.d.mts``：schema versionと、workerとclientが
+  交換する封筒の検査。封筒の中身の形はWebAssembly側が検査します
 * `THIRD_PARTY_NOTICES.adoc`：rootとZedのlockfileから生成したthird-party package一覧
 
 == 最小例

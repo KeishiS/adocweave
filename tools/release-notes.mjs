@@ -7,6 +7,7 @@ import {
 } from "./release-policy.mjs";
 import { loadBreakingRustApi } from "./breaking-rust-api.mjs";
 import { loadTextlintPluginPackageContract } from "./textlint-plugin-package-contract.mjs";
+import { WORKER_PROTOCOL_VERSION } from "../web-worker/worker-protocol.mjs";
 
 // Release Notesの本文は人が``release/notes.md``へ書き、このtoolはその検証と機械生成部分の追記だけを
 // 行います。版ごとに変わる説明をcodeへ書くと、Release用Pull Requestの差分から公開内容を読み取りにくく、
@@ -16,7 +17,7 @@ import { loadTextlintPluginPackageContract } from "./textlint-plugin-package-con
 const ROOT = new URL("../", import.meta.url);
 const manifest = JSON.parse(readFileSync(new URL("release-manifest.json", ROOT), "utf8"));
 const plan = JSON.parse(readFileSync(new URL("release/distribution-plan.json", ROOT), "utf8"));
-const protocol = JSON.parse(readFileSync(new URL("protocol/public-api.json", ROOT), "utf8"));
+
 const textlintContract = loadTextlintPluginPackageContract();
 const breakingRustApi = loadBreakingRustApi();
 export { RELEASE_NOTES_VERSION };
@@ -85,7 +86,7 @@ export const UNCHANGED_CONTRACTS = [
 /// them, and a file diff would report every unrelated edit. The tool names the
 /// unchecked contracts in its output so the reader knows how far the check goes.
 export const CONTRACT_SOURCES = {
-  "WASM protocol": "protocol/public-api.json",
+  "WASM protocol": "web-worker/protocol.d.mts",
   設定schema: "config/adocweave.schema.json",
   "textlint Processorパッケージ契約": "release/textlint-plugin-package-contract.json",
 };
@@ -131,7 +132,7 @@ const GENERATED_SECTIONS = {
     markdownList([
       `統一package version：${RELEASE_NOTES_VERSION}`,
       `release manifest schema version：${manifest.schemaVersion}（3製品共通schema）、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
-      `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。`,
+      `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${WORKER_PROTOCOL_VERSION}。`,
       ...breakingContractNotes(breakingRustApi.changes),
       `${UNCHANGED_CONTRACTS.join("、")}は変更していません。`,
     ]),
@@ -151,7 +152,7 @@ const GENERATED_SECTIONS = {
 /// 人が書きますが、到達値は必ず正本の現在値と一致させます。
 const SCHEMA_VERSION_AUTHORITIES = {
   "WASM protocol schema version": RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION,
-  "Worker protocol version": protocol.workerProtocolVersion,
+  "Worker protocol version": WORKER_PROTOCOL_VERSION,
   "release manifest schema version": manifest.schemaVersion,
   "distribution plan schema version": plan.schemaVersion,
 };

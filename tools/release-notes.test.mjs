@@ -18,8 +18,8 @@ import {
   validateReleaseNotesSource,
 } from "./release-notes.mjs";
 import manifest from "../release-manifest.json" with { type: "json" };
-import protocol from "../protocol/public-api.json" with { type: "json" };
 import { loadTextlintPluginPackageContract } from "./textlint-plugin-package-contract.mjs";
+import { WORKER_PROTOCOL_VERSION } from "../web-worker/worker-protocol.mjs";
 
 const textlintContract = loadTextlintPluginPackageContract();
 const escape = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -153,7 +153,7 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の人の文章と機械生成部
   assert.match(notes, new RegExp(`統一package version：${escape(RELEASE_NOTES_VERSION)}`));
   assert.match(notes, new RegExp(`release manifest schema version：${manifest.schemaVersion}（3製品共通schema）`));
   assert.match(notes, new RegExp(`WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}`));
-  assert.match(notes, new RegExp(`Worker protocol version：${protocol.workerProtocolVersion}`));
+  assert.match(notes, new RegExp(`Worker protocol version：${WORKER_PROTOCOL_VERSION}`));
   assert.match(notes, new RegExp(`Rust toolchainは${escape(manifest.rustVersion)}`));
   assert.match(notes, new RegExp(`Node\\.jsは${escape(manifest.nodeVersion)}`));
   assert.match(notes, /Rust APIの破壊的変更：/);
@@ -162,10 +162,6 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の人の文章と機械生成部
   assert.match(notes, new RegExp(escape(textlintContract.compatibility.textlintVersion)));
   assert.match(notes, new RegExp(`## v${escape(RELEASE_NOTES_VERSION)}への移行`));
 
-  const requestFields = protocol.request.fields.map((field) => field.json);
-  assert.equal(requestFields.includes("schemaVersion"), false);
-  assert.equal(requestFields.includes("packageVersion"), true);
-  assert.equal(protocol.request.unknownFields, "reject");
 });
 
 test("機械生成部分は人の文章の後ろへ、見出しの順序を保って追記する", () => {

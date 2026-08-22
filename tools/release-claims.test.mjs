@@ -1,29 +1,30 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { changedContracts, contractShape } from "./release-claims.mjs";
 import { PUBLIC_PROTOCOL_SCHEMA_VERSION } from "./release-policy.mjs";
+import { PROTOCOL_SCHEMA_VERSION as WORKER_PROTOCOL_SCHEMA_VERSION } from "../web-worker/worker-protocol.mjs";
 import {
   CONTRACT_SOURCES,
   CONTRACT_VERSION_FIELDS,
   UNCHANGED_CONTRACTS,
 } from "./release-notes.mjs";
-import protocol from "../protocol/public-api.json" with { type: "json" };
 
 test("versionだけが違う契約は変更として報告しない", () => {
   // packageVersionはreleaseごとに必ず変わります。これを差分として数えると、
   // 形を変えていない契約が毎回「変更あり」になり、検査が役に立ちません。
   const before = JSON.stringify({ packageVersion: "1.0.0", schemaVersion: 9, fields: ["a"] });
   const after = JSON.stringify({ packageVersion: "1.0.1", schemaVersion: 9, fields: ["a"] });
-  assert.equal(contractShape(before, "protocol/public-api.json"), contractShape(after, "protocol/public-api.json"));
+  assert.equal(contractShape(before, "config/adocweave.schema.json"), contractShape(after, "config/adocweave.schema.json"));
 });
 
 test("形が違う契約は変更として報告する", () => {
   const before = JSON.stringify({ packageVersion: "1.0.0", schemaVersion: 9 });
   const after = JSON.stringify({ packageVersion: "1.0.1", schemaVersion: 10 });
   assert.notEqual(
-    contractShape(before, "protocol/public-api.json"),
-    contractShape(after, "protocol/public-api.json"),
+    contractShape(before, "config/adocweave.schema.json"),
+    contractShape(after, "config/adocweave.schema.json"),
   );
 });
 
@@ -47,7 +48,8 @@ test("宣言した契約のうち正本を持つものは検査対象になる",
   assert.notEqual(Object.keys(CONTRACT_SOURCES).length, 0);
   for (const [name, path] of Object.entries(CONTRACT_SOURCES)) {
     assert.match(path, /^[a-z]/, name);
-    assert.match(path, /\.json$/, name);
+    // 契約の正本はJSONか、Rustから生成したTypeScript宣言です。
+    assert.match(path, /\.(json|d\.mts)$/, name);
   }
   assert.ok(
     UNCHANGED_CONTRACTS.some((name) => name in CONTRACT_SOURCES),
@@ -60,9 +62,12 @@ test("versionを表すfieldを明示している", () => {
 });
 
 test("WASM requestのversion fieldとprotocol schemaの識別子を区別する", () => {
-  const requestFields = protocol.request.fields.map((field) => field.json);
-  assert.ok(requestFields.includes("packageVersion"));
-  assert.equal(requestFields.includes("schemaVersion"), false);
-  assert.equal(protocol.schemaVersion, PUBLIC_PROTOCOL_SCHEMA_VERSION);
-  assert.equal(protocol.request.unknownFields, "reject");
+  // requestはpackageVersionだけを持ち、protocol schemaの識別子はrequestの項目では
+  // ありません。型の正本はRustで、公開契約は生成したTypeScript宣言です。
+  const declarations = readFileSync(new URL("../web-worker/protocol.d.mts", import.meta.url), "utf8");
+  const request = declarations.match(/^export type WasmRequest = \{ (.*) \};$/m);
+  assert.ok(request, "WasmRequestの宣言がありません");
+  assert.match(request[1], /packageVersion: string/);
+  assert.doesNotMatch(request[1], /schemaVersion/);
+  assert.equal(WORKER_PROTOCOL_SCHEMA_VERSION, PUBLIC_PROTOCOL_SCHEMA_VERSION);
 });

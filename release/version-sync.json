@@ -74,6 +74,12 @@
     },
     {
       "type": "literal",
+      "path": "web-worker/worker-protocol.mjs",
+      "template": "\"{version}\"",
+      "count": 1
+    },
+    {
+      "type": "literal",
       "path": "release/distribution-plan.json",
       "template": "\"packageVersion\": \"{version}\"",
       "count": 1
@@ -83,6 +89,12 @@
       "path": "release/notes.md",
       "template": "{version}",
       "count": "all"
+    },
+    {
+      "type": "literal",
+      "path": "fixtures/protocol/request-corpus.json",
+      "template": "\"packageVersion\": \"{version}\"",
+      "count": 1
     },
     {
       "type": "literal",
@@ -140,12 +152,6 @@
     },
     {
       "type": "literal",
-      "path": "protocol/public-api.json",
-      "template": "\"packageVersion\": \"{version}\"",
-      "count": 1
-    },
-    {
-      "type": "literal",
       "path": "release/adocweave-dist-manifest.fixture.json",
       "template": "\"packageVersion\": \"{version}\"",
       "count": 1
@@ -180,31 +186,7 @@
       "id": "protocol",
       "outputs": [
         {
-          "path": "web-worker/protocol.generated.mjs"
-        },
-        {
-          "path": "web-worker/protocol.generated.d.mts"
-        },
-        {
-          "path": "crates/adocweave-wasm/src/protocol_generated.rs"
-        },
-        {
-          "path": "crates/adocweave-wasm/src/preprocess_wire_generated.rs"
-        },
-        {
-          "path": "crates/adocweave-wasm/src/render_input_wire_generated.rs"
-        },
-        {
-          "path": "crates/adocweave-wasm/src/request_enum_generated.rs"
-        },
-        {
-          "path": "crates/adocweave-wasm/src/request_wire_generated.rs"
-        },
-        {
-          "path": "crates/adocweave-wasm/src/shared_wire_generated.rs"
-        },
-        {
-          "path": "crates/adocweave-wasm/src/response_wire_generated.rs"
+          "path": "web-worker/protocol.d.mts"
         }
       ]
     },

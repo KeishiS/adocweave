@@ -1,14 +1,39 @@
-import type {
-  AdocWeaveWasmResponse,
-  AdocWeaveError,
-  UpdateRequest,
-} from "./protocol.generated.d.mts";
+import type { WasmRequest, WasmResponse } from "./protocol.d.mts";
+import type { AdocWeaveError } from "./worker-protocol.d.mts";
 
-export type * from "./protocol.generated.d.mts";
-export { PROTOCOL_SCHEMA_VERSION } from "./protocol.generated.mjs";
+export type * from "./protocol.d.mts";
+export type { AdocWeaveError, WorkerRequest, WorkerResponse } from "./worker-protocol.d.mts";
+export { PROTOCOL_SCHEMA_VERSION } from "./worker-protocol.mjs";
+
+/// 利用側が使う名前。wire型はRustの定義から生成するため、公開名だけここで与えます。
+export type AdocWeaveWasmResponse = WasmResponse;
+
+/// 設定objectのうち、省略できるfieldを任意にした形。
+///
+/// WebAssembly側は既定値を持つfieldの省略を受け付けます。生成したwire型は
+/// 完全な形(すべてのfieldを持つ値)を表すため、入力として省略できる範囲は
+/// ここで表現します。配列は要素ごとではなく丸ごと置き換えるため、そのままにします。
+type Settings<T> = {
+  [K in keyof T]?: T[K] extends ReadonlyArray<unknown>
+    ? T[K]
+    : T[K] extends object
+      ? Settings<T[K]>
+      : T[K];
+};
+
+/// 解析を依頼するときに渡す値。``packageVersion``と``generation``はclientが補います。
+export type UpdateRequest = Pick<WasmRequest, "version" | "source"> & {
+  sourceId?: WasmRequest["sourceId"];
+  preprocess?: WasmRequest["preprocess"];
+} & Settings<
+    Pick<
+      WasmRequest,
+      "products" | "renderInputs" | "analysisOptions" | "renderPolicy" | "outputLimits"
+    >
+  >;
 
 export type AdocWeaveResult =
-  Omit<AdocWeaveWasmResponse, "version"> & { sourceVersion: number };
+  Omit<WasmResponse, "version"> & { sourceVersion: number };
 
 export interface AdocWeaveClientOptions {
   workerUrl: string | URL;

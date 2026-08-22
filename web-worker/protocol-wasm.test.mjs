@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
-import { validateWorkerMessage, WORKER_PROTOCOL_VERSION } from "./protocol.generated.mjs";
+import { validateWorkerMessage, WORKER_PROTOCOL_VERSION } from "./worker-protocol.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");

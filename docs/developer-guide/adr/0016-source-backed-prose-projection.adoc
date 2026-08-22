@@ -29,7 +29,7 @@ textlintとの接続では、次の責務に分けます。
 * ``cargo make`` task：対象文書の選択、読み取り専用実行および終了状態
 
 Node.js専用入口は既定で無効なCargo featureとして構築します。既存の``process``、
-``protocol/public-api.json``、Web WorkerおよびBrowser成果物には追加しません。専用taskは通常のNode.js向け
+公開wire型、Web WorkerおよびBrowser成果物には追加しません。専用taskは通常のNode.js向け
 WebAssemblyとは異なる出力先を使います。
 
 プロジェクト固有の禁止語は``config/japanese-terminology.json``だけに定義します。Rustの検査とtextlint規則は

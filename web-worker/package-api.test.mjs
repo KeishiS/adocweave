@@ -12,7 +12,7 @@ import {
   isAdocWeaveClientLifecycleError,
 } from "./index.mjs";
 import { WORKER_PROTOCOL_VERSION } from "./contracts.mjs";
-import { PROTOCOL_SCHEMA_VERSION as GENERATED_PROTOCOL_SCHEMA_VERSION } from "./protocol.generated.mjs";
+import { PROTOCOL_SCHEMA_VERSION as GENERATED_PROTOCOL_SCHEMA_VERSION } from "./worker-protocol.mjs";
 
 test("public entry owns worker and WASM asset resolution", () => {
   for (const base of [

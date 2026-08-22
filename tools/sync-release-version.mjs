@@ -326,11 +326,18 @@ function run(command, args, root) {
 
 export function runRepositoryGenerator({ id, mode, root }) {
   if (id === "protocol") {
+    // TypeScript宣言はRustのwire型から書き出します。checkでも同じtestを実行し、
+    // 差分が出た場合は呼出側が管理対象外の変更として検出します。
     run(
-      process.execPath,
+      "cargo",
       [
-        "tools/generate-protocol.mjs",
-        ...(mode === "check" ? ["--check"] : []),
+        "test",
+        "--locked",
+        "-p",
+        "adocweave-wasm",
+        "--features",
+        "ts-rs",
+        "export_bindings",
       ],
       root,
     );

@@ -12,7 +12,7 @@ import {
   WORKER_PROTOCOL_VERSION as GENERATED_WORKER_PROTOCOL_VERSION,
   validateClientError,
   validateWorkerMessage,
-} from "./protocol.generated.mjs";
+} from "./worker-protocol.mjs";
 
 function harness(process = (request) => request) {
   const messages = [];
@@ -72,32 +72,31 @@ function assertWorkerContract(message, direction) {
     delete missing[field];
     assert.equal(validateWorkerMessage(missing, direction), false, `missing ${field}`);
   }
-  for (const [path, invalid] of invalidNestedValues(message)) {
+  for (const [path, invalid] of invalidEnvelopeValues(message)) {
     const mutated = structuredClone(message);
-    let target = mutated;
-    for (const segment of path.slice(0, -1)) target = target[segment];
-    target[path.at(-1)] = invalid;
+    mutated[path[0]] = invalid;
     assert.equal(
       validateWorkerMessage(mutated, direction),
       false,
-      `invalid nested value at ${path.join(".")}`,
+      `invalid envelope value at ${path.join(".")}`,
     );
   }
 }
 
-function invalidNestedValues(value, path = []) {
+/// 封筒のfieldを一つずつ壊した値。
+///
+/// 中身(payload、result)の形はWebAssembly側のserdeが検査するため、ここでは
+/// 封筒のfieldだけを対象とします。objectを取るfieldは、objectでない値へ
+/// 置き換えたときに拒否されることを確かめます。
+function invalidEnvelopeValues(value) {
   const mutations = [];
   for (const [key, child] of Object.entries(value)) {
-    const childPath = [...path, key];
-    if (typeof child === "string") mutations.push([childPath, false]);
-    else if (typeof child === "number") mutations.push([childPath, "invalid"]);
-    else if (typeof child === "boolean") mutations.push([childPath, "invalid"]);
-    else if (child === null) mutations.push([childPath, false]);
-    else if (Array.isArray(child)) mutations.push([childPath, "invalid"]);
-    else if (typeof child === "object") {
-      mutations.push([childPath, { ...child, unexpected: true }]);
-      mutations.push(...invalidNestedValues(child, childPath));
-    }
+    if (key === "type") continue;
+    if (typeof child === "string") mutations.push([[key], false]);
+    else if (typeof child === "number") mutations.push([[key], "invalid"]);
+    else if (typeof child === "boolean") mutations.push([[key], "invalid"]);
+    else if (child === null) mutations.push([[key], false]);
+    else mutations.push([[key], "invalid"]);
   }
   return mutations;
 }
@@ -246,10 +245,12 @@ test("client sends the current WASM API version with responsibility-specific def
       protocolVersion: invalid,
     }, "requests"), false);
   }
+  // payloadの中身はWebAssembly側のserdeが検査します。封筒はobjectであることだけを求めます。
   assert.equal(validateWorkerMessage({
     ...messages[1],
     payload: { ...messages[1].payload, source: false },
-  }, "requests"), false);
+  }, "requests"), true);
+  assert.equal(validateWorkerMessage({ ...messages[1], payload: "invalid" }, "requests"), false);
   assert.deepEqual(messages[1].payload.analysisOptions, {});
   assert.deepEqual(messages[1].payload.renderPolicy, {});
   assert.deepEqual(messages[1].payload.outputLimits, {});
@@ -313,7 +314,7 @@ test("a trapped worker is discarded before the next request", async () => {
   client.dispose();
 });
 
-test("generated validators cover result and client error recursively", () => {
+test("封筒の検査はresultとclient errorの形を確かめる", () => {
   const result = {
     protocolVersion: WORKER_PROTOCOL_VERSION,
     type: "result",
@@ -344,10 +345,12 @@ test("generated validators cover result and client error recursively", () => {
     },
   };
   assertWorkerContract(result, "responses");
+  // resultの中身はWebAssemblyが生成した値です。封筒はobjectであることだけを求めます。
   assert.equal(validateWorkerMessage({
     ...result,
     result: { ...result.result, version: "1" },
-  }, "responses"), false);
+  }, "responses"), true);
+  assert.equal(validateWorkerMessage({ ...result, result: null }, "responses"), false);
 
   const error = { code: "worker-failed", message: "failed", sourceVersion: null, generation: 1 };
   assert.equal(validateClientError(error), true);
