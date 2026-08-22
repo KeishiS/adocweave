@@ -17,7 +17,6 @@ test("native archiveへ影響する入力だけを選択する", () => {
     "crates/adocweave/src/lib.rs",
     "crates/adocweave-cli/src/main.rs",
     "tools/native-lsp-smoke.mjs",
-    "tools/native-lsp-smoke.test.mjs",
     "tools/native-release-smoke.mjs",
     ".github/workflows/release.yml",
     "Cargo.lock",
@@ -63,7 +62,6 @@ test("global archiveへ影響する入力だけを選択する", () => {
     "tools/verify-textlint-wasm-memory.mjs",
     "packages/textlint-plugin-asciidoc/processor.mjs",
     "tools/protocol-rust-codegen.mjs",
-    "tools/protocol-rust-codegen.test.mjs",
     "tools/sync-release-version.mjs",
     "release-manifest.json",
     "crates/adocweave-textlint/src/lib.rs",
@@ -81,7 +79,6 @@ test("global archiveへ影響する入力だけを選択する", () => {
     "crates/adocweave-cli/src/main.rs",
     "crates/adocweave-lsp/src/main.rs",
     "tools/native-lsp-smoke.mjs",
-    "tools/native-lsp-smoke.test.mjs",
     "tools/native-release-smoke.mjs",
     "docs/user-guide/command-line.adoc",
   ]) {
@@ -118,7 +115,7 @@ test("Browser実行補助はglobalだけ、repository metadataはcandidate対象
   for (const pathname of [
     "tools/browser-startup.mjs",
     "tools/browser-release-budget.mjs",
-    "tools/browser-release-smoke.test.mjs",
+    "tools/browser-release-smoke.mjs",
     "tools/host-executable.mjs",
     "tools/host-executable.test.mjs",
   ]) {
