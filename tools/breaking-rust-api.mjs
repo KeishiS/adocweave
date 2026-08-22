@@ -1,7 +1,11 @@
 import { readFileSync } from "node:fs";
 
 const ROOT = new URL("../", import.meta.url);
-const CHANGE_KEYS = ["crate", "description", "item", "lint", "migration", "summary"];
+/// cargo-semver-checksの出力から機械的に決まる項目。記録には必ず必要です。
+const REQUIRED_CHANGE_KEYS = ["crate", "item", "lint", "summary"];
+/// 利用者向けの説明と移行手順。0.y系では``release/notes.md``へ書けば足りるため任意とします。
+/// 記録した場合はRelease Notesの該当節へそのまま載ります。
+const OPTIONAL_CHANGE_KEYS = ["description", "migration"];
 
 const fail = (message) => {
   throw new Error(message);
@@ -25,10 +29,16 @@ export function validateBreakingRustApi(record) {
   const seen = new Set();
   for (const change of record.changes) {
     const changeKeys = change && typeof change === "object" ? Object.keys(change).sort() : [];
-    if (JSON.stringify(changeKeys) !== JSON.stringify(CHANGE_KEYS)) {
-      fail(`破壊的変更に未知または不足した項目があります：${changeKeys.join("、")}`);
+    const known = [...REQUIRED_CHANGE_KEYS, ...OPTIONAL_CHANGE_KEYS];
+    const unknown = changeKeys.filter((key) => !known.includes(key));
+    const missing = REQUIRED_CHANGE_KEYS.filter((key) => !changeKeys.includes(key));
+    if (unknown.length > 0 || missing.length > 0) {
+      fail(
+        `破壊的変更に未知または不足した項目があります：未知=${unknown.join("、") || "なし"}` +
+          ` 不足=${missing.join("、") || "なし"}`,
+      );
     }
-    for (const key of CHANGE_KEYS) {
+    for (const key of changeKeys) {
       if (typeof change[key] !== "string" || change[key].trim() === "") {
         fail(`破壊的変更の${key}が空です`);
       }
