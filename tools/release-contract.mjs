@@ -346,8 +346,8 @@ function verifyRepository() {
   if (plan.repository !== repository || tomlValue(extension, "repository") !== repository) {
     fail("repository URL mismatch in release train");
   }
-  if (plan.distVersion !== "0.32.0" || !dist.includes('cargo-dist-version = "0.32.0"')) {
-    fail("dist must be pinned to 0.32.0");
+  if (plan.distVersion !== "0.31.0" || !dist.includes('cargo-dist-version = "0.31.0"')) {
+    fail("dist must be pinned to 0.31.0");
   }
   if (!dist.includes('checksum = "false"')) {
     fail("dist per-archive checksums must be disabled in favor of the canonical checksum list");
