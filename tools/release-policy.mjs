@@ -1,10 +1,7 @@
 import { readFileSync } from "node:fs";
 
 import { TEXTLINT_ADAPTER_API_VERSION } from "../packages/textlint-plugin-asciidoc/bridge.mjs";
-import {
-  PROTOCOL_SCHEMA_VERSION,
-  WORKER_PROTOCOL_VERSION,
-} from "../web-worker/worker-protocol.mjs";
+import { PROTOCOL_SCHEMA_VERSION } from "../web-worker/worker-protocol.mjs";
 
 const ROOT = new URL("../", import.meta.url);
 const plan = JSON.parse(readFileSync(new URL("release/distribution-plan.json", ROOT), "utf8"));
@@ -47,10 +44,7 @@ export function productRelease(product) {
 export function relatedApiVersions(product) {
   if (product === "lsp") return [];
   if (product === "browser") {
-    return [
-      { name: "WASM protocol schema", version: PROTOCOL_SCHEMA_VERSION },
-      { name: "Worker protocol", version: WORKER_PROTOCOL_VERSION },
-    ];
+    return [{ name: "WASM protocol schema", version: PROTOCOL_SCHEMA_VERSION }];
   }
   if (product === "textlint") {
     return [{ name: "textlint adapter API", version: TEXTLINT_ADAPTER_API_VERSION }];

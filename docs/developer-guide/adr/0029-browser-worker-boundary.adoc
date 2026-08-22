@@ -1,0 +1,65 @@
+= ADR 0029: Browser clientとWeb Workerの処理境界
+:status: accepted
+
+== 文脈
+
+Browser clientはPromiseによる解析に加えて、callback、debounce、generation、共有memoryによる取消しおよび
+Workerの再生成を一つの状態機械で管理していました。文書の版とgenerationはWorkerの封筒とWASMの要求・応答へ
+重複して入り、同じBrowser packageに収録したJavaScriptとWASMの間でもpackage versionを照合していました。
+
+debounceの時間、古い結果を採用するかどうか、および処理を取り消す時期は、入力欄や文書storeを持つ利用側アプリの
+方針です。Browser libraryがこれらを所有すると、利用側の状態とlibrary内部の状態を対応付ける必要があります。
+
+== 決定
+
+=== 公開client
+
+公開する解析入口を``analyze(request, { signal }) -> Promise<Result>``へ統一します。callback形式の結果通知、
+公開debounce設定、``update``、``cancel``、``ready``および一回だけの解析を行う別名の関数は設けません。
+一つのclientが同時に実行する要求は一つだけとします。並行した解析が必要な利用側アプリはclientを分けます。
+
+debounce、文書の版、古い結果の判定および``AbortController``は利用側アプリが所有します。取消しを要求した場合は、
+対応するPromiseを必ず完了させ、未解決のまま残しません。clientの公開結果へ内部の要求番号を含めません。
+
+=== WorkerとWASM
+
+clientとWorkerの内部通信は、要求と応答を対応付ける一つの``requestId``だけを持ちます。文書の版、generation、
+package versionおよび公開用のWorker protocol versionを封筒へ重複して載せません。``requestId``はBrowser packageの
+内部実装であり、公開互換仕様やRelease Notesの関連API世代には含めません。
+
+取消しを受けたWorkerは終了します。WASMがtrapした場合もそのWorkerを終了し、同じWASM instanceを次の要求に
+再利用しません。次の解析は新しいWorkerで開始します。同期WASMを``SharedArrayBuffer``から協調停止する経路は
+設けません。
+
+JavaScriptとWASMの互換性は、WASMが公開するschemaのhandshakeだけで検査します。同じ製品archiveに収録した
+部品間でpackage versionを照合せず、Worker封筒にも別の公開versionを設けません。
+
+=== 配備
+
+Browser packageは静的hostingとbundlerの双方を引き続き対象とします。利用側は配備後の
+``worker/index.mjs``のURLを``defaultAssetUrls(baseUrl)``へ必ず渡します。Worker、WASMのJavaScript補助fileおよび
+WASM binaryはこのURLから解決できる同一originへ別fileとして配置し、bundleへinline化しません。CSPはmodule Worker、
+WASMの取得と実行を明示的に許可します。
+
+== 検討した代替案
+
+**callbackとPromiseを両方維持する。** 利用側は選択できますが、一つの完了を二つの通知経路へ届ける順序、例外および
+取消しを定義する必要があります。Promiseだけで完了と失敗を表します。
+
+**debounceと古い結果の判定をclientへ残す。** 簡単な入力欄では設定箇所を減らせますが、文書storeが持つ版とclientの
+generationが分かれます。入力を所有する利用側アプリが、待機、取消しおよび結果採用を一続きに管理します。
+
+**同じWorkerを取消し後も再利用する。** Worker生成回数は減りますが、同期WASMが停止したこととinstanceが再利用可能な
+ことを別々に証明する必要があります。取消しとtrapをWorkerの寿命の境界にします。
+
+== 帰結
+
+利用側アプリは入力ごとの``AbortController``と文書の版を持ち、前の処理を取り消してから次の解析を開始します。
+Browser clientは一つの要求、WorkerおよびPromiseの寿命だけを管理します。異なる解析を同時に行う場合は、その数だけ
+clientとWorkerが必要です。
+
+``SharedArrayBuffer``を使わないため、Browser libraryだけを理由としてCOOPまたはCOEP headerを要求しません。
+ただしWorkerとWASMを同一originから配信し、必要なContent-TypeとCSPを設定する必要があります。
+
+ADR 0022のうち、Worker封筒の公開versionと識別子を``worker-protocol.mjs``に持たせる決定を本ADRで置き換えます。
+Rustのwire型を正本としてTypeScript宣言を生成し、WASMが要求と応答を検査する決定は維持します。

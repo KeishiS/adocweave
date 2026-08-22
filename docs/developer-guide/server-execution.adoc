@@ -416,13 +416,16 @@ rangeから決定的に生成します。同じ入力、設定およびパッケ
 == Web Workerでの実行
 
 ブラウザーでは公開されているBrowser clientを使用し、Workerの内部メッセージ形式やWASM補助fileを
-直接利用しません。clientはgenerationを単調増加させ、現在のgenerationと一致する結果だけを通知します。
-sourceが変わった場合は古いquery、解決結果および表示結果を破棄します。
+直接利用しません。公開入口は``analyze(request, { signal })``が返すPromiseだけです。一つのclientは一度に
+一つの要求を実行し、clientとWorkerは内部の``requestId``だけで要求と応答を対応付けます。この番号は公開結果へ
+含めません。
 
-``SharedArrayBuffer``を利用できる場合は、共有したgenerationを``CancellationCheck``から確認して同期WASMを
-協調停止します。利用できない場合は古いWorkerを終了して再生成します。message送信やJavaScriptの
-Promiseを破棄するだけで、実行中の同期WASMが停止したとはみなしません。
+debounce、文書の版、古い結果の判定および``AbortController``は利用側アプリが所有します。取消しを受けた場合は
+実行中のWorkerを終了し、対応するPromiseをrejectします。WASMがtrapした場合もWorkerを終了し、そのWASM instanceを
+次の要求へ再利用しません。
 
 WASMもnativeと同じ処理上限を使用し、上限超過時に別のparserへ切り替えません。必要な出力だけを要求し、
 最後に成功した表示を保持したまま利用側アプリがエラーと再試行手段を表示します。DOM、認証、DB、
 ネットワーク、CSPおよび表示sandboxは利用側アプリが管理します。生成HTMLは信頼済みDOMとして扱いません。
+静的hostingとbundlerでは、配備後の公開entry URLを明示し、WorkerとWASMを同一originの別fileとして配信します。
+詳細はxref:../user-guide/release-installation.adoc#browser-library-deployment[Browser libraryの配備]を参照してください。

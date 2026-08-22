@@ -3,7 +3,8 @@
 :status: accepted
 
 公開仕様の正本を生成TypeScript宣言へ移す決定は維持します。``release-claims``によるtag間比較の決定は、
-xref:0026-no-unverified-release-claims.adoc[ADR 0026]で改訂しました。
+xref:0026-no-unverified-release-claims.adoc[ADR 0026]で改訂しました。Worker封筒を公開version付きの仕様とする決定は、
+xref:0029-browser-worker-boundary.adoc[ADR 0029]で改訂しました。
 
 == 文脈
 

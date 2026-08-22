@@ -74,6 +74,8 @@ Browser、Zed拡張およびVS Code拡張は、それぞれの製品Releaseへ�
 内容と公開APIはxref:core-profile.adoc#wasm-api[WebAssembly API]、展開と配備は
 xref:../user-guide/release-installation.adoc#browser-library-deployment[Browser libraryの配備]を基準とします。
 Browser packageは展開前のarchiveを2 MiB以下、archive内のraw WASMを1.25 MiB以下とします。
+公開clientはPromiseを返す一つの解析入口だけを持ち、Worker内部のprotocol versionを公開互換仕様に含めません。
+JavaScriptとWASMの互換性はWASM protocol schemaだけで検査します。
 global成果物へ影響するPull Requestとrelease用main candidateでは公開archiveを展開し、
 分離されたChromium環境、通常のChromium環境およびbundlerで構築した経路から同じ公開APIを実行して、
 この性能予算と実行時の互換性を確認します。静的なarchive検査と実行検査は一つのtask graphで行い、
@@ -165,7 +167,8 @@ archive検証および実URLを指定した単発実行を確認します。公�
 link:../../release/distribution-plan.json[配布計画]の``versionSource``と``tagPrefix``で対応付けます。
 配布計画自体はバージョンを重複して保持しません。RustとNode.jsの構築版は``toolchains.json``に記録します。
 Release Notesの本文は``release/notes.md``に人が書き、公開workflowの``tools/release-notes.mjs``が、選択した
-製品、製品バージョンおよび、その製品が互換性の判断に使うAPI世代との一致を検査します。CLI引数や
+製品、製品バージョンおよび、その製品が互換性の判断に使う公開API世代との一致を検査します。Browserでは
+WASM protocol schemaだけを関連API世代とし、Worker内部の封筒は含めません。CLI引数や
 Language Server protocolなどの変更と移行方法は人が本文へ記載します。``cargo make release-contract``が、
 六製品のrouting、製品ごとの成果物集合、
 配布manifestおよびRelease Notesの形を検査します（xref:adr/0026-no-unverified-release-claims.adoc[ADR 0026]、

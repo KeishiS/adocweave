@@ -12,15 +12,16 @@ test("Browser packageの公開versionはpackage.jsonを正本とする", async (
   assert.equal(manifest.version, BROWSER_PACKAGE_VERSION);
 });
 
-test("READMEはBrowserのversion境界と型付き変換を説明する", async () => {
+test("READMEはPromise単一入口と配備条件を説明する", async () => {
   const readme = await readFile(new URL("./README.adoc", import.meta.url), "utf8");
 
-  assert.match(readme, /unsupported-package-version/);
-  assert.match(readme, /Worker応答の.*version.*解析要求の.*version/s);
-  assert.match(readme, /invalid-worker-response/);
-  assert.match(readme, /staleな応答.*onResult.*onError.*通知しません/s);
-  assert.match(readme, /onError.*microtask/s);
-  assert.match(readme, /WASM adapterはcoreの型付き結果を公開wire型へ明示的に変換/);
-  assert.match(readme, /変換の更新漏れをbuildで検出/);
-  assert.match(readme, /公開応答の形はRustのwire定義を正本/);
+  assert.match(readme, /analyze\(request, \{ signal \}\).*Promise/);
+  assert.match(readme, /一つのclientは同時に一つの解析/);
+  assert.match(readme, /AbortController/);
+  assert.match(readme, /取消し.*Workerを終了し.*Promiseをreject/s);
+  assert.match(readme, /WASM protocolの.*schema handshake/s);
+  assert.match(readme, /defaultAssetUrls\(baseUrl\).*配備後の公開entry/s);
+  assert.match(readme, /同一origin/);
+  assert.match(readme, /script-src.*worker-src.*connect-src/s);
+  assert.doesNotMatch(readme, /onResult|onError|generation|SharedArrayBuffer|COOP|COEP|packageVersion/);
 });
