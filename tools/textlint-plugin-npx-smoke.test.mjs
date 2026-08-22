@@ -12,17 +12,9 @@ import {
   runTextlintPluginNpxSmoke,
 } from "./textlint-plugin-npx-smoke.mjs";
 
-const contract = {
-  compatibility: { textlintVersion: "15.8.0" },
-  identity: {
-    packageName: "@adocweave/textlint-plugin-asciidoc",
-    pluginName: "@adocweave/asciidoc",
-  },
-  oneShot: {
-    preset: "ja-technical-writing",
-    rulePackage: "textlint-rule-preset-ja-technical-writing",
-    ruleVersion: "12.0.2",
-  },
+const manifest = {
+  name: "@adocweave/textlint-plugin-asciidoc",
+  peerDependencies: { textlint: "15.8.0" },
 };
 
 test("candidate tgzを固定したnpx package引数で検査する", async () => {
@@ -32,7 +24,7 @@ test("candidate tgzを固定したnpx package引数で検査する", async () =>
   try {
     await writeFile(archive, "fixture");
     await runTextlintPluginNpxSmoke(archive, {
-      contract,
+      manifest,
       invokeNpm: async (value) => {
         invocation = value;
         return {
@@ -45,7 +37,7 @@ test("candidate tgzを固定したnpx package引数で検査する", async () =>
         };
       },
     });
-    assert.deepEqual(invocation.args, npxArguments(archive, npxSettings(contract)));
+    assert.deepEqual(invocation.args, npxArguments(archive, npxSettings(manifest)));
     assert.deepEqual(invocation.args.slice(0, 7), [
       "exec",
       "--yes",
@@ -67,10 +59,10 @@ test("期待する診断がない成功らしい出力を拒否する", () => {
   );
 });
 
-test("契約のone-shot設定欠落を拒否する", () => {
+test("単発実行設定の欠落を拒否する", () => {
   assert.throws(
-    () => npxSettings({ ...contract, oneShot: {} }),
-    /missing the one-shot execution settings/,
+    () => npxSettings(manifest, {}),
+    /単発実行設定が不足/,
   );
 });
 

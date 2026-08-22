@@ -3,10 +3,10 @@ import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, readlinkSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-import { loadTextlintPluginPackageContract } from "../textlint-plugin-package-contract.mjs";
+import { loadTextlintPluginManifest } from "../textlint-plugin-package.mjs";
 
-const PACKAGE_CONTRACT = loadTextlintPluginPackageContract();
-export const PLUGIN_PATH = `node_modules/${PACKAGE_CONTRACT.identity.packageName}`;
+const PACKAGE_MANIFEST = loadTextlintPluginManifest();
+export const PLUGIN_PATH = `node_modules/${PACKAGE_MANIFEST.name}`;
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, "utf8"));

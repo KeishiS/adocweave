@@ -7,7 +7,7 @@ import process from "node:process";
 import { pathToFileURL } from "node:url";
 
 import { runTextlintPluginNpxSmoke } from "./textlint-plugin-npx-smoke.mjs";
-import { loadStrictContract } from "./textlint-plugin-npx-smoke.mjs";
+import { loadPackageManifest } from "./textlint-plugin-npx-smoke.mjs";
 
 const DEFAULT_MANIFEST = new URL("../packages/textlint-plugin-asciidoc/package.json", import.meta.url);
 
@@ -22,14 +22,14 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
 export async function runTextlintPluginPostReleaseSmoke(
   releaseBaseUrl,
   {
-    contract,
+    manifest,
     fetchAsset = fetchBytes,
     runNpxSmoke = runTextlintPluginNpxSmoke,
     verifyPackage = verifyTextlintPluginPackage,
     version,
   } = {},
 ) {
-  contract ??= await loadStrictContract();
+  manifest ??= await loadPackageManifest();
   version ??= JSON.parse(await readFile(DEFAULT_MANIFEST, "utf8")).version;
   const base = new URL(`${releaseBaseUrl.replace(/\/$/, "")}/`);
   if (base.protocol !== "https:" || base.hostname !== "github.com") {
@@ -59,7 +59,7 @@ export async function runTextlintPluginPostReleaseSmoke(
   } finally {
     await rm(scratch, { force: true, maxRetries: 5, recursive: true, retryDelay: 100 });
   }
-  await runNpxSmoke(archiveUrl, { contract });
+  await runNpxSmoke(archiveUrl, { manifest });
 }
 
 export function checksumFor(source, archiveName) {

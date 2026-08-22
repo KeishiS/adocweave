@@ -141,7 +141,7 @@ const GLOBAL_TOOLS = [
   "textlint-plugin-compatibility-probe.mjs",
   "textlint-plugin-compatibility-probe.test.mjs",
   "textlint-plugin-consumer-e2e.test.mjs",
-  "textlint-plugin-package-contract.mjs",
+  "textlint-plugin-package.mjs",
   "verify-textlint-plugin-reproducibility.mjs",
   "verify-textlint-plugin-reproducibility.test.mjs",
   "verify-textlint-plugin-package.mjs",
@@ -250,8 +250,6 @@ export const DEPENDENCY_AUDIT_FILES = new Set([
   "Cargo.lock",
   "Cargo.toml",
   "deny.toml",
-  "release/textlint-plugin-package-contract.json",
-  "release/textlint-plugin-package-contract.schema.json",
   "tools/dependency-governance.sh",
   "tools/generate-third-party-notices.mjs",
   "tools/generate-third-party-notices.test.mjs",
@@ -264,7 +262,7 @@ export const DEPENDENCY_AUDIT_FILES = new Set([
   "tools/npm-lock-policy.mjs",
   "tools/package-textlint-plugin-release.sh",
   "tools/stage-textlint-plugin-package.mjs",
-  "tools/textlint-plugin-package-contract.mjs",
+  "tools/textlint-plugin-package.mjs",
   "tools/verify-textlint-dependencies.mjs",
   "tools/verify-textlint-dependencies.test.mjs",
   "tools/verify-textlint-plugin-dependencies.mjs",
@@ -312,9 +310,7 @@ const DOCUMENT_FILES = new Set([
   "tools/html5-check.mjs",
   "tools/build-textlint-wasm-node.sh",
   "tools/verify-textlint-wasm-memory.mjs",
-  "tools/textlint-plugin-package-contract.mjs",
-  "release/textlint-plugin-package-contract.json",
-  "release/textlint-plugin-package-contract.schema.json",
+  "tools/textlint-plugin-package.mjs",
 ]);
 
 /// Files that change how a check itself behaves.

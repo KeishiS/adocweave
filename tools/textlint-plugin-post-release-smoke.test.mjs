@@ -7,17 +7,9 @@ import {
   runTextlintPluginPostReleaseSmoke,
 } from "./textlint-plugin-post-release-smoke.mjs";
 
-const contract = {
-  compatibility: { textlintVersion: "15.8.0" },
-  identity: {
-    packageName: "@adocweave/textlint-plugin-asciidoc",
-    pluginName: "@adocweave/asciidoc",
-  },
-  oneShot: {
-    preset: "ja-technical-writing",
-    rulePackage: "textlint-rule-preset-ja-technical-writing",
-    ruleVersion: "12.0.2",
-  },
+const manifest = {
+  name: "@adocweave/textlint-plugin-asciidoc",
+  peerDependencies: { textlint: "15.8.0" },
 };
 
 test("公開asset、checksumおよび実URLのnpx経路を順に検査する", async () => {
@@ -29,7 +21,7 @@ test("公開asset、checksumおよび実URLのnpx経路を順に検査する", a
   await runTextlintPluginPostReleaseSmoke(
     "https://github.com/KeishiS/adocweave/releases/download/v1.2.3",
     {
-      contract,
+      manifest,
       fetchAsset: async (url) => {
         fetched.push(url);
         return url.endsWith("sha256.sum")
@@ -47,7 +39,7 @@ test("公開asset、checksumおよび実URLのnpx経路を順に検査する", a
   ]);
   assert.equal(verified.length, 1);
   assert.equal(npx[0].url, fetched[0]);
-  assert.equal(npx[0].options.contract, contract);
+  assert.equal(npx[0].options.manifest, manifest);
 });
 
 test("checksumの欠落、重複および不一致を拒否する", async () => {
@@ -60,7 +52,7 @@ test("checksumの欠落、重複および不一致を拒否する", async () => 
     runTextlintPluginPostReleaseSmoke(
       "https://github.com/KeishiS/adocweave/releases/download/v1.2.3",
       {
-        contract,
+        manifest,
         fetchAsset: async (url) => url.endsWith("sha256.sum")
           ? Buffer.from(`${hash}  ${name}\n`)
           : Buffer.from("different"),

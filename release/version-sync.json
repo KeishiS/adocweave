@@ -73,7 +73,7 @@
       "authority": {
         "type": "literal",
         "path": "packages/textlint-plugin-asciidoc/package.json",
-        "template": "\"name\": \"adocweave-textlint-plugin-development\",\n  \"version\": \"{version}\"",
+        "template": "\"name\": \"@adocweave/textlint-plugin-asciidoc\",\n  \"version\": \"{version}\"",
         "count": 1
       },
       "targets": [

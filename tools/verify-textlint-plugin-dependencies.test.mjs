@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { fetchedSafely } from "./npm-lock-policy.mjs";
-import { loadTextlintPluginPackageContract } from "./textlint-plugin-package-contract.mjs";
 
 const manifest = JSON.parse(readFileSync(
   new URL("../packages/textlint-plugin-asciidoc/package.json", import.meta.url),
@@ -22,24 +21,19 @@ const catalog = JSON.parse(readFileSync(
   "utf8",
 ));
 const governance = readFileSync(new URL("dependency-governance.sh", import.meta.url), "utf8");
-const contract = loadTextlintPluginPackageContract();
 const fixedDependencies = {
-  "@textlint/types": contract.compatibility.textlintTypesVersion,
-  textlint: contract.compatibility.textlintVersion,
+  "@textlint/types": manifest.peerDependencies["@textlint/types"],
+  textlint: manifest.peerDependencies.textlint,
 };
 
 test("公開textlint pluginの実行時npm依存を0件に固定する", () => {
-  const { version, ...identity } = manifest;
-  assert.match(version, /^\d+\.\d+\.\d+$/);
-  assert.deepEqual(identity, {
-    name: "adocweave-textlint-plugin-development",
-    private: contract.identity.private,
-    type: "module",
-  });
+  assert.match(manifest.version, /^\d+\.\d+\.\d+$/);
+  assert.equal(manifest.name, "@adocweave/textlint-plugin-asciidoc");
+  assert.equal(manifest.private, true);
   assert.deepEqual(manifest.dependencies ?? {}, {});
   assert.deepEqual(manifest.optionalDependencies ?? {}, {});
   assert.deepEqual(manifest.bundledDependencies ?? [], []);
-  assert.equal(manifest.peerDependencies, undefined);
+  assert.deepEqual(manifest.peerDependencies, fixedDependencies);
   assert.deepEqual(consumer.dependencies, fixedDependencies);
   assert.deepEqual(lock.packages[""].dependencies, fixedDependencies);
 });

@@ -1,22 +1,69 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { gzipSync } from "node:zlib";
 
-import { loadTextlintPluginPackageContract } from "../../tools/textlint-plugin-package-contract.mjs";
+import {
+  loadTextlintPluginManifest,
+  TEXTLINT_PLUGIN_WASM_PATHS,
+  validateTextlintPluginManifest,
+} from "../../tools/textlint-plugin-package.mjs";
+import { stageTextlintPluginPackage } from "../../tools/stage-textlint-plugin-package.mjs";
 import { readTarMembers, verifyTextlintPluginPackage } from "../../tools/verify-textlint-plugin-package.mjs";
 
-const contract = loadTextlintPluginPackageContract();
+const manifest = loadTextlintPluginManifest();
 
-test("契約どおりのarchiveを検査する", async () => withArchive(entries(), async (archive) => {
+test("公開manifestどおりのarchiveを検査する", async () => withArchive(entries(), async (archive) => {
   const result = await verifyTextlintPluginPackage(archive);
-  assert.equal(result.fileCount, contract.archive.fileCount);
+  assert.equal(result.fileCount, manifest.files.length + 1);
 }));
 
+test("package.jsonを正本としてstageを生成する", async () => {
+  const root = await mkdtemp(join(tmpdir(), "adocweave-stage-test-"));
+  const wasm = join(root, "wasm");
+  const stage = join(root, "stage");
+  const notice = join(root, "notice.adoc");
+  try {
+    await mkdir(wasm);
+    await writeFile(join(wasm, "adocweave_textlint_wasm.js"), "module.exports = { parseText() {} };\n");
+    await writeFile(join(wasm, "adocweave_textlint_wasm_bg.wasm"), minimalWasm());
+    await writeFile(notice, "= Notice\n");
+    const result = await stageTextlintPluginPackage(stage, wasm, notice);
+    assert.deepEqual(result.manifest, manifest);
+    assert.deepEqual(await listFiles(stage), ["package.json", ...manifest.files].sort());
+    assert.deepEqual(JSON.parse(await readFile(join(stage, "package.json"), "utf8")), manifest);
+    assert.equal(await readFile(join(stage, "THIRD_PARTY_NOTICES.adoc"), "utf8"), "= Notice\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("公開manifestのfile pathはportableな相対pathに限定する", () => {
+  for (const path of [
+    "/absolute",
+    "../parent",
+    "a/./b",
+    "a//b",
+    "a/",
+    "C:/build",
+    String.raw`C:\build`,
+    String.raw`a\b`,
+    "a\0b",
+    "cafe\u0301",
+  ]) {
+    const mutant = structuredClone(manifest);
+    mutant.files[0] = path;
+    assert.throws(() => validateTextlintPluginManifest(mutant), /file pathが不正/);
+  }
+  const collision = structuredClone(manifest);
+  collision.files[1] = collision.files[0].toUpperCase();
+  assert.throws(() => validateTextlintPluginManifest(collision), /file pathが不正/);
+});
+
 test("欠落fileと余分なfileを拒否する", async () => {
-  await withArchive(entries().slice(1), (archive) => assert.rejects(verifyTextlintPluginPackage(archive), /file set/));
+  await withArchive(entries().slice(0, -1), (archive) => assert.rejects(verifyTextlintPluginPackage(archive), /file set/));
   await withArchive([...entries(), regular("package/extra.txt", "extra")], (archive) => assert.rejects(verifyTextlintPluginPackage(archive), /file set/));
 });
 
@@ -71,29 +118,22 @@ test("path形の偶然のbyte列は機械固有pathとして拒否しない", as
   await withArchive(noise, (archive) => verifyTextlintPluginPackage(archive));
 });
 
-test("公開manifestの未知fieldを拒否する", async () => {
+test("archive内manifestが正本と異なる場合は拒否する", async () => {
   const mutant = entries().map((entry) => entry.name === "package/package.json"
     ? { ...entry, data: Buffer.from(JSON.stringify({ ...JSON.parse(entry.data), sourceOnly: true })) }
     : entry);
-  await withArchive(mutant, (archive) => assert.rejects(verifyTextlintPluginPackage(archive), /public allowlist/));
+  await withArchive(mutant, (archive) => assert.rejects(
+    verifyTextlintPluginPackage(archive),
+    /does not match the source package contract/,
+  ));
 });
 
 function entries() {
-  const sourceManifest = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
-  const manifest = { name: contract.identity.packageName, version: sourceManifest.version,
-    description: "AsciiDoc Processor Plugin for textlint powered by AdocWeave", private: true, type: "module",
-    main: "./index.mjs", types: "./index.d.mts",
-    exports: { ".": { types: "./index.d.mts", import: "./index.mjs", default: "./index.mjs" } },
-    files: contract.files.filter(({ path }) => path !== "package.json").map(({ path }) => path),
-    engines: { node: contract.compatibility.nodeEngine }, peerDependencies: { "@textlint/types": contract.compatibility.textlintTypesVersion, textlint: contract.compatibility.textlintVersion },
-    keywords: ["asciidoc", "textlint", "textlintplugin"], license: "MIT OR Apache-2.0",
-    homepage: "https://github.com/KeishiS/adocweave", bugs: "https://github.com/KeishiS/adocweave/issues",
-    repository: { type: "git", url: "https://github.com/KeishiS/adocweave.git", directory: "packages/textlint-plugin-asciidoc" } };
-  return contract.files.map(({ path }) => regular(`package/${path}`,
+  return ["package.json", ...manifest.files].map((path) => regular(`package/${path}`,
     path === "package.json" ? `${JSON.stringify(manifest)}\n`
-      : path === contract.wasm.wrapperPath
-        ? "module.exports = { adapterApiVersion() { return 1; }, parseText() {} };\n"
-        : path === contract.wasm.binaryPath ? minimalWasm() : sourceFor(path)));
+      : path === TEXTLINT_PLUGIN_WASM_PATHS.wrapper
+        ? "module.exports = { parseText() {} };\n"
+        : path === TEXTLINT_PLUGIN_WASM_PATHS.binary ? minimalWasm() : sourceFor(path)));
 }
 
 import { readFileSync } from "node:fs";
@@ -106,3 +146,13 @@ function tarEntry({ name, data, type = "0" }) {
   const header = Buffer.alloc(512); header.write(name, 0, 100, "utf8"); writeOctal(header, 100, 8, 0o644); writeOctal(header, 108, 8, 0); writeOctal(header, 116, 8, 0); writeOctal(header, 124, 12, data.length); writeOctal(header, 136, 12, 0); header.fill(0x20, 148, 156); header.write(type, 156, 1, "ascii"); header.write("ustar\0", 257, 6, "ascii"); header.write("00", 263, 2, "ascii"); writeOctal(header, 148, 8, [...header].reduce((sum, byte) => sum + byte, 0)); return Buffer.concat([header, data, Buffer.alloc((512 - data.length % 512) % 512)]);
 }
 function writeOctal(buffer, offset, length, value) { buffer.write(`${value.toString(8).padStart(length - 1, "0")}\0`, offset, length, "ascii"); }
+
+async function listFiles(root, prefix = "") {
+  const result = [];
+  for (const entry of await readdir(join(root, prefix), { withFileTypes: true })) {
+    const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) result.push(...await listFiles(root, relative));
+    else result.push(relative);
+  }
+  return result.sort();
+}

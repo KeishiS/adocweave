@@ -21,15 +21,21 @@ import {
   assertConsumerTreeUnchanged,
   verifyInstalledConsumerTree,
 } from "./textlint-plugin-e2e/installed-tree.mjs";
-import { loadTextlintPluginPackageContract } from "./textlint-plugin-package-contract.mjs";
+import {
+  loadTextlintPluginManifest,
+  textlintPluginName,
+  TEXTLINT_PLUGIN_WASM_PATHS,
+} from "./textlint-plugin-package.mjs";
 
 const EXPECTED_LINE = 3;
 const EXPECTED_COLUMN = 6;
 const CONSUMER_FIXTURE = fileURLToPath(new URL("./textlint-plugin-e2e/", import.meta.url));
 
-function fileCases(contract) {
+const BUILT_IN_EXTENSIONS = [".adoc", ".asciidoc", ".asc"];
+
+function fileCases() {
   return [
-    ...contract.extensions.map((extension, index) => ({
+    ...BUILT_IN_EXTENSIONS.map((extension, index) => ({
       name: `sample${extension}`,
       newline: index === 1 ? "\r\n" : "\n",
     })),
@@ -37,8 +43,8 @@ function fileCases(contract) {
   ];
 }
 
-function stdinCases(contract) {
-  return contract.extensions.map((extension, index) => ({
+function stdinCases() {
+  return BUILT_IN_EXTENSIONS.map((extension, index) => ({
     name: `stdin${extension}`,
     newline: index === 1 ? "\r\n" : "\n",
   }));
@@ -79,7 +85,7 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
 export async function runTextlintPluginConsumerE2E(
   archive,
   {
-    contract = loadTextlintPluginPackageContract(),
+    manifest = loadTextlintPluginManifest(),
     installPackage = installFixedConsumerAndPlugin,
     invokeTextlint = invokeTextlintCli,
   } = {},
@@ -90,22 +96,22 @@ export async function runTextlintPluginConsumerE2E(
 
   const root = await mkdtemp(join(tmpdir(), "adocweave-textlint-plugin-smoke-"));
   try {
-    await installPackage({ archive: archivePath, contract, cwd: root });
-    await assertInstalledPackage(root, contract);
+    await installPackage({ archive: archivePath, cwd: root, manifest });
+    await assertInstalledPackage(root, manifest);
 
     const rulesDirectory = join(root, "rules");
     await mkdir(rulesDirectory);
     await writeFile(join(rulesDirectory, "probe.js"), probeRule);
     const config = join(root, ".textlintrc.json");
     await writeFile(config, `${JSON.stringify({
-      plugins: { [contract.identity.pluginName]: { extensions: [".guide"] } },
+      plugins: { [textlintPluginName(manifest.name)]: { extensions: [".guide"] } },
       rules: {},
     }, null, 2)}\n`);
 
     const fixtures = join(root, "fixtures");
     await mkdir(fixtures);
     const inputByPath = new Map();
-    for (const fixture of fileCases(contract)) {
+    for (const fixture of fileCases()) {
       const path = join(fixtures, fixture.name);
       const input = fixtureSource(fixture.newline);
       await writeFile(path, input);
@@ -122,7 +128,7 @@ export async function runTextlintPluginConsumerE2E(
     assert.equal(lintResult.code, 1, diagnosticForUnexpectedExit("file lint", lintResult));
     assertDiagnostics(lintResult.stdout, [...inputByPath.keys()]);
 
-    for (const fixture of stdinCases(contract)) {
+    for (const fixture of stdinCases()) {
       const filename = join(fixtures, fixture.name);
       const stdinResult = await invokeTextlint({
         args: [...commonArguments, "--stdin", "--stdin-filename", filename],
@@ -183,23 +189,23 @@ export function assertDiagnostics(stdout, expectedPaths) {
   }
 }
 
-async function assertInstalledPackage(root, contract) {
-  const { packageName } = contract.identity;
-  const textlintVersion = contract.compatibility.textlintVersion;
+async function assertInstalledPackage(root, manifestContract) {
+  const packageName = manifestContract.name;
+  const textlintVersion = manifestContract.peerDependencies.textlint;
   const packageRoot = join(root, "node_modules", ...packageName.split("/"));
   assert.equal((await lstat(packageRoot)).isSymbolicLink(), false, "installed plugin must not be a symlink");
   const manifestPath = join(packageRoot, "package.json");
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
   assert.equal(manifest.name, packageName, `installed package name must be ${packageName}`);
   assert.deepEqual(manifest.peerDependencies, {
-    "@textlint/types": contract.compatibility.textlintTypesVersion,
+    "@textlint/types": manifestContract.peerDependencies["@textlint/types"],
     textlint: textlintVersion,
   }, `installed plugin peer dependencies must be pinned to ${textlintVersion}`);
   const require = createRequire(import.meta.url);
   assert.deepEqual(
-    Object.keys(require(join(packageRoot, contract.wasm.wrapperPath))),
-    contract.wasm.exportNames,
-    "packed WebAssembly wrapper exports must match the package contract",
+    Object.keys(require(join(packageRoot, TEXTLINT_PLUGIN_WASM_PATHS.wrapper))),
+    ["parseText"],
+    "packed WebAssembly wrapper must export parseText only",
   );
   const textlintManifest = JSON.parse(
     await readFile(join(root, "node_modules", "textlint", "package.json"), "utf8"),
@@ -249,7 +255,7 @@ export async function installFixedConsumerAndPlugin({ archive, cwd }) {
 
 export async function installLatestCompatibleConsumer({
   archive,
-  contract = loadTextlintPluginPackageContract(),
+  manifest = loadTextlintPluginManifest(),
   cwd,
 }) {
   const npm = npmInvocation();
@@ -260,7 +266,7 @@ export async function installLatestCompatibleConsumer({
     "--no-audit",
     "--no-fund",
     "--save-exact",
-    `textlint@${contract.compatibility.textlintVersion}`,
+    `textlint@${manifest.peerDependencies.textlint}`,
     archive,
   ], {
     cwd,

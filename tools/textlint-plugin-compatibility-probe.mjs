@@ -6,22 +6,22 @@ import {
   installLatestCompatibleConsumer,
   runTextlintPluginConsumerE2E,
 } from "./textlint-plugin-consumer-e2e.mjs";
-import { loadTextlintPluginPackageContract } from "./textlint-plugin-package-contract.mjs";
+import { loadTextlintPluginManifest } from "./textlint-plugin-package.mjs";
 
 export async function runTextlintPluginCompatibilityProbe(
   archive,
   {
-    contract = loadTextlintPluginPackageContract(),
+    manifest = loadTextlintPluginManifest(),
     runConsumer = runTextlintPluginConsumerE2E,
   } = {},
 ) {
   await runConsumer(resolve(archive), {
-    contract,
+    manifest,
     installPackage: installLatestCompatibleConsumer,
   });
   return {
-    packageName: contract.identity.packageName,
-    textlintVersion: contract.compatibility.textlintVersion,
+    packageName: manifest.name,
+    textlintVersion: manifest.peerDependencies.textlint,
   };
 }
 
