@@ -1021,14 +1021,19 @@ impl WorkspaceResourceRequest {
         source_id: impl Into<String>,
         text: impl Into<Arc<str>>,
     ) -> WorkspaceResourceResponse {
+        let source_id = source_id.into();
         let text = text.into();
         let id = ResourceId::new(self.target()).expect("preprocessor returned a valid target");
         WorkspaceResourceResponse {
             inner: self.inner.found(ResourceDocument {
-                source_id: SourceId::new(source_id),
+                source_id: SourceId::new(source_id.clone()),
                 source: Arc::clone(&text),
             }),
-            evidence: WorkspaceResourceEvidence::Found { id, text },
+            evidence: WorkspaceResourceEvidence::Found {
+                id,
+                source_id,
+                text,
+            },
         }
     }
 
@@ -1069,14 +1074,19 @@ impl WorkspaceResourceRequest {
         &self,
         source_id: impl Into<String>,
     ) -> WorkspaceResourceResponse {
+        let source_id = source_id.into();
         let id = ResourceId::new(self.target()).expect("preprocessor returned a valid target");
         let text = Arc::<str>::from("");
         WorkspaceResourceResponse {
             inner: self.inner.found(ResourceDocument {
-                source_id: SourceId::new(source_id),
+                source_id: SourceId::new(source_id.clone()),
                 source: Arc::clone(&text),
             }),
-            evidence: WorkspaceResourceEvidence::FailedWithPlaceholder { id, text },
+            evidence: WorkspaceResourceEvidence::FailedWithPlaceholder {
+                id,
+                source_id,
+                text,
+            },
         }
     }
 }
@@ -1090,10 +1100,18 @@ pub struct WorkspaceResourceResponse {
 
 #[derive(Clone, Debug)]
 enum WorkspaceResourceEvidence {
-    Found { id: ResourceId, text: Arc<str> },
+    Found {
+        id: ResourceId,
+        source_id: String,
+        text: Arc<str>,
+    },
     Missing(ResourceId),
     Failed(ResourceId),
-    FailedWithPlaceholder { id: ResourceId, text: Arc<str> },
+    FailedWithPlaceholder {
+        id: ResourceId,
+        source_id: String,
+        text: Arc<str>,
+    },
 }
 
 /// Result of starting or resuming preprocessing for one workspace root.
@@ -1285,6 +1303,7 @@ struct WorkspacePreprocessRun {
     found: BTreeMap<ResourceId, Arc<str>>,
     missing: BTreeSet<ResourceId>,
     failed: BTreeSet<ResourceId>,
+    deferred_source_targets: BTreeMap<String, ResourceId>,
     include_journal: Vec<WorkspaceIncludeEvent>,
 }
 
@@ -1371,10 +1390,15 @@ impl WorkspacePreprocessRun {
         #[cfg(test)]
         RESUMABLE_EVIDENCE_RECORDS.with(|records| records.set(records.get() + 1));
         let (target, resolution) = match evidence {
-            WorkspaceResourceEvidence::Found { id, text } => {
+            WorkspaceResourceEvidence::Found {
+                id,
+                source_id,
+                text,
+            } => {
                 self.missing.remove(&id);
                 self.failed.remove(&id);
                 self.found.insert(id.clone(), text);
+                self.deferred_source_targets.insert(source_id, id.clone());
                 (id, WorkspaceIncludeResolution::DeferredFound)
             }
             WorkspaceResourceEvidence::Missing(id) => {
@@ -1384,10 +1408,15 @@ impl WorkspacePreprocessRun {
                 (id, WorkspaceIncludeResolution::AuthoritativeMissing)
             }
             WorkspaceResourceEvidence::Failed(id) => (id, WorkspaceIncludeResolution::Failed),
-            WorkspaceResourceEvidence::FailedWithPlaceholder { id, text } => {
+            WorkspaceResourceEvidence::FailedWithPlaceholder {
+                id,
+                source_id,
+                text,
+            } => {
                 self.missing.remove(&id);
                 self.failed.insert(id.clone());
                 self.found.insert(id.clone(), text);
+                self.deferred_source_targets.insert(source_id, id.clone());
                 (id, WorkspaceIncludeResolution::Failed)
             }
         };
@@ -1489,7 +1518,11 @@ impl WorkspacePreprocessDraft {
         if adocweave::CancellationCheck::is_cancelled(cancellation) {
             return WorkspaceAnalysisStep::Cancelled;
         }
-        let dependencies = actual_dependencies(&preprocessed.document, &state.root);
+        let dependencies = actual_dependencies(
+            &preprocessed.document,
+            &state.root,
+            &state.deferred_source_targets,
+        );
         #[cfg(test)]
         record_resumable_stage(2);
         let projection =
@@ -1811,6 +1844,7 @@ impl WorkspaceSnapshot {
             found: BTreeMap::new(),
             missing: BTreeSet::new(),
             failed: BTreeSet::new(),
+            deferred_source_targets: BTreeMap::new(),
             include_journal: Vec::new(),
         };
         #[cfg(test)]
@@ -1934,7 +1968,7 @@ impl WorkspaceSnapshot {
                 }
             })?;
         check_cancelled(cancellation)?;
-        let dependencies = actual_dependencies(&preprocessed.document, root);
+        let dependencies = actual_dependencies(&preprocessed.document, root, &BTreeMap::new());
         let projection = preprocessed
             .project_origins_cancellable(projection_limits, cancellation)
             .map_err(|error| {
@@ -2110,6 +2144,7 @@ fn host_resource_workspace_error(
 fn actual_dependencies(
     document: &adocweave::preprocess::PreprocessedDocument,
     root: &ResourceId,
+    deferred_source_targets: &BTreeMap<String, ResourceId>,
 ) -> BTreeMap<ResourceId, BTreeSet<ResourceId>> {
     let mut dependencies =
         BTreeMap::<ResourceId, BTreeSet<ResourceId>>::from([(root.clone(), BTreeSet::new())]);
@@ -2117,16 +2152,14 @@ fn actual_dependencies(
         if directive.kind != DirectiveKind::Include {
             continue;
         }
-        let (Some(owner), Some(target)) = (
-            directive.source_id.as_ref(),
-            directive.resource_source_id.as_ref(),
-        ) else {
+        let Some(owner_source_id) = directive.source_id.as_ref() else {
             continue;
         };
-        let (Ok(owner), Ok(target)) = (
-            ResourceId::new(owner.as_str()),
-            ResourceId::new(target.as_str()),
-        ) else {
+        let owner = deferred_source_targets
+            .get(owner_source_id.as_str())
+            .cloned()
+            .or_else(|| ResourceId::new(owner_source_id.as_str()).ok());
+        let (Some(owner), Ok(target)) = (owner, ResourceId::new(&directive.target)) else {
             continue;
         };
         dependencies
@@ -3092,6 +3125,64 @@ mod tests {
                 .map(SourceId::as_str),
             Some("include:part.adoc")
         );
+        let WorkspaceAnalysisStep::Complete(analysis) =
+            draft.analyze(ProjectionLimits::default(), &NeverCancelled)
+        else {
+            panic!("analysis must complete");
+        };
+        assert_eq!(
+            analysis.dependencies[&root],
+            BTreeSet::from([target.clone()])
+        );
+        assert!(!analysis.dependencies.contains_key(&id("include:part.adoc")));
+    }
+
+    #[test]
+    fn nested_dependency_owners_use_targets_instead_of_diagnostic_source_ids() {
+        let mut workspace = Workspace::default();
+        let root = id("file:///book/root.adoc");
+        let part = id("file:///book/part.adoc");
+        let nested = id("file:///book/nested.adoc");
+        workspace
+            .upsert_disk(root.clone(), Revision::new(1), "include::part.adoc[]\n")
+            .expect("root");
+        workspace.register_root(root.clone()).expect("root");
+        let snapshot = workspace.snapshot();
+        let WorkspacePreprocessStep::NeedResource(part_request) =
+            snapshot.preprocess_resumable(&root, &effective_options(), &NeverCancelled)
+        else {
+            panic!("part must be deferred");
+        };
+        let part_response = part_request
+            .request()
+            .found_as("diagnostic:part", "include::nested.adoc[]\n");
+        let WorkspacePreprocessStep::NeedResource(nested_request) =
+            part_request.resume(part_response, &NeverCancelled)
+        else {
+            panic!("nested resource must be deferred");
+        };
+        assert_eq!(nested_request.request().target(), nested.as_str());
+        let nested_response = nested_request
+            .request()
+            .found_as("diagnostic:nested", "nested\n");
+        let WorkspacePreprocessStep::Complete(draft) =
+            nested_request.resume(nested_response, &NeverCancelled)
+        else {
+            panic!("preprocessing must complete");
+        };
+        let WorkspaceAnalysisStep::Complete(analysis) =
+            draft.analyze(ProjectionLimits::default(), &NeverCancelled)
+        else {
+            panic!("analysis must complete");
+        };
+
+        assert_eq!(analysis.dependencies[&root], BTreeSet::from([part.clone()]));
+        assert_eq!(
+            analysis.dependencies[&part],
+            BTreeSet::from([nested.clone()])
+        );
+        assert!(analysis.dependencies[&nested].is_empty());
+        assert!(!analysis.dependencies.contains_key(&id("diagnostic:part")));
     }
 
     #[test]
