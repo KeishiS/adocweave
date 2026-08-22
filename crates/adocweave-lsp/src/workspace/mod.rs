@@ -18,7 +18,7 @@ use adocweave_host::{
 use adocweave_workspace::{
     Generation, ResourceId, RetainedLayerCharge, RetainedResourceBudget, RetainedResourceLimits,
     Revision, Workspace, WorkspaceAnalysis, WorkspaceAnalysisDraft, WorkspaceAnalysisStep,
-    WorkspaceError, WorkspaceLimits, WorkspaceSnapshot,
+    WorkspaceError, WorkspaceLimits, WorkspacePreprocessStep, WorkspaceSnapshot,
 };
 use async_lsp::lsp_types::Url;
 
@@ -270,14 +270,12 @@ pub struct AnalyzedRoot {
     /// This is what the root depends on, so it is also what the file watcher
     /// must keep watching. A run that failed still contributes here: repairing
     /// a broken include has to produce a notification the document can act on.
-    requested_includes: BTreeSet<ResourceId>,
+    include_interests: BTreeSet<ResourceId>,
 }
 
 enum AnalyzedRootOutcome {
     Complete(Box<WorkspaceAnalysisDraft>),
     Failed(WorkspaceError),
-    /// A resource could not be read, so nothing this run produced may be kept.
-    ReadFailed(String),
     Cancelled,
 }
 
@@ -302,12 +300,6 @@ impl AnalyzedRoot {
                 range: error.range,
                 code: error.diagnostic_code().to_owned(),
                 message: error.to_string(),
-            }),
-            AnalyzedRootOutcome::ReadFailed(message) => Some(AnalysisFailure {
-                source_id: None,
-                range: None,
-                code: "workspace-input-error".to_owned(),
-                message: message.clone(),
             }),
             AnalyzedRootOutcome::Complete(_) | AnalyzedRootOutcome::Cancelled => None,
         }
@@ -352,12 +344,7 @@ struct IncludeAcquisition<'a> {
     drafts: BTreeMap<ProjectScopeId, WorkspaceFilesystemCandidate>,
     root_scope: ProjectScopeId,
     allowed_roots: Vec<PathBuf>,
-    requested: BTreeSet<ResourceId>,
-    /// The first read that failed, if any.
-    ///
-    /// A failed read leaves its draft unusable, so no part of this run may be
-    /// committed once it is set.
-    read_failure: Option<String>,
+    admitted: BTreeSet<ResourceId>,
     job: &'a FilesystemJobCoordinator,
 }
 
@@ -394,7 +381,6 @@ impl IncludeAcquisition<'_> {
             Ok(Some(candidate)) => candidate,
             Ok(None) => return Ok(AcquiredInclude::NotFound),
             Err(message) => {
-                self.read_failure.get_or_insert_with(|| message.clone());
                 return Ok(AcquiredInclude::Failed(message));
             }
         };
@@ -413,8 +399,20 @@ impl IncludeAcquisition<'_> {
             ));
         }
         Arc::make_mut(&mut self.candidate.include_interests).insert(target.clone());
-        self.requested.insert(target.clone());
+        self.admitted.insert(target.clone());
         Ok(())
+    }
+
+    /// Keeps only dependencies whose authority was established for this run.
+    ///
+    /// Snapshot resources were validated before the run began. Deferred
+    /// resources must have passed `admit_include_target`; refused targets are
+    /// intentionally absent even though preprocessing records their request.
+    fn admitted_dependencies(&self, dependencies: BTreeSet<ResourceId>) -> BTreeSet<ResourceId> {
+        dependencies
+            .into_iter()
+            .filter(|id| self.candidate.inner.get(id).is_some() || self.admitted.contains(id))
+            .collect()
     }
 
     fn draft_for(
@@ -1897,58 +1895,68 @@ impl WorkspaceResources {
             drafts: BTreeMap::new(),
             root_scope,
             allowed_roots,
-            requested: BTreeSet::new(),
-            read_failure: None,
+            admitted: BTreeSet::new(),
             job,
         };
-        let mut step = input.snapshot.analyze_resumable(
+        let mut step = input.snapshot.preprocess_resumable(
             &input.root,
             &options,
-            ProjectionLimits::default(),
             &SharedCancellation(cancellation),
         );
         loop {
             match step {
-                WorkspaceAnalysisStep::Complete(draft) => {
-                    let requested_includes = acquisition.requested.clone();
-                    // A read that failed leaves its draft unusable, so a run
-                    // that got this far anyway must still keep nothing.
-                    if let Some(message) = acquisition.read_failure {
-                        return Ok(AnalyzedRoot {
-                            candidate: self.clone(),
-                            root: input.root.clone(),
-                            canonical_options: options,
-                            outcome: AnalyzedRootOutcome::ReadFailed(message),
-                            requested_includes,
-                        });
-                    }
+                WorkspacePreprocessStep::Complete(preprocessed) => {
+                    let include_interests =
+                        acquisition.admitted_dependencies(preprocessed.dependencies());
+                    let (candidate, outcome) = match preprocessed.analyze(
+                        ProjectionLimits::default(),
+                        &SharedCancellation(cancellation),
+                    ) {
+                        WorkspaceAnalysisStep::Complete(draft) => {
+                            (acquisition.commit()?, AnalyzedRootOutcome::Complete(draft))
+                        }
+                        WorkspaceAnalysisStep::Failed(error) => {
+                            (self.clone(), AnalyzedRootOutcome::Failed(error))
+                        }
+                        WorkspaceAnalysisStep::Cancelled => {
+                            (self.clone(), AnalyzedRootOutcome::Cancelled)
+                        }
+                        WorkspaceAnalysisStep::NeedResource(_) => {
+                            return Err(
+                                "analysis requested a resource after preprocessing completed"
+                                    .to_owned(),
+                            );
+                        }
+                    };
                     return Ok(AnalyzedRoot {
-                        candidate: acquisition.commit()?,
+                        candidate,
                         root: input.root.clone(),
                         canonical_options: options,
-                        outcome: AnalyzedRootOutcome::Complete(draft),
-                        requested_includes,
+                        outcome,
+                        include_interests,
                     });
                 }
-                WorkspaceAnalysisStep::Failed(error) => {
+                WorkspacePreprocessStep::Failed(failure) => {
+                    let include_interests =
+                        acquisition.admitted_dependencies(failure.dependencies());
                     return Ok(AnalyzedRoot {
                         candidate: self.clone(),
                         root: input.root.clone(),
                         canonical_options: options,
-                        outcome: AnalyzedRootOutcome::Failed(error),
-                        requested_includes: acquisition.requested,
+                        outcome: AnalyzedRootOutcome::Failed(failure.into_error()),
+                        include_interests,
                     });
                 }
-                WorkspaceAnalysisStep::Cancelled => {
+                WorkspacePreprocessStep::Cancelled => {
                     return Ok(AnalyzedRoot {
                         candidate: self.clone(),
                         root: input.root.clone(),
                         canonical_options: options,
                         outcome: AnalyzedRootOutcome::Cancelled,
-                        requested_includes: acquisition.requested,
+                        include_interests: BTreeSet::new(),
                     });
                 }
-                WorkspaceAnalysisStep::NeedResource(suspended) => {
+                WorkspacePreprocessStep::NeedResource(suspended) => {
                     let target = ResourceId::new(suspended.request().target())
                         .map_err(|error| error.to_string())?;
                     let response = match acquisition.acquire(&target)? {
@@ -1978,14 +1986,14 @@ impl WorkspaceResources {
             root,
             canonical_options,
             outcome,
-            requested_includes,
+            include_interests,
         } = analyzed;
         let AnalyzedRootOutcome::Complete(draft) = outcome else {
-            self.watch_requested_includes(&root, requested_includes);
+            self.watch_include_interests(&root, include_interests);
             return Ok(None);
         };
         if !draft.matches_canonical_context(self.generation(), &canonical_options) {
-            self.watch_requested_includes(&root, requested_includes);
+            self.watch_include_interests(&root, include_interests);
             return Ok(None);
         }
         // Publication is decided on the copy, so installing it below is the last
@@ -1997,7 +2005,7 @@ impl WorkspaceResources {
             .inner
             .finalize_draft(draft)
             .map_err(|error| error.to_string())?;
-        candidate.accept_for_root(&root, &analysis, requested_includes)?;
+        candidate.accept_for_root(&root, &analysis, include_interests)?;
         *self = candidate;
         Ok(Some(analysis))
     }
@@ -2008,8 +2016,8 @@ impl WorkspaceResources {
     /// needs to hear about the repair. Recording the request here, rather than
     /// when the read was attempted, keeps a run that is still in flight from
     /// changing anything the editor can see.
-    fn watch_requested_includes(&mut self, root: &ResourceId, requested: BTreeSet<ResourceId>) {
-        for id in &requested {
+    fn watch_include_interests(&mut self, root: &ResourceId, interests: BTreeSet<ResourceId>) {
+        for id in &interests {
             if !self.include_interests.contains(id)
                 && self.include_interests.len() >= MAX_WATCHED_INCLUDE_RESOURCES
             {
@@ -2017,7 +2025,7 @@ impl WorkspaceResources {
             }
             Arc::make_mut(&mut self.include_interests).insert(id.clone());
         }
-        self.record_include_dependencies(root, requested);
+        self.record_include_dependencies(root, interests);
     }
 
     /// Records what one root depends on and drops includes nothing needs.
@@ -2049,7 +2057,7 @@ impl WorkspaceResources {
         &mut self,
         root: &ResourceId,
         analysis: &WorkspaceAnalysis,
-        requested_includes: BTreeSet<ResourceId>,
+        include_interests: BTreeSet<ResourceId>,
     ) -> Result<(), String> {
         if analysis.root() != root {
             return Err("workspace analysis root does not match the adoption root".to_owned());
@@ -2059,10 +2067,7 @@ impl WorkspaceResources {
             .map_err(|error| error.to_string())?;
         self.record_include_dependencies(
             root,
-            analysis
-                .dependencies()
-                .into_iter()
-                .chain(requested_includes),
+            analysis.dependencies().into_iter().chain(include_interests),
         );
         Ok(())
     }
