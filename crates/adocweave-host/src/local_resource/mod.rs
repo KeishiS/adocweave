@@ -1808,7 +1808,10 @@ impl LocalFilesystemDraft {
     }
 
     /// Verifies that this draft can be installed into `live` without mutation.
-    fn validate(&self, live: &LocalFilesystemSession) -> Result<(), FilesystemDraftError> {
+    pub(crate) fn validate(
+        &self,
+        live: &LocalFilesystemSession,
+    ) -> Result<(), FilesystemDraftError> {
         self.job.ensure_active_job()?;
         if self.poisoned {
             return Err(FilesystemDraftError::PoisonedDraft);

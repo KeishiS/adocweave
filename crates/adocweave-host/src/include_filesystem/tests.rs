@@ -316,6 +316,10 @@ fn superseding_transaction_rejects_old_work_and_commits_only_its_candidate() {
     let mut replacement = job
         .superseding_transaction(&mut session)
         .expect("replacement transaction");
+    assert_eq!(
+        old.validate(&session),
+        Err(FilesystemDraftError::InvalidDraft)
+    );
     let IncludeFilesystemBudgetedOutcome::Failed(failed) =
         old.read_utf8_within_budget(path_request("old-again", &old_path))
     else {

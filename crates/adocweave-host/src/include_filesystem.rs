@@ -401,6 +401,14 @@ impl IncludeFilesystemTransaction {
         self.coordinator.usage()
     }
 
+    /// Checks that this candidate can still replace the given live session.
+    ///
+    /// Multi-session consumers use this as a preflight before committing any
+    /// member of a batch. [`Self::commit`] repeats the validation.
+    pub fn validate(&self, session: &LocalFilesystemSession) -> Result<(), FilesystemDraftError> {
+        self.draft_ref().validate(session)
+    }
+
     /// Installs this draft. The shared job is finished separately by its owner.
     pub fn commit(
         mut self,
@@ -416,6 +424,12 @@ impl IncludeFilesystemTransaction {
     fn draft_mut(&mut self) -> &mut LocalFilesystemDraft {
         self.draft
             .as_mut()
+            .expect("an open include transaction owns its draft")
+    }
+
+    fn draft_ref(&self) -> &LocalFilesystemDraft {
+        self.draft
+            .as_ref()
             .expect("an open include transaction owns its draft")
     }
 }

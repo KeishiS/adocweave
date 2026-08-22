@@ -457,6 +457,18 @@ impl IncludeAcquisition {
     /// cancelled run drops its drafts instead, which leaves the live sessions
     /// exactly as they were.
     fn commit(mut self) -> Result<WorkspaceResources, String> {
+        for candidate in self.transactions.values() {
+            let session = candidate
+                .session
+                .lock()
+                .map_err(|_| "workspace resource session lock is poisoned".to_owned())?;
+            candidate
+                .transaction
+                .as_ref()
+                .expect("include transaction is active")
+                .validate(&session)
+                .map_err(|error| error.to_string())?;
+        }
         for candidate in self.transactions.values_mut() {
             let transaction = candidate
                 .transaction
@@ -2021,10 +2033,9 @@ impl WorkspaceResources {
         }
         let acquisition = acquisition
             .ok_or_else(|| "completed analysis is missing include acquisition state".to_owned())?;
-        // Publication is decided on the copy, so installing it below is the last
-        // step and cannot fail. Finalising against the live state instead would
-        // leave the acquired includes installed with no analysis to justify them
-        // whenever that check rejected the draft.
+        // The generation decision precedes every filesystem commit. Transaction
+        // validation remains a final safety gate for a session superseded by a
+        // watch operation that did not publish a workspace generation.
         let mut candidate = acquisition.commit()?;
         let analysis = candidate
             .inner
