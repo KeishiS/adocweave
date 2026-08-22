@@ -5,7 +5,7 @@ use adocweave::preprocess::{
 };
 use adocweave::{CancellationCheck, NeverCancel, ParseError, SourceId};
 
-/// Browser package version accepted and returned by this adapter.
+/// Package version of this adapter.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 mod preprocess_projection;
@@ -26,7 +26,7 @@ pub use preprocess_wire::{
     WasmAnalysisPreprocessInput, WasmError, WasmPreprocessOptions, WasmPreprocessRequest,
     WasmPreprocessResponse, WasmResource, WasmSafeMode, WasmSourceMapSegment, WasmSourceMapping,
 };
-pub use protocol::{PROTOCOL_SCHEMA_VERSION, WORKER_PROTOCOL_VERSION, WasmProductSet};
+pub use protocol::{PROTOCOL_SCHEMA_VERSION, WasmProductSet};
 pub use render_input_wire::{
     WasmCitationOutcome, WasmCitationSegment, WasmGeneratedBibliography,
     WasmGeneratedBibliographyEntry, WasmReferenceFailureKind, WasmReferenceNotice,
@@ -51,15 +51,6 @@ pub use shared_wire::{WasmMathLanguage, WasmSeverity};
 pub fn preprocess_request(
     request: WasmPreprocessRequest,
 ) -> Result<WasmPreprocessResponse, WasmError> {
-    if request.package_version != VERSION {
-        return Err(WasmError {
-            code: "unsupported-api-version".to_owned(),
-            message: format!(
-                "unsupported package version {} (expected {VERSION})",
-                request.package_version
-            ),
-        });
-    }
     let snapshot = preprocess_wire::resource_snapshot(request.resources);
     let options =
         preprocess_wire::to_core_options(request.source_id.map(SourceId::new), request.options);
@@ -182,8 +173,6 @@ fn execute_request(
     let response = project_response(
         products,
         requested,
-        request.version,
-        request.generation,
         analysis,
         request.source_id.as_ref(),
         attribute_projection.as_ref(),
@@ -251,7 +240,6 @@ fn serialize_error(error: &WasmError) -> String {
 
 #[cfg(target_arch = "wasm32")]
 mod bindings {
-    use js_sys::Function;
     use serde::Serialize;
     use serde::de::DeserializeOwned;
     use wasm_bindgen::prelude::*;
@@ -263,27 +251,10 @@ mod bindings {
         PROTOCOL_SCHEMA_VERSION
     }
 
-    struct JsCancellation(Option<Function>);
-
-    impl CancellationCheck for JsCancellation {
-        fn is_cancelled(&self) -> bool {
-            self.0.as_ref().is_some_and(|callback| {
-                callback
-                    .call0(&JsValue::NULL)
-                    .ok()
-                    .and_then(|value| value.as_bool())
-                    .unwrap_or(true)
-            })
-        }
-    }
-
     #[wasm_bindgen(js_name = process)]
-    pub fn process_js(
-        request: JsValue,
-        cancellation: Option<Function>,
-    ) -> Result<JsValue, JsValue> {
+    pub fn process_js(request: JsValue) -> Result<JsValue, JsValue> {
         let request = deserialize_request(request)?;
-        let response = process_request(request, &JsCancellation(cancellation))
+        let response = process_request(request, &NeverCancel)
             .map_err(|error| JsValue::from_str(&serialize_error(&error)))?;
         response
             .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
@@ -328,10 +299,7 @@ mod tests {
 
     fn request(source: &str) -> WasmRequest {
         WasmRequest {
-            package_version: VERSION.to_owned(),
             source_id: Some("web:document".to_owned()),
-            version: 3,
-            generation: 7,
             source: source.to_owned(),
             preprocess: None,
             products: WasmProductSet {
@@ -382,13 +350,10 @@ mod tests {
     }
 
     #[test]
-    fn wasm_api_returns_all_products_from_one_versioned_request() {
+    fn wasm_api_returns_all_products_from_one_request() {
         let response =
             process_request(request("= Title\n\n== Section\n"), &NeverCancel).expect("response");
 
-        assert_eq!(response.version, 3);
-        assert_eq!(response.generation, 7);
-        assert_eq!(response.package_version, VERSION);
         assert!(response.syntax.contains("Document@"));
         assert!(response.ast.contains("\"blocks\""));
         assert!(response.html.contains("<h1"));
@@ -879,12 +844,9 @@ mod tests {
     }
 
     #[test]
-    fn wasm_api_rejects_unknown_fields_and_versions() {
+    fn wasm_api_rejects_unknown_fields() {
         let invalid = json!({
-            "packageVersion": VERSION,
             "sourceId": null,
-            "version": 1,
-            "generation": 1,
             "source": "text",
             "unexpected": true
         })
@@ -893,10 +855,7 @@ mod tests {
         assert!(error.contains("invalid-request"));
 
         let legacy_options = json!({
-            "packageVersion": VERSION,
             "sourceId": null,
-            "version": 1,
-            "generation": 1,
             "source": "text",
             "options": {"syntaxMode": "strict"}
         })
@@ -905,10 +864,7 @@ mod tests {
         assert!(error.contains("invalid-request"));
 
         let leaked_failure = json!({
-            "packageVersion": VERSION,
             "sourceId": null,
-            "version": 1,
-            "generation": 1,
             "source": "xref:note:private[]",
             "renderInputs": {
                 "references": [{
@@ -925,16 +881,6 @@ mod tests {
         .to_string();
         let error = process_json(&leaked_failure).expect_err("failure detail is forbidden");
         assert!(error.contains("invalid-request"));
-
-        let error = process_request(
-            WasmRequest {
-                package_version: "0.0.0".to_owned(),
-                ..request("text")
-            },
-            &NeverCancel,
-        )
-        .expect_err("unsupported version");
-        assert_eq!(error.code, "unsupported-api-version");
     }
 
     #[test]
@@ -978,10 +924,7 @@ mod tests {
     #[test]
     fn wasm_options_are_partial_overrides_and_bound_the_complete_response() {
         let value = json!({
-            "packageVersion": VERSION,
             "sourceId": null,
-            "version": 1,
-            "generation": 1,
             "source": "text",
             "outputLimits": {"maxOutputBytes": 1}
         });
@@ -1135,7 +1078,6 @@ mod tests {
             },
         )]);
         let response = preprocess_request(WasmPreprocessRequest {
-            package_version: VERSION.to_owned(),
             source_id: Some("root".to_owned()),
             source: "include::intro.adoc[leveloffset=+1]\n".to_owned(),
             resources,
@@ -1188,7 +1130,6 @@ mod tests {
         ))
         .expect("public preprocess fixture");
         let request: WasmPreprocessRequest = serde_json::from_value(json!({
-            "packageVersion": VERSION,
             "sourceId": fixture["sourceId"],
             "source": fixture["source"],
             "resources": fixture["resources"],
@@ -1277,7 +1218,6 @@ mod tests {
             let native =
                 preprocess(source, &native_snapshot, &native_options).expect_err("native limit");
             let wasm = preprocess_request(WasmPreprocessRequest {
-                package_version: VERSION.to_owned(),
                 source_id: None,
                 source: source.to_owned(),
                 resources,

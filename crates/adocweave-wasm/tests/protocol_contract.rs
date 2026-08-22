@@ -37,9 +37,7 @@ fn latex_wire_value_remains_distinct_from_the_asciidoc_name() {
 }
 
 fn base_request(corpus: &Value) -> Value {
-    let mut request = corpus["defaultRequest"].clone();
-    request["packageVersion"] = Value::String(adocweave_wasm::VERSION.to_owned());
-    request
+    corpus["defaultRequest"].clone()
 }
 
 fn expanded_request(corpus: &Value) -> Value {
@@ -408,7 +406,6 @@ fn generated_preprocess_wire_keeps_the_public_api_and_schema_defaults() {
         options: options.clone(),
     };
     let request = WasmPreprocessRequest {
-        package_version: adocweave_wasm::VERSION.to_owned(),
         source_id: None,
         source: "include::chapter.adoc[]".to_owned(),
         resources: analysis.resources,
@@ -418,7 +415,6 @@ fn generated_preprocess_wire_keeps_the_public_api_and_schema_defaults() {
     serde_json::from_value::<WasmPreprocessRequest>(serialized)
         .expect("round-tripped preprocess request");
     let response = WasmPreprocessResponse {
-        package_version: adocweave_wasm::VERSION.to_owned(),
         source: "expanded".to_owned(),
         source_map: vec![WasmSourceMapSegment {
             output_start: 0,
@@ -566,7 +562,7 @@ fn apply_setup(request: &mut Value, case: &Value) {
 }
 
 #[test]
-fn request_rejects_unknown_and_missing_fields_and_old_versions() {
+fn request_rejects_unknown_missing_and_removed_identity_fields() {
     let corpus = corpus();
     for case in corpus["unknownFieldCases"]
         .as_array()
@@ -597,14 +593,33 @@ fn request_rejects_unknown_and_missing_fields_and_old_versions() {
         );
     }
 
-    let mut request: WasmRequest =
-        serde_json::from_value(base_request(&corpus)).expect("valid request");
-    request.package_version = corpus["oldVersion"]
-        .as_str()
-        .expect("old package version")
-        .to_owned();
-    let error = process_request(request, &NeverCancel).expect_err("old version is rejected");
-    assert_eq!(error.code, "unsupported-api-version");
+    for field in ["packageVersion", "version", "generation"] {
+        let mut legacy = base_request(&corpus);
+        legacy[field] = json!(1);
+        assert!(
+            serde_json::from_value::<WasmRequest>(legacy).is_err(),
+            "removed request field was accepted: {field}"
+        );
+    }
+}
+
+#[test]
+fn response_rejects_removed_identity_fields() {
+    let corpus = corpus();
+    let response = process_request(
+        serde_json::from_value(base_request(&corpus)).expect("valid request"),
+        &NeverCancel,
+    )
+    .expect("response");
+    let value = serde_json::to_value(response).expect("serialized response");
+    for field in ["packageVersion", "version", "generation"] {
+        let mut legacy = value.clone();
+        legacy[field] = json!(1);
+        assert!(
+            serde_json::from_value::<adocweave_wasm::WasmResponse>(legacy).is_err(),
+            "removed response field was accepted: {field}"
+        );
+    }
 }
 
 /// requestのどのobjectでも、未知field、型違いおよびfieldの欠落を検査します。
@@ -933,13 +948,11 @@ fn stable_typed_products_use_explicit_disabled_sentinels() {
 #[test]
 fn preprocess_wire_contract_round_trips_and_rejects_drift() {
     let corpus = corpus();
-    let mut value = corpus["preprocessRequest"].clone();
-    value["packageVersion"] = Value::String(adocweave_wasm::VERSION.to_owned());
+    let value = corpus["preprocessRequest"].clone();
     let request: WasmPreprocessRequest =
         serde_json::from_value(value.clone()).expect("preprocess request");
     serde_json::to_value(&request).expect("serialized preprocess request");
     let defaults: WasmPreprocessRequest = serde_json::from_value(json!({
-        "packageVersion": adocweave_wasm::VERSION,
         "source": "text"
     }))
     .expect("default preprocess request");
@@ -949,7 +962,14 @@ fn preprocess_wire_contract_round_trips_and_rejects_drift() {
         corpus["preprocessOptionsExpansion"],
     );
     let response = preprocess_request(request).expect("preprocess response");
-    serde_json::to_value(response).expect("serialized preprocess response");
+    let response = serde_json::to_value(response).expect("serialized preprocess response");
+
+    let mut legacy_request = value.clone();
+    legacy_request["packageVersion"] = json!("0.46.2");
+    assert!(serde_json::from_value::<WasmPreprocessRequest>(legacy_request).is_err());
+    let mut legacy_response = response;
+    legacy_response["packageVersion"] = json!("0.46.2");
+    assert!(serde_json::from_value::<WasmPreprocessResponse>(legacy_response).is_err());
 
     for case in corpus["preprocessObjectCases"]
         .as_array()
@@ -1018,10 +1038,4 @@ fn preprocess_wire_contract_round_trips_and_rejects_drift() {
     let mut invalid_mode = value;
     invalid_mode["options"]["safeMode"] = Value::String("invalid".to_owned());
     assert!(serde_json::from_value::<WasmPreprocessRequest>(invalid_mode).is_err());
-
-    let mut old = corpus["preprocessRequest"].clone();
-    old["packageVersion"] = Value::String(corpus["oldVersion"].as_str().expect("old").to_owned());
-    let error = preprocess_request(serde_json::from_value(old).expect("old preprocess request"))
-        .expect_err("old preprocess package");
-    serde_json::to_value(error).expect("serialized preprocess error");
 }

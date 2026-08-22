@@ -371,11 +371,8 @@ fn default_wasm_request_output_limits() -> WasmOutputLimits {
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmRequest {
-    pub package_version: String,
     #[serde(default = "default_wasm_request_source_id")]
     pub source_id: Option<String>,
-    pub version: u32,
-    pub generation: u32,
     pub source: String,
     #[serde(default = "default_wasm_request_preprocess")]
     pub preprocess: Option<WasmAnalysisPreprocessInput>,

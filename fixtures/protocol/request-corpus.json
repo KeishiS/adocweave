@@ -11,11 +11,8 @@
     "syntax": false
   },
   "defaultRequest": {
-    "generation": 1,
-    "packageVersion": "@PACKAGE_VERSION@",
     "source": "text",
-    "sourceId": null,
-    "version": 1
+    "sourceId": null
   },
   "defaultRequestExpansion": {
     "analysisOptions": {
@@ -57,11 +54,9 @@
         "syntaxMode": "permissive"
       }
     },
-    "generation": 1,
     "outputLimits": {
       "maxOutputBytes": 52428800
     },
-    "packageVersion": "0.46.2",
     "preprocess": null,
     "products": {
       "attributeOccurrences": false,
@@ -116,8 +111,7 @@
       "unresolvedReferences": "target"
     },
     "source": "text",
-    "sourceId": null,
-    "version": 1
+    "sourceId": null
   },
   "enumCases": [
     {
@@ -495,7 +489,6 @@
       "path": "/outputLimits"
     }
   ],
-  "oldVersion": "0.10.0",
   "preprocessObjectCases": [
     {
       "object": "PreprocessRequest",
@@ -528,7 +521,6 @@
     "options": {
       "enableIncludes": true
     },
-    "packageVersion": "@PACKAGE_VERSION@",
     "resources": {
       "part.adoc": {
         "source": "included\n",
@@ -539,9 +531,6 @@
     "sourceId": "main.adoc"
   },
   "requiredRequestFields": [
-    "packageVersion",
-    "version",
-    "generation",
     "source"
   ],
   "responseProbe": {

@@ -1,10 +1,10 @@
 //! Cross-field validation at the JSON request boundary.
 
+use crate::WasmError;
 use crate::render_input_normalization::{self, NormalizedRenderInputs};
 use crate::request_wire::WasmRequest;
-use crate::{VERSION, WasmError};
 
-/// A request whose package version and cross-field invariants were validated.
+/// A request whose cross-field invariants were validated.
 ///
 /// The inner wire value is private so the core conversion stage cannot be
 /// called with an unnormalized public request.
@@ -14,15 +14,6 @@ pub(crate) struct NormalizedRequest {
 }
 
 pub(crate) fn normalize(mut request: WasmRequest) -> Result<NormalizedRequest, WasmError> {
-    if request.package_version != VERSION {
-        return Err(WasmError {
-            code: "unsupported-api-version".to_owned(),
-            message: format!(
-                "unsupported package version {} (expected {VERSION})",
-                request.package_version
-            ),
-        });
-    }
     if let Some(input) = &request.preprocess {
         for (matches, message) in [
             (

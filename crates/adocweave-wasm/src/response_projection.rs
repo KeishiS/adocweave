@@ -1,7 +1,5 @@
 use adocweave::SourceId;
 
-use crate::VERSION;
-
 use crate::response_conversion::{wasm_diagnostics, wasm_document_symbols, wasm_text_range};
 use crate::{
     ParseSummary, WasmAttributeBindingQuery, WasmAttributeExpansionError,
@@ -27,8 +25,6 @@ pub(crate) struct ResponseProducts {
 pub(crate) fn project_response(
     products: ResponseProducts,
     requested_products: WasmProductSet,
-    version: u32,
-    generation: u32,
     analysis: &adocweave::Analysis,
     source_id: Option<&SourceId>,
     attribute_projection: Option<&adocweave::preprocess::AnalysisProjection>,
@@ -39,9 +35,6 @@ pub(crate) fn project_response(
         .map(|output| wasm_diagnostics(&output.diagnostics))
         .unwrap_or_default();
     Ok(WasmResponse {
-        package_version: VERSION.to_owned(),
-        version,
-        generation,
         products: requested_products,
         parse: ParseSummary {
             block_count: response_count("blockCount", analysis.document().blocks().len())?,
