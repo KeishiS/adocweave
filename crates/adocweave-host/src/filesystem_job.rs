@@ -578,7 +578,11 @@ impl FilesystemCapacityReservation<'_> {
         self.granted
     }
 
-    #[cfg(test)]
+    /// Reports whether this reservation came from the overflow probe.
+    ///
+    /// Committing a probed unit ends the job, because it means the caller went
+    /// past the ordinary limit. A caller that would rather stop than end the
+    /// job asks first and drops the reservation instead.
     pub(crate) const fn is_probe(&self) -> bool {
         matches!(self.class, CapacityClass::Probe)
     }
