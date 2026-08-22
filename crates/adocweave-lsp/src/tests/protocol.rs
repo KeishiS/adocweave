@@ -597,6 +597,173 @@ async fn protocol_preserves_json_rpc_ids_errors_and_notification_silence() {
     server_result.expect("clean exit");
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn protocol_reports_an_incomplete_scan_once_without_document_diagnostics() {
+    use std::time::Duration;
+
+    use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-protocol-scan-notice-{unique}"));
+    fs::create_dir_all(&root).expect("workspace");
+    let config_path = root.join(adocweave_config::FILE_NAME);
+    fs::write(
+        &config_path,
+        "schema-version = 1\n[resources]\nmax-files = 1\n",
+    )
+    .expect("configuration");
+    for name in ["a.adoc", "b.adoc", "c.adoc"] {
+        fs::write(root.join(name), "text\n").expect("document");
+    }
+    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
+    let document_uri = lsp::Url::from_file_path(root.join("a.adoc")).expect("document URI");
+    let config_uri = lsp::Url::from_file_path(&config_path).expect("configuration URI");
+
+    let (server_stream, client_stream) = tokio::io::duplex(64 * 1024);
+    let (server_read, server_write) = tokio::io::split(server_stream);
+    let server = run(server_read.compat(), server_write.compat_write());
+    let (client_read, mut client_write) = tokio::io::split(client_stream);
+    let mut client_read = BufReader::new(client_read);
+
+    let client = async move {
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": root_uri,
+                    "capabilities": {
+                        "workspace": {
+                            "didChangeWatchedFiles": {"dynamicRegistration": true}
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+        assert_eq!(read_message(&mut client_read).await["id"], 1);
+        write_message(
+            &mut client_write,
+            &json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await;
+
+        let mut registered = false;
+        let mut first_notice = None;
+        while !registered || first_notice.is_none() {
+            let message = read_message(&mut client_read).await;
+            match message["method"].as_str() {
+                Some("client/registerCapability") => {
+                    write_message(
+                        &mut client_write,
+                        &json!({
+                            "jsonrpc": "2.0",
+                            "id": message["id"].clone(),
+                            "result": null
+                        }),
+                    )
+                    .await;
+                    registered = true;
+                }
+                Some("window/showMessage") => {
+                    assert!(
+                        first_notice.is_none(),
+                        "scan notice was sent more than once"
+                    );
+                    first_notice = Some(typed::<lsp::ShowMessageParams>(message["params"].clone()));
+                }
+                method => panic!("unexpected server message before scan completion: {method:?}"),
+            }
+        }
+        let first_notice = first_notice.expect("scan notice");
+        assert_eq!(first_notice.typ, lsp::MessageType::WARNING);
+        assert!(first_notice.message.contains("resources.max-files"));
+        assert!(
+            first_notice
+                .message
+                .contains(config_path.to_string_lossy().as_ref())
+        );
+
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {"textDocument": {
+                    "uri": document_uri,
+                    "languageId": "asciidoc",
+                    "version": 1,
+                    "text": "text\n"
+                }}
+            }),
+        )
+        .await;
+        let initial_diagnostics = loop {
+            let message = read_message(&mut client_read).await;
+            assert_ne!(message["method"], "window/showMessage");
+            if message["method"] == "textDocument/publishDiagnostics" {
+                let params = typed::<lsp::PublishDiagnosticsParams>(message["params"].clone());
+                if params.uri == document_uri {
+                    break params;
+                }
+            }
+        };
+        assert!(initial_diagnostics.diagnostics.iter().all(|diagnostic| {
+            diagnostic.code
+                != Some(lsp::NumberOrString::String(
+                    "workspace-scan-incomplete".to_owned(),
+                ))
+                && !diagnostic.message.contains("resources.max-files")
+        }));
+
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc": "2.0",
+                "method": "workspace/didChangeWatchedFiles",
+                "params": {"changes": [{"uri": config_uri, "type": 2}]}
+            }),
+        )
+        .await;
+        loop {
+            let message = read_message(&mut client_read).await;
+            assert_ne!(message["method"], "window/showMessage");
+            if message["method"] == "textDocument/publishDiagnostics" {
+                let params = typed::<lsp::PublishDiagnosticsParams>(message["params"].clone());
+                if params.uri == document_uri {
+                    break;
+                }
+            }
+        }
+
+        write_message(
+            &mut client_write,
+            &json!({"jsonrpc": "2.0", "id": 2, "method": "shutdown", "params": null}),
+        )
+        .await;
+        assert_eq!(read_message(&mut client_read).await["id"], 2);
+        write_message(
+            &mut client_write,
+            &json!({"jsonrpc": "2.0", "method": "exit", "params": null}),
+        )
+        .await;
+    };
+
+    let (server_result, ()) = tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::join!(server, client)
+    })
+    .await
+    .expect("protocol timeout");
+    server_result.expect("clean exit");
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
 #[cfg(unix)]
 #[tokio::test(flavor = "current_thread")]
 async fn protocol_stops_when_the_declared_client_process_does_not_exist() {

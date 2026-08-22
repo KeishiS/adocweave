@@ -1,4 +1,116 @@
 use super::*;
+use crate::workspace::WorkspaceScanNotice;
+
+#[test]
+fn scan_notice_episode_ends_after_a_complete_scan() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-scan-notice-{unique}"));
+    fs::create_dir_all(&root).expect("workspace");
+    let config = root.join(adocweave_config::FILE_NAME);
+    for name in ["a.adoc", "b.adoc", "c.adoc"] {
+        fs::write(root.join(name), "text\n").expect("document");
+    }
+    fs::write(&config, "schema-version = 1\n[resources]\nmax-files = 1\n")
+        .expect("limited configuration");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
+    let expected = WorkspaceScanNotice::ProjectResourceLimit {
+        project: config.clone(),
+    };
+    let mut service = LanguageService::default();
+    service.initialize(&typed(json!({
+        "processId": null,
+        "rootUri": root_uri,
+        "capabilities": {}
+    })));
+
+    let first = service.plan_workspace_scan(&adocweave::NeverCancel);
+    let first = service.apply_workspace_scan(first);
+    assert!(first.installed);
+    assert_eq!(first.notices, vec![expected.clone()]);
+
+    let repeated = service.plan_workspace_scan(&adocweave::NeverCancel);
+    assert!(service.apply_workspace_scan(repeated).notices.is_empty());
+
+    fs::write(&config, "schema-version = 99\n").expect("invalid configuration");
+    let failed = service.plan_workspace_scan(&adocweave::NeverCancel);
+    let failed = service.apply_workspace_scan(failed);
+    assert!(!failed.installed);
+    assert!(failed.notices.is_empty());
+    fs::write(&config, "schema-version = 1\n[resources]\nmax-files = 1\n")
+        .expect("recovered limited configuration");
+    let recovered = service.plan_workspace_scan(&adocweave::NeverCancel);
+    assert!(service.apply_workspace_scan(recovered).notices.is_empty());
+
+    fs::write(&config, "schema-version = 1\n[resources]\nmax-files = 8\n")
+        .expect("complete configuration");
+    let complete = service.plan_workspace_scan(&adocweave::NeverCancel);
+    let complete = service.apply_workspace_scan(complete);
+    assert!(complete.installed);
+    assert!(complete.notices.is_empty());
+    assert_eq!(service.workspace_analysis_count(), 3);
+
+    fs::write(&config, "schema-version = 1\n[resources]\nmax-files = 1\n")
+        .expect("limited configuration");
+    let recurrence = service.plan_workspace_scan(&adocweave::NeverCancel);
+    assert_eq!(
+        service.apply_workspace_scan(recurrence).notices,
+        vec![expected]
+    );
+
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn workspace_folder_change_starts_a_new_scan_notice_episode() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let base = std::env::temp_dir().join(format!("adocweave-scan-notice-roots-{unique}"));
+    let limited = base.join("limited");
+    let added = base.join("added");
+    fs::create_dir_all(&limited).expect("limited workspace");
+    fs::create_dir_all(&added).expect("added workspace");
+    let config = limited.join(adocweave_config::FILE_NAME);
+    fs::write(&config, "schema-version = 1\n[resources]\nmax-files = 1\n")
+        .expect("limited configuration");
+    for name in ["a.adoc", "b.adoc"] {
+        fs::write(limited.join(name), "text\n").expect("document");
+    }
+    let limited_uri = lsp::Url::from_directory_path(&limited).expect("limited URI");
+    let added_uri = lsp::Url::from_directory_path(&added).expect("added URI");
+    let expected = WorkspaceScanNotice::ProjectResourceLimit { project: config };
+    let mut service = LanguageService::default();
+    service.initialize(&typed(json!({
+        "processId": null,
+        "workspaceFolders": [{"uri": limited_uri, "name": "limited"}],
+        "capabilities": {"workspace": {"workspaceFolders": true}}
+    })));
+
+    let first = service.plan_workspace_scan(&adocweave::NeverCancel);
+    assert_eq!(
+        service.apply_workspace_scan(first).notices,
+        vec![expected.clone()]
+    );
+    assert!(service.workspace_folders_changed(typed(json!({
+        "event": {
+            "removed": [],
+            "added": [{"uri": added_uri, "name": "added"}]
+        }
+    }))));
+    let changed = service.plan_workspace_scan(&adocweave::NeverCancel);
+    assert_eq!(
+        service.apply_workspace_scan(changed).notices,
+        vec![expected]
+    );
+    let repeated = service.plan_workspace_scan(&adocweave::NeverCancel);
+    assert!(service.apply_workspace_scan(repeated).notices.is_empty());
+
+    fs::remove_dir_all(base).expect("cleanup");
+}
 
 #[test]
 fn initial_workspace_scan_prunes_configured_directories() {

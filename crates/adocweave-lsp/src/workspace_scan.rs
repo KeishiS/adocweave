@@ -510,12 +510,14 @@ impl WorkspaceScanCoordinator {
     ) -> Option<WorkspaceScanTransition> {
         let completion = self.complete_active(scanned.sequence)?;
         let mut jobs = Vec::new();
+        let mut notices = Vec::new();
         let mut recovery_timer = WorkspaceRecoveryTimerUpdate::Keep;
         if completion.accept_result {
             match scanned.scan {
                 Ok(scan) => {
                     let application = service.apply_workspace_scan(scan);
                     jobs.extend(application.jobs);
+                    notices.extend(application.notices);
                     let mut replay_requires_recovery = false;
                     if let Some(changes) = self.watched_changes.take() {
                         let replay = service.workspace_files_changed_with_journal(changes);
@@ -547,6 +549,7 @@ impl WorkspaceScanCoordinator {
         }
         Some(WorkspaceScanTransition {
             jobs,
+            notices,
             next: completion.next,
             recovery_timer,
         })
@@ -584,21 +587,10 @@ impl WorkspaceScanRecovery {
 }
 
 pub(super) struct WorkspaceScanTransition {
-    jobs: Vec<AnalysisJob>,
-    next: Option<WorkspaceScanStart>,
-    recovery_timer: WorkspaceRecoveryTimerUpdate,
-}
-
-impl WorkspaceScanTransition {
-    pub(super) fn into_parts(
-        self,
-    ) -> (
-        Vec<AnalysisJob>,
-        Option<WorkspaceScanStart>,
-        WorkspaceRecoveryTimerUpdate,
-    ) {
-        (self.jobs, self.next, self.recovery_timer)
-    }
+    pub(super) jobs: Vec<AnalysisJob>,
+    pub(super) notices: Vec<crate::workspace::WorkspaceScanNotice>,
+    pub(super) next: Option<WorkspaceScanStart>,
+    pub(super) recovery_timer: WorkspaceRecoveryTimerUpdate,
 }
 
 pub(super) enum WorkspaceRecoveryTimerUpdate {

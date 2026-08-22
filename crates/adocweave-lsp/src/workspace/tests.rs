@@ -326,9 +326,12 @@ fn a_projects_read_budget_skips_its_documents_without_voiding_the_workspace() {
         resources.resource_text(&outside).is_some(),
         "documents outside the limited project stay registered"
     );
-    let notice = resources.scan_notice().expect("the skip is reported");
-    assert!(notice.contains("resources.max-files"), "{notice}");
-    assert!(notice.contains("limited"), "{notice}");
+    assert_eq!(
+        resources.scan_notices(),
+        &BTreeSet::from([WorkspaceScanNotice::ProjectResourceLimit {
+            project: limited.join(adocweave_config::FILE_NAME),
+        }])
+    );
 }
 
 #[test]
@@ -356,9 +359,56 @@ fn workspace_scan_entry_budget_keeps_the_workspace_and_reports_a_notice() {
     // discarded, so an open document still analyses.
     assert!(!resources.inner.roots().is_empty());
     assert!(!resources.last_load_failed_closed());
-    let notice = resources.scan_notice().expect("an incomplete scan reports");
-    assert!(notice.contains("workspace.scan.exclude"), "{notice}");
-    assert!(notice.contains("directory entries"), "{notice}");
+    assert_eq!(
+        resources.scan_notices(),
+        &BTreeSet::from([WorkspaceScanNotice::DirectoryEntryLimit { limit: 1 }])
+    );
+}
+
+#[test]
+fn workspace_scan_retains_every_incomplete_reason() {
+    let root = TestDirectory::new();
+    let limited = root.0.join("a-limited-root");
+    let overflow = root.0.join("z-overflow-root");
+    std::fs::create_dir_all(&limited).expect("limited project");
+    std::fs::create_dir_all(&overflow).expect("overflow directory");
+    std::fs::write(
+        limited.join(adocweave_config::FILE_NAME),
+        "schema-version = 1\n[resources]\nmax-files = 1\n",
+    )
+    .expect("limited project configuration");
+    for name in ["a.adoc", "b.adoc", "c.adoc"] {
+        std::fs::write(limited.join(name), "text\n").expect("limited source");
+    }
+    for index in 0..8 {
+        std::fs::write(overflow.join(format!("{index}.adoc")), "text\n").expect("overflow source");
+    }
+    let limited_uri = Url::from_directory_path(&limited).expect("limited root URI");
+    let overflow_uri = Url::from_directory_path(&overflow).expect("overflow root URI");
+    let mut resources = WorkspaceResources::default();
+    let job = FilesystemJobCoordinator::new(FilesystemJobLimits {
+        max_directory_entries: 8,
+        max_directory_probe_entries: 1,
+        ..workspace_scan_job_limits()
+    })
+    .expect("scan job");
+
+    let loaded =
+        resources.load_roots_detached_with_job(&[limited_uri, overflow_uri], &NeverCancel, &job);
+    assert_eq!(loaded.error, None);
+    resources
+        .apply_loaded_roots(loaded, &[])
+        .expect("partial scan remains usable");
+
+    assert_eq!(
+        resources.scan_notices(),
+        &BTreeSet::from([
+            WorkspaceScanNotice::DirectoryEntryLimit { limit: 8 },
+            WorkspaceScanNotice::ProjectResourceLimit {
+                project: limited.join(adocweave_config::FILE_NAME),
+            },
+        ])
+    );
 }
 
 #[test]
@@ -2000,8 +2050,13 @@ fn shared_scope_fixture_has_the_same_root_and_include_count_contract() {
     resources
         .load_roots(&[root_uri])
         .expect("a count limit must not void the workspace");
-    let notice = resources.scan_notice().expect("the skip is reported");
-    assert!(notice.contains("resources.max-files"), "{notice}");
+    assert!(
+        resources
+            .scan_notices()
+            .contains(&WorkspaceScanNotice::ProjectResourceLimit {
+                project: root.0.join(adocweave_config::FILE_NAME),
+            })
+    );
     let error = resources
         .input(&document_uri)
         .expect_err("the skipped document is not an analysis root");

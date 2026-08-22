@@ -24,7 +24,7 @@ use crate::state::{
     Adoption, AnalysisJob, DocumentSnapshot, WorkspaceAnalysis as DocumentWorkspaceAnalysis,
     WorkspaceProblem,
 };
-use crate::workspace::{WatchedFileKind, WorkspaceResources};
+use crate::workspace::{WatchedFileKind, WorkspaceResources, WorkspaceScanNotice};
 use crate::{SERVER_NAME, VERSION};
 
 const MAX_WORKSPACE_WATCH_ERRORS: usize = 128;
@@ -213,10 +213,11 @@ pub(crate) struct LanguageService {
     workspace: WorkspaceResources,
     workspace_roots: std::collections::BTreeMap<String, lsp::Url>,
     workspace_error: Option<String>,
-    /// The scan notice already announced, so a rescan does not repeat it.
-    reported_scan_notice: Option<String>,
-    /// The scan notice waiting to be sent to the editor.
-    pending_scan_notice: Option<String>,
+    /// Incomplete-scan reasons whose notification period is still active.
+    ///
+    /// A failed scan does not end a period because it establishes neither a
+    /// complete result nor a new set of incomplete reasons.
+    active_scan_notices: std::collections::BTreeSet<WorkspaceScanNotice>,
     workspace_watch_errors: std::collections::BTreeMap<String, String>,
     workspace_watch_error_bytes: usize,
     workspace_watch_errors_overflowed: bool,
@@ -236,6 +237,7 @@ pub(crate) struct WorkspaceFileChanges {
 pub(crate) struct WorkspaceScanApplication {
     pub(crate) jobs: Vec<AnalysisJob>,
     pub(crate) installed: bool,
+    pub(crate) notices: Vec<WorkspaceScanNotice>,
 }
 
 impl fmt::Debug for LanguageService {
@@ -262,8 +264,7 @@ impl Default for LanguageService {
             workspace: WorkspaceResources::default(),
             workspace_roots: std::collections::BTreeMap::new(),
             workspace_error: None,
-            reported_scan_notice: None,
-            pending_scan_notice: None,
+            active_scan_notices: std::collections::BTreeSet::new(),
             workspace_watch_errors: std::collections::BTreeMap::new(),
             workspace_watch_error_bytes: 0,
             workspace_watch_errors_overflowed: false,
@@ -790,24 +791,22 @@ impl LanguageService {
             .apply_loaded_roots(scan.loaded, &parsed_open_sources);
         let installed = outcome.is_ok();
         let jobs = self.finish_reload(outcome, open_sources);
-        if let Some(notice) = self.workspace.scan_notice()
-            && self.reported_scan_notice.as_deref() != Some(notice)
-        {
-            let notice = notice.to_owned();
-            self.reported_scan_notice = Some(notice.clone());
-            self.pending_scan_notice = Some(notice);
+        let notices = if installed {
+            let current = self.workspace.scan_notices().clone();
+            let newly_active = current
+                .difference(&self.active_scan_notices)
+                .cloned()
+                .collect();
+            self.active_scan_notices = current;
+            newly_active
+        } else {
+            Vec::new()
+        };
+        WorkspaceScanApplication {
+            jobs,
+            installed,
+            notices,
         }
-        WorkspaceScanApplication { jobs, installed }
-    }
-
-    /// Returns the scan notice the editor has not been told about yet.
-    ///
-    /// What a scan could not finish is a property of the workspace, not of any
-    /// document, so it leaves as a message rather than a diagnostic: attaching
-    /// it to files would mark every one of them for something none of them
-    /// caused. The same text is announced once, however many rescans repeat it.
-    pub fn take_scan_notice(&mut self) -> Option<String> {
-        self.pending_scan_notice.take()
     }
 
     /// Records an internal scan worker failure without replacing the last
@@ -888,6 +887,7 @@ impl LanguageService {
             return false;
         }
         self.workspace_roots = roots;
+        self.active_scan_notices.clear();
         true
     }
 
