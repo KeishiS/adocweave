@@ -11,9 +11,12 @@ import {
 const platform = platformForHost("linux", "x64");
 const options: SelectionOptions = {
   allowDownload: true,
-  installer: { storagePath: "/cache", version: "0.16.0" },
+  installer: {
+    managedLspVersion: "0.16.0",
+    storagePath: "/cache",
+    supportedLspApiVersions: [1],
+  },
   platform,
-  version: "0.16.0",
 };
 
 function dependencies(overrides: Partial<SelectionDependencies> = {}): SelectionDependencies {
@@ -55,11 +58,11 @@ test("明示path不一致はfail closed、PATH不一致はmanagedへ進みます
       { ...options, configuredPath: "/explicit/adocweave-lsp" },
       dependencies({
         requireCompatibleServer: async () => {
-          throw new Error("server-version-mismatch");
+          throw new Error("server-lsp-api-incompatible");
         },
       }),
     ),
-    /server-version-mismatch/,
+    /server-lsp-api-incompatible/,
   );
   const warnings: string[] = [];
   const selected = await selectServer(
@@ -67,7 +70,7 @@ test("明示path不一致はfail closed、PATH不一致はmanagedへ進みます
     dependencies({
       findOnPath: async () => "/path/adocweave-lsp",
       requireCompatibleServer: async (path) => {
-        if (path.startsWith("/path")) throw new Error("server-version-mismatch");
+        if (path.startsWith("/path")) throw new Error("server-lsp-api-incompatible");
       },
     }),
   );

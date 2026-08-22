@@ -12,12 +12,21 @@ export interface DistributionAsset {
 
 export interface DistributionManifest {
   readonly assets: readonly unknown[];
-  readonly packageVersion: string;
-  readonly schemaVersion: 2;
+  readonly lspApiVersion: number;
+  readonly product: "adocweave-lsp";
+  readonly productVersion: string;
+  readonly schemaVersion: 3;
   readonly sourceCommit: string;
 }
 
-const manifestKeys = ["assets", "packageVersion", "schemaVersion", "sourceCommit"];
+const manifestKeys = [
+  "assets",
+  "lspApiVersion",
+  "product",
+  "productVersion",
+  "schemaVersion",
+  "sourceCommit",
+];
 const assetKeys = ["archive", "byteSize", "executable", "kind", "name", "sha256", "target"];
 
 function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
@@ -33,7 +42,8 @@ function object(value: unknown, label: string): Record<string, unknown> {
 
 export function parseDistributionManifest(
   text: string,
-  expectedVersion: string,
+  expectedProductVersion: string,
+  supportedLspApiVersions: readonly number[],
 ): DistributionManifest {
   let parsed: unknown;
   try {
@@ -44,13 +54,20 @@ export function parseDistributionManifest(
   const root = object(parsed, "root");
   if (!exactKeys(root, manifestKeys)) throw new Error("invalid-manifest:fields");
   if (
-    root.schemaVersion !== 2 ||
-    root.packageVersion !== expectedVersion ||
+    root.schemaVersion !== 3 ||
+    root.product !== "adocweave-lsp" ||
+    root.productVersion !== expectedProductVersion ||
+    !Number.isSafeInteger(root.lspApiVersion) ||
+    (root.lspApiVersion as number) < 1 ||
+    !supportedLspApiVersions.includes(root.lspApiVersion as number) ||
     typeof root.sourceCommit !== "string" ||
     !/^[0-9a-f]{40}$/.test(root.sourceCommit) ||
     !Array.isArray(root.assets)
   ) {
     throw new Error("invalid-manifest:identity");
+  }
+  for (const entry of root.assets) {
+    if (object(entry, "asset").kind !== "lsp") throw new Error("invalid-manifest:product-asset");
   }
   return root as unknown as DistributionManifest;
 }

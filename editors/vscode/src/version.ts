@@ -4,6 +4,7 @@ const MAX_OUTPUT_BYTES = 64 * 1024;
 const PROBE_TIMEOUT_MS = 5_000;
 
 export interface ServerVersion {
+  readonly lspApiVersion: number;
   readonly name: string;
   readonly packageVersion: string;
 }
@@ -36,7 +37,9 @@ export function probeServerVersion(command: string): Promise<ServerVersion> {
           value === null ||
           typeof value !== "object" ||
           (value as Record<string, unknown>).name !== "adocweave-lsp" ||
-          typeof (value as Record<string, unknown>).packageVersion !== "string"
+          typeof (value as Record<string, unknown>).packageVersion !== "string" ||
+          !Number.isSafeInteger((value as Record<string, unknown>).lspApiVersion) ||
+          ((value as Record<string, unknown>).lspApiVersion as number) < 1
         ) {
           reject(new Error("server-version-invalid-response"));
           return;
@@ -49,10 +52,10 @@ export function probeServerVersion(command: string): Promise<ServerVersion> {
 
 export async function requireCompatibleServer(
   command: string,
-  expectedVersion: string,
+  supportedLspApiVersions: readonly number[],
 ): Promise<void> {
   const actual = await probeServerVersion(command);
-  if (actual.packageVersion !== expectedVersion) {
-    throw new Error("server-version-mismatch");
+  if (!supportedLspApiVersions.includes(actual.lspApiVersion)) {
+    throw new Error("server-lsp-api-incompatible");
   }
 }

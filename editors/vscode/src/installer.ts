@@ -41,17 +41,19 @@ interface CacheMarker {
   readonly assetByteSize: number;
   readonly assetSha256: string;
   readonly binarySha256: string;
-  readonly packageVersion: string;
-  readonly schemaVersion: 1;
+  readonly lspApiVersion: number;
+  readonly lspVersion: string;
+  readonly schemaVersion: 2;
   readonly sourceCommit: string;
   readonly target: string;
 }
 
 export interface InstallerOptions {
   readonly fetcher?: typeof fetch;
+  readonly managedLspVersion: string;
   readonly signal?: AbortSignal;
   readonly storagePath: string;
-  readonly version: string;
+  readonly supportedLspApiVersions: readonly number[];
 }
 
 function sha256(bytes: Uint8Array): string {
@@ -59,8 +61,9 @@ function sha256(bytes: Uint8Array): string {
 }
 
 function releaseUrl(version: string, name: string): URL {
+  const tag = encodeURIComponent(`adocweave-lsp/v${version}`);
   return new URL(
-    `https://github.com/${REPOSITORY}/releases/download/v${encodeURIComponent(version)}/${encodeURIComponent(name)}`,
+    `https://github.com/${REPOSITORY}/releases/download/${tag}/${encodeURIComponent(name)}`,
   );
 }
 
@@ -212,6 +215,7 @@ function exactObjectKeys(value: object, expected: readonly string[]): boolean {
 async function verifyCacheDirectory(
   directory: string,
   version: string,
+  supportedLspApiVersions: readonly number[],
   platform: ManagedPlatform,
 ): Promise<string | undefined> {
   let marker: CacheMarker;
@@ -228,13 +232,16 @@ async function verifyCacheDirectory(
       "assetByteSize",
       "assetSha256",
       "binarySha256",
-      "packageVersion",
+      "lspApiVersion",
+      "lspVersion",
       "schemaVersion",
       "sourceCommit",
       "target",
     ]) ||
-    marker.schemaVersion !== 1 ||
-    marker.packageVersion !== version ||
+    marker.schemaVersion !== 2 ||
+    marker.lspVersion !== version ||
+    !Number.isSafeInteger(marker.lspApiVersion) ||
+    !supportedLspApiVersions.includes(marker.lspApiVersion) ||
     marker.target !== platform.target ||
     marker.asset !== `adocweave-lsp-${platform.target}.zip` ||
     !Number.isSafeInteger(marker.assetByteSize) ||
@@ -283,6 +290,7 @@ async function hasValidOwnerMarker(path: string): Promise<boolean> {
 export async function findVerifiedCache(
   storagePath: string,
   version: string,
+  supportedLspApiVersions: readonly number[],
   platform: ManagedPlatform,
 ): Promise<string | undefined> {
   const root = join(storagePath, version, platform.target);
@@ -294,7 +302,12 @@ export async function findVerifiedCache(
   }
   for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
     if (!entry.isDirectory() || !/^[0-9a-f]{64}$/.test(entry.name)) continue;
-    const binary = await verifyCacheDirectory(join(root, entry.name), version, platform);
+    const binary = await verifyCacheDirectory(
+      join(root, entry.name),
+      version,
+      supportedLspApiVersions,
+      platform,
+    );
     if (binary) return binary;
   }
   return undefined;
@@ -355,23 +368,32 @@ async function installManagedServerLocked(
   fetcher: typeof fetch,
   storageRoot: string,
 ): Promise<string> {
-  const root = join(storageRoot, options.version, platform.target);
+  const root = join(storageRoot, options.managedLspVersion, platform.target);
   await mkdir(root, { recursive: true });
   const release = await download(
-    releaseUrl(options.version, MANIFEST_NAME),
+    releaseUrl(options.managedLspVersion, MANIFEST_NAME),
     fetcher,
     options.signal,
     undefined,
     MAX_MANIFEST_BYTES,
   );
-  const manifest = parseDistributionManifest(new TextDecoder().decode(release), options.version);
+  const manifest = parseDistributionManifest(
+    new TextDecoder().decode(release),
+    options.managedLspVersion,
+    options.supportedLspApiVersions,
+  );
   const asset = selectLspAsset(manifest, platform);
   const destination = join(root, asset.sha256);
-  const cached = await verifyCacheDirectory(destination, options.version, platform);
+  const cached = await verifyCacheDirectory(
+    destination,
+    options.managedLspVersion,
+    options.supportedLspApiVersions,
+    platform,
+  );
   if (cached) return cached;
 
   const archive = await download(
-    releaseUrl(options.version, asset.name),
+    releaseUrl(options.managedLspVersion, asset.name),
     fetcher,
     options.signal,
     asset.byteSize,
@@ -388,8 +410,9 @@ async function installManagedServerLocked(
       assetByteSize: asset.byteSize,
       assetSha256: asset.sha256,
       binarySha256: sha256(binary),
-      packageVersion: options.version,
-      schemaVersion: 1,
+      lspApiVersion: manifest.lspApiVersion,
+      lspVersion: options.managedLspVersion,
+      schemaVersion: 2,
       sourceCommit: manifest.sourceCommit,
       target: platform.target,
     };
@@ -402,7 +425,12 @@ async function installManagedServerLocked(
   } finally {
     await rm(staging, { force: true, recursive: true });
   }
-  const installed = await verifyCacheDirectory(destination, options.version, platform);
+  const installed = await verifyCacheDirectory(
+    destination,
+    options.managedLspVersion,
+    options.supportedLspApiVersions,
+    platform,
+  );
   if (!installed) throw new Error("managed-cache-commit-failed");
   return installed;
 }

@@ -9,7 +9,9 @@ use std::{
 };
 use zed_extension_api as zed;
 
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+const EXTENSION_VERSION: &str = env!("CARGO_PKG_VERSION");
+const MANAGED_LSP_VERSION: &str = "0.46.2";
+const SUPPORTED_LSP_API_VERSIONS: &[u64] = &[1];
 const SERVER_NAME: &str = "adocweave";
 
 struct AdocWeaveExtension;
@@ -18,12 +20,22 @@ impl AdocWeaveExtension {
     fn managed_binary(&self, language_server_id: &zed::LanguageServerId) -> Result<String, String> {
         let (os, architecture) = zed::current_platform();
         let target = install::target_for_platform(os, architecture)?;
-        let cache = install::cache_paths(VERSION, target);
-        if install::verified_cache(&cache, VERSION, target) {
+        let cache = install::cache_paths(MANAGED_LSP_VERSION, target);
+        if install::verified_cache(
+            &cache,
+            MANAGED_LSP_VERSION,
+            SUPPORTED_LSP_API_VERSIONS,
+            target,
+        ) {
             return Ok(path_string(&cache.binary));
         }
         let _lock = InstallLock::acquire(&lock_path(&cache.directory))?;
-        if install::verified_cache(&cache, VERSION, target) {
+        if install::verified_cache(
+            &cache,
+            MANAGED_LSP_VERSION,
+            SUPPORTED_LSP_API_VERSIONS,
+            target,
+        ) {
             return Ok(path_string(&cache.binary));
         }
 
@@ -31,7 +43,7 @@ impl AdocWeaveExtension {
             language_server_id,
             &zed::LanguageServerInstallationStatus::CheckingForUpdate,
         );
-        let tag = format!("v{VERSION}");
+        let tag = format!("adocweave-lsp/v{MANAGED_LSP_VERSION}");
         let release = zed::github_release_by_tag_name(REPOSITORY, &tag)
             .map_err(|error| format!("failed to resolve AdocWeave release {tag}: {error}"))?;
         let manifest_asset = release
@@ -41,9 +53,12 @@ impl AdocWeaveExtension {
             .ok_or_else(|| format!("AdocWeave release {tag} has no {MANIFEST_NAME}"))?;
 
         let operation = unique_operation_id();
-        let manifest_temp = format!(".adocweave-{VERSION}-{target}-{operation}-manifest.tmp");
-        let archive_temp = format!(".adocweave-{VERSION}-{target}-{operation}-archive.tmp");
-        let staging = format!(".adocweave-{VERSION}-{target}-{operation}-install.tmp");
+        let operation_prefix = format!(
+            ".adocweave-zed-{EXTENSION_VERSION}-lsp-{MANAGED_LSP_VERSION}-{target}-{operation}"
+        );
+        let manifest_temp = format!("{operation_prefix}-manifest.tmp");
+        let archive_temp = format!("{operation_prefix}-archive.tmp");
+        let staging = format!("{operation_prefix}-install.tmp");
 
         let result: Result<String, String> = (|| {
             zed::set_language_server_installation_status(
@@ -58,7 +73,12 @@ impl AdocWeaveExtension {
             .map_err(|error| format!("failed to download {MANIFEST_NAME}: {error}"))?;
             let manifest = fs::read_to_string(&manifest_temp)
                 .map_err(|error| format!("failed to read {MANIFEST_NAME}: {error}"))?;
-            let selected = install::select_lsp_asset(&manifest, VERSION, target)?;
+            let selected = install::select_lsp_asset(
+                &manifest,
+                MANAGED_LSP_VERSION,
+                SUPPORTED_LSP_API_VERSIONS,
+                target,
+            )?;
             let archive_asset = release
                 .assets
                 .iter()
@@ -81,7 +101,8 @@ impl AdocWeaveExtension {
             let binary_hash = install::sha256_file(&staging_binary)?;
             install::write_marker(
                 &Path::new(&staging).join("verified.json"),
-                VERSION,
+                MANAGED_LSP_VERSION,
+                selected.lsp_api_version,
                 target,
                 &selected,
                 &binary_hash,

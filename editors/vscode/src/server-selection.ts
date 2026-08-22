@@ -17,7 +17,6 @@ export interface SelectionOptions {
   readonly configuredPath?: string;
   readonly installer: InstallerOptions;
   readonly platform?: ManagedPlatform;
-  readonly version: string;
   readonly warning?: (code: string) => void;
 }
 
@@ -41,14 +40,20 @@ export async function selectServer(
 ): Promise<SelectedServer> {
   if (options.configuredPath) {
     if (!isAbsolute(options.configuredPath)) throw new Error("configured-server-path-not-absolute");
-    await dependencies.requireCompatibleServer(options.configuredPath, options.version);
+    await dependencies.requireCompatibleServer(
+      options.configuredPath,
+      options.installer.supportedLspApiVersions,
+    );
     return { command: options.configuredPath, source: "configured" };
   }
 
   const pathCandidate = await dependencies.findOnPath("adocweave-lsp");
   if (pathCandidate) {
     try {
-      await dependencies.requireCompatibleServer(pathCandidate, options.version);
+      await dependencies.requireCompatibleServer(
+        pathCandidate,
+        options.installer.supportedLspApiVersions,
+      );
       return { command: pathCandidate, source: "path" };
     } catch {
       options.warning?.("path-server-incompatible");
@@ -58,16 +63,17 @@ export async function selectServer(
   if (!options.platform) throw new Error("managed-platform-unsupported");
   const cached = await dependencies.findVerifiedCache(
     options.installer.storagePath,
-    options.version,
+    options.installer.managedLspVersion,
+    options.installer.supportedLspApiVersions,
     options.platform,
   );
   if (cached) {
-    await dependencies.requireCompatibleServer(cached, options.version);
+    await dependencies.requireCompatibleServer(cached, options.installer.supportedLspApiVersions);
     return { command: cached, source: "managed-cache" };
   }
   if (!options.allowDownload) throw new Error("managed-download-disabled");
 
   const installed = await dependencies.installManagedServer(options.platform, options.installer);
-  await dependencies.requireCompatibleServer(installed, options.version);
+  await dependencies.requireCompatibleServer(installed, options.installer.supportedLspApiVersions);
   return { command: installed, source: "managed-download" };
 }
