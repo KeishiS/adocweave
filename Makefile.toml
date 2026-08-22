@@ -831,7 +831,7 @@ command = "npm"
 args = ["run", "check", "--prefix", "editors/vscode"]
 
 [tasks.test-vscode]
-description = "Run the VS Code adapter, managed binary, and package contract tests"
+description = "Run the VS Code adapter selection and package contract tests"
 dependencies = ["vscode-dependencies"]
 command = "npm"
 args = ["test", "--prefix", "editors/vscode"]

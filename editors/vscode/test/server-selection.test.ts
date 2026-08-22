@@ -1,114 +1,54 @@
 import assert from "node:assert/strict";
+import { resolve } from "node:path";
 import test from "node:test";
 
-import { platformForHost } from "../src/platform.js";
 import {
   selectServer,
   type SelectionDependencies,
   type SelectionOptions,
 } from "../src/server-selection.js";
 
-const platform = platformForHost("linux", "x64");
-const options: SelectionOptions = {
-  allowDownload: true,
-  installer: {
-    managedLspVersion: "0.16.0",
-    storagePath: "/cache",
-    supportedLspApiVersions: [1],
-  },
-  platform,
-};
+const options: SelectionOptions = {};
 
 function dependencies(overrides: Partial<SelectionDependencies> = {}): SelectionDependencies {
   return {
     findOnPath: async () => undefined,
-    findVerifiedCache: async () => undefined,
-    installManagedServer: async () => "/cache/adocweave-lsp",
-    requireCompatibleServer: async () => undefined,
     ...overrides,
   };
 }
 
-test("明示path、PATH、cache、downloadの順で選択します", async () => {
-  assert.equal(
-    (await selectServer({ ...options, configuredPath: "/explicit/adocweave-lsp" }, dependencies()))
-      .source,
-    "configured",
-  );
-  assert.equal(
-    (await selectServer(options, dependencies({ findOnPath: async () => "/path/adocweave-lsp" })))
-      .source,
-    "path",
-  );
-  assert.equal(
-    (
-      await selectServer(
-        options,
-        dependencies({ findVerifiedCache: async () => "/cache/adocweave-lsp" }),
-      )
-    ).source,
-    "managed-cache",
-  );
-  assert.equal((await selectServer(options, dependencies())).source, "managed-download");
-});
-
-test("明示path不一致はfail closed、PATH不一致はmanagedへ進みます", async () => {
-  await assert.rejects(
-    selectServer(
-      { ...options, configuredPath: "/explicit/adocweave-lsp" },
-      dependencies({
-        requireCompatibleServer: async () => {
-          throw new Error("server-lsp-api-incompatible");
-        },
-      }),
-    ),
-    /server-lsp-api-incompatible/,
-  );
-  const warnings: string[] = [];
+test("明示した絶対pathをPATHより先に選択します", async () => {
+  let pathSearches = 0;
+  const configuredPath = resolve("explicit-adocweave-lsp");
   const selected = await selectServer(
-    { ...options, warning: (code) => warnings.push(code) },
+    { configuredPath },
     dependencies({
-      findOnPath: async () => "/path/adocweave-lsp",
-      requireCompatibleServer: async (path) => {
-        if (path.startsWith("/path")) throw new Error("server-lsp-api-incompatible");
+      findOnPath: async () => {
+        pathSearches += 1;
+        return resolve("path-adocweave-lsp");
       },
     }),
   );
-  assert.equal(selected.source, "managed-download");
-  assert.deepEqual(warnings, ["path-server-incompatible"]);
+  assert.deepEqual(selected, { command: configuredPath, source: "configured" });
+  assert.equal(pathSearches, 0);
 });
 
-test("未対応platformでも明示pathとPATHを使用し、downloadは開始しません", async () => {
-  assert.equal(
-    (
-      await selectServer(
-        { ...options, configuredPath: "/explicit/adocweave-lsp", platform: undefined },
-        dependencies(),
-      )
-    ).source,
-    "configured",
+test("設定がない場合はPATH上の絶対pathを選択します", async () => {
+  const pathCandidate = resolve("path-adocweave-lsp");
+  assert.deepEqual(
+    await selectServer(options, dependencies({ findOnPath: async () => pathCandidate })),
+    { command: pathCandidate, source: "path" },
   );
-  assert.equal(
-    (
-      await selectServer(
-        { ...options, platform: undefined },
-        dependencies({ findOnPath: async () => "/path/adocweave-lsp" }),
-      )
-    ).source,
-    "path",
-  );
-  let downloads = 0;
+});
+
+test("相対設定pathと候補不在を区別して拒否します", async () => {
   await assert.rejects(
-    selectServer(
-      { ...options, platform: undefined },
-      dependencies({
-        installManagedServer: async () => {
-          downloads += 1;
-          return "/unexpected";
-        },
-      }),
-    ),
-    /managed-platform-unsupported/,
+    selectServer({ configuredPath: "relative/adocweave-lsp" }, dependencies()),
+    /configured-server-path-not-absolute/,
   );
-  assert.equal(downloads, 0);
+  await assert.rejects(selectServer(options, dependencies()), /language-server-not-found/);
+  await assert.rejects(
+    selectServer(options, dependencies({ findOnPath: async () => "relative/adocweave-lsp" })),
+    /language-server-not-found/,
+  );
 });

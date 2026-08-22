@@ -29,15 +29,16 @@
   "activationEvents": [
     "onLanguage:asciidoc"
   ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false
+    }
+  },
   "contributes": {
     "commands": [
       {
         "command": "adocweave.restartServer",
         "title": "AdocWeave: Restart Language Server"
-      },
-      {
-        "command": "adocweave.clearManagedServer",
-        "title": "AdocWeave: Remove Managed Language Server"
       }
     ],
     "configuration": {
@@ -46,14 +47,8 @@
         "adocweave.server.path": {
           "type": "string",
           "default": "",
-          "scope": "window",
-          "description": "Absolute path to the adocweave-lsp executable to use. Workspace values are ignored in untrusted workspaces."
-        },
-        "adocweave.server.download": {
-          "type": "boolean",
-          "default": true,
-          "scope": "window",
-          "description": "Use a verified managed binary when no compatible Language Server is found at the configured path or on PATH."
+          "scope": "machine",
+          "description": "Absolute path to the adocweave-lsp executable to use. When empty, the extension searches PATH."
         }
       }
     },
@@ -93,7 +88,6 @@
     "test:extension": "node scripts/run-extension-tests.mts"
   },
   "dependencies": {
-    "fflate": "0.8.3",
     "vscode-languageclient": "10.1.0"
   },
   "devDependencies": {
@@ -103,6 +97,7 @@
     "@vscode/test-electron": "3.1.0",
     "@vscode/vsce": "3.9.2",
     "esbuild": "0.28.1",
+    "fflate": "0.8.3",
     "typescript": "7.0.2",
     "vscode-oniguruma": "2.0.1",
     "vscode-textmate": "9.3.2"

@@ -36,3 +36,10 @@ test("Unixでは実行権限のあるfileだけを選択します", {
     await rm(directory, { force: true, recursive: true });
   }
 });
+
+test("PATH内の相対directoryを候補にしません", async () => {
+  assert.equal(
+    await findOnPath("adocweave-lsp", "relative-directory", process.platform),
+    undefined,
+  );
+});
