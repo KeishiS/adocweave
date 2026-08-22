@@ -75,7 +75,7 @@ book part・manpage headerの構造、および番号・TOC・captionなどの�
 構造体へ複製して保持しません。
 
 WASM adapterは、利用者がprojectionを要求した場合だけ、これらのqueryと``Analysis``から借用した値を
-``WasmDocumentProjection``へ集約します。公開するbrowser／Worker protocolのfield名、列挙値、配列順および
+``WasmDocumentProjection``へ集約します。公開するWASM protocolのfield名、列挙値、配列順および
 projectionを要求しない場合の``null``は、このadapterが保証します。Rustのqueryは公開protocolの構造へ依存しません。
 
 Language Serverはsemantic tokensやdocument linksの処理で必要なlinkやrangeだけを参照します。検索用文字列、数式、
@@ -110,9 +110,9 @@ TOC出力の有無を``RenderingFeatures``として返します。言語は重�
 
 同じパッケージバージョン、``Analysis``および解決結果からは、WASM adapterが同じ順序のJSONを生成します。
 保存した構造情報はAdocWeaveの更新時に再生成してください。
-公開protocolのfield、列挙値またはtag付きunionを変更する場合は``schemaVersion``を更新し、
-``workerProtocolVersion``はworker envelope自体を変更する場合だけ更新します。Package versionは
-リリース用Pull Requestで、対象製品のversionの正本と公開protocolへ同時に反映します。
+公開protocolのfield、列挙値またはtag付きunionを変更する場合は``schemaVersion``を更新します。
+Browser内部のWorker封筒は公開protocolに含めません。Package versionはリリース用Pull Requestで、
+対象製品のversionの正本と配布物へ反映します。
 
 === 識別子と文書構造
 
@@ -240,8 +240,7 @@ unset後の参照は``undefined-attribute``、循環と展開上限超過は``at
 == WebAssembly API
 
 ``adocweave-wasm``は、ブラウザーとJavaScriptからコアAPIを利用するための入口です。要求には
-`packageVersion`、`sourceId`、文書バージョン、generation、source、必要な出力および設定を渡します。
-パッケージバージョンが一致しない要求や未知のfieldは拒否します。バージョンとgenerationは``u32``の範囲に制限します。
+`sourceId`、source、必要な出力および設定を渡します。未知のfieldは拒否します。
 
 出力はsyntax tree、AST、HTML、文書属性の出現箇所、resource query、診断、symbolおよび構造情報から選択できます。
 省略時はHTML、resource query、診断および構造情報を返します。`analysisOptions`、`renderPolicy`、
@@ -252,7 +251,7 @@ unset後の参照は``undefined-attribute``、循環と展開上限超過は``at
 参照とresourceのJSON表現および
 安全性の規則はxref:server-execution.adoc#render-inputs[変換入力]を基準とします。
 
-応答には入力のバージョンとgeneration、パッケージバージョン、解析結果の概要および要求した出力を含めます。
+応答には解析結果の概要および要求した出力を含めます。
 エラーは安定した``code``と利用者向けの``message``だけを返します。source、応答およびエラーは呼び出しごとの
 所有値であり、次回の呼び出しで無効になるpointerを公開しません。
 
@@ -261,6 +260,9 @@ TypeScript宣言``web-worker/protocol.d.mts``はここから生成します。wi
 未検査の値を実行処理へ渡しません。前処理と通常の応答では、コアの結果を生成されたwire型へ投影する処理だけを
 WASM adapterに置きます。field、列挙値またはtag付きunionを変更する場合は、schemaを更新して生成物と
 protocol検査を同時に更新します。
+
+Browser clientとWASMの互換性は、このWASM protocol schemaのhandshakeで検査します。Worker内部の要求番号や
+封筒の形式は公開API世代に含めません。
 
 HTML、整形、問題一覧、構造情報、外部リンクの解決結果は用途ごとの公開moduleにあります。型名とJSONの
 詳細はAPIドキュメントを参照してください。

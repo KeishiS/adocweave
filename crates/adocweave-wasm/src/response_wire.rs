@@ -8,9 +8,6 @@ use crate::{WasmMathLanguage, WasmProductSet, WasmSeverity};
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmResponse {
-    pub package_version: String,
-    pub version: u32,
-    pub generation: u32,
     pub products: WasmProductSet,
     pub parse: ParseSummary,
     pub syntax: String,

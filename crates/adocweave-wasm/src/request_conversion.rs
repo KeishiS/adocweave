@@ -41,10 +41,8 @@ pub(crate) enum ProcessingExecution {
 /// Core configuration and remaining analysis-dependent wire inputs.
 ///
 /// Construction consumes `NormalizedRequest`, so execution cannot bypass the
-/// public version and cross-field validation stage.
+/// public cross-field validation stage.
 pub(crate) struct ExecutionRequest {
-    pub(crate) version: u32,
-    pub(crate) generation: u32,
     pub(crate) source: String,
     pub(crate) source_id: Option<SourceId>,
     pub(crate) requested_products: WasmProductSet,
@@ -94,8 +92,6 @@ pub(crate) fn convert(request: NormalizedRequest) -> Result<ExecutionRequest, Wa
         .expect("u32 fits usize on supported targets");
 
     Ok(ExecutionRequest {
-        version: request.version,
-        generation: request.generation,
         source: request.source,
         source_id,
         requested_products,

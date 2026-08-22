@@ -384,26 +384,22 @@ TypeScriptの型定義は``worker/index.d.mts``にあります。
 ----
 import { AdocWeaveClient, defaultAssetUrls } from "./worker/index.mjs";
 
-const client = new AdocWeaveClient({
-  ...defaultAssetUrls(),
-  onResult(result) {
-    console.log(result.html, result.diagnostics);
-  },
-  onError(error) {
-    console.error(error.code, error.message);
-  },
-});
-
-client.update({
-  version: 1,
+const entryUrl = new URL("./worker/index.mjs", import.meta.url);
+const client = new AdocWeaveClient(defaultAssetUrls(entryUrl));
+const controller = new AbortController();
+const result = await client.analyze({
   source: "= Title\n\nText\n",
   renderPolicy: { documentMode: "fragment" },
-});
+}, { signal: controller.signal });
+console.log(result.html, result.diagnostics);
 ----
 
-``update``は単調増加するgenerationを返します。``cancel``は現在の処理を無効化し、``dispose``はclientを
-終了します。bundlerから利用する場合は、配備した``worker/index.mjs``のbase URLを
-``defaultAssetUrls``へ渡します。WebAssembly APIの詳細は
+``analyze``はPromiseを返し、一つのclientでは同時に一つだけ実行できます。異なる文書を並行して解析する場合は
+clientを分けます。入力の連続更新をまとめる待機、文書の版および古い結果を採用するかどうかは利用側で管理します。
+前の解析が不要になった場合は、その解析へ渡した``AbortController``の``abort()``を呼び、Promiseのrejectを処理します。
+
+``defaultAssetUrls``には、配備した``worker/index.mjs``のURLを必ず渡します。bundlerから利用する場合も、bundleの
+chunkではなく、公開ディレクトリへコピーした``worker/index.mjs``のURLを指定します。WebAssembly APIの詳細は
 xref:../developer-guide/core-profile.adoc#wasm-api[WebAssembly API]を参照してください。
 
 serverは少なくとも次を設定します。
@@ -422,15 +418,14 @@ serverは少なくとも次を設定します。
 |`text/html; charset=utf-8`
 |===
 
-協調cancelに``SharedArrayBuffer``を使う場合、main document、WorkerおよびWASMを含む同一contextへ
-``Cross-Origin-Opener-Policy: same-origin``と``Cross-Origin-Embedder-Policy: require-corp``を設定します。使えない環境では
-Worker再生成へ縮退します。CSPは``script-src 'self'``、``worker-src 'self'``を基本とし、inline scriptや``unsafe-eval``を
-要求しません。HTML結果はDOMへ無検証で挿入せず、ホストの表示sandboxとpolicyを適用します。
+main document、``worker/index.mjs``、WorkerおよびWASMは同一originから配信します。CSPは少なくとも
+``script-src 'self' 'wasm-unsafe-eval'``、``worker-src 'self'``および``connect-src 'self'``を許可します。
+inline scriptと``unsafe-eval``は不要です。HTML結果はDOMへ無検証で挿入せず、ホストの表示sandboxとpolicyを適用します。
 
 URLにはバージョンまたはarchive digestを含め、WASMとJavaScriptへ同じcache keyを使います。更新時に既存URLの内容を
 置換せず、新URLへ切り替えます。配備前のarchiveは``sha256.sum``で検証し、配備後はserverから取得したファイルのdigestを
 deploy記録へ残します。展開物の``example/index.html``と``example/app.mjs``はリアルタイム変換の最小例であり、同じserverから
-配信して入力更新、最新generationだけの表示およびfallback動作を確認できます。
+配信して入力更新、取消しおよび解析結果の表示を確認できます。
 
 [#editor-language-server]
 == エディターからLanguage Serverを使う

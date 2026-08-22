@@ -1,5 +1,4 @@
-pub const PROTOCOL_SCHEMA_VERSION: u16 = 14;
-pub const WORKER_PROTOCOL_VERSION: u16 = 2;
+pub const PROTOCOL_SCHEMA_VERSION: u16 = 15;
 
 #[cfg_attr(
     feature = "ts-rs",

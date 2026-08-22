@@ -103,7 +103,6 @@ fn default_wasm_preprocess_request_options() -> WasmPreprocessOptions {
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmPreprocessRequest {
-    pub package_version: String,
     #[serde(default = "default_wasm_preprocess_request_source_id")]
     pub source_id: Option<String>,
     pub source: String,
@@ -121,7 +120,6 @@ pub struct WasmPreprocessRequest {
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmPreprocessResponse {
-    pub package_version: String,
     pub source: String,
     pub source_map: Vec<WasmSourceMapSegment>,
 }

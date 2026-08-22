@@ -1,6 +1,5 @@
 //! Meaning projection from a core preprocessing result to generated wire values.
 
-use crate::VERSION;
 use adocweave::preprocess::{PreprocessedDocument, SourceMapping};
 
 use crate::{WasmPreprocessResponse, WasmSourceMapSegment, WasmSourceMapping};
@@ -26,7 +25,6 @@ pub(crate) fn project(document: PreprocessedDocument) -> WasmPreprocessResponse 
         })
         .collect();
     WasmPreprocessResponse {
-        package_version: VERSION.to_owned(),
         source: document.source,
         source_map,
     }

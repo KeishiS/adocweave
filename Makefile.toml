@@ -500,11 +500,9 @@ printf '%s\n' \
   "$package/worker/" \
   "$package/worker/client.mjs" \
   "$package/worker/contracts.mjs" \
-  "$package/worker/controller.mjs" \
   "$package/worker/index.d.mts" \
   "$package/worker/index.mjs" \
   "$package/worker/protocol.d.mts" \
-  "$package/worker/worker-protocol.d.mts" \
   "$package/worker/worker-protocol.mjs" \
   "$package/worker/worker.mjs" | LC_ALL=C sort > "$expected"
 diff -u "$expected" "$actual"
@@ -514,11 +512,10 @@ tar -xJf "$archive" -C "$root"
 node --input-type=module -e '
   const publicApi = await import(process.argv[1]);
   const protocol = await import(process.argv[2]);
-  if (publicApi.PACKAGE_VERSION !== process.argv[3]) throw new Error("browser archive package version mismatch");
   if (publicApi.PROTOCOL_SCHEMA_VERSION !== protocol.PROTOCOL_SCHEMA_VERSION) {
     throw new Error("browser archive protocol schema version mismatch");
   }
-' "$root/$package/worker/index.mjs" "$root/$package/worker/worker-protocol.mjs" "$version"
+' "$root/$package/worker/index.mjs" "$root/$package/worker/worker-protocol.mjs"
 echo "browser release package verified: $second"
 '''
 
@@ -528,7 +525,7 @@ command = "tsc"
 args = ["--project", "web-worker/tsconfig.json"]
 
 [tasks.test-browser-smoke]
-description = "Run the extracted browser archive in isolated and fallback Chromium contexts"
+description = "Run the extracted browser archive in a non-isolated Chromium context"
 dependencies = ["package-browser-release", "test-browser-types"]
 script_runner = "@shell"
 script = '''
@@ -549,7 +546,13 @@ root="$(mktemp -d "${TMPDIR:-/tmp}/adocweave-browser-bundler.XXXXXX")"
 archive="$root/$package-bundled.tar.xz"
 trap 'rm -rf "$root"' EXIT
 tar -xJf "$source_archive" -C "$root"
-esbuild web-worker/bundler-entry.mjs \
+mkdir -p "$root/consumer/node_modules/@adocweave"
+ln -s "$root/$package" "$root/consumer/node_modules/@adocweave/browser"
+cp web-worker/bundler-entry.mjs "$root/consumer/app.mjs"
+cp web-worker/typecheck/package-usage.mts "$root/consumer/package-usage.mts"
+tsc --noEmit --strict --target ES2022 --module NodeNext --moduleResolution NodeNext \
+  --lib DOM,ES2022 "$root/consumer/package-usage.mts"
+esbuild "$root/consumer/app.mjs" \
   --bundle --format=esm --platform=browser \
   --outfile="$root/$package/example/app.mjs"
 tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
@@ -579,7 +582,7 @@ dependencies = [
 ]
 
 [tasks.browser-runtime-check]
-description = "Run the release browser archive in isolated, fallback, and bundler Chromium paths"
+description = "Run the release browser archive through static hosting and a package-name bundler import"
 dependencies = ["test-browser-smoke", "test-browser-bundler"]
 
 [tasks.build-wasm-node]

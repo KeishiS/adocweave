@@ -250,11 +250,10 @@ cargo make verify-with-global-candidate
 ----
 
 このtaskは``cargo make verify``に加えて、配布するbrowser、ZedおよびVS Codeのarchiveを構築し、
-分離環境、通常環境およびbundler経由の3経路で実Chromiumから実行します。
+cross-origin isolationを使わない静的配信環境およびbundler経由の2経路で実Chromiumから実行します。
 
-手元では``nix develop``の開発環境が提供するChromiumを使用します。CIでは実行環境が用意した
-browserを使用するため、バージョンは一致しません。``ADOCWEAVE_BROWSER``で使用するbrowserを
-指定できます。
+手元とCIでは、``flake.lock``で固定した開発環境のChromiumを使用します。別のbrowserを確認する場合は
+``ADOCWEAVE_BROWSER``で実行ファイルを指定できます。
 
 [#tag]
 == Tag
@@ -372,7 +371,8 @@ clean環境で、公開assetだけを使って実行します。
 * [ ] VS Code拡張: Open VSXまたは公開VSIXから導入し、AsciiDoc認識、基本構文色付け、managed Language Serverの
       取得、更新、rollbackおよび削除を確認する。
 * [ ] Zed拡張: 公開archiveとmanaged LSPをoverrideなしで使用し、AsciiDoc認識とLSP機能を確認する。
-* [ ] browser package: 実WASMを読み込み、HTML、診断、projectionと、SharedArrayBufferあり／なしの両経路を確認する。
+* [ ] browser package: cross-origin isolationを使わない環境で実WASMを読み込み、HTML、診断、projection、解析の取消しおよび
+      取消し後の再解析を確認する。
 * [ ] textlint用Processor: 新しいプロジェクトへ導入し、``.adoc``の検査と``textlint --fix``で入力が変化しないことを
       確認する。
 * [ ] CLIとLSP: clean ``PATH``へ導入し、バージョンの選択、更新、rollbackおよび完全削除を確認する。

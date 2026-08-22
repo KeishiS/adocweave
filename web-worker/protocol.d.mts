@@ -101,9 +101,9 @@ export type WasmOutputLimits = { maxOutputBytes: number, };
 
 export type WasmPreprocessOptions = { baseUri: string | null, safeMode: WasmSafeMode, allowedSchemes: Array<string>, attributes: { [key in string]: string | null }, enableIncludes: boolean, maxIncludeDepth: number, maxIncludes: number, maxTotalBytes: number, maxExpandedNodes: number, maxSourceMapSegments: number, maxAttributeExpansionDepth: number, maxAttributeExpansionBytes: number, };
 
-export type WasmPreprocessRequest = { packageVersion: string, sourceId: string | null, source: string, resources: { [key in string]: WasmResource }, options: WasmPreprocessOptions, };
+export type WasmPreprocessRequest = { sourceId: string | null, source: string, resources: { [key in string]: WasmResource }, options: WasmPreprocessOptions, };
 
-export type WasmPreprocessResponse = { packageVersion: string, source: string, sourceMap: Array<WasmSourceMapSegment>, };
+export type WasmPreprocessResponse = { source: string, sourceMap: Array<WasmSourceMapSegment>, };
 
 export type WasmProductSet = { syntax: boolean, canonicalAst: boolean, html: boolean, attributeOccurrences: boolean, attributeQueries: boolean, resourceQueries: boolean, diagnostics: boolean, symbols: boolean, projection: boolean, };
 
@@ -135,7 +135,7 @@ export type WasmRenderInputs = { references: Array<WasmResolvedReference>, resou
 
 export type WasmRenderPolicy = { activeUrls: WasmActiveUrlPolicy, externalLinks: WasmExternalLinkPolicy, sourceLanguages: WasmSourceLanguagePolicy, roles: WasmRolePolicy, mathLanguages: Array<WasmMathLanguage>, unresolvedReferences: WasmUnresolvedReferencePresentation, resources: WasmResourceCapabilities, documentMode: WasmDocumentMode, stylesheets: Array<WasmStylesheet>, };
 
-export type WasmRequest = { packageVersion: string, sourceId: string | null, version: number, generation: number, source: string, preprocess: WasmAnalysisPreprocessInput | null, products: WasmProductSet, renderInputs: WasmRenderInputs, analysisOptions: WasmAnalysisOptions, renderPolicy: WasmRenderPolicy, outputLimits: WasmOutputLimits, };
+export type WasmRequest = { sourceId: string | null, source: string, preprocess: WasmAnalysisPreprocessInput | null, products: WasmProductSet, renderInputs: WasmRenderInputs, analysisOptions: WasmAnalysisOptions, renderPolicy: WasmRenderPolicy, outputLimits: WasmOutputLimits, };
 
 export type WasmResolvedCitation = { sourceStart: number, sourceEnd: number, outcome: WasmCitationOutcome, };
 
@@ -155,7 +155,7 @@ export type WasmResourcePurpose = "image" | "icon" | "audio" | "video" | "video-
 
 export type WasmResourceQuery = { purpose: WasmResourcePurpose, form: WasmMacroForm, ownerRange: WasmTextRange, range: WasmTextRange, targetRange: WasmTextRange, target: string, };
 
-export type WasmResponse = { packageVersion: string, version: number, generation: number, products: WasmProductSet, parse: ParseSummary, syntax: string, ast: string, html: string, attributeOccurrences: Array<WasmDocumentAttributeOccurrence>, attributeQueries: WasmAttributeQueryProduct, resourceQueries: Array<WasmResourceQuery>, diagnostics: Array<WasmDiagnostic>, renderDiagnostics: Array<WasmDiagnostic>, symbols: Array<WasmDocumentSymbol>, projection: WasmDocumentProjection | null, };
+export type WasmResponse = { products: WasmProductSet, parse: ParseSummary, syntax: string, ast: string, html: string, attributeOccurrences: Array<WasmDocumentAttributeOccurrence>, attributeQueries: WasmAttributeQueryProduct, resourceQueries: Array<WasmResourceQuery>, diagnostics: Array<WasmDiagnostic>, renderDiagnostics: Array<WasmDiagnostic>, symbols: Array<WasmDocumentSymbol>, projection: WasmDocumentProjection | null, };
 
 export type WasmRolePolicy = { allowed: Array<string>, unknown: WasmUnknownRole, };
 
