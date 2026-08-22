@@ -232,9 +232,11 @@ workspaceが走査対象として保持する解析root、open overlayによっ�
 ``IncludeFilesystemTransaction::read``の型付き結果を応答に変換し、同じ継続を再開します。前処理は先頭からやり直しません。
 ``Complete``は前処理済み文書を``WorkspacePreprocessDraft::analyze``へ渡し、前処理を繰り返さずに解析を続けます。
 
-同じproject scopeのfilesystem sessionを使う解析workerは直列に実行し、一つのsessionで複数の解析transactionを
-同時に開きません。待機中に古くなった解析はtransactionを開く前に取り消します。ファイル監視による更新は
-進行中の解析transactionを明示的に置き換えられますが、解析worker同士は互いのtransactionを置き換えません。
+workspaceのincludeを処理する解析workerは、project scopeが異なる場合も直列に実行します。一つの文書が別の
+project scopeに属するinclude先を取得できるため、workspace全体を一つの実行単位にすると、同じfilesystem sessionで
+複数の解析transactionを同時に開きません。待機中に古くなった解析はtransactionを開く前に取り消します。
+ファイル監視による更新は進行中の解析transactionを明示的に置き換えられますが、解析worker同士は互いの
+transactionを置き換えません。workspaceを使わない解析は、この直列化の対象外です。
 
 読込はworkspaceとinclude bindingの候補stateに対して行います。revision、generation、解析設定および解析結果が
 すべて現在の状態と一致する場合だけ、Workspace draftとinclude transactionを採用します。

@@ -688,6 +688,7 @@ fn superseding_the_later_scope_commits_no_scope_from_one_analysis() {
         .acquisition
         .as_ref()
         .expect("completed include acquisition");
+    let root_scope = acquisition.root_scope.clone();
     assert_eq!(acquisition.transactions.len(), 2);
     let sessions = acquisition
         .transactions
@@ -698,9 +699,9 @@ fn superseding_the_later_scope_commits_no_scope_from_one_analysis() {
             (scope.clone(), session, budget)
         })
         .collect::<Vec<_>>();
-    assert_eq!(sessions.first().expect("earlier scope").0, input.scope);
+    assert_eq!(sessions.first().expect("earlier scope").0, root_scope);
     let (later_scope, later_session, _) = sessions.last().expect("later scope");
-    assert_ne!(later_scope, &input.scope);
+    assert_ne!(later_scope, &root_scope);
 
     let superseding_job =
         IncludeFilesystemJob::new(watched_file_job_limits()).expect("superseding filesystem job");

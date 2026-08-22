@@ -133,14 +133,9 @@ pub struct WorkspaceInput {
     pub options: PreprocessOptions,
     pub project_config: adocweave_config::ResolvedProjectConfig,
     pub config_sha256: Option<[u8; 32]>,
-    scope: ProjectScopeId,
 }
 
 impl WorkspaceInput {
-    pub(crate) fn project_scope(&self) -> &ProjectScopeId {
-        &self.scope
-    }
-
     #[cfg(test)]
     pub fn root_text(&self) -> Option<&Arc<str>> {
         self.snapshot
@@ -1901,7 +1896,6 @@ impl WorkspaceResources {
             options,
             config_sha256: config_snapshot.map(|snapshot| snapshot.content_sha256),
             project_config,
-            scope: root_scope.clone(),
         })
     }
 
