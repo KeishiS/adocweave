@@ -3,11 +3,13 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+  CLAIMABLE_CONTRACTS,
   RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION,
   RELEASE_NOTES_SOURCE,
   RELEASE_NOTES_TITLE,
   RELEASE_NOTES_VERSION,
   REQUIRED_RELEASE_NOTE_HEADINGS,
+  UNCHANGED_CONTRACTS,
   breakingContractNotes,
   breakingMigrationNotes,
   buildReleaseNotes,
@@ -179,6 +181,23 @@ test("機械生成部分は人の文章の後ろへ、見出しの順序を保�
 test("破壊的変更が無いreleaseでは定型文を記録から生成する", () => {
   assert.deepEqual(breakingContractNotes([]), ["Rust APIの破壊的変更：ありません。"]);
   assert.deepEqual(breakingMigrationNotes([]), []);
+});
+
+test("変更していないと述べる契約は、この版の宣言だけから決まる", () => {
+  // v0.27.2は設定schemaを変えた版で「変更していません」と述べました。件の
+  // 一覧をcodeへ固定すると、option一つ足した版でも同じ三つを述べてしまいます。
+  const declaration = JSON.parse(
+    readFileSync(new URL("../release/unchanged-contracts.json", import.meta.url), "utf8"),
+  );
+  assert.equal(declaration.schemaVersion, 1);
+  assert.equal(declaration.releaseVersion, RELEASE_NOTES_VERSION);
+  assert.deepEqual(
+    UNCHANGED_CONTRACTS,
+    CLAIMABLE_CONTRACTS.filter((name) => declaration.unchanged.includes(name)),
+  );
+  for (const name of UNCHANGED_CONTRACTS) {
+    assert.ok(CLAIMABLE_CONTRACTS.includes(name), name);
+  }
 });
 
 test("Release Notesは別release trainのtagを拒否する", () => {
