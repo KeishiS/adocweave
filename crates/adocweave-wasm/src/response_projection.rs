@@ -1,19 +1,33 @@
 use adocweave::SourceId;
 
 use crate::VERSION;
-use serde::Deserialize;
 
+use crate::response_conversion::{
+    wasm_diagnostics, wasm_document_projection, wasm_document_symbols, wasm_text_range,
+};
 use crate::{
     ParseSummary, WasmAttributeBindingQuery, WasmAttributeExpansionError,
     WasmAttributeQueryProduct, WasmAttributeReferenceQuery, WasmAttributeValueContinuation,
-    WasmDiagnostic, WasmDocumentAttributeContinuation, WasmDocumentAttributeOccurrence,
+    WasmDocumentAttributeContinuation, WasmDocumentAttributeOccurrence,
     WasmDocumentAttributeOperation, WasmDocumentAttributeValue, WasmDocumentAttributeValueLine,
-    WasmDocumentProjection, WasmDocumentSymbol, WasmError, WasmMacroForm, WasmProductSet,
-    WasmResourcePurpose, WasmResourceQuery, WasmResponse, WasmTextRange, serialization_error,
+    WasmError, WasmMacroForm, WasmProductSet, WasmResourcePurpose, WasmResourceQuery, WasmResponse,
+    WasmTextRange, serialization_error,
 };
 
+pub(crate) struct ResponseProducts {
+    pub(crate) syntax: Option<String>,
+    pub(crate) canonical_ast: Option<String>,
+    pub(crate) html: Option<adocweave::output::html::HtmlOutput>,
+    pub(crate) attribute_occurrences: Option<Vec<adocweave::semantic::DocumentAttributeOccurrence>>,
+    pub(crate) attribute_queries: Option<adocweave::semantic::AttributeQueryProduct>,
+    pub(crate) resource_queries: Option<Vec<adocweave::resolution::ResourceQuery>>,
+    pub(crate) diagnostics: Option<Vec<adocweave::output::diagnostics::Diagnostic>>,
+    pub(crate) symbols: Option<Vec<adocweave::semantic::DocumentSymbol>>,
+    pub(crate) projection: Option<adocweave::output::projection::DocumentProjection>,
+}
+
 pub(crate) fn project_response(
-    products: adocweave::output::conformance::DocumentProducts,
+    products: ResponseProducts,
     requested_products: WasmProductSet,
     version: u32,
     generation: u32,
@@ -21,14 +35,11 @@ pub(crate) fn project_response(
     source_id: Option<&SourceId>,
     attribute_projection: Option<&adocweave::preprocess::AnalysisProjection>,
 ) -> Result<WasmResponse, WasmError> {
-    let diagnostics =
-        parse_optional_product::<Vec<WasmDiagnostic>>(products.diagnostics_json.as_deref())?;
-    let render_diagnostics =
-        parse_optional_product::<Vec<WasmDiagnostic>>(products.render_diagnostics_json.as_deref())?;
-    let symbols =
-        parse_optional_product::<Vec<WasmDocumentSymbol>>(products.symbols_json.as_deref())?;
-    let projection =
-        parse_optional_product::<WasmDocumentProjection>(products.projection_json.as_deref())?;
+    let render_diagnostics = products
+        .html
+        .as_ref()
+        .map(|output| wasm_diagnostics(&output.diagnostics))
+        .unwrap_or_default();
     Ok(WasmResponse {
         package_version: VERSION.to_owned(),
         version,
@@ -41,7 +52,7 @@ pub(crate) fn project_response(
         },
         syntax: products.syntax.unwrap_or_default(),
         ast: products.canonical_ast.unwrap_or_default(),
-        html: products.html.unwrap_or_default(),
+        html: products.html.map(|output| output.html).unwrap_or_default(),
         attribute_occurrences: products
             .attribute_occurrences
             .unwrap_or_default()
@@ -79,10 +90,17 @@ pub(crate) fn project_response(
                 }
             })
             .collect(),
-        diagnostics: diagnostics.unwrap_or_default(),
-        render_diagnostics: render_diagnostics.unwrap_or_default(),
-        symbols: symbols.unwrap_or_default(),
-        projection,
+        diagnostics: products
+            .diagnostics
+            .as_deref()
+            .map(wasm_diagnostics)
+            .unwrap_or_default(),
+        render_diagnostics,
+        symbols: products
+            .symbols
+            .map(wasm_document_symbols)
+            .unwrap_or_default(),
+        projection: products.projection.map(wasm_document_projection),
     })
 }
 
@@ -107,16 +125,6 @@ pub(crate) fn enforce_output_limit(
 fn response_count(name: &str, value: usize) -> Result<u32, WasmError> {
     u32::try_from(value)
         .map_err(|_| serialization_error(format!("{name} does not fit the response schema")))
-}
-
-pub(crate) fn parse_optional_product<T>(source: Option<&str>) -> Result<Option<T>, WasmError>
-where
-    T: for<'de> Deserialize<'de>,
-{
-    source
-        .map(serde_json::from_str)
-        .transpose()
-        .map_err(serialization_error)
 }
 
 fn wasm_document_attribute_occurrence(
@@ -350,13 +358,6 @@ fn wasm_attribute_resolution(
                 }
             }),
         ),
-    }
-}
-
-fn wasm_text_range(range: adocweave::text::TextRange) -> WasmTextRange {
-    WasmTextRange {
-        start: range.start().to_u32(),
-        end: range.end().to_u32(),
     }
 }
 

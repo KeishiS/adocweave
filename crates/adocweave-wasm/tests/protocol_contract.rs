@@ -265,6 +265,23 @@ fn request_modules_keep_wire_normalization_conversion_and_execution_one_way() {
 }
 
 #[test]
+fn production_response_path_does_not_round_trip_conformance_json() {
+    const FACADE: &str = include_str!("../src/lib.rs");
+    const PROJECTION: &str = include_str!("../src/response_projection.rs");
+    const CONVERSION: &str = include_str!("../src/response_conversion.rs");
+
+    assert!(!FACADE.contains("output::conformance"));
+    assert!(!FACADE.contains("conformance::products"));
+    assert!(!PROJECTION.contains("parse_optional_product"));
+    assert!(!PROJECTION.contains("serde_json::from_str"));
+    assert!(!CONVERSION.contains("serde_json::from_str"));
+    assert!(FACADE.contains("ResponseProducts"));
+    assert!(PROJECTION.contains("wasm_diagnostics"));
+    assert!(PROJECTION.contains("wasm_document_projection"));
+    assert!(PROJECTION.contains("wasm_document_symbols"));
+}
+
+#[test]
 fn wire_types_live_only_in_the_wire_modules() {
     // wire型はprotocol.rs、shared_wire.rs、request_enums.rs、request_wire.rs、
     // render_input_wire.rs、preprocess_wire.rs、response_wire.rsだけが宣言します。
@@ -294,6 +311,10 @@ fn wire_types_live_only_in_the_wire_modules() {
         (
             "response_projection.rs",
             include_str!("../src/response_projection.rs"),
+        ),
+        (
+            "response_conversion.rs",
+            include_str!("../src/response_conversion.rs"),
         ),
     ];
     const NON_WIRE_PUBLIC_TYPE_EXCEPTIONS: &[(&str, &str, &str)] = &[];

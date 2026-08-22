@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
-use adocweave::output::diagnostics as diagnostic;
 use adocweave::{CancellationCheck, CancellationToken, Engine, ParseError};
 
 use super::html_policy::{self, StylesheetArgument, StylesheetFileOrigin};
@@ -355,11 +354,11 @@ fn build_with_stage_hook(
             .include_errors()
             .iter()
             .map(|(target, error)| {
-                serde_json::json!({
-                    "code": error.diagnostic_code(),
-                    "message": error.to_string(),
-                    "target": target,
-                })
+                preview::PreviewDiagnostic::include(
+                    error.diagnostic_code(),
+                    error.to_string(),
+                    target,
+                )
             })
             .collect::<Vec<_>>();
         (
@@ -412,21 +411,13 @@ fn build_with_stage_hook(
     let output =
         html_policy::render_checked(analysis.document(), &render_policy).map_err(Error::Html)?;
     ensure_active(cancellation)?;
-    let mut diagnostics = serde_json::from_str::<Vec<serde_json::Value>>(&diagnostic::render_json(
-        analysis.diagnostics(),
-    ))
-    .expect("core diagnostic renderer returns a JSON array");
-    diagnostics.extend(
-        serde_json::from_str::<Vec<serde_json::Value>>(&diagnostic::render_json(
-            &output.diagnostics,
-        ))
-        .expect("render diagnostic renderer returns a JSON array"),
-    );
+    let mut diagnostics = preview::PreviewDiagnostic::analysis(analysis.diagnostics());
+    diagnostics.extend(preview::PreviewDiagnostic::analysis(&output.diagnostics));
     diagnostics.extend(include_diagnostics);
     let style_origins = html_policy::external_origins(&render_policy);
     Ok(preview::Build::new(
         output.html,
-        serde_json::to_string(&diagnostics).expect("diagnostics are serializable"),
+        preview::serialize_diagnostics(&diagnostics),
         dependencies.clone(),
     )
     .with_style_origins(style_origins))
@@ -469,6 +460,20 @@ impl std::fmt::Display for Error {
 mod tests {
     use super::*;
     use crate::local_include::DependencyObserver as _;
+
+    #[test]
+    fn preview_build_keeps_typed_diagnostics_until_the_response_boundary() {
+        const SOURCE: &str = include_str!("preview.rs");
+        let production = SOURCE
+            .split_once("#[cfg(test)]")
+            .expect("preview module has tests")
+            .0;
+
+        assert!(!production.contains("diagnostic::render_json"));
+        assert!(!production.contains("serde_json::from_str"));
+        assert!(production.contains("PreviewDiagnostic::analysis"));
+        assert!(production.contains("serialize_diagnostics(&diagnostics)"));
+    }
 
     fn test_authorities(
         root: &Path,

@@ -12,7 +12,7 @@ test("Browser packageの公開versionはpackage.jsonを正本とする", async (
   assert.equal(manifest.version, BROWSER_PACKAGE_VERSION);
 });
 
-test("READMEはBrowserのversion境界とprojection境界を説明する", async () => {
+test("READMEはBrowserのversion境界と型付き変換を説明する", async () => {
   const readme = await readFile(new URL("./README.adoc", import.meta.url), "utf8");
 
   assert.match(readme, /unsupported-package-version/);
@@ -20,6 +20,7 @@ test("READMEはBrowserのversion境界とprojection境界を説明する", async
   assert.match(readme, /invalid-worker-response/);
   assert.match(readme, /staleな応答.*onResult.*onError.*通知しません/s);
   assert.match(readme, /onError.*microtask/s);
-  assert.match(readme, /WASM adapterがcoreから受け取るprojection JSON/);
-  assert.match(readme, /内部の取り決めにないfieldを検出した場合は処理を失敗/);
+  assert.match(readme, /WASM adapterはcoreの型付き結果を公開wire型へ明示的に変換/);
+  assert.match(readme, /変換の更新漏れをbuildで検出/);
+  assert.match(readme, /公開応答の形はRustのwire定義を正本/);
 });

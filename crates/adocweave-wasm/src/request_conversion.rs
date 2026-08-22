@@ -4,7 +4,6 @@ use std::collections::BTreeSet;
 
 #[cfg(test)]
 use adocweave::OutputLimits;
-use adocweave::output::conformance::ProductSet;
 use adocweave::output::diagnostics::{LintConfig, RuleSettings, Severity, lint_rule};
 use adocweave::output::html::{
     ExternalLinkPresentation, HtmlDocumentMode, MathLanguagePolicy, RenderPolicy,
@@ -49,7 +48,6 @@ pub(crate) struct ExecutionRequest {
     pub(crate) source: String,
     pub(crate) source_id: Option<SourceId>,
     pub(crate) requested_products: WasmProductSet,
-    pub(crate) products: ProductSet,
     pub(crate) render_inputs: NormalizedRenderInputs,
     pub(crate) processing: ProcessingExecution,
     pub(crate) render_policy: RenderPolicy,
@@ -59,7 +57,6 @@ pub(crate) struct ExecutionRequest {
 pub(crate) fn convert(request: NormalizedRequest) -> Result<ExecutionRequest, WasmError> {
     let (request, render_inputs) = request.into_parts();
     let requested_products = request.products;
-    let products = requested_products.into();
     let analysis_options = request.analysis_options;
     let render_options = request.render_policy;
     let source_id = request.source_id.map(SourceId::new);
@@ -102,7 +99,6 @@ pub(crate) fn convert(request: NormalizedRequest) -> Result<ExecutionRequest, Wa
         source: request.source,
         source_id,
         requested_products,
-        products,
         render_inputs,
         processing,
         render_policy: render_policy(render_options),
