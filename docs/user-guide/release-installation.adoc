@@ -140,15 +140,17 @@ xattr -d com.apple.quarantine "$ROOT/bin/adocweave-lsp"
 
 == 取得と完全性の検証
 
-バージョンと利用するarchiveを固定し、同じReleaseの``sha256.sum``とともに空のディレクトリへdownloadします。
-GitHub CLIを使う例は次のとおりです。``VERSION``と``ASSET``を実際の値へ置き換えます。
+製品、バージョンおよび利用するarchiveを固定し、その製品のReleaseにある``sha256.sum``とともに空の
+ディレクトリへdownloadします。GitHub CLIを使う例は次のとおりです。``PRODUCT``、``VERSION``および
+``ASSET``を実際の値へ置き換えます。
 
 [source,console]
 ----
 VERSION=X.Y.Z
+PRODUCT=adocweave-cli
 ASSET=adocweave-cli-x86_64-unknown-linux-musl.zip
 mkdir "adocweave-$VERSION"
-gh release download "v$VERSION" \
+gh release download "$PRODUCT/v$VERSION" \
   --repo KeishiS/adocweave \
   --pattern "$ASSET" \
   --pattern sha256.sum \
@@ -184,7 +186,7 @@ GitHub Actionsから生成された来歴を示します。いずれも、成果
 ----
 VERSION=X.Y.Z
 npm install --save-dev textlint@15.8.0 \
-  "https://github.com/KeishiS/adocweave/releases/download/v$VERSION/adocweave-textlint-plugin-asciidoc-$VERSION.tgz"
+  "https://github.com/KeishiS/adocweave/releases/download/adocweave-textlint%2Fv$VERSION/adocweave-textlint-plugin-asciidoc-$VERSION.tgz"
 ----
 
 対応環境はNode.js 22.18.0以上27未満とtextlint 15.8.0です。パッケージの``engines``と
@@ -197,7 +199,7 @@ Rust、Cargo、``wasm-bindgen``、AdocWeave CLIおよび実行時の追加downlo
 [source,console]
 ----
 VERSION=X.Y.Z
-RELEASE_URL="https://github.com/KeishiS/adocweave/releases/download/v$VERSION"
+RELEASE_URL="https://github.com/KeishiS/adocweave/releases/download/adocweave-textlint%2Fv$VERSION"
 PLUGIN="$RELEASE_URL/adocweave-textlint-plugin-asciidoc-$VERSION.tgz"
 npx --yes \
   --package=textlint@15.8.0 \
@@ -365,8 +367,10 @@ Remove-Item -Recurse (Join-Path $env:LOCALAPPDATA "AdocWeave\$Version")
 
 新しいバージョンは既存ディレクトリへ上書きせず、別のディレクトリへ展開・検証します。``current``を切り替えた後に
 ``--version --json``を確認します。rollbackは``current``を以前のバージョン別のディレクトリへ戻すだけであり、動作確認が終わるまで
-旧ディレクトリを削除しません。CLI、LSP、browser、Zed拡張、VS Code拡張およびtextlint用パッケージは
-同じReleaseのバージョンを組み合わせ、異なるrelease trainを混在させません。
+旧ディレクトリを削除しません。CLI、Language Server、Browser、Zed拡張、VS Code拡張およびtextlint用
+Processorは、それぞれ独立した製品バージョンを持ちます。Browserとtextlint用Processorは、同じ製品archiveに
+JavaScriptとWebAssemblyを同梱するため、別々に組み合わせません。エディター拡張とLanguage Serverは、
+製品バージョンではなく``lspApiVersion``が対応する組み合わせを使用します。
 
 [#browser-library-deployment]
 == ブラウザーライブラリーの配備
@@ -441,19 +445,21 @@ Zed拡張は、次の順序で最初に利用できる``adocweave-lsp``を選び
 
 . Zedの``lsp.adocweave.binary.path``で明示した実行ファイル
 . Zed processから見える``PATH``上の実行ファイル
-. 拡張と同じバージョンのGitHub Releaseから取得したmanaged binary
+. 拡張が固定するLanguage Server製品のGitHub Releaseから取得したmanaged binary
 
 複数の由来を混在させません。明示した実行ファイルでは、同じ``binary``設定にある``arguments``と``env``も
 使用します。
 
 === 管理対象バイナリー
 
-Managed binaryは拡張と同じバージョンのReleaseから取得します。拡張は配布manifestのschema、バージョン、target、
-asset名、byte数およびSHA-256を確認してからarchiveを展開します。所定の通常ファイルだけを上限付きで取り出し、
+Managed binaryは、拡張に記録した``managedLspVersion``の``adocweave-lsp/vX.Y.Z`` Releaseから取得します。
+拡張は配布manifestの製品名、製品バージョン、``lspApiVersion``、target、asset名、byte数およびSHA-256を
+確認してからarchiveを展開します。所定の通常ファイルだけを上限付きで取り出し、
 検証markerとともにZedの拡張用working ディレクトリへ原子的に配置します。project、利用者の``PATH``および
 system ディレクトリへ書き込みません。
 
-Cacheはパッケージバージョンとtargetごとに分けます。起動時にmarkerとbinaryのSHA-256が一致すればネットワークへ接続せず
+CacheはLanguage Serverの製品バージョンとtargetごとに分けます。起動時にmarkerの``lspApiVersion``と
+binaryのSHA-256が一致すればネットワークへ接続せず
 再利用します。markerの欠落やbinaryの改変時は起動せず、onlineの場合だけ再取得します。更新に失敗した場合は
 検証済みの以前のバージョンを変更せず、同じバージョンの置換に失敗した場合は直前のキャッシュを復元します。
 
@@ -494,8 +500,9 @@ code --install-extension "adocweave-vscode-$VERSION.vsix" --force
 ----
 
 VS CodeのExtensions viewにAdocWeaveと対象バージョンが表示されることを確認します。更新時は新しいバージョンの
-VSIXを同じcommandで導入し、Windowを再読込します。rollbackでは以前のReleaseから検証済みVSIXを取得し、
-同じ方法で導入します。拡張とLanguage Serverのバージョンは完全一致が必要です。
+VSIXを同じcommandで導入し、Windowを再読込します。rollbackでは以前のVS Code拡張製品のReleaseから
+検証済みVSIXを取得し、同じ方法で導入します。拡張とLanguage Serverの製品バージョンが異なっていても、
+``lspApiVersion``が拡張の対応範囲なら使用できます。
 
 [#vscode-language-server-selection]
 === VS CodeのLanguage Server選択
@@ -503,16 +510,18 @@ VSIXを同じcommandで導入し、Windowを再読込します。rollbackでは�
 VS Code拡張は次の順序でLanguage Serverを選びます。
 
 . ``adocweave.server.path``で明示した絶対path
-. VS Code extension hostの``PATH``上にある互換バージョン
+. VS Code extension hostの``PATH``上にある互換なLSP API世代
 . 拡張のglobal storageにある検証済みmanaged キャッシュ
-. 同じバージョンのGitHub Releaseにあるmanaged binary
+. 拡張が固定するLanguage Server製品のGitHub Releaseにあるmanaged binary
 
 ワークスペースの``adocweave.server.path``は、VS Codeがそのワークスペースを信頼している
-場合だけ使用します。未信頼ワークスペースでは利用者scopeの値だけを使用します。明示pathのバージョンが一致しない
-場合は別のbinaryへfallbackしません。``PATH``上の不一致では警告を表示してmanaged binaryへ進みます。
+場合だけ使用します。未信頼ワークスペースでは利用者scopeの値だけを使用します。明示pathの``lspApiVersion``が
+対応範囲外の場合は別のbinaryへfallbackしません。``PATH``上の不一致では警告を表示してmanaged binaryへ進みます。
 
-Managed binaryは配布manifest、archive byte数、SHA-256、展開後binaryおよび``--version --json``を検証してから
-起動します。対応platformがない場合はdownloadしません。検証済みキャッシュはofflineでも利用できます。
+Managed binaryは配布manifestの製品名、製品バージョン、``lspApiVersion``、archive byte数、SHA-256、
+展開後binaryおよび``--version --json``を検証してから起動します。対応platformがない場合はdownloadしません。
+検証済みキャッシュはofflineでも利用できます。現在の固定Language Server版と対応API世代は、各拡張製品の
+Release Notesで確認できます。
 自動取得を無効にする場合は``adocweave.server.download``を``false``にし、互換binaryを明示設定または``PATH``へ
 配置します。
 

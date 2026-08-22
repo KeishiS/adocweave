@@ -25,7 +25,7 @@ code --install-extension adocweave-vscode-<version>.vsix --force
 
 ## Requirements
 
-The extension and the Language Server must have the same version. The extension downloads a managed Language Server of its own version from the matching GitHub Release and verifies its checksum before starting it. See `docs/user-guide/release-installation.adoc` in the repository for installation, update, rollback, and verification steps.
+The extension and Language Server have independent product versions. Compatibility is determined by the `lspApiVersion` reported by `adocweave-lsp --version --json`. The extension pins one tested `managedLspVersion`, downloads it from the matching `adocweave-lsp/vX.Y.Z` GitHub Release, and verifies its product manifest and checksum before starting it. See `docs/user-guide/release-installation.adoc` in the repository for installation, update, rollback, and verification steps.
 
 ## License
 
