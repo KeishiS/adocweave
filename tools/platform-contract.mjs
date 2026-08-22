@@ -72,6 +72,19 @@ export function requiredInstallationAssets(scope, target, version, archiveType) 
   ];
 }
 
+export function requiredProductInstallationAssets(product, target, version, archiveType) {
+  const names = {
+    browser: `adocweave-browser-${version}.tar.xz`,
+    cli: `adocweave-cli-${target}.${archiveType}`,
+    lsp: `adocweave-lsp-${target}.${archiveType}`,
+    textlint: `adocweave-textlint-plugin-asciidoc-${version}.tgz`,
+    vscode: `adocweave-vscode-${version}.vsix`,
+    zed: `adocweave-zed-${version}.tar.xz`,
+  };
+  if (!Object.hasOwn(names, product)) throw new Error(`unsupported installation product: ${product}`);
+  return [names[product]];
+}
+
 export function missingInstallationAssets(available, required) {
   const names = new Set(available);
   return required.filter((name) => !names.has(name));

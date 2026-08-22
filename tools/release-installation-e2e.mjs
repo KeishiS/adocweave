@@ -8,15 +8,14 @@ import {
   TEMPORARY_DIRECTORY_REMOVAL_OPTIONS,
   archiveEntries,
   createRuntimeAdapters,
-  executableNames,
   installationLayout,
   isPathInside,
   missingInstallationAssets,
-  requiredInstallationAssets,
-  selectedInstallationFamilies,
+  requiredProductInstallationAssets,
   validateArchiveEntries,
   vscodePackageContract,
 } from "./platform-contract.mjs";
+import { loadDistributionPlan, selectProduct } from "./product-release-plan.mjs";
 
 const runtime = createRuntimeAdapters({
   fileSystem: nodeFileSystem,
@@ -48,18 +47,16 @@ const {
 const { execFileSync } = runtime.processControl;
 const { basename, delimiter, dirname, join, resolve } = runtime.pathApi;
 
-const [candidateArgument, target, manifestArgument, installationScope] = process.argv.slice(2);
-if (!candidateArgument || !target) {
+const [product, candidateArgument, target, manifestArgument] = process.argv.slice(2);
+if (!product || !candidateArgument || !target) {
   process.stderr.write(
-    "usage: node tools/release-installation-e2e.mjs CANDIDATE_DIRECTORY TARGET [MANIFEST] [SCOPE]\n",
+    "usage: node tools/release-installation-e2e.mjs PRODUCT CANDIDATE_DIRECTORY TARGET [MANIFEST]\n",
   );
   process.exit(2);
 }
-const installationFamilies = selectedInstallationFamilies(installationScope);
 
-const distributionPlan = JSON.parse(
-  readFileSync(new URL("../release/distribution-plan.json", import.meta.url), "utf8"),
-);
+const distributionPlan = loadDistributionPlan();
+selectProduct(distributionPlan, product);
 const platform = distributionPlan.targets.find(({ triple }) => triple === target);
 if (!platform) throw new Error(`unsupported installation target: ${target}`);
 if (runtime.platform.os !== platform.os || runtime.platform.architecture !== platform.architecture) {
@@ -71,14 +68,12 @@ const manifestPath = manifestArgument
   ? resolve(manifestArgument)
   : join(candidate, "adocweave-dist-manifest.json");
 const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-const version = manifest.packageVersion;
-if (typeof version !== "string" || !version) throw new Error("manifest has no packageVersion");
-const requiredAssets = requiredInstallationAssets(
-  installationScope,
-  target,
-  version,
-  platform.archive,
-);
+if (manifest.schemaVersion !== 3 || manifest.product !== product) {
+  throw new Error(`distribution manifest does not describe ${product}`);
+}
+const version = manifest.productVersion;
+if (typeof version !== "string" || !version) throw new Error("manifest has no productVersion");
+const requiredAssets = requiredProductInstallationAssets(product, target, version, platform.archive);
 const missingAssets = missingInstallationAssets(
   readdirSync(candidate, { withFileTypes: true })
     .filter((entry) => entry.isFile())
@@ -256,6 +251,14 @@ function installVSCode() {
   renameSync(extension, vscodeRoot);
 }
 
+function verifyTextlintArchive() {
+  const name = `adocweave-textlint-plugin-asciidoc-${version}.tgz`;
+  const entries = archiveEntries(execFileSync("tar", ["-tzf", archive(name)], { encoding: "utf8" }));
+  if (entries.length === 0 || validateArchiveEntries(entries, "package").length > 0) {
+    throw new Error(`unsafe or unexpected archive path in ${name}`);
+  }
+}
+
 async function verifyBrowserContract() {
   const modulePath = join(browserRoot, "wasm", "adocweave_wasm.js");
   const wasmPath = join(browserRoot, "wasm", "adocweave_wasm_bg.wasm");
@@ -330,17 +333,17 @@ try {
   mkdirSync(home);
   const before = files(home).map((path) => path.slice(home.length + 1));
 
-  if (installationFamilies.native) {
-    installNative("adocweave-cli", `adocweave${platform.executableSuffix}`);
-    installNative("adocweave-lsp", `adocweave-lsp${platform.executableSuffix}`);
-  }
-  if (installationFamilies.global) {
-    installBrowser();
-    installZed();
-    installVSCode();
-  }
-  const executables = executableNames(platform.executableSuffix);
-  if (installationFamilies.native) {
+  const native = product === "cli" || product === "lsp";
+  const executable = product === "cli"
+    ? `adocweave${platform.executableSuffix}`
+    : product === "lsp" ? `adocweave-lsp${platform.executableSuffix}` : null;
+  if (native) installNative(`adocweave-${product}`, executable);
+  else if (product === "browser") installBrowser();
+  else if (product === "textlint") verifyTextlintArchive();
+  else if (product === "zed") installZed();
+  else if (product === "vscode") installVSCode();
+  const executables = native ? [executable] : [];
+  if (native) {
     cpSync(versionRoot, previousRoot, { recursive: true });
     activateNative(versionRoot, version, executables);
     if (runtime.platform.os !== "win32" && readlinkSync(currentLink) !== versionRoot) {
@@ -350,6 +353,9 @@ try {
     for (const executable of executables) {
       const actual = JSON.parse(command(executable, ["--version", "--json"]));
       if (actual.packageVersion !== version) throw new Error(`${executable} version mismatch`);
+      if (product === "lsp" && actual.lspApiVersion !== manifest.lspApiVersion) {
+        throw new Error("LSP API version mismatch");
+      }
     }
     activateNative(previousRoot, `${version}-previous-fixture`, executables);
     if (readFileSync(activeMarker, "utf8") !== `${version}-previous-fixture\n`) {
@@ -368,25 +374,29 @@ try {
       throw new Error("failed native update changed the active version");
     }
   }
-  if (installationFamilies.global) {
+  if (product === "browser") {
     if (!existsSync(join(browserRoot, "worker", "index.mjs"))) throw new Error("browser public entry point is missing");
     if (!existsSync(join(browserRoot, "wasm", "adocweave_wasm_bg.wasm"))) throw new Error("browser WASM is missing");
+    await verifyBrowserContract();
+  }
+  if (product === "zed") {
     if (!existsSync(join(zedRoot, "extension.toml"))) throw new Error("Zed extension manifest is missing");
+  }
+  if (product === "vscode") {
     const vscodeManifest = JSON.parse(readFileSync(join(vscodeRoot, "package.json"), "utf8"));
     if (!vscodePackageContract(vscodeManifest, version)) {
       throw new Error("VS Code extension manifest mismatch");
     }
-    await verifyBrowserContract();
   }
 
-  if (installationFamilies.native) {
+  if (native) {
     for (const executable of executables) rmSync(join(binDirectory, executable));
     if (runtime.platform.os !== "win32") rmSync(currentLink);
     rmSync(activeMarker);
     rmSync(versionRoot, { recursive: true });
     rmSync(previousRoot, { recursive: true });
   }
-  if (installationFamilies.global) {
+  if (["browser", "zed", "vscode"].includes(product)) {
     rmSync(join(prefix, "share", "adocweave", version), { recursive: true });
   }
   for (const directory of [
@@ -404,7 +414,7 @@ try {
   if (JSON.stringify(after) !== JSON.stringify(before)) {
     throw new Error(`managed files remain after uninstall: ${after.join(", ")}`);
   }
-  process.stdout.write(`release installation E2E passed: ${version} ${target}\n`);
+  process.stdout.write(`release installation E2E passed: ${product} ${version} ${target}\n`);
 } finally {
   rmSync(scratch, TEMPORARY_DIRECTORY_REMOVAL_OPTIONS);
 }
