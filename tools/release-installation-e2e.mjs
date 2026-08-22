@@ -15,7 +15,7 @@ import {
   validateArchiveEntries,
   vscodePackageContract,
 } from "./platform-contract.mjs";
-import { loadDistributionPlan, selectProduct } from "./product-release.mjs";
+import { loadDistributionPlan, productIdentity, selectProduct } from "./product-release.mjs";
 
 const runtime = createRuntimeAdapters({
   fileSystem: nodeFileSystem,
@@ -67,8 +67,11 @@ const candidate = realpathSync(resolve(candidateArgument));
 const manifestPath = manifestArgument
   ? resolve(manifestArgument)
   : join(candidate, "adocweave-dist-manifest.json");
-const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-if (manifest.schemaVersion !== 3 || manifest.product !== product) {
+const identity = productIdentity(product, { plan: distributionPlan });
+const manifest = existsSync(manifestPath)
+  ? JSON.parse(readFileSync(manifestPath, "utf8"))
+  : { product, productVersion: identity.version, schemaVersion: 3 };
+if (manifest.schemaVersion !== 3 || manifest.product !== product || manifest.productVersion !== identity.version) {
   throw new Error(`distribution manifest does not describe ${product}`);
 }
 const version = manifest.productVersion;

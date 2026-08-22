@@ -341,12 +341,12 @@ jobs:
           path: artifacts
       - name: Pull request installation and complete removal
         if: github.event_name == 'pull_request'
-        run: >-
-          node tools/release-installation-e2e.mjs
-          artifacts
-          "${{ matrix.target }}"
-          release/distribution-plan.json
-          "native-only"
+        shell: bash
+        run: |
+          for product in cli lsp; do
+            node tools/release-installation-e2e.mjs \
+              "$product" artifacts "${{ matrix.target }}"
+          done
 
   global-installation-e2e:
     if: >-
@@ -366,12 +366,11 @@ jobs:
           name: release-candidate-pr
           path: artifacts
       - name: Global installation and complete removal
-        run: >-
-          node tools/release-installation-e2e.mjs
-          artifacts
-          x86_64-unknown-linux-musl
-          release/distribution-plan.json
-          "global-only"
+        run: |
+          for product in browser textlint vscode zed; do
+            node tools/release-installation-e2e.mjs \
+              "$product" artifacts x86_64-unknown-linux-musl
+          done
 
   textlint-plugin-installation-e2e:
     if: >-
