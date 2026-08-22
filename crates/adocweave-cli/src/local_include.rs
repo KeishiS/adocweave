@@ -50,6 +50,7 @@ pub struct ProjectionInput {
 }
 
 pub struct LocalValidationContext {
+    authority: PathBuf,
     include_errors: Vec<IncludeFailure>,
 }
 
@@ -140,6 +141,10 @@ impl ProjectionInput {
 }
 
 impl LocalValidationContext {
+    pub fn authority(&self) -> &Path {
+        &self.authority
+    }
+
     pub fn include_error(
         &self,
         source_id: &str,
@@ -227,6 +232,13 @@ enum IncludeReadMode {
 }
 
 impl IncludeReadMode {
+    fn local_authority(&self) -> Option<&Path> {
+        match self {
+            Self::Local { root } => Some(root),
+            Self::General { .. } => None,
+        }
+    }
+
     fn watch_candidate(&self, target: &str) -> Option<PathBuf> {
         match self {
             Self::Local { root } => Some(root.join(target)),
@@ -285,6 +297,7 @@ fn prepare_with_driver(
     validate_local_targets: bool,
     dependencies: &mut DependencyJournal,
 ) -> Result<PreparedInput, LocalIncludeError> {
+    let validation_authority = read_mode.local_authority().map(Path::to_owned);
     let root_id = ResourceId::new(source_id.clone())
         .map_err(|error| LocalIncludeError::Analysis(error.to_string()))?;
     let mut workspace = Workspace::new(WorkspaceLimits::default());
@@ -410,7 +423,10 @@ fn prepare_with_driver(
                 })
         })
         .collect();
-    let validation = validate_local_targets.then_some(LocalValidationContext { include_errors });
+    let validation = validate_local_targets.then(|| LocalValidationContext {
+        authority: validation_authority.expect("local validation has an authority"),
+        include_errors,
+    });
     Ok(PreparedInput {
         projection: ProjectionInput {
             draft,
@@ -758,6 +774,7 @@ mod tests {
         let error = crate::local_target::inspect_with_session(
             &root.join("root.adoc").to_string_lossy(),
             &root,
+            &root,
             "asset.png",
             &mut filesystem,
         )
@@ -908,6 +925,7 @@ mod tests {
         assert_eq!(
             crate::local_target::inspect_with_session(
                 "root.adoc",
+                &root.0,
                 &root.0,
                 "asset.png",
                 &mut filesystem,

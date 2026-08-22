@@ -244,6 +244,117 @@ fn inspection_reads_no_bytes_and_creates_no_binding() {
 }
 
 #[test]
+fn inspection_within_uses_a_wider_explicit_authority_for_parent_targets() {
+    let project = TestDir::new("inspect-authority");
+    let docs = project.path().join("docs");
+    fs::create_dir(&docs).expect("docs");
+    let asset = project.path().join("asset.png");
+    fs::write(&asset, "asset").expect("asset");
+    let mut session = LocalFilesystemPolicy::new(
+        [project.path().to_owned(), docs.clone()],
+        FilesystemReadLimits::default(),
+    )
+    .expect("policy")
+    .session()
+    .expect("session");
+
+    let IncludeFilesystemInspectionOutcome::Found(found) = IncludeFilesystem::new().inspect_within(
+        &mut session,
+        project.path(),
+        request("asset", &docs, "../asset.png"),
+    ) else {
+        panic!("the project authority should contain the parent target");
+    };
+    assert_eq!(found.provenance().canonical_path(), asset);
+}
+
+#[test]
+fn inspection_within_rejects_targets_outside_the_explicit_authority() {
+    let parent = TestDir::new("inspect-outside-parent");
+    let project = parent.path().join("project");
+    let docs = project.join("docs");
+    fs::create_dir_all(&docs).expect("docs");
+    fs::write(parent.path().join("secret.png"), "secret").expect("outside asset");
+    let mut session = LocalFilesystemPolicy::new(
+        [project.clone(), docs.clone()],
+        FilesystemReadLimits::default(),
+    )
+    .expect("policy")
+    .session()
+    .expect("session");
+
+    assert!(matches!(
+        IncludeFilesystem::new().inspect_within(
+            &mut session,
+            &project,
+            request("secret", &docs, "../../secret.png"),
+        ),
+        IncludeFilesystemInspectionOutcome::Failed(_)
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn inspection_within_does_not_retry_a_symlink_escape_under_a_wider_root() {
+    use std::os::unix::fs::symlink;
+
+    let project = TestDir::new("inspect-no-symlink-fallback");
+    let docs = project.path().join("docs");
+    fs::create_dir(&docs).expect("docs");
+    fs::write(project.path().join("asset.png"), "asset").expect("asset");
+    symlink("../asset.png", docs.join("asset-link.png")).expect("symlink");
+    let mut session = LocalFilesystemPolicy::new(
+        [project.path().to_owned(), docs.clone()],
+        FilesystemReadLimits::default(),
+    )
+    .expect("policy")
+    .session()
+    .expect("session");
+
+    assert!(matches!(
+        IncludeFilesystem::new().inspect_within(
+            &mut session,
+            project.path(),
+            request("asset", &docs, "asset-link.png"),
+        ),
+        IncludeFilesystemInspectionOutcome::Failed(_)
+    ));
+}
+
+#[test]
+fn inspection_within_shares_the_live_session_path_budget() {
+    let project = TestDir::new("inspect-shared-budget");
+    let docs = project.path().join("docs");
+    fs::create_dir(&docs).expect("docs");
+    fs::write(docs.join("root.adoc"), "root").expect("root source");
+    fs::write(project.path().join("asset.png"), "asset").expect("asset");
+    let mut session = LocalFilesystemPolicy::new(
+        [project.path().to_owned(), docs.clone()],
+        FilesystemReadLimits {
+            max_files: 1,
+            ..FilesystemReadLimits::default()
+        },
+    )
+    .expect("policy")
+    .session()
+    .expect("session");
+    let filesystem = IncludeFilesystem::new();
+    assert!(matches!(
+        filesystem.read_utf8(&mut session, path_request("root", &docs.join("root.adoc")),),
+        IncludeFilesystemOutcome::Found(_)
+    ));
+
+    assert!(matches!(
+        filesystem.inspect_within(
+            &mut session,
+            project.path(),
+            request("asset", &docs, "../asset.png"),
+        ),
+        IncludeFilesystemInspectionOutcome::Failed(_)
+    ));
+}
+
+#[test]
 fn one_job_enforces_a_shared_limit_across_sessions() {
     let first_root = TestDir::new("shared-first");
     let second_root = TestDir::new("shared-second");

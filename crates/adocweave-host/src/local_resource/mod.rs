@@ -487,7 +487,10 @@ impl LocalFilesystemPolicy {
             .map(|policy| {
                 LocalTargetSession::new(
                     policy,
-                    self.limits.max_files,
+                    // The enclosing session enforces one path limit across
+                    // every root. Per-root limits would create independent
+                    // allowances for nested authorities.
+                    usize::MAX,
                     FilesystemReadLimits {
                         max_files: usize::MAX,
                         max_total_bytes: u64::MAX,
@@ -786,6 +789,19 @@ impl LocalFilesystemSession {
         self.invalidate_active_draft();
         self.mutation_cursor()
             .inspect_target(source_id, base, target)
+            .map_err(ResourceError::from)
+    }
+
+    pub(crate) fn inspect_target_within_outcome(
+        &mut self,
+        source_id: LogicalSourceId,
+        authority: &Path,
+        base: &Path,
+        target: &str,
+    ) -> Result<FilesystemInspectOutcome, ResourceError> {
+        self.invalidate_active_draft();
+        self.mutation_cursor()
+            .inspect_target_within(source_id, authority, base, target)
             .map_err(ResourceError::from)
     }
 
@@ -1122,6 +1138,31 @@ impl LocalFilesystemMutationCursor<'_> {
         let candidate_path = self.state.sessions[index]
             .candidate(base, target)
             .map_err(ResourceError::from)?;
+        self.ensure_path_request_allowed(index, &candidate_path)?;
+        match self.state.sessions[index].inspect(base, target) {
+            Ok(canonical_path) => Ok(FilesystemInspectOutcome::Found {
+                source_id,
+                candidate_path,
+                canonical_path,
+            }),
+            Err(LocalTargetError::Missing(_)) => Ok(FilesystemInspectOutcome::NotFound {
+                source_id,
+                candidate_path,
+            }),
+            Err(error) => Err(ResourceError::from(error).into()),
+        }
+    }
+
+    fn inspect_target_within(
+        &mut self,
+        source_id: LogicalSourceId,
+        authority: &Path,
+        base: &Path,
+        target: &str,
+    ) -> Result<FilesystemInspectOutcome, FilesystemDraftError> {
+        let _permit = self.begin_read()?;
+        let (index, candidate_path) = self.target_root_index(authority, base, target)?;
+        self.ensure_path_request_allowed(index, &candidate_path)?;
         match self.state.sessions[index].inspect(base, target) {
             Ok(canonical_path) => Ok(FilesystemInspectOutcome::Found {
                 source_id,
@@ -1162,6 +1203,7 @@ impl LocalFilesystemMutationCursor<'_> {
         let candidate = self.state.sessions[index]
             .candidate(base, target)
             .map_err(ResourceError::from)?;
+        self.ensure_path_request_allowed(index, &candidate)?;
         let candidate_rollback = (missing == MissingDisposition::PreserveLegacyState
             && self.state.candidates.contains_key(&candidate))
         .then(|| self.state.sessions[index].candidate_rollback(&candidate));
@@ -1238,6 +1280,7 @@ impl LocalFilesystemMutationCursor<'_> {
     ) -> Result<FilesystemReadOutcome, FilesystemDraftError> {
         let mut permit = self.begin_read()?;
         let index = self.root_index(path)?;
+        self.ensure_path_request_allowed(index, path)?;
         let candidate_rollback = self.state.sessions[index].candidate_rollback(path);
         let binding_generation = self.reserve_binding_generation()?;
         let budget = self.state.budget;
@@ -1332,6 +1375,7 @@ impl LocalFilesystemMutationCursor<'_> {
         if candidate == self.state.roots[index] {
             return Err(ResourceError::NotRegularFile(candidate).into());
         }
+        self.ensure_path_request_allowed(index, &candidate)?;
         let candidate_rollback = (missing == MissingDisposition::PreserveLegacyState
             && self.state.candidates.contains_key(&candidate))
         .then(|| self.state.sessions[index].candidate_rollback(&candidate));
@@ -1396,6 +1440,55 @@ impl LocalFilesystemMutationCursor<'_> {
             .max_by_key(|(_, root)| root.components().count())
             .map(|(index, _)| index)
             .ok_or_else(|| ResourceError::OutsideRoots(path.to_owned()).into())
+    }
+
+    fn target_root_index(
+        &self,
+        authority: &Path,
+        base: &Path,
+        target: &str,
+    ) -> Result<(usize, PathBuf), FilesystemDraftError> {
+        if !authority.is_absolute() {
+            return Err(ResourceError::PathNotAbsolute(authority.to_owned()).into());
+        }
+        if !self.state.roots.iter().any(|root| root == authority) {
+            return Err(ResourceError::OutsideRoots(authority.to_owned()).into());
+        }
+        let candidate = crate::local_target::normalize_authored_candidate(authority, base, target)
+            .map_err(ResourceError::from)?;
+        self.state
+            .roots
+            .iter()
+            .enumerate()
+            .filter(|(_, root)| {
+                root.starts_with(authority) && base.starts_with(root) && candidate.starts_with(root)
+            })
+            .max_by_key(|(_, root)| root.components().count())
+            .map(|(index, _)| (index, candidate))
+            .ok_or_else(|| ResourceError::OutsideRoots(base.to_owned()).into())
+    }
+
+    fn ensure_path_request_allowed(
+        &self,
+        index: usize,
+        candidate: &Path,
+    ) -> Result<(), FilesystemDraftError> {
+        if self.state.sessions[index].has_inspection(candidate) {
+            return Ok(());
+        }
+        let inspected = self
+            .state
+            .sessions
+            .iter()
+            .map(LocalTargetSession::inspected_paths)
+            .sum::<usize>();
+        if inspected >= self.state.limits.max_files {
+            return Err(ResourceError::FileLimit {
+                limit: self.state.limits.max_files,
+            }
+            .into());
+        }
+        Ok(())
     }
 
     fn finish_read(

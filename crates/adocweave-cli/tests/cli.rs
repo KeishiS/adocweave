@@ -2243,6 +2243,61 @@ fn local_target_check_rejects_symlink_escape_and_keeps_duplicate_positions() {
 }
 
 #[test]
+fn local_target_check_uses_the_explicit_project_root_for_parent_targets() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let parent = std::env::temp_dir().join(format!("adocweave-local-parent-{unique}"));
+    let project = parent.join("project");
+    let docs = project.join("docs");
+    std::fs::create_dir_all(&docs).expect("docs");
+    std::fs::write(project.join("asset.png"), "asset").expect("project asset");
+    std::fs::write(parent.join("secret.png"), "secret").expect("outside asset");
+    std::fs::write(
+        docs.join("root.adoc"),
+        "image::../asset.png[]\nimage::../../secret.png[]\n",
+    )
+    .expect("source");
+
+    let output = adocweave()
+        .current_dir(&project)
+        .args([
+            "check",
+            "--local-targets",
+            "--project-root",
+            ".",
+            "--json",
+            "docs/root.adoc",
+        ])
+        .output()
+        .expect("local target check");
+    let diagnostics: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("JSON diagnostics");
+    let local = diagnostics
+        .as_array()
+        .expect("array")
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic["code"]
+                .as_str()
+                .is_some_and(|code| code.starts_with("local-target-"))
+        })
+        .collect::<Vec<_>>();
+    assert!(!output.status.success());
+    assert_eq!(
+        local.len(),
+        1,
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(local[0]["code"], "local-target-outside-root");
+    assert_eq!(local[0]["target"], "../../secret.png");
+
+    std::fs::remove_dir_all(parent).expect("cleanup");
+}
+
+#[test]
 fn check_reports_invalid_explicit_ordered_numbers_without_losing_the_list() {
     let source = b"4294967296. overflow\n0. zero\n";
     let output = run_with_stdin(&["check", "--json", "-"], source);

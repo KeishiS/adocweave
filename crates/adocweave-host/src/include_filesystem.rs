@@ -273,6 +273,34 @@ impl IncludeFilesystem {
                 .map_err(FilesystemDraftError::from),
         )
     }
+
+    /// Inspects a target within one explicit authority while retaining the
+    /// session's shared cache and budget.
+    ///
+    /// A session may contain both the authority root and narrower roots for
+    /// individual documents. The host chooses the deepest configured root
+    /// which contains both the base and the lexically normalized target. It
+    /// then performs exactly one handle-relative inspection. A filesystem
+    /// error, including a symbolic-link escape, is never retried under a wider
+    /// root.
+    pub fn inspect_within(
+        &self,
+        session: &mut LocalFilesystemSession,
+        authority: &Path,
+        request: IncludeFilesystemRequest,
+    ) -> IncludeFilesystemInspectionOutcome {
+        let IncludeFilesystemRequest {
+            source_id,
+            base,
+            target,
+        } = request;
+        map_inspection(
+            source_id.clone(),
+            session
+                .inspect_target_within_outcome(source_id, authority, &base, &target)
+                .map_err(FilesystemDraftError::from),
+        )
+    }
 }
 
 /// One job budget shared by transactions from any authorized session.

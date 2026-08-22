@@ -33,6 +33,7 @@ pub(crate) enum Error {
 }
 
 pub(crate) struct LocalContext<'context> {
+    pub(crate) authority: &'context Path,
     pub(crate) base: &'context Path,
     pub(crate) source_id: &'context str,
     pub(crate) session: &'context mut adocweave_host::LocalFilesystemSession,
@@ -130,6 +131,7 @@ pub(crate) fn process(
         targets.extend(includes.iter().filter_map(|include| include.local_target()));
         let mut diagnostics = local_target::validate_with_session(
             &targets,
+            local.authority,
             local.base,
             local.source_id,
             source,
@@ -291,6 +293,7 @@ pub(crate) fn process_preprocessed(
         )));
     }
     if let Some(validation) = validation.as_mut() {
+        let authority = validation.authority().to_owned();
         let filesystem = filesystem.expect("validation requires a checked filesystem session");
         for target in &projected.local_targets {
             for origin in &target.target_origins {
@@ -344,6 +347,7 @@ pub(crate) fn process_preprocessed(
                 if optional && target.value.syntax == adocweave::LocalTargetSyntax::Candidate {
                     match local_target::inspect_with_session(
                         source_id,
+                        &authority,
                         base,
                         &target.value.path,
                         filesystem,
@@ -356,6 +360,7 @@ pub(crate) fn process_preprocessed(
                 value.target_range = origin.range.text_range();
                 host.extend(local_target::validate_with_session(
                     std::slice::from_ref(&value),
+                    &authority,
                     base,
                     source_id,
                     source,
