@@ -149,8 +149,7 @@ const GLOBAL_TOOLS = [
   "textlint-plugin-consumer-e2e.mjs",
   "textlint-plugin-compatibility-probe.mjs",
   "textlint-plugin-compatibility-probe.test.mjs",
-  "textlint-plugin-release-smoke.mjs",
-  "textlint-plugin-release-smoke.test.mjs",
+  "textlint-plugin-consumer-e2e.test.mjs",
   "textlint-plugin-package-contract.mjs",
   "verify-textlint-plugin-reproducibility.mjs",
   "verify-textlint-plugin-reproducibility.test.mjs",
@@ -245,6 +244,7 @@ export const DEPENDENCY_AUDIT_FILES = new Set([
   "release/textlint-plugin-package-contract.schema.json",
   "tools/dependency-governance.sh",
   "tools/generate-third-party-notices.mjs",
+  "tools/generate-third-party-notices.test.mjs",
   "tools/verify-dependency-boundaries.mjs",
   // `dependency-governance` runs these tests before the audit, so they decide
   // what the audit accepts just as the scripts they test do.

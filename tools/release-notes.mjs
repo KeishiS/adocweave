@@ -54,11 +54,16 @@ const UNFINISHED_MARKERS = /TODO|FIXME|記載してから公開/;
 
 export function breakingContractNotes(changes) {
   if (changes.length === 0) return ["Rust APIの破壊的変更：ありません。"];
-  return changes.map((change) => `Rust APIの破壊的変更：${change.description}`);
+  // descriptionは任意です。書かれていない場合はcargo-semver-checksの出力から
+  // 機械的に文を作り、利用者向けの説明はrelease/notes.mdの本文へ委ねます。
+  return changes.map(
+    (change) =>
+      `Rust APIの破壊的変更：${change.description ?? `${change.crate}の${change.item}（${change.lint}）`}`,
+  );
 }
 
 export function breakingMigrationNotes(changes) {
-  return changes.map((change) => change.migration);
+  return changes.map((change) => change.migration).filter((migration) => migration !== undefined);
 }
 
 /// Public contracts this release states are unchanged since the previous stable tag.

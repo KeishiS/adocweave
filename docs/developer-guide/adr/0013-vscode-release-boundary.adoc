@@ -1,6 +1,9 @@
 = ADR 0013: VSIXとLanguage Serverの同一release境界
 
-:status: accepted
+:status: superseded by ADR 0023
+
+決定の正本はxref:0023-publication-boundary.adoc[ADR 0023: 公開と配布の境界]です。
+この文書は当時の文脈と判断の経緯を残します。
 
 == 文脈
 

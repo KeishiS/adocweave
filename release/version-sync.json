@@ -88,7 +88,7 @@
       "type": "literal",
       "path": "release/notes.md",
       "template": "{version}",
-      "count": 6
+      "count": "all"
     },
     {
       "type": "literal",
@@ -195,149 +195,78 @@
       "id": "public-conformance",
       "outputs": [
         {
-          "path": "fixtures/public-conformance/document-structure.html",
-          "versionOccurrences": 0
+          "path": "fixtures/public-conformance/document-structure.html"
         },
         {
-          "path": "fixtures/public-conformance/document-structure.projection.json",
-          "versionOccurrences": 0
+          "path": "fixtures/public-conformance/document-structure.projection.json"
         },
         {
-          "path": "fixtures/public-conformance/document-structure.diagnostics.json",
-          "versionOccurrences": 0
+          "path": "fixtures/public-conformance/document-structure.diagnostics.json"
         },
         {
-          "path": "fixtures/public-conformance/document-structure.render-diagnostics.json",
-          "versionOccurrences": 0
+          "path": "fixtures/public-conformance/document-structure.render-diagnostics.json"
         },
         {
-          "path": "fixtures/public-conformance/source-block.html",
-          "versionOccurrences": 0
+          "path": "fixtures/public-conformance/source-block.html"
         },
         {
-          "path": "fixtures/public-conformance/source-block.projection.json",
-          "versionOccurrences": 0
+          "path": "fixtures/public-conformance/source-block.projection.json"
         },
         {
-          "path": "fixtures/public-conformance/source-block.diagnostics.json",
-          "versionOccurrences": 0
+          "path": "fixtures/public-conformance/source-block.diagnostics.json"
         },
         {
-          "path": "fixtures/public-conformance/source-block.render-diagnostics.json",
-          "versionOccurrences": 0
+          "path": "fixtures/public-conformance/source-block.render-diagnostics.json"
         },
         {
-          "path": "fixtures/public-conformance/formulas.html",
-          "versionOccurrences": 0
+          "path": "fixtures/public-conformance/formulas.html"
         },
         {
-          "path": "fixtures/public-conformance/formulas.projection.json",
-          "versionOccurrences": 0
+          "path": "fixtures/public-conformance/formulas.projection.json"
         },
         {
-          "path": "fixtures/public-conformance/formulas.diagnostics.json",
-          "versionOccurrences": 0
+          "path": "fixtures/public-conformance/formulas.diagnostics.json"
         },
         {
-          "path": "fixtures/public-conformance/formulas.render-diagnostics.json",
-          "versionOccurrences": 0
+          "path": "fixtures/public-conformance/formulas.render-diagnostics.json"
         },
         {
-          "path": "fixtures/public-conformance/blocks.html",
-          "versionOccurrences": 0
+          "path": "fixtures/public-conformance/blocks.html"
         },
         {
-          "path": "fixtures/public-conformance/blocks.projection.json",
-          "versionOccurrences": 0
+          "path": "fixtures/public-conformance/blocks.projection.json"
         },
         {
-          "path": "fixtures/public-conformance/blocks.diagnostics.json",
-          "versionOccurrences": 0
+          "path": "fixtures/public-conformance/blocks.diagnostics.json"
         },
         {
-          "path": "fixtures/public-conformance/blocks.render-diagnostics.json",
-          "versionOccurrences": 0
+          "path": "fixtures/public-conformance/blocks.render-diagnostics.json"
         },
         {
-          "path": "fixtures/public-conformance/diagnostics.html",
-          "versionOccurrences": 0
+          "path": "fixtures/public-conformance/diagnostics.html"
         },
         {
-          "path": "fixtures/public-conformance/diagnostics.projection.json",
-          "versionOccurrences": 0
+          "path": "fixtures/public-conformance/diagnostics.projection.json"
         },
         {
-          "path": "fixtures/public-conformance/diagnostics.diagnostics.json",
-          "versionOccurrences": 0
+          "path": "fixtures/public-conformance/diagnostics.diagnostics.json"
         },
         {
-          "path": "fixtures/public-conformance/diagnostics.render-diagnostics.json",
-          "versionOccurrences": 0
+          "path": "fixtures/public-conformance/diagnostics.render-diagnostics.json"
         },
         {
-          "path": "fixtures/public-conformance/unsupported-source-option.html",
-          "versionOccurrences": 0
+          "path": "fixtures/public-conformance/unsupported-source-option.html"
         },
         {
-          "path": "fixtures/public-conformance/unsupported-source-option.projection.json",
-          "versionOccurrences": 0
+          "path": "fixtures/public-conformance/unsupported-source-option.projection.json"
         },
         {
-          "path": "fixtures/public-conformance/unsupported-source-option.diagnostics.json",
-          "versionOccurrences": 0
+          "path": "fixtures/public-conformance/unsupported-source-option.diagnostics.json"
         },
         {
-          "path": "fixtures/public-conformance/unsupported-source-option.render-diagnostics.json",
-          "versionOccurrences": 0
+          "path": "fixtures/public-conformance/unsupported-source-option.render-diagnostics.json"
         }
       ]
-    }
-  ],
-  "preserved": [
-    {
-      "path": "dist-workspace.toml",
-      "literal": "cargo-dist-version = \"0.32.0\"",
-      "count": 1
-    },
-    {
-      "path": "release/distribution-plan.json",
-      "literal": "\"distVersion\": \"0.32.0\"",
-      "count": 1
-    },
-    {
-      "path": "release/windows-dist-bootstrap.json",
-      "literal": "0.32.0",
-      "count": 2
-    },
-    {
-      "path": "tools/release-contract.mjs",
-      "literal": "0.32.0",
-      "count": 3
-    },
-    {
-      "path": "fixtures/protocol/request-corpus.json",
-      "literal": "\"oldVersion\": \"0.10.0\"",
-      "count": 1
-    },
-    {
-      "path": "tools/native-change-plan.test.mjs",
-      "literal": "\"refs/tags/v0.17.0\"",
-      "count": 1
-    },
-    {
-      "path": "editors/vscode/test/server-selection.test.ts",
-      "literal": "\"0.16.0\"",
-      "count": 2
-    },
-    {
-      "path": "Cargo.lock",
-      "literal": "name = \"hashbrown\"\nversion = \"0.17.1\"",
-      "count": 1
-    },
-    {
-      "path": "editors/zed/Cargo.lock",
-      "literal": "name = \"hashbrown\"\nversion = \"0.17.1\"",
-      "count": 1
     }
   ]
 }

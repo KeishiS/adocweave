@@ -300,10 +300,11 @@ minor版とmajor版では``--release-type minor``を使用します。major版�
 破壊的変更を許容して検査を省略するのではなく、major差分をすべて列挙して記録と照合するためです。
 
 patch版に破壊的変更があれば失敗させます。minor版とmajor版では、検出したすべての破壊的変更が
-``release/breaking-rust-api.json``の``changes``と完全に一致する場合だけ許容します。各記録にはcrate、
-cargo-semver-checksのlint名、対象、summary、利用者向けの日本語による変更説明および具体的な移行方法が必要です。
-不足、余分、重複、未知の項目、空の説明および空の移行方法を受理しません。Release Notesの公開仕様と移行方法は
-この記録から生成します。変更が無いreleaseでは``changes``を空にし、「破壊的変更：ありません」という本文を
+``release/breaking-rust-api.json``の``changes``と完全に一致する場合だけ許容します。各記録には
+cargo-semver-checksの出力から決まるcrate、lint名、対象およびsummaryが必要です。利用者向けの説明
+(``description``)と移行方法(``migration``)は任意で、書かない場合はRelease Notesへ機械的な一文を載せ、
+利用者向けの説明は``release/notes.md``の本文で述べます。不足、余分、重複、未知の項目および空の値を
+受理しません。変更が無いreleaseでは``changes``を空にし、「破壊的変更：ありません」という本文を
 自動生成します。この定型文を記録の代わりに書いても、検出した変更は許容されません。
 
 cargo-semver-checksは破壊的変更が無い場合に終了ステータス0、検出した場合に1を返します。破壊的変更がある場合は、

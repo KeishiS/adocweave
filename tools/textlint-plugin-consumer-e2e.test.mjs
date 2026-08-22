@@ -8,8 +8,8 @@ import {
   assertDiagnostics,
   fixtureSource,
   npmInvocation,
-  runTextlintPluginReleaseSmoke,
-} from "./textlint-plugin-release-smoke.mjs";
+  runTextlintPluginConsumerE2E,
+} from "./textlint-plugin-consumer-e2e.mjs";
 import { loadTextlintPluginPackageContract } from "./textlint-plugin-package-contract.mjs";
 
 const packageContract = loadTextlintPluginPackageContract();
@@ -18,7 +18,7 @@ test("公開tgzを実CLI相当の経路で検査する", async () => {
   const { archive, root } = await createFixtureArchive();
   const invocations = [];
   try {
-    await runTextlintPluginReleaseSmoke(archive, {
+    await runTextlintPluginConsumerE2E(archive, {
       installPackage: async ({ archive: installedArchive, cwd }) => {
         assert.equal(installedArchive, archive);
         await writeManifest(cwd);
@@ -68,7 +68,7 @@ test("--fixによる入力変更を検出する", async () => {
   const { archive, root } = await createFixtureArchive();
   try {
     await assert.rejects(
-      runTextlintPluginReleaseSmoke(archive, {
+      runTextlintPluginConsumerE2E(archive, {
         installPackage: async ({ cwd }) => writeManifest(cwd),
         invokeTextlint: async ({ args, cwd, input }) => {
           const paths = input === undefined
