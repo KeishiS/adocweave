@@ -682,7 +682,8 @@ fn every_request_union_enforces_tags_fields_and_unknown_rejection() {
                 .unwrap_or_else(|error| panic!("{name}.{variant} was rejected: {error}"));
             let serialized = serde_json::to_value(valid).expect("serialized union probe");
             assert_eq!(
-                serialized.pointer(path).expect("serialized union")[tag], *variant,
+                serialized.pointer(path).expect("serialized union")[tag],
+                *variant,
                 "{name}.{variant} lost its tag"
             );
 

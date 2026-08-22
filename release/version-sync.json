@@ -186,8 +186,7 @@
       "id": "protocol",
       "outputs": [
         {
-          "path": "web-worker/protocol.d.mts",
-          "versionOccurrences": 0
+          "path": "web-worker/protocol.d.mts"
         }
       ]
     },
