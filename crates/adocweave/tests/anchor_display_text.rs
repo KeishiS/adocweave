@@ -7,8 +7,7 @@
 //! specification broke: `<<id>>` pointed at an identifier nobody wrote and the
 //! reader was told the target did not exist.
 
-use adocweave::resolution::RenderInputs;
-use adocweave::{AnalysisOptions, Engine, output};
+use adocweave::{AnalysisOptions, Engine};
 
 fn analyze(source: &str) -> adocweave::Analysis {
     Engine::new(AnalysisOptions::default())
@@ -21,9 +20,7 @@ const NUMBERED: &str = "= Note\n\nBody <<smith2024>>\n\n[bibliography]\n== Sourc
 #[test]
 fn a_bibliography_anchor_keeps_only_the_identifier() {
     let analysis = analyze(NUMBERED);
-    let projection = output::projection::project(&analysis, &RenderInputs::default());
-
-    let entry = &projection.catalogs.bibliography()[0];
+    let entry = &analysis.catalogs().bibliography()[0];
     assert_eq!(entry.id, "smith2024");
     assert_eq!(entry.label.as_deref(), Some("1"));
 }
@@ -61,8 +58,7 @@ fn an_anchor_without_display_text_keeps_the_identifier_as_its_label() {
         .find(|target| target.id == "smith2024")
         .expect("bibliography target");
     assert_eq!(target.label, "smith2024");
-    let projection = output::projection::project(&analysis, &RenderInputs::default());
-    assert_eq!(projection.catalogs.bibliography()[0].label, None);
+    assert_eq!(analysis.catalogs().bibliography()[0].label, None);
 }
 
 #[test]

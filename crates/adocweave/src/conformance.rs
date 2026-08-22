@@ -8,7 +8,7 @@ use crate::diagnostic::render_json as render_diagnostics_json;
 use crate::document::{document_symbols, render_symbols_json};
 use crate::html::{RenderPolicy, render_with_inputs};
 use crate::inline_model::Inline;
-use crate::projection::project;
+use crate::projection::render_json as render_projection_json;
 use crate::reference::ReferenceKey;
 use crate::render::RenderInputs;
 use crate::source::TextRange;
@@ -72,7 +72,7 @@ pub fn snapshot(
         diagnostics_json: render_diagnostics_json(analysis.diagnostics()),
         render_diagnostics_json: render_diagnostics_json(&html.diagnostics),
         symbols_json: render_symbols_json(&document_symbols(analysis.document())),
-        projection_json: project(analysis, inputs).render_json(),
+        projection_json: render_projection_json(analysis, inputs),
         html: html.html,
     }
 }

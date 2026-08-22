@@ -1,6 +1,9 @@
 use adocweave::output::formatter::{FormatConfig, format_analysis};
 use adocweave::output::html::{RenderPolicy, render};
-use adocweave::output::projection::{project, searchable_text};
+use adocweave::output::projection::{
+    block_presentations, document_title, external_links, formulas, ordered_lists, reference_edges,
+    rendering_features, searchable_text, source_blocks,
+};
 use adocweave::resolution::ReferenceKey;
 use adocweave::resolution::{AuthoredUrlPolicy, UrlDecision};
 use adocweave::semantic::{
@@ -149,10 +152,21 @@ fn renderer_and_projections_are_deterministic_for_generated_input() {
         let first_html = render(analysis.document(), &RenderPolicy::default());
         let second_html = render(analysis.document(), &RenderPolicy::default());
         assert_eq!(first_html, second_html);
+        let inputs = adocweave::resolution::RenderInputs::default();
+        assert_eq!(document_title(&analysis), document_title(&analysis));
+        assert_eq!(external_links(&analysis), external_links(&analysis));
         assert_eq!(
-            project(&analysis, &adocweave::resolution::RenderInputs::default()),
-            project(&analysis, &adocweave::resolution::RenderInputs::default())
+            reference_edges(&analysis, &inputs),
+            reference_edges(&analysis, &inputs)
         );
+        assert_eq!(source_blocks(&analysis), source_blocks(&analysis));
+        assert_eq!(formulas(&analysis), formulas(&analysis));
+        assert_eq!(ordered_lists(&analysis), ordered_lists(&analysis));
+        assert_eq!(
+            block_presentations(&analysis),
+            block_presentations(&analysis)
+        );
+        assert_eq!(rendering_features(&analysis), rendering_features(&analysis));
         assert_eq!(searchable_text(&analysis), searchable_text(&analysis));
         assert!(first_html.html.len() <= source.len().saturating_mul(32).max(64));
     }

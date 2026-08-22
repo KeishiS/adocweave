@@ -10,26 +10,25 @@ use crate::reference::{ReferenceKey, ResolutionOutcome};
 use crate::render::{RenderInputs, ResolutionMatch};
 use crate::source::TextRange;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DocumentProjection {
-    pub source_id: Option<SourceId>,
-    pub title: Option<ProjectedText>,
-    pub targets: Vec<ReferenceTarget>,
-    pub external_links: Vec<ExternalLink>,
-    pub reference_edges: Vec<ReferenceEdge>,
-    pub source_blocks: Vec<SourceBlockProjection>,
-    pub ordered_lists: Vec<OrderedListProjection>,
-    pub block_presentations: Vec<BlockPresentationProjection>,
-    pub formulas: Vec<FormulaProjection>,
+struct ConformanceProjection<'a> {
+    source_id: Option<&'a SourceId>,
+    title: Option<ProjectedText>,
+    targets: &'a [ReferenceTarget],
+    external_links: Vec<ExternalLink>,
+    reference_edges: Vec<ReferenceEdge>,
+    source_blocks: Vec<SourceBlockProjection>,
+    ordered_lists: Vec<OrderedListProjection>,
+    block_presentations: Vec<BlockPresentationProjection>,
+    formulas: Vec<FormulaProjection>,
     /// Citations of entries held by a bibliography library outside the document.
     ///
     /// AdocWeave never resolves these keys. A host reads them, resolves them
     /// against its own library, and passes the result back for rendering.
-    pub citations: Vec<crate::citation::Citation>,
-    pub searchable_text: SearchableText,
-    pub catalogs: crate::catalog::DocumentCatalogs,
-    pub structure: crate::structure::DocumentStructure,
-    pub presentation: crate::presentation::DocumentPresentation,
+    citations: Vec<crate::citation::Citation>,
+    searchable_text: SearchableText,
+    catalogs: &'a crate::catalog::DocumentCatalogs,
+    structure: &'a crate::structure::DocumentStructure,
+    presentation: &'a crate::presentation::DocumentPresentation,
 }
 
 /// Semantic features that a host may need to render a document.
@@ -308,8 +307,8 @@ pub struct SearchableText {
     pub segments: Vec<SearchTextSegment>,
 }
 
-pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection {
-    let title = analysis
+pub fn document_title(analysis: &Analysis) -> Option<ProjectedText> {
+    analysis
         .ast()
         .blocks()
         .iter()
@@ -323,17 +322,21 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
                 })
             }
             _ => None,
-        });
+        })
+}
 
-    let mut external_links = Vec::new();
-    crate::walker::walk(analysis.document(), |node| {
-        if let crate::walker::SemanticNode::Inline(Inline::Link(link)) = node {
-            external_links.push(project_link(link));
-        }
-    });
+pub fn external_links(analysis: &Analysis) -> Vec<ExternalLink> {
+    let mut external_links = analysis
+        .links()
+        .iter()
+        .map(project_link)
+        .collect::<Vec<_>>();
     external_links.sort_by_key(|link| (link.source_range.start(), link.source_range.end()));
+    external_links
+}
 
-    let reference_edges = analysis
+pub fn reference_edges(analysis: &Analysis, inputs: &RenderInputs) -> Vec<ReferenceEdge> {
+    analysis
         .references()
         .iter()
         .filter_map(|reference| {
@@ -349,19 +352,15 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
                 resolution,
             })
         })
-        .collect();
+        .collect()
+}
 
+pub fn source_blocks(analysis: &Analysis) -> Vec<SourceBlockProjection> {
     let mut source_blocks = Vec::new();
-    let mut ordered_lists = Vec::new();
-    let mut block_presentations = Vec::new();
-    let mut formulas = Vec::new();
-    crate::walker::walk(analysis.document(), |node| match node {
-        crate::walker::SemanticNode::Block(AstBlock::Verbatim(block))
-            if matches!(block.kind, crate::block_model::VerbatimKind::Source(_)) =>
+    crate::walker::walk(analysis.document(), |node| {
+        if let crate::walker::SemanticNode::Block(AstBlock::Verbatim(block)) = node
+            && let crate::block_model::VerbatimKind::Source(source) = &block.kind
         {
-            let crate::block_model::VerbatimKind::Source(source) = &block.kind else {
-                unreachable!("match guard ensures source verbatim block")
-            };
             source_blocks.push(SourceBlockProjection {
                 source_range: block.range,
                 content_range: block.content_range,
@@ -375,12 +374,19 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
                 start_line: source.start_line,
                 source: block.value.clone(),
                 caption: analysis
-                    .ast()
                     .presentation()
                     .caption_at(block.range)
                     .and_then(crate::caption::BlockCaption::label),
             });
         }
+    });
+    source_blocks.sort_by_key(|source| (source.source_range.start(), source.source_range.end()));
+    source_blocks
+}
+
+pub fn formulas(analysis: &Analysis) -> Vec<FormulaProjection> {
+    let mut formulas = Vec::new();
+    crate::walker::walk(analysis.document(), |node| match node {
         crate::walker::SemanticNode::Inline(Inline::Formula(formula)) => {
             formulas.push(FormulaProjection {
                 kind: FormulaKind::Inline,
@@ -399,8 +405,17 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
                 source: formula.value.clone(),
             });
         }
-        crate::walker::SemanticNode::Block(AstBlock::List(list))
-            if list.kind == crate::block_model::ListKind::Ordered =>
+        _ => {}
+    });
+    formulas.sort_by_key(|formula| (formula.source_range.start(), formula.source_range.end()));
+    formulas
+}
+
+pub fn ordered_lists(analysis: &Analysis) -> Vec<OrderedListProjection> {
+    let mut ordered_lists = Vec::new();
+    crate::walker::walk(analysis.document(), |node| {
+        if let crate::walker::SemanticNode::Block(AstBlock::List(list)) = node
+            && list.kind == crate::block_model::ListKind::Ordered
         {
             ordered_lists.push(OrderedListProjection {
                 source_range: list.range,
@@ -409,6 +424,14 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
                 style: list.presentation.style,
             });
         }
+    });
+    ordered_lists.sort_by_key(|list| (list.source_range.start(), list.source_range.end()));
+    ordered_lists
+}
+
+pub fn block_presentations(analysis: &Analysis) -> Vec<BlockPresentationProjection> {
+    let mut block_presentations = Vec::new();
+    crate::walker::walk(analysis.document(), |node| match node {
         crate::walker::SemanticNode::Block(AstBlock::Paragraph(value))
             if value.admonition.is_some() =>
         {
@@ -429,38 +452,40 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
             });
         }
         crate::walker::SemanticNode::Block(AstBlock::Paragraph(value)) => {
-            if let Some(figure) = image_block_presentation(value, analysis.ast().presentation()) {
+            if let Some(figure) = image_block_presentation(value, analysis.presentation()) {
                 block_presentations.push(figure);
             }
         }
         crate::walker::SemanticNode::Block(AstBlock::Delimited(value)) => {
-            if let Some(presentation) = delimited_presentation(value, analysis.ast().presentation())
-            {
+            if let Some(presentation) = delimited_presentation(value, analysis.presentation()) {
                 block_presentations.push(presentation);
             }
         }
         _ => {}
     });
-    source_blocks.sort_by_key(|source| (source.source_range.start(), source.source_range.end()));
-    ordered_lists.sort_by_key(|list| (list.source_range.start(), list.source_range.end()));
     block_presentations.sort_by_key(|block| (block.source_range.start(), block.source_range.end()));
-    formulas.sort_by_key(|formula| (formula.source_range.start(), formula.source_range.end()));
+    block_presentations
+}
 
-    DocumentProjection {
-        source_id: analysis.source_id().cloned(),
-        title,
-        targets: analysis.reference_targets().to_vec(),
-        external_links,
-        reference_edges,
-        source_blocks,
-        ordered_lists,
-        block_presentations,
-        formulas,
+fn conformance_projection<'a>(
+    analysis: &'a Analysis,
+    inputs: &RenderInputs,
+) -> ConformanceProjection<'a> {
+    ConformanceProjection {
+        source_id: analysis.source_id(),
+        title: document_title(analysis),
+        targets: analysis.reference_targets(),
+        external_links: external_links(analysis),
+        reference_edges: reference_edges(analysis, inputs),
+        source_blocks: source_blocks(analysis),
+        ordered_lists: ordered_lists(analysis),
+        block_presentations: block_presentations(analysis),
+        formulas: formulas(analysis),
         citations: analysis.citations(),
         searchable_text: searchable_text(analysis),
-        catalogs: analysis.catalogs().clone(),
-        structure: analysis.structure().clone(),
-        presentation: analysis.presentation().clone(),
+        catalogs: analysis.catalogs(),
+        structure: analysis.structure(),
+        presentation: analysis.presentation(),
     }
 }
 
@@ -712,42 +737,41 @@ fn fold_line_endings(value: &str) -> String {
         .join(" ")
 }
 
-impl DocumentProjection {
-    /// Returns normalized rendering requirements for this projected document.
-    ///
-    /// Languages are canonicalized, unique, and returned in their documented
-    /// stable order.
-    /// The TOC value reports whether the projected TOC has any entries.
-    pub fn rendering_features(&self) -> RenderingFeatures {
-        let math_languages = self
-            .formulas
-            .iter()
-            .map(|formula| math_language_feature(formula.language))
-            .collect::<BTreeSet<_>>()
+/// Returns normalized rendering requirements without constructing content
+/// projections that the caller does not need.
+pub fn rendering_features(analysis: &Analysis) -> RenderingFeatures {
+    let mut math_languages = BTreeSet::new();
+    let mut source_languages = BTreeSet::new();
+    crate::walker::walk(analysis.document(), |node| match node {
+        crate::walker::SemanticNode::Inline(Inline::Formula(formula)) => {
+            math_languages.insert(math_language_feature(formula.language));
+        }
+        crate::walker::SemanticNode::Block(AstBlock::Math(formula)) => {
+            math_languages.insert(math_language_feature(formula.language));
+        }
+        crate::walker::SemanticNode::Block(AstBlock::Verbatim(block)) => {
+            if let crate::block_model::VerbatimKind::Source(source) = &block.kind
+                && let Some(language) = source.language.as_deref()
+            {
+                source_languages.insert(canonical_source_language(language));
+            }
+        }
+        _ => {}
+    });
+    RenderingFeatures {
+        math_languages: math_languages
             .into_iter()
             .map(|(_, name)| name.to_owned())
-            .collect();
-        let source_languages = self
-            .source_blocks
-            .iter()
-            .filter_map(|source| source.language.as_deref())
-            .map(canonical_source_language)
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
-
-        RenderingFeatures {
-            math_languages,
-            source_languages,
-            table_of_contents: self.presentation.toc_policy().enabled
-                && !self.presentation.toc().is_empty(),
-        }
+            .collect(),
+        source_languages: source_languages.into_iter().collect(),
+        table_of_contents: analysis.presentation().toc_policy().enabled
+            && !analysis.presentation().toc().is_empty(),
     }
+}
 
-    /// Stable JSON with the crate's fixed key order and escaping.
-    pub fn render_json(&self) -> String {
-        serde_json::to_string(&wire::Doc::new(self)).expect("projection serializes to JSON")
-    }
+pub(crate) fn render_json(analysis: &Analysis, inputs: &RenderInputs) -> String {
+    let projection = conformance_projection(analysis, inputs);
+    serde_json::to_string(&wire::Doc::new(&projection)).expect("projection serializes to JSON")
 }
 
 pub(crate) fn canonical_source_language(language: &str) -> String {
@@ -802,7 +826,7 @@ mod wire {
     use serde::Serialize;
 
     use super::{
-        DocumentProjection, ProjectedText, ReferenceKey, ResolutionOutcome, SourceId, TextRange,
+        ConformanceProjection, ProjectedText, ReferenceKey, ResolutionOutcome, SourceId, TextRange,
         math_language, reference_target_kind, structure_kind,
     };
 
@@ -1149,9 +1173,9 @@ mod wire {
     }
 
     impl<'a> Doc<'a> {
-        pub(super) fn new(doc: &'a DocumentProjection) -> Self {
+        pub(super) fn new(doc: &'a ConformanceProjection<'a>) -> Self {
             Self {
-                source_id: doc.source_id.as_ref().map(SourceId::as_str),
+                source_id: doc.source_id.map(SourceId::as_str),
                 title: doc.title.as_ref().map(TextW::from),
                 targets: doc
                     .targets
@@ -1361,7 +1385,6 @@ mod wire {
 
 #[cfg(test)]
 mod tests {
-    use crate::inline_model::MathLanguage;
     use crate::preprocessor::{
         PreprocessOptions, ResourceDocument, ResourceSnapshot, preprocess_and_analyze,
     };
@@ -1377,24 +1400,19 @@ mod tests {
         let analysis = Engine::new(AnalysisOptions::default())
             .analyze(source)
             .expect("analysis");
-        let mut projected = project(&analysis, &RenderInputs::default());
+        let projected_formulas = formulas(&analysis);
         assert_eq!(
-            projected
-                .formulas
+            projected_formulas
                 .iter()
                 .map(|formula| formula.kind)
                 .collect::<Vec<_>>(),
             [FormulaKind::Inline, FormulaKind::Inline, FormulaKind::Block]
         );
-        let latex = projected.formulas[0].clone();
-        let mut typst = latex.clone();
-        typst.language = MathLanguage::Typst;
-        projected.formulas.extend([typst, latex]);
 
         assert_eq!(
-            projected.rendering_features(),
+            rendering_features(&analysis),
             RenderingFeatures {
-                math_languages: vec!["latexmath".to_owned(), "typst".to_owned()],
+                math_languages: vec!["latexmath".to_owned()],
                 source_languages: vec![
                     "c--".to_owned(),
                     "javascript".to_owned(),
@@ -1403,7 +1421,7 @@ mod tests {
                 table_of_contents: true,
             }
         );
-        assert!(!projected.presentation.toc().is_empty());
+        assert!(!analysis.presentation().toc().is_empty());
     }
 
     #[test]
@@ -1432,7 +1450,7 @@ mod tests {
         .expect("preprocessed analysis");
 
         assert_eq!(
-            project(&preprocessed.analysis, &RenderInputs::default()).rendering_features(),
+            rendering_features(&preprocessed.analysis),
             RenderingFeatures {
                 math_languages: vec!["latexmath".to_owned()],
                 source_languages: vec!["kotlin".to_owned()],
@@ -1447,28 +1465,17 @@ mod tests {
             .analyze("Plain paragraph.\n")
             .expect("analysis");
 
-        assert_eq!(
-            project(&analysis, &RenderInputs::default()).rendering_features(),
-            RenderingFeatures::default()
-        );
+        assert_eq!(rendering_features(&analysis), RenderingFeatures::default());
 
         let section_without_toc = Engine::new(AnalysisOptions::default())
             .analyze("= Title\n\n== Section\n")
             .expect("analysis");
-        assert!(
-            !project(&section_without_toc, &RenderInputs::default())
-                .rendering_features()
-                .table_of_contents
-        );
+        assert!(!rendering_features(&section_without_toc).table_of_contents);
 
         let toc_without_entries = Engine::new(AnalysisOptions::default())
             .analyze("= Title\n:toc:\n")
             .expect("analysis");
-        assert!(
-            !project(&toc_without_entries, &RenderInputs::default())
-                .rendering_features()
-                .table_of_contents
-        );
+        assert!(!rendering_features(&toc_without_entries).table_of_contents);
     }
 
     #[test]
@@ -1497,29 +1504,35 @@ stem:[x+y]
                 },
             )
             .expect("analysis");
-        let projected = project(&analysis, &RenderInputs::default());
+        let projected_links = external_links(&analysis);
+        let projected_references = reference_edges(&analysis, &RenderInputs::default());
+        let searchable = searchable_text(&analysis);
         let html = crate::html::render(analysis.document(), &crate::html::RenderPolicy::default());
 
         assert!(html.html.contains("<h1"));
-        assert_eq!(projected.external_links.len(), 1);
-        assert_eq!(projected.reference_edges.len(), 3);
+        assert_eq!(
+            document_title(&analysis).map(|title| title.text),
+            Some("Title".to_owned())
+        );
+        assert_eq!(projected_links.len(), 1);
+        assert_eq!(projected_references.len(), 3);
         assert!(matches!(
-            projected.reference_edges[0].target,
+            projected_references[0].target,
             ReferenceKey::Local { .. }
         ));
         assert!(matches!(
-            projected.reference_edges[1].target,
+            projected_references[1].target,
             ReferenceKey::Document { .. }
         ));
         assert!(matches!(
-            projected.reference_edges[2].target,
+            projected_references[2].target,
             ReferenceKey::Scheme { .. }
         ));
-        assert!(projected.searchable_text.text.contains("fn main() {}"));
-        assert!(!projected.searchable_text.text.contains("x+y"));
+        assert!(searchable.text.contains("fn main() {}"));
+        assert!(!searchable.text.contains("x+y"));
         assert_eq!(
-            projected.render_json(),
-            project(&analysis, &RenderInputs::default()).render_json()
+            render_json(&analysis, &RenderInputs::default()),
+            render_json(&analysis, &RenderInputs::default())
         );
     }
 
@@ -1539,12 +1552,9 @@ body
 ",
             )
             .expect("analysis");
-        let projection = project(&analysis, &RenderInputs::default());
+        let projection = block_presentations(&analysis);
 
-        assert_eq!(
-            projection.block_presentations[0].title.as_deref(),
-            Some("Important AdocWeave")
-        );
+        assert_eq!(projection[0].title.as_deref(), Some("Important AdocWeave"));
     }
 
     #[test]
@@ -1555,13 +1565,11 @@ body
         let resolution =
             ResolvedReference::resolved(analysis.references()[0].range, "https://example/other")
                 .with_display_text("Resolved document title");
-        let projected = project(
-            &analysis,
-            &RenderInputs::default().with_references(vec![resolution]),
-        );
+        let inputs = RenderInputs::default().with_references(vec![resolution]);
+        let projected = reference_edges(&analysis, &inputs);
 
         assert!(matches!(
-            projected.reference_edges[0].resolution,
+            projected[0].resolution,
             Some(ResolutionOutcome::Resolved {
                 ref href,
                 ref display_text,
@@ -1570,9 +1578,7 @@ body
                 && display_text.as_deref() == Some("Resolved document title")
         ));
         assert!(
-            projected
-                .render_json()
-                .contains("\"displayText\":\"Resolved document title\"")
+            render_json(&analysis, &inputs).contains("\"displayText\":\"Resolved document title\"")
         );
     }
 
@@ -1590,38 +1596,35 @@ a^2
 ",
             )
             .expect("analysis");
-        let projected = project(&analysis, &RenderInputs::default());
+        let projected = formulas(&analysis);
 
-        assert_eq!(projected.formulas.len(), 2);
-        assert_eq!(projected.formulas[0].kind, FormulaKind::Inline);
-        assert_eq!(projected.formulas[0].display(), FormulaKind::Inline);
+        assert_eq!(projected.len(), 2);
+        assert_eq!(projected[0].kind, FormulaKind::Inline);
+        assert_eq!(projected[0].display(), FormulaKind::Inline);
         assert_eq!(
-            projected.formulas[0].language,
+            projected[0].language,
             crate::inline_model::MathLanguage::Latex
         );
+        assert_eq!(projected[0].language.as_asciidoc_name(), "latexmath");
+        assert_eq!(projected[0].source, "x + y");
         assert_eq!(
-            projected.formulas[0].language.as_asciidoc_name(),
-            "latexmath"
+            &analysis.source()[projected[0].content_range.start().to_usize()
+                ..projected[0].content_range.end().to_usize()],
+            projected[0].source
         );
-        assert_eq!(projected.formulas[0].source, "x + y");
+        assert_eq!(projected[1].kind, FormulaKind::Block);
+        assert_eq!(projected[1].display(), FormulaKind::Block);
         assert_eq!(
-            &analysis.source()[projected.formulas[0].content_range.start().to_usize()
-                ..projected.formulas[0].content_range.end().to_usize()],
-            projected.formulas[0].source
-        );
-        assert_eq!(projected.formulas[1].kind, FormulaKind::Block);
-        assert_eq!(projected.formulas[1].display(), FormulaKind::Block);
-        assert_eq!(
-            projected.formulas[1].language,
+            projected[1].language,
             crate::inline_model::MathLanguage::Latex
         );
-        assert_eq!(projected.formulas[1].source, "a^2\n");
+        assert_eq!(projected[1].source, "a^2\n");
         assert_eq!(
-            &analysis.source()[projected.formulas[1].content_range.start().to_usize()
-                ..projected.formulas[1].content_range.end().to_usize()],
-            projected.formulas[1].source
+            &analysis.source()[projected[1].content_range.start().to_usize()
+                ..projected[1].content_range.end().to_usize()],
+            projected[1].source
         );
-        let json = projected.render_json();
+        let json = render_json(&analysis, &RenderInputs::default());
         assert!(json.contains("\"formulas\":["));
         // The wire enum remains `latex`; the AsciiDoc syntax name is `latexmath`.
         assert!(json.contains("\"language\":\"latex\""));
@@ -1640,10 +1643,10 @@ let x = 1;
 ",
             )
             .expect("analysis");
-        let projected = project(&analysis, &RenderInputs::default());
+        let projected = source_blocks(&analysis);
 
-        assert_eq!(projected.source_blocks.len(), 1);
-        let source = &projected.source_blocks[0];
+        assert_eq!(projected.len(), 1);
+        let source = &projected[0];
         assert_eq!(
             source.title.as_ref().map(|title| title.text.as_str()),
             Some("main.rs")
@@ -1675,8 +1678,8 @@ let x = 1;
             let analysis = Engine::new(AnalysisOptions::default())
                 .analyze(&format!("{attribute}\n----\ncode\n----\n"))
                 .expect("analysis");
-            let projected = project(&analysis, &RenderInputs::default());
-            let source = &projected.source_blocks[0];
+            let projected = source_blocks(&analysis);
+            let source = &projected[0];
 
             assert!(source.line_numbers, "{attribute}");
             assert_eq!(source.start_line, Some(1), "{attribute}");
@@ -1704,8 +1707,8 @@ let x = 1;
             let analysis = Engine::new(AnalysisOptions::default())
                 .analyze(&format!("{attribute}\n----\ncode\n----\n"))
                 .expect("analysis");
-            let projected = project(&analysis, &RenderInputs::default());
-            let source = &projected.source_blocks[0];
+            let projected = source_blocks(&analysis);
+            let source = &projected[0];
 
             assert_eq!(source.line_numbers, line_numbers, "{attribute}");
             assert_eq!(source.start_line, start_line, "{attribute}");
@@ -1723,11 +1726,11 @@ let x = 1;
 ",
             )
             .expect("analysis");
-        let projected = project(&analysis, &RenderInputs::default());
+        let projected = ordered_lists(&analysis);
 
-        assert_eq!(projected.ordered_lists.len(), 1);
+        assert_eq!(projected.len(), 1);
         assert_eq!(
-            projected.ordered_lists[0],
+            projected[0],
             OrderedListProjection {
                 source_range: analysis.ast().blocks()[0].range(),
                 start: Some(4),
@@ -1736,8 +1739,7 @@ let x = 1;
             }
         );
         assert!(
-            projected
-                .render_json()
+            render_json(&analysis, &RenderInputs::default())
                 .contains("\"orderedLists\":[{\"sourceRange\":")
         );
     }
@@ -1750,17 +1752,14 @@ let x = 1;
         let range = analysis.references()[0].range;
         let first = ResolvedReference::resolved(range, "https://example/first");
         let second = ResolvedReference::resolved(range, "https://example/second");
-        let forward = project(
-            &analysis,
-            &RenderInputs::default().with_references(vec![first.clone(), second.clone()]),
-        );
-        let reverse = project(
-            &analysis,
-            &RenderInputs::default().with_references(vec![second, first]),
-        );
+        let forward_inputs =
+            RenderInputs::default().with_references(vec![first.clone(), second.clone()]);
+        let reverse_inputs = RenderInputs::default().with_references(vec![second, first]);
+        let forward = reference_edges(&analysis, &forward_inputs);
+        let reverse = reference_edges(&analysis, &reverse_inputs);
 
         assert_eq!(forward, reverse);
-        assert!(forward.reference_edges[0].resolution.is_none());
+        assert!(forward[0].resolution.is_none());
     }
 
     #[test]
@@ -1769,7 +1768,7 @@ let x = 1;
         let analysis = crate::Engine::new(crate::AnalysisOptions::default())
             .analyze(source)
             .expect("analysis");
-        let json = project(&analysis, &RenderInputs::default()).render_json();
+        let json = render_json(&analysis, &RenderInputs::default());
 
         // Keys keep their source order and their own ranges.
         assert!(json.contains(
@@ -1783,8 +1782,8 @@ let x = 1;
         assert!(json.contains("\"order\":1,"));
 
         // The recorded ranges address the original source.
-        let value = project(&analysis, &RenderInputs::default());
-        for citation in &value.citations {
+        let value = analysis.citations();
+        for citation in &value {
             for key in &citation.keys {
                 assert_eq!(
                     &source[key.range.start().to_usize()..key.range.end().to_usize()],
@@ -1799,7 +1798,7 @@ let x = 1;
         let analysis = Engine::new(AnalysisOptions::default())
             .analyze("= T")
             .expect("analysis");
-        let rendered = project(&analysis, &RenderInputs::default()).render_json();
+        let rendered = render_json(&analysis, &RenderInputs::default());
         assert_eq!(
             rendered.replacen(
                 &format!("\"packageVersion\":\"{}\"", crate::VERSION),
@@ -1815,13 +1814,10 @@ let x = 1;
         let analysis = Engine::new(AnalysisOptions::default())
             .analyze("* bibanchor:ref[] Entry\n\nSee <<ref>> and <<ref,Entry>>.")
             .expect("analysis");
-        let projection = project(&analysis, &RenderInputs::default());
-
-        assert_eq!(projection.catalogs.bibliography().len(), 1);
-        assert_eq!(projection.catalogs.bibliography()[0].references.len(), 2);
+        assert_eq!(analysis.catalogs().bibliography().len(), 1);
+        assert_eq!(analysis.catalogs().bibliography()[0].references.len(), 2);
         assert!(
-            projection
-                .render_json()
+            render_json(&analysis, &RenderInputs::default())
                 .contains("\"bibliography\":[{\"id\":\"ref\",\"label\":null,\"definitionRange\":")
         );
     }
@@ -1831,14 +1827,11 @@ let x = 1;
         let analysis = Engine::new(AnalysisOptions::default())
             .analyze("* [[[smith2024,1]]] Smith, A. 2024.\n\nSee <<smith2024>>.")
             .expect("analysis");
-        let projection = project(&analysis, &RenderInputs::default());
-
-        let entry = &projection.catalogs.bibliography()[0];
+        let entry = &analysis.catalogs().bibliography()[0];
         assert_eq!(entry.id, "smith2024");
         assert_eq!(entry.label.as_deref(), Some("1"));
         assert!(
-            projection
-                .render_json()
+            render_json(&analysis, &RenderInputs::default())
                 .contains("\"bibliography\":[{\"id\":\"smith2024\",\"label\":\"1\",")
         );
     }
