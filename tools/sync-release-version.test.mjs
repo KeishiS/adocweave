@@ -42,41 +42,8 @@ function registry() {
       },
     ],
     generators: [
-      {
-        id: "protocol",
-        outputs: [
-          {
-            path: "generated/protocol.txt",
-            versionOccurrences: 1,
-          },
-        ],
-      },
-      {
-        id: "public-conformance",
-        outputs: [
-          {
-            path: "generated/public.txt",
-            versionOccurrences: 1,
-          },
-        ],
-      },
-    ],
-    preserved: [
-      {
-        path: "fixtures/old-version.json",
-        literal: "\"oldVersion\": \"0.10.0\"",
-        count: 1,
-      },
-      {
-        path: "Cargo.lock",
-        literal: "name = \"dependency\"\nversion = \"0.10.0\"",
-        count: 1,
-      },
-      {
-        path: "fixtures/unrelated-version.txt",
-        literal: "dependency-version=1.3.0",
-        count: 1,
-      },
+      { id: "protocol", outputs: [{ path: "generated/protocol.txt" }] },
+      { id: "public-conformance", outputs: [{ path: "generated/public.txt" }] },
     ],
   };
 }
@@ -120,6 +87,62 @@ function generatedRunner({ id, mode, root, current, version, generator }) {
     writeFileSync(path, source.replaceAll(current, version));
   }
 }
+
+test("countがallの対象は件数を数えずすべてのversion記録を置き換える", () => {
+  // 散文では版表記の数が文面ごとに変わります。件数を宣言すると、記録を1つ足すたびに
+  // registryの数値を手で直す必要があり、置換漏れではなく数え直しの手間だけが増えます。
+  const scope = fixture();
+  try {
+    writeFileSync(join(scope.directory, "notes.md"), "# v1.2.3\n\n1.2.3へ更新します。\n");
+    const inventory = registry();
+    inventory.targets.push({
+      type: "literal",
+      path: "notes.md",
+      template: "{version}",
+      count: "all",
+    });
+    assert.doesNotThrow(() => validateRegistry(inventory));
+    syncReleaseVersion({
+      root: scope.root,
+      mode: "update",
+      version: "1.3.0",
+      registry: inventory,
+      runGenerator: generatedRunner,
+    });
+    assert.equal(
+      readFileSync(join(scope.directory, "notes.md"), "utf8"),
+      "# v1.3.0\n\n1.3.0へ更新します。\n",
+    );
+
+    // 記録の数が変わってもregistryの更新は要りません。
+    writeFileSync(join(scope.directory, "notes.md"), "# v1.3.0\n\n1.3.0と1.3.0。\n");
+    assert.doesNotThrow(() =>
+      syncReleaseVersion({
+        root: scope.root,
+        mode: "check",
+        version: "1.3.0",
+        registry: inventory,
+        runGenerator: generatedRunner,
+      }),
+    );
+
+    // 記録が1件も無い場合は、置換漏れとして拒否します。
+    writeFileSync(join(scope.directory, "notes.md"), "# 版の記載なし\n");
+    assert.throws(
+      () =>
+        syncReleaseVersion({
+          root: scope.root,
+          mode: "check",
+          version: "1.3.0",
+          registry: inventory,
+          runGenerator: generatedRunner,
+        }),
+      /version記録がありません/,
+    );
+  } finally {
+    scope.cleanup();
+  }
+});
 
 test("更新と検査を一つのallowlistから決定的に実行する", () => {
   const scope = fixture();
@@ -187,37 +210,28 @@ test("更新と検査を一つのallowlistから決定的に実行する", () =>
   }
 });
 
-test("部分更新とallowlist外のversion記録を変更前に拒否する", () => {
-  for (const mutate of [
-    (directory) =>
-      writeFileSync(join(directory, "component.txt"), "component-version=1.3.0\n"),
-    (directory) => writeFileSync(join(directory, "unknown.txt"), "1.2.3\n"),
-  ]) {
-    const scope = fixture();
-    try {
-      mutate(scope.directory);
-      const before = readFileSync(
-        join(scope.directory, "release-manifest.json"),
-        "utf8",
-      );
-      assert.throws(
-        () =>
-          syncReleaseVersion({
-            root: scope.root,
-            mode: "update",
-            version: "1.3.0",
-            registry: registry(),
-            runGenerator: generatedRunner,
-          }),
-        /version記録数|version inventory/,
-      );
-      assert.equal(
-        readFileSync(join(scope.directory, "release-manifest.json"), "utf8"),
-        before,
-      );
-    } finally {
-      scope.cleanup();
-    }
+test("管理対象の部分更新を変更前に拒否する", () => {
+  const scope = fixture();
+  try {
+    writeFileSync(join(scope.directory, "component.txt"), "component-version=1.3.0\n");
+    const before = readFileSync(join(scope.directory, "release-manifest.json"), "utf8");
+    assert.throws(
+      () =>
+        syncReleaseVersion({
+          root: scope.root,
+          mode: "update",
+          version: "1.3.0",
+          registry: registry(),
+          runGenerator: generatedRunner,
+        }),
+      /version記録数/,
+    );
+    assert.equal(
+      readFileSync(join(scope.directory, "release-manifest.json"), "utf8"),
+      before,
+    );
+  } finally {
+    scope.cleanup();
   }
 });
 
@@ -261,11 +275,12 @@ test("generator失敗時は管理対象と旧version fixtureを復元する", ()
   }
 });
 
-test("第三者packageの版が候補versionと一致してもinventoryを妨げない", () => {
+test("第三者packageの版が候補versionと一致しても書き換えない", () => {
   const scope = fixture();
   try {
     // wit-bindgen系のように、外部packageの版が候補versionと偶然一致する
-    // lockfileを再現する。source付きblockのversion行は照合から除かれる。
+    // lockfileを再現する。cargo-lock対象では登録したlocal packageのblockだけを
+    // 書き換えるため、source付きblockは残ります。
     const lockPath = join(scope.directory, "Cargo.lock");
     writeFileSync(
       lockPath,
@@ -335,7 +350,7 @@ test("Git worktreeでもgeneratorの未追跡fileを検出して削除する", (
   }
 });
 
-test("repository内の作業用worktree directoryをversion目録から除外する", () => {
+test("repository内の作業用worktree directoryを副作用の検出から除外する", () => {
   const scope = fixture();
   try {
     assert.equal(spawnSync("git", ["init", "-q"], { cwd: scope.directory }).status, 0);

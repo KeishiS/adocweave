@@ -51,4 +51,7 @@ node tools/verify-dependency-boundaries.mjs
 node tools/verify-vscode-dependencies.mjs
 node tools/verify-textlint-dependencies.mjs
 node tools/verify-textlint-plugin-dependencies.mjs
+# 生成したnoticeはarchiveへ同梱する成果物であり、内容を照合する検査がほかにないため、
+# 生成logicのtestをここで実行します。
+node --test tools/generate-third-party-notices.test.mjs
 node tools/generate-third-party-notices.mjs "$notice"
