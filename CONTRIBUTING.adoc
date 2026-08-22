@@ -306,16 +306,14 @@ gh workflow run release-dispatch.yml \
 Release Notesの本文は``release/notes.md``に人が書きます。題名は``# AdocWeave vX.Y.Z``とし、
 ``## 主な変更``、``## 対応環境``、``## 公開契約と破壊的変更``、``## vX.Y.Zへの移行``、
 ``## 更新とロールバック``、``## 既知の制約``、``## 配布物の検証``の7見出しをこの順に一度ずつ置いて、
-各節に本文を書きます。この見出しはMarginalis、Renkanと共通です。配布target、公開仕様のversion、Rust APIの
-破壊的変更と移行、textlintの対応範囲は``tools/release-notes.mjs``が正本のfileから生成して各節の後ろへ
-追記するため、本文には書きません。``cargo make release-contract``（``verify``に含む）がこの形を検査し、
-公開workflowが同じtoolでGitHub Releaseの本文を生成します。
+各節に本文を書きます。この見出しはMarginalis、Renkanと共通です。配布target、公開仕様の現在のversion、
+検出済みのRust API破壊的変更と移行、textlintの対応範囲は``tools/release-notes.mjs``が正本のfileから生成して
+各節の後ろへ追記するため、本文には書きません。``cargo make release-contract``（``verify``に含む）がこの形を
+検査し、公開workflowが同じtoolでGitHub Releaseの本文を生成します。
 
-「CLI引数、Language Server protocol、設定schemaは変更していません」という文は、
-``release/unchanged-contracts.json``の``unchanged``に挙げた名前だけから組み立てます。この版で変えた
-公開仕様は一覧から外し、何をどう変えたかを``## 公開契約と破壊的変更``の本文に書きます。
-``release-claims``は同じ一覧を読み、正本のfileがある項目について前の版との差分を照合します。
-挙げられる名前は``CLI引数``、``Language Server protocol``、``設定schema``の3つです。
+CLI引数、Language Server protocol、設定schemaなど、外部から利用する仕様を変更した場合は、変更内容と影響を
+``## 公開契約と破壊的変更``へ記載します。利用者の作業が必要な場合は``## vX.Y.Zへの移行``へ操作を記載します。
+前の版と比較していない仕様を「変更していません」と機械生成しません。
 
 版を上げるときは、雛形``release/notes.template.md``を``release/notes.md``へ複製し、``X.Y.Z``を新しい版へ
 置き換えてから各節を書きます。雛形の「記載してから公開」を含む案内文は、書き終えたら消します。残っている

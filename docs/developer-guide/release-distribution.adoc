@@ -157,8 +157,11 @@ archive検証および実URLを指定した単発実行を確認します。公�
 一覧であるため、buildで成果物を作るAdocWeaveでは空とし、target、archive、SBOMおよびchecksumは拡張項目
 ``distributionPlan``が指す``release/distribution-plan.json``が決めます。Release Notesの本文は
 ``releaseNotes``が指す``release/notes.md``に人が書き、公開workflowの``tools/release-notes.mjs``が
-形を検査して機械生成部分を追記します。``cargo make release-contract``が、manifestの項目、配布計画との
-整合およびRelease Notesの形を検査します（xref:adr/0021-common-development-contract.adoc[ADR 0021]）。
+形を検査して機械生成部分を追記します。機械生成するのは、正本から直接決まる現在のversionと対応範囲、
+および``cargo-semver-checks``で検出して記録したRust API差分です。CLI引数やLanguage Server protocolなどの
+変更と移行方法は人が本文へ記載します。``cargo make release-contract``が、manifestの項目、配布計画との
+整合およびRelease Notesの形を検査します（xref:adr/0021-common-development-contract.adoc[ADR 0021]、
+xref:adr/0026-no-unverified-release-claims.adoc[ADR 0026]）。
 
 ``tools/release-metadata.mjs``を配布manifest、SPDX SBOMおよびchecksumの生成器とします。target別の成果物を
 一つのcandidateディレクトリへ集約した後、実際に公開するarchiveから次を決定的に生成します。
@@ -234,7 +237,8 @@ cargo make release-check
 ``acceptance``は、``verify``に加えて、CIが行う自動受入検証のうち現在のhostで実行できるもの
 （global成果物の実Chromium検査、native smoke、installation E2E）を実行します。
 ``release-check``は公開前の完全な検査です。標準の``verify``が行うsourceと公開Rust APIの検査に、配布物および
-導入経路の検査を加えます。公開Rust API差分とRelease Notesに記載した公開仕様は``semver-check``で照合します。
+導入経路の検査を加えます。``semver-check``は公開Rust APIを前のstable tagと比較し、検出した破壊的変更が
+``release/breaking-rust-api.json``の記録と一致することを検査します。
 GitHub Actionsのsource qualityも、
 変更pathに応じて実際の差分検査または対象外であることの記録を完了した``semver`` jobだけを成功として集約します。
 

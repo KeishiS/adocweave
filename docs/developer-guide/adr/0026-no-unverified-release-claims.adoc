@@ -1,0 +1,47 @@
+= ADR 0026: 未検査の変更なし宣言をRelease Notesへ生成しない
+:status: accepted
+
+== 文脈
+
+Release Notes生成器は、``release/unchanged-contracts.json``に列挙したCLI引数、Language Server protocol、
+設定schemaを「変更していません」と追記していました。``release-claims``は前のstable tagと比較する役割を
+持っていましたが、比較できたのは単一のJSONを正本とする設定schemaだけです。CLI引数とLanguage Server protocolは
+複数の実装と試験に分かれているため、未検査と表示したまま処理を成功させていました。
+
+この仕組みでは、人がRelease Notesへ破壊的変更を書いても、同じ節へ「変更していません」という文を追記できます。
+検査できない否定的な主張を自動生成することは、利用者へ誤った保証を示すだけでなく、宣言file、比較script、
+生成器および試験の対応を保つ負担にもなります。
+
+== 決定
+
+Release Notesへ、外部から利用する仕様が前の版から変わっていないという文を自動生成しません。
+``release/unchanged-contracts.json``と``release-claims``を廃止します。
+
+機械生成する内容は、現在の正本から直接決まる値と、``cargo-semver-checks``の検出結果と照合した
+``release/breaking-rust-api.json``のRust API差分に限定します。CLI引数、Language Server protocol、設定schema、
+WASM protocolなどの変更内容、利用者への影響および移行方法は、人が``release/notes.md``へ記載します。
+
+``semver-check``は公開Rust APIだけを前のstable tagと比較し、検出結果と記録の一致を検査します。設定schema、
+WASM protocolおよびtextlint packageの既存のschema試験、protocol試験、package内容の試験は、現在の実装が正本と
+一致することを引き続き検査します。ただし、これらの結果を前の版から変更がないという保証には使いません。
+
+この決定は、ADR 0022のうち生成TypeScript宣言を``release-claims``でtag間比較する部分を改訂します。
+Rustの型からTypeScript宣言を生成し、その宣言を現在の公開仕様とする決定は維持します。
+
+== 検討した代替案
+
+**比較できる設定schemaだけを変更なし宣言の対象に残す。** 一つの仕様について否定的な主張をするために、releaseごとの宣言、
+tagからのfile取得、version項目を除く比較およびRelease Notesへの追記を維持する必要があります。設定schemaを
+変更した場合は人が変更内容を記載し、現在のschemaは既存試験で検査できるため、維持費に見合いません。
+
+**CLI引数とLanguage Server protocolの比較器を追加する。** 意味のある比較には、複数の実装から公開面だけを
+抽出し、互換性を判定する新しい仕組みが必要です。変更頻度と個人開発の規模に対して複雑すぎるため採用しません。
+
+== 帰結
+
+Release Notes生成器は、検査していない変更なしの記述を公開しません。外部から利用する仕様を変更したときに
+人が記載する責務は残りますが、未検査の文を自動追記する仕組みに起因する矛盾はなくなります。
+
+設定schema、WASM protocolおよびtextlint packageについて、前のtagから変更がないことの比較は行いません。
+現在の実装と正本の一致を検査する既存試験は維持し、実際に変更した場合はRelease Notesの本文と移行節で
+説明します。

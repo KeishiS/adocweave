@@ -12,9 +12,7 @@ CLIとLanguage Serverのnative archiveは、次に挙げるLinux、macOSおよ�
 
 ## 公開契約と破壊的変更
 
-（WASM protocol schema versionとWorker protocol versionが前の版から変わったかを書きます。変えた場合は「WASM protocol schema versionをNからMへ更新しました。理由。」の形で書くと、到達値を生成器が正本と照合します。記載してから公開）
-
-textlint Processorの公開API、TxtASTへの変換結果および自動修正を行わない保証は変更していません。GitHub Release以外のregistryへpackageまたは拡張を公開しません。
+（CLI引数、Language Server protocol、設定schema、WASM protocolなど、前の版から変更した仕様の内容と影響を書きます。WASM protocolを変えた場合は「WASM protocol schema versionをNからMへ更新しました。理由。」の形で書くと、到達値を生成器が正本と照合します。利用者の操作は移行節へ記載してから公開）
 
 consumerは記載されたpackage versionを厳密に一致させてください。異なるversionのCLI、LSP、browser、Zed、VS Codeまたはtextlint向け配布物を混在させないでください。
 
