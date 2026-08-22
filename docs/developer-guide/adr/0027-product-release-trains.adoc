@@ -1,0 +1,80 @@
+= ADR 0027: 配布製品ごとのバージョンと公開単位
+:status: accepted
+
+== 文脈
+
+ADR 0023では、CLI、Language Server、Browser、textlint用Processor、VS Code拡張およびZed拡張を
+一つのバージョンとGitHub Releaseへまとめることを決めました。この構成では、Language Serverだけを
+修正した場合も、変更していないBrowserやtextlint用Processorを再構築し、同じ版として再公開する必要があります。
+
+製品間に必要なのは、すべての版番号が一致することではありません。CLIは単独で動作し、Browserとtextlint用
+Processorはそれぞれの配布物にWebAssemblyを同梱します。エディター拡張とLanguage Serverの間に必要なのは、
+拡張が利用する機能とLanguage Serverが提供する機能の互換性です。完全な版番号の一致は、この互換性とは別の条件です。
+
+== 決定
+
+=== 配布製品
+
+次の六つを独立した配布製品とします。
+
+* CLI
+* Language Server
+* Browser
+* textlint用Processor
+* VS Code拡張
+* Zed拡張
+
+各製品は自身のmanifestにバージョンの正本を持ちます。共通のRust crateは実装を共有する内部部品であり、
+配布製品として独立したバージョンを持ちません。内部部品を変更したときは、その変更が届く製品だけを更新します。
+
+tagは``adocweave-<product>/vX.Y.Z``とし、一つのGitHub Releaseには一製品の成果物だけを添付します。
+配布manifestは製品名、製品バージョン、source commitおよびその製品の成果物を記録します。変更していない製品の
+既存成果物を別のReleaseへコピーせず、checksum、SBOMおよびattestationも選択した製品だけを対象とします。
+
+=== Language Serverとの互換性
+
+Language Serverは製品バージョンとは別に整数の``lspApiVersion``を公開します。この値は、AdocWeave固有の設定、
+command、request、responseまたは通知の意味を互換性なく変更したときだけ増やします。通常の機能追加と不具合修正では
+増やしません。
+
+VS Code拡張とZed拡張は、次の値を別々に管理します。
+
+* 拡張自身の製品バージョン
+* 自動取得する``managedLspVersion``
+* 起動できる``lspApiVersion``の集合
+
+拡張は完全な製品バージョンの一致を互換条件にしません。明示した実行ファイルと``PATH``上の実行ファイルは、
+確認できる``lspApiVersion``が対応範囲なら、拡張と異なる製品バージョンでも使用できます。自動取得では可変な最新版を
+探索せず、``managedLspVersion``が示す不変のtagと配布manifestを使用します。この固定値を変更した拡張だけが、
+新しいLanguage Serverへ厳密に依存します。
+
+Browserとtextlint用Processorは、同梱したJavaScriptとWebAssemblyの境界を各製品のschemaまたはAPI世代で検査します。
+他製品のバージョンとは比較しません。
+
+=== 公開工程
+
+公開workflowは製品を一つ選び、その製品の正本からバージョン、tag、成果物およびRelease Notesを導出します。
+候補SHAの固定、検証済み成果物の再利用、再発行の拒否、GitHub Environmentによる権限境界はADR 0023の決定を維持します。
+
+Open VSXへの公開はVS Code拡張、textlintの公開後検査はtextlint用Processor、native archiveの検査はCLIまたは
+Language Serverを選択した場合だけ実行します。製品に関係しない公開後処理は起動しません。
+
+== 検討した代替案
+
+**製品バージョンをSemVerの範囲で比較する。** バージョン範囲から、AdocWeave固有のLSP機能が利用できるかは
+判断できません。0.y版ではminor版の意味も安定しないため、互換性を直接表す``lspApiVersion``を採用します。
+
+**対応するLanguage Serverの最新版を実行時に探索する。** 可変の一覧、選択規則、通信失敗時の処理および検証対象が
+増えます。個人開発の範囲では、拡張が検証済みの一版を固定する方が単純で再現できます。
+
+**共通Rust crateにも個別の公開バージョンを与える。** これらのcrateはregistryへ公開せず、六製品へ静的に
+組み込まれます。利用者が直接選ぶ配布物ではないため、別のrelease trainは設けません。
+
+== 帰結
+
+Language Serverだけを変更したreleaseでは、Browserとtextlint用Processorのバージョン更新、構築および再公開を
+行いません。製品間の対応は版番号の偶然の一致ではなく、配布manifestと境界ごとのAPI世代から確認できます。
+
+ADR 0023のうち、単一バージョン、単一``vX.Y.Z`` tag、全成果物を一つのReleaseへまとめる決定、ならびに
+エディター拡張とLanguage Serverの完全一致を要求する決定を本ADRで置き換えます。公開権限、候補SHAの固定、
+検証済み成果物の再利用およびregistryを増やさない決定は維持します。
