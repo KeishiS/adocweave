@@ -232,18 +232,6 @@ impl IncludeFilesystem {
         Self
     }
 
-    /// Creates an independent session narrowed from retained authority.
-    ///
-    /// This is intended for a standalone validation pass. Work that must share
-    /// include read limits must keep using the same session instead.
-    pub fn scoped_session(
-        &self,
-        authority: &LocalFilesystemSession,
-        root: &Path,
-    ) -> Result<LocalFilesystemSession, ResourceError> {
-        authority.scoped_session(root)
-    }
-
     pub fn read(
         &self,
         session: &mut LocalFilesystemSession,

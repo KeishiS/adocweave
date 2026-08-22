@@ -244,38 +244,6 @@ fn inspection_reads_no_bytes_and_creates_no_binding() {
 }
 
 #[test]
-fn scoped_session_has_an_independent_bounded_inspection_budget() {
-    let root = TestDir::new("scoped-inspection");
-    fs::write(root.path().join("first.adoc"), "first\n").expect("first");
-    fs::write(root.path().join("second.adoc"), "second\n").expect("second");
-    let limits = FilesystemReadLimits {
-        max_files: 1,
-        ..FilesystemReadLimits::default()
-    };
-    let authority = LocalFilesystemPolicy::new([root.path().to_owned()], limits)
-        .and_then(|policy| policy.session())
-        .expect("authority");
-    let mut scoped = IncludeFilesystem::new()
-        .scoped_session(&authority, root.path())
-        .expect("scoped session");
-
-    assert!(matches!(
-        IncludeFilesystem::new().inspect(
-            &mut scoped,
-            IncludeFilesystemRequest::new(source_id("first"), root.path(), "first.adoc"),
-        ),
-        IncludeFilesystemInspectionOutcome::Found(_)
-    ));
-    assert!(matches!(
-        IncludeFilesystem::new().inspect(
-            &mut scoped,
-            IncludeFilesystemRequest::new(source_id("second"), root.path(), "second.adoc"),
-        ),
-        IncludeFilesystemInspectionOutcome::Failed(_)
-    ));
-}
-
-#[test]
 fn one_job_enforces_a_shared_limit_across_sessions() {
     let first_root = TestDir::new("shared-first");
     let second_root = TestDir::new("shared-second");

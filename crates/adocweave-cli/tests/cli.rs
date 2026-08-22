@@ -1940,7 +1940,7 @@ fn local_target_permission_failure_has_stable_cli_contract() {
 fn local_target_inspection_limit_has_stable_cli_contract() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/local-target/permission-limit/limit");
-    let run = |json| {
+    let run = |json: bool, include: bool| {
         let mut command = adocweave();
         command.current_dir(&root).args([
             "check",
@@ -1950,6 +1950,9 @@ fn local_target_inspection_limit_has_stable_cli_contract() {
             "--project-root",
             ".",
         ]);
+        if !include {
+            command.arg("--no-include");
+        }
         if json {
             command.arg("--json");
         }
@@ -1959,7 +1962,7 @@ fn local_target_inspection_limit_has_stable_cli_contract() {
             .expect("inspection limit fixture")
     };
 
-    let human = run(false);
+    let human = run(false, true);
     assert!(!human.status.success());
     assert!(human.stderr.is_empty());
     assert_eq!(
@@ -1967,7 +1970,44 @@ fn local_target_inspection_limit_has_stable_cli_contract() {
         b"root.adoc:1:6: error[local-target-limit-exceeded]: local target inspection limit exceeded (target: first.adoc)\nroot.adoc:2:6: error[local-target-limit-exceeded]: local target inspection limit exceeded (target: second.adoc)\n"
     );
 
-    let json = run(true);
+    let without_include = run(false, false);
+    assert_eq!(without_include.status, human.status);
+    assert_eq!(without_include.stderr, human.stderr);
+    assert_eq!(without_include.stdout, human.stdout);
+
+    let mut stdin = adocweave();
+    let mut stdin = stdin
+        .current_dir(&root)
+        .args([
+            "check",
+            "--config",
+            ".adocweave.toml",
+            "--no-include",
+            "--local-targets",
+            "--project-root",
+            ".",
+            "-",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("stdin inspection limit command");
+    stdin
+        .stdin
+        .take()
+        .expect("piped stdin")
+        .write_all(b"xref:first.adoc[first]\nxref:second.adoc[second]\n")
+        .expect("stdin source");
+    let stdin = stdin.wait_with_output().expect("stdin inspection limit");
+    assert!(!stdin.status.success());
+    assert!(stdin.stderr.is_empty());
+    assert_eq!(
+        stdin.stdout,
+        b"<stdin>:2:6: error[local-target-limit-exceeded]: local target inspection limit exceeded (target: second.adoc)\n"
+    );
+
+    let json = run(true, true);
     assert!(!json.status.success());
     assert!(json.stderr.is_empty());
     let diagnostics: serde_json::Value =

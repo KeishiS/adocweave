@@ -401,23 +401,17 @@ fn process_check(
     preprocess_options: &adocweave::preprocess::PreprocessOptions,
     local: Option<(
         &std::path::Path,
-        &std::path::Path,
         &str,
-        &adocweave_host::LocalFilesystemSession,
+        &mut adocweave_host::LocalFilesystemSession,
     )>,
 ) -> Result<CheckOutcome, CliError> {
-    let local = local
-        .map(|(base, root, source_id, filesystem)| {
-            Ok(commands::check::LocalContext {
-                base,
-                source_id,
-                session: adocweave_host::IncludeFilesystem::new()
-                    .scoped_session(filesystem, root)
-                    .map_err(local_include::LocalIncludeError::Host)
-                    .map_err(CliError::Include)?,
-            })
-        })
-        .transpose()?;
+    let local = local.map(
+        |(base, source_id, filesystem)| commands::check::LocalContext {
+            base,
+            source_id,
+            session: filesystem,
+        },
+    );
     commands::check::process(
         input,
         check,
@@ -1141,7 +1135,7 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                 }
                 let local_context = project_root
                     .as_ref()
-                    .map(|root| (source_base.as_path(), root.as_path(), source_id.as_ref()));
+                    .map(|_| (source_base.as_path(), source_id.as_ref()));
                 let outcome = if include {
                     let source = decode_input(&checked)?;
                     let base_dir = cli_base_dir.as_deref().unwrap_or(source_base.as_path());
@@ -1182,8 +1176,7 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                         &source_id,
                         &config.analysis,
                         &config.preprocess,
-                        local_context
-                            .map(|(base, root, source_id)| (base, root, source_id, &*filesystem)),
+                        local_context.map(|(base, source_id)| (base, source_id, &mut *filesystem)),
                     )?
                 };
                 counts.merge(outcome.counts);
@@ -1420,7 +1413,7 @@ fn run() -> Result<ExitCode, CliError> {
                     .as_deref()
                     .and_then(std::path::Path::parent)
                     .map_or_else(|| project_root.clone(), PathBuf::from);
-                (base, project_root.clone(), source_id.clone())
+                (base, source_id.clone())
             });
             let primary_base = canonical_input
                 .as_deref()
@@ -1457,7 +1450,7 @@ fn run() -> Result<ExitCode, CliError> {
             {
                 let base = local_context
                     .as_ref()
-                    .map(|(base, _, _)| base.clone())
+                    .map(|(base, _)| base.clone())
                     .unwrap_or_else(|| project_root.to_owned());
                 let (confined_roots, independent_roots) = processing_filesystem_roots(
                     &authority_root,
@@ -1517,7 +1510,7 @@ fn run() -> Result<ExitCode, CliError> {
                 }
                 let source_base = local_context
                     .as_ref()
-                    .map(|(base, _, _)| base.as_path())
+                    .map(|(base, _)| base.as_path())
                     .unwrap_or(&base_dir);
                 let include_input = prepare_includes(IncludePreparation {
                     source,
@@ -1583,15 +1576,10 @@ fn run() -> Result<ExitCode, CliError> {
                         &source_id,
                         &project_config.analysis,
                         &project_config.preprocess,
-                        local_context.as_ref().and_then(|(base, root, source_id)| {
-                            primary_filesystem.as_ref().map(|filesystem| {
-                                (
-                                    base.as_path(),
-                                    root.as_path(),
-                                    source_id.as_str(),
-                                    filesystem,
-                                )
-                            })
+                        local_context.as_ref().and_then(|(base, source_id)| {
+                            primary_filesystem
+                                .as_mut()
+                                .map(|filesystem| (base.as_path(), source_id.as_str(), filesystem))
                         }),
                     )
                 }?;

@@ -600,15 +600,6 @@ impl LocalFilesystemSession {
         self.state.limits
     }
 
-    pub(crate) fn scoped_session(&self, root: &Path) -> Result<Self, ResourceError> {
-        let policy = self
-            .policy_for_path(root)
-            .ok_or_else(|| ResourceError::OutsideRoots(root.to_owned()))?
-            .derive_confined_directory(root)
-            .map_err(ResourceError::from)?;
-        LocalFilesystemPolicy::from_selected(vec![policy], self.limits())?.session()
-    }
-
     /// Returns the retained authority for the deepest root containing `path`.
     pub fn policy_for_path(&self, path: &Path) -> Option<&LocalTargetPolicy> {
         self.state

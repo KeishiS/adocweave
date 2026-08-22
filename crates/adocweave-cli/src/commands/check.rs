@@ -35,7 +35,7 @@ pub(crate) enum Error {
 pub(crate) struct LocalContext<'context> {
     pub(crate) base: &'context Path,
     pub(crate) source_id: &'context str,
-    pub(crate) session: adocweave_host::LocalFilesystemSession,
+    pub(crate) session: &'context mut adocweave_host::LocalFilesystemSession,
 }
 
 fn analysis_options(
@@ -105,7 +105,7 @@ pub(crate) fn process(
     ))
     .analyze(source)
     .map_err(Error::Analysis)?;
-    let mut host = if let Some(mut local) = local {
+    let mut host = if let Some(local) = local {
         let mut targets = analysis.local_targets();
         let snapshot =
             std::iter::empty::<(String, adocweave::preprocess::ResourceDocument)>().collect();
@@ -133,7 +133,7 @@ pub(crate) fn process(
             local.base,
             local.source_id,
             source,
-            &mut local.session,
+            local.session,
         );
         diagnostics.retain(|diagnostic| {
             diagnostic.code != "local-target-missing"
