@@ -91,7 +91,8 @@ function entries() {
     repository: { type: "git", url: "https://github.com/KeishiS/adocweave.git", directory: "packages/textlint-plugin-asciidoc" } };
   return contract.files.map(({ path }) => regular(`package/${path}`,
     path === "package.json" ? `${JSON.stringify(manifest)}\n`
-      : path === contract.wasm.wrapperPath ? "module.exports = { parseText() {} };\n"
+      : path === contract.wasm.wrapperPath
+        ? "module.exports = { adapterApiVersion() { return 1; }, parseText() {} };\n"
         : path === contract.wasm.binaryPath ? minimalWasm() : sourceFor(path)));
 }
 

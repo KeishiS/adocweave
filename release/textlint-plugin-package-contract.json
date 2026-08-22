@@ -32,7 +32,7 @@
     { "path": "wasm/adocweave_textlint_wasm_bg.wasm", "generator": "wasm-binary" }
   ],
   "wasm": {
-    "exportNames": ["parseText"],
+    "exportNames": ["adapterApiVersion", "parseText"],
     "maximumMemoryBytes": 268435456,
     "wrapperPath": "wasm/adocweave_textlint_wasm.cjs",
     "binaryPath": "wasm/adocweave_textlint_wasm_bg.wasm"
