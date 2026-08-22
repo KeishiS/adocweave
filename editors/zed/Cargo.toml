@@ -12,6 +12,4 @@ crate-type = ["cdylib"]
 path = "src/lib.rs"
 
 [dependencies]
-sha2 = "0.11.0"
 zed_extension_api = "0.7.0"
-zip = { version = "=7.1.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }

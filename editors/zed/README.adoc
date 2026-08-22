@@ -4,10 +4,10 @@
 xref:../../docs/developer-guide/zed-development.adoc[Zedへ開発版を導入する]を基準とする。
 
 このディレクトリはZedが選択する拡張rootであり、`extension.toml`、Rust製WASM adapterおよび
-AsciiDoc言語設定を保持する。binaryの解決、公開Releaseからの安全な取得およびcache仕様は
-xref:../../docs/user-guide/release-installation.adoc#zed-installation[Zedへの導入]を参照する。拡張自身の製品バージョンと
-自動取得するLanguage Serverの``managedLspVersion``は独立しており、配布manifestの``lspApiVersion``で互換性を
-判定する。開発時はworktreeの``PATH``にある``adocweave-lsp``がmanaged binaryより優先される。
+AsciiDoc言語設定を保持する。Language Serverの導入と選択は
+xref:../../docs/user-guide/release-installation.adoc#zed-installation[Zedへの導入]を参照する。拡張は、設定した
+絶対path、Zedから見える``PATH``の順に``adocweave-lsp``を探す。Language Serverの取得、更新、互換性確認および
+process管理は担当せず、標準のLSP初期化とZedのclientへ委譲する。
 
 基本的な構文色付けは``languages/asciidoc``と``languages/asciidoc_inline``のTree-sitter queryが担当する。
 LSP Semantic Tokensはリンク、参照、anchor等の意味的補足であり、基本色付けの代替ではない。

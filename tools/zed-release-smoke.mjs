@@ -21,7 +21,6 @@ const expected = [
   `${packageName}/README.adoc`,
   `${packageName}/THIRD_PARTY_NOTICES.adoc`,
   `${packageName}/extension.toml`,
-  `${packageName}/platforms.json`,
   `${packageName}/languages/`,
   `${packageName}/languages/asciidoc/`,
   `${packageName}/languages/asciidoc/config.toml`,
@@ -32,7 +31,6 @@ const expected = [
   `${packageName}/languages/asciidoc_inline/highlights.scm`,
   `${packageName}/languages/asciidoc_inline/injections.scm`,
   `${packageName}/src/`,
-  `${packageName}/src/install.rs`,
   `${packageName}/src/lib.rs`,
 ].sort();
 const actual = execFileSync("tar", ["-tJf", archive], { encoding: "utf8" }).trim().split("\n").sort();

@@ -6,8 +6,7 @@
 Zedの開発拡張は次のファイルを入口とします。
 link:../../editors/zed/extension.toml[`editors/zed/extension.toml`]
 拡張はAsciiDoc用Tree-sitter grammar、inline grammarおよびhighlight／injection queryを提供します。
-開発手順ではworktreeの``PATH``から``adocweave-lsp``を探して起動するため、
-公開Releaseからmanaged binaryをdownloadしません。公開版におけるbinaryの選択と取得は
+開発手順ではworktreeの``PATH``から``adocweave-lsp``を探して起動します。公開版における実行ファイルの選択は
 xref:../user-guide/release-installation.adoc#zed-installation[Zedへの導入]を参照します。
 
 == 前提条件
@@ -54,8 +53,7 @@ cargo make test-zed
 cargo make check-zed-wasm
 ----
 
-``test-zed``はmanaged binaryのmanifest検査、hash不一致、archive抽出、キャッシュ改変および更新失敗時の
-rollbackも確認します。
+``test-zed``は絶対pathの判定と、起動commandの引数が空でZedのshell環境だけを使うことを検査します。
 
 . 同じshellでLanguage Serverを``PATH``へ追加し、隔離したZedをforegroundで起動します。
 
@@ -192,10 +190,10 @@ grammarリポジトリの取得結果または``extension.toml``のリポジト�
 AdocWeaveのRust parserをCへ変換する必要はありません。取得キャッシュを消して再導入する前に、Zed logに表示された
 grammar checkoutが固定コミットと一致することを確認します。
 
-``adocweave-lsp``の取得または起動に失敗する::
-local buildを使う場合は``command -v adocweave-lsp``と``$PWD/target/debug/adocweave-lsp --version``を、Zedを起動する
-shellで確認します。managed binaryを使う場合はZed logにあるinstallation statusを確認し、バージョンと同じGitHub Releaseに
-manifestと対象platformのLSP assetがあることを確認します。
+``adocweave-lsp``の確認または起動に失敗する::
+``command -v adocweave-lsp``と``adocweave-lsp --version``を、Zedを起動するshellで確認します。明示設定を
+使う場合は``lsp.adocweave.binary.path``が相対pathではなく実行ファイルの絶対pathか確認します。LSP初期化に
+失敗した場合はZed logを確認し、Language Serverが返した標準LSPのcapabilityとエラーを基準に切り分けます。
 
 AsciiDocとして認識されるが色付けされない::
 dev extensionを再導入して、Zed logに``asciidoc``と``asciidoc_inline``のgrammar build失敗がないことを確認します。
