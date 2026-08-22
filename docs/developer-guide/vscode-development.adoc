@@ -13,6 +13,13 @@ managed binaryの取得を担当します。解析、診断、整形および意
 TextMate grammarはLanguage Server起動前の基本色付けを担当します。Semantic Tokensはlink、xref、anchor、
 literalなどの意味的な補足を担当し、見出しの基本色付けを置き換えません。
 
+== アイコン
+
+拡張画面と拡張registryへ表示するアイコンは``editors/vscode/resources/icon.png``です。VSIXへ同梱するのは
+128×128のこのfileだけで、元画像``resources/icon-source.png``(1254×1254)は同梱しません。元画像はChatGPTの
+画像生成で作成したもので、このリポジトリの成果物として扱います。図案を変更する場合は元画像を差し替え、
+同じ縦横比のまま128×128へ縮小して``icon.png``を更新します。
+
 == 自動検証
 
 Nix開発環境で次を実行します。
