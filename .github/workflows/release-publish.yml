@@ -84,11 +84,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PLAN: ${{ inputs.plan }}
+          PRODUCT: ${{ inputs.product }}
         run: |
           tag="$(jq -r '.announcement_tag' <<<"$PLAN")"
           title="$(jq -r '.title' <<<"$PLAN")"
-          version="$(jq -r '.productVersion' <<<"$PLAN")"
-          body="$(node tools/release-notes.mjs "v$version" </dev/null)"
+          body="$(node tools/release-notes.mjs "$PRODUCT" "$tag" </dev/null)"
           draft="$(gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
             -f tag_name="$tag" \
             -f name="$title" \

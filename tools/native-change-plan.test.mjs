@@ -255,7 +255,7 @@ test("公開済みversionのmain pushではmanifest以外を変更してもcandi
 });
 
 test("version tagではmain candidateを再構築しない", () => {
-  const plan = nativeChangePlan("push", [], distributionPlan, "refs/tags/v0.17.0");
+  const plan = nativeChangePlan("push", [], distributionPlan, "refs/tags/adocweave-cli/v0.17.0");
   assert.equal(plan.candidateRequired, false);
   assert.equal(plan.preflightRequired, true);
 });

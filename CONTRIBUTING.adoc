@@ -294,6 +294,7 @@ git fetch upstream main
 candidate_sha="$(git rev-parse upstream/main)"
 gh workflow run release-dispatch.yml \
   --ref main \
+  -f product=lsp \
   -f candidate_sha="$candidate_sha"
 ----
 . workflowが候補SHAとdispatch時点のmain先端の一致、同じSHAのcandidate成功、既存tagとReleaseの不在を検査し、
@@ -302,11 +303,10 @@ gh workflow run release-dispatch.yml \
 . GitHub Releaseがstableとして公開され、予定されたassetだけを含むことを確認します。
 . checksumとattestationを検証し、xref:#release-checklist[Release checklist]に従って受け入れ結果を記録します。
 
-Release Notesの本文は``release/notes.md``に人が書きます。題名は``# AdocWeave vX.Y.Z``とし、
+Release Notesの本文は``release/notes.md``に人が書きます。題名は``# AdocWeave <product> vX.Y.Z``とし、
 ``## 主な変更``、``## 対応環境``、``## 公開契約と破壊的変更``、``## vX.Y.Zへの移行``、
 ``## 更新とロールバック``、``## 既知の制約``、``## 配布物の検証``の7見出しをこの順に一度ずつ置いて、
-各節に本文を書きます。この見出しはMarginalis、Renkanと共通です。配布target、公開仕様の現在のversion、
-検出済みのRust API破壊的変更と移行、textlintの対応範囲は``tools/release-notes.mjs``が正本のfileから生成して
+各節に本文を書きます。選択した製品のversionと互換性判断に使うAPI世代は``tools/release-notes.mjs``が正本のfileから生成して
 各節の後ろへ追記するため、本文には書きません。``cargo make release-contract``（``verify``に含む）がこの形を
 検査し、公開workflowが同じtoolでGitHub Releaseの本文を生成します。
 
