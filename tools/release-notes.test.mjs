@@ -49,7 +49,7 @@ test("関連するAPI世代だけを製品ごとに返す", () => {
   assert.deepEqual(relatedApiVersions("cli"), []);
   assert.deepEqual(relatedApiVersions("lsp"), []);
   assert.deepEqual(relatedApiVersions("browser"), [
-    { name: "WASM protocol schema", version: 14 },
+    { name: "WASM protocol schema", version: 15 },
   ]);
   assert.deepEqual(relatedApiVersions("textlint"), [{ name: "textlint adapter API", version: 1 }]);
   assert.deepEqual(relatedApiVersions("vscode"), []);
