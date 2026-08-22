@@ -154,10 +154,11 @@ pub mod output {
     }
     pub mod projection {
         pub use crate::projection::{
-            BlockPresentationKind, BlockPresentationProjection, DocumentProjection, ExternalLink,
-            FormulaKind, FormulaProjection, OrderedListProjection, ProjectedText, ReferenceEdge,
+            BlockPresentationKind, BlockPresentationProjection, ExternalLink, FormulaKind,
+            FormulaProjection, OrderedListProjection, ProjectedText, ReferenceEdge,
             RenderingFeatures, SearchTextKind, SearchTextSegment, SearchableText,
-            SourceBlockProjection, project, searchable_text,
+            SourceBlockProjection, block_presentations, document_title, external_links, formulas,
+            ordered_lists, reference_edges, rendering_features, searchable_text, source_blocks,
         };
         pub use crate::text_role::{
             BlockTextRole, block_text_role, delimited_text_role, table_cell_text_role,

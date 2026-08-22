@@ -57,3 +57,16 @@ fn conformance_fixture_is_reused_by_editor_projections() {
     let tokens = serde_json::to_value(tokens).expect("serialize tokens");
     assert!(!tokens["data"].as_array().expect("token data").is_empty());
 }
+
+#[test]
+fn lsp_link_features_do_not_build_the_full_document_projection() {
+    const NAVIGATION: &str = include_str!("../navigation.rs");
+    const SEMANTIC_TOKENS: &str = include_str!("../semantic_tokens.rs");
+
+    for source in [NAVIGATION, SEMANTIC_TOKENS] {
+        assert!(!source.contains("output::projection::project"));
+        assert!(!source.contains("projection::project"));
+        assert!(!source.contains("RenderInputs"));
+        assert!(source.contains(".links()"));
+    }
+}

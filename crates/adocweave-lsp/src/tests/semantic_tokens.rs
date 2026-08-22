@@ -57,3 +57,28 @@ fn semantic_tokens_leave_syntactic_headings_to_editor_grammars() {
 
     assert_eq!(value["data"], json!([]));
 }
+
+#[test]
+fn external_link_tokens_keep_exact_ranges_even_when_document_links_reject_the_url() {
+    let source = "😀 https://example.com/path[Safe]\n\
+javascript:alert(1)[Unsafe]\n\
+https://example.com:99999[Invalid port]\n";
+    for (encoding, expected_start) in [("utf-8", 5), ("utf-16", 3)] {
+        let mut service = LanguageService::default();
+        initialize(&mut service, &[encoding]);
+        let document = uri("file:///external-link-tokens.adoc");
+        open(&mut service, document.as_str(), 1, source);
+
+        let tokens = service
+            .semantic_tokens(&document)
+            .expect("semantic tokens")
+            .expect("tokens");
+        let value = serde_json::to_value(tokens).expect("serialize");
+
+        assert_eq!(
+            value["data"],
+            json!([0, expected_start, 24, 0, 0, 1, 0, 19, 0, 0, 1, 0, 25, 0, 0]),
+            "{encoding}"
+        );
+    }
+}

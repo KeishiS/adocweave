@@ -211,10 +211,9 @@ fn browser_version_and_toolchains_have_separate_authorities() {
 /// never disagree with the command that writes it. Cases that expect an error,
 /// and products a case does not name, contribute nothing.
 ///
-/// Some shared cases reuse a file from the public conformance set. Those files
-/// belong to `public_conformance_fixture`, which writes them in the byte form
-/// the core crate emits, so they are left out here: one file cannot answer to
-/// two regeneration commands.
+/// Some shared cases reuse files from the public conformance set. Projection
+/// files belong to this adapter because only it owns the public projection
+/// protocol. Other reused products remain owned by the core fixture command.
 fn expected_products(entry: &Value, fixtures: &Path) -> Vec<(PathBuf, String)> {
     if entry["expectedErrorCode"].is_string() {
         return Vec::new();
@@ -224,7 +223,7 @@ fn expected_products(entry: &Value, fixtures: &Path) -> Vec<(PathBuf, String)> {
     let mut products = Vec::new();
     let mut text = |field: &str, content: String| {
         if let Some(file) = entry[field].as_str()
-            && !file.starts_with("../")
+            && (!file.starts_with("../") || field == "expectedProjectionFile")
         {
             products.push((resolve(fixtures, file), content));
         }
@@ -253,7 +252,16 @@ fn expected_products(entry: &Value, fixtures: &Path) -> Vec<(PathBuf, String)> {
         ),
     ] {
         let value = value.expect("product serializes as JSON");
-        text(field, format!("{}\n", canonical_json(&value)));
+        let json = if field == "expectedProjectionFile"
+            && entry[field]
+                .as_str()
+                .is_some_and(|file| file.starts_with("../"))
+        {
+            serde_json::to_string(&value).expect("JSON product formats")
+        } else {
+            canonical_json(&value)
+        };
+        text(field, format!("{json}\n"));
     }
     products
 }

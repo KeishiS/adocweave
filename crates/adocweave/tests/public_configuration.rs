@@ -67,6 +67,41 @@ fn projection_product_field_types_are_publicly_nameable() {
 }
 
 #[test]
+fn focused_projection_queries_are_publicly_nameable() {
+    use adocweave::output::projection::{
+        BlockPresentationProjection, ExternalLink, FormulaProjection, OrderedListProjection,
+        ProjectedText, ReferenceEdge, RenderingFeatures, SearchableText, SourceBlockProjection,
+        block_presentations, document_title, external_links, formulas, ordered_lists,
+        reference_edges, rendering_features, searchable_text, source_blocks,
+    };
+
+    let analysis = Engine::new(AnalysisOptions::default())
+        .analyze("= Title\n\nhttps://example.com[]\n")
+        .expect("analysis");
+    let inputs = adocweave::resolution::RenderInputs::default();
+
+    let _: Option<ProjectedText> = document_title(&analysis);
+    let _: Vec<ExternalLink> = external_links(&analysis);
+    let _: Vec<ReferenceEdge> = reference_edges(&analysis, &inputs);
+    let _: Vec<SourceBlockProjection> = source_blocks(&analysis);
+    let _: Vec<FormulaProjection> = formulas(&analysis);
+    let _: Vec<OrderedListProjection> = ordered_lists(&analysis);
+    let _: Vec<BlockPresentationProjection> = block_presentations(&analysis);
+    let _: SearchableText = searchable_text(&analysis);
+    let _: RenderingFeatures = rendering_features(&analysis);
+}
+
+#[test]
+fn focused_projection_queries_have_no_full_document_aggregate_or_wire_serializer() {
+    const PROJECTION: &str = include_str!("../src/projection.rs");
+
+    assert!(!PROJECTION.contains("struct DocumentProjection"));
+    assert!(!PROJECTION.contains("ConformanceProjection"));
+    assert!(!PROJECTION.contains("mod wire"));
+    assert!(!PROJECTION.contains("serde_json"));
+}
+
+#[test]
 fn cancellable_lint_api_is_public() {
     let analysis = Engine::new(AnalysisOptions::default())
         .analyze("paragraph\n")

@@ -2,9 +2,7 @@ use adocweave::SourceId;
 
 use crate::VERSION;
 
-use crate::response_conversion::{
-    wasm_diagnostics, wasm_document_projection, wasm_document_symbols, wasm_text_range,
-};
+use crate::response_conversion::{wasm_diagnostics, wasm_document_symbols, wasm_text_range};
 use crate::{
     ParseSummary, WasmAttributeBindingQuery, WasmAttributeExpansionError,
     WasmAttributeQueryProduct, WasmAttributeReferenceQuery, WasmAttributeValueContinuation,
@@ -23,7 +21,7 @@ pub(crate) struct ResponseProducts {
     pub(crate) resource_queries: Option<Vec<adocweave::resolution::ResourceQuery>>,
     pub(crate) diagnostics: Option<Vec<adocweave::output::diagnostics::Diagnostic>>,
     pub(crate) symbols: Option<Vec<adocweave::semantic::DocumentSymbol>>,
-    pub(crate) projection: Option<adocweave::output::projection::DocumentProjection>,
+    pub(crate) projection: Option<crate::WasmDocumentProjection>,
 }
 
 pub(crate) fn project_response(
@@ -100,7 +98,7 @@ pub(crate) fn project_response(
             .symbols
             .map(wasm_document_symbols)
             .unwrap_or_default(),
-        projection: products.projection.map(wasm_document_projection),
+        projection: products.projection,
     })
 }
 

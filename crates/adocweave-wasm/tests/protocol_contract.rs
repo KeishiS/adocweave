@@ -275,10 +275,14 @@ fn production_response_path_does_not_round_trip_conformance_json() {
     assert!(!PROJECTION.contains("parse_optional_product"));
     assert!(!PROJECTION.contains("serde_json::from_str"));
     assert!(!CONVERSION.contains("serde_json::from_str"));
+    assert!(!CONVERSION.contains("doc: DocumentProjection"));
+    assert!(!CONVERSION.contains("projection::DocumentProjection"));
     assert!(FACADE.contains("ResponseProducts"));
+    assert!(FACADE.contains("wasm_document_projection(analysis, &render_inputs)"));
     assert!(PROJECTION.contains("wasm_diagnostics"));
-    assert!(PROJECTION.contains("wasm_document_projection"));
+    assert!(!PROJECTION.contains("wasm_document_projection"));
     assert!(PROJECTION.contains("wasm_document_symbols"));
+    assert!(CONVERSION.contains("fn wasm_document_projection("));
 }
 
 #[test]

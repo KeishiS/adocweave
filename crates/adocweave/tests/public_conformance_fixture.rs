@@ -329,14 +329,6 @@ fn public_fixtures_match_declared_products_and_stable_contracts() {
 
         let expected_projection: Value =
             serde_json::from_str(&read(&case.files.projection)).expect("projection JSON");
-        let actual_projection: Value =
-            serde_json::from_str(&actual.projection_json).expect("generated projection JSON");
-        assert_eq!(
-            actual_projection, expected_projection,
-            "{}: projection",
-            case.name
-        );
-
         let expected_diagnostics: Value =
             serde_json::from_str(&read(&case.files.diagnostics)).expect("diagnostics JSON");
         let actual_diagnostics: Value =
@@ -361,7 +353,7 @@ fn public_fixtures_match_declared_products_and_stable_contracts() {
 
         for assertion in &case.stable_contract.projection_assertions {
             assert_eq!(
-                actual_projection.pointer(&assertion.pointer),
+                expected_projection.pointer(&assertion.pointer),
                 Some(&assertion.value),
                 "{}: projection pointer {}",
                 case.name,
@@ -401,7 +393,6 @@ fn public_fixture_regeneration_is_clean() {
             case.name
         );
         for (path, generated) in [
-            (&case.files.projection, actual.projection_json),
             (&case.files.diagnostics, actual.diagnostics_json),
             (
                 &case.files.render_diagnostics,
@@ -425,11 +416,6 @@ fn regenerate_public_fixture_products() {
     for case in &manifest().cases {
         let actual = generated(case);
         fs::write(root().join(&case.files.html), actual.html).expect("write HTML fixture");
-        fs::write(
-            root().join(&case.files.projection),
-            format!("{}\n", actual.projection_json),
-        )
-        .expect("write projection fixture");
         fs::write(
             root().join(&case.files.diagnostics),
             format!("{}\n", actual.diagnostics_json),

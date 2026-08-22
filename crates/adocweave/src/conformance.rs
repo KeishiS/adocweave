@@ -8,7 +8,6 @@ use crate::diagnostic::render_json as render_diagnostics_json;
 use crate::document::{document_symbols, render_symbols_json};
 use crate::html::{RenderPolicy, render_with_inputs};
 use crate::inline_model::Inline;
-use crate::projection::project;
 use crate::reference::ReferenceKey;
 use crate::render::RenderInputs;
 use crate::source::TextRange;
@@ -55,7 +54,6 @@ pub struct ConformanceSnapshot {
     pub diagnostics_json: String,
     pub render_diagnostics_json: String,
     pub symbols_json: String,
-    pub projection_json: String,
     pub html: String,
 }
 
@@ -72,7 +70,6 @@ pub fn snapshot(
         diagnostics_json: render_diagnostics_json(analysis.diagnostics()),
         render_diagnostics_json: render_diagnostics_json(&html.diagnostics),
         symbols_json: render_symbols_json(&document_symbols(analysis.document())),
-        projection_json: project(analysis, inputs).render_json(),
         html: html.html,
     }
 }
@@ -542,7 +539,6 @@ mod tests {
         assert!(first.syntax.contains("Document@"));
         assert!(first.ast.contains("\"schemaVersion\":2"));
         assert!(first.ast.contains("local-reference"));
-        assert!(first.projection_json.contains("referenceEdges"));
         assert!(first.html.contains("href=\"#target\""));
     }
 

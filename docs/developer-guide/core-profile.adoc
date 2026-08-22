@@ -31,25 +31,55 @@ xref:../user-guide/syntax-support.adoc[対応しているAsciiDocの書式]に�
 [#document-projection]
 == 構造情報
 
-``adocweave::output::projection::project``は、一つの``Analysis``と同じrevisionの``RenderInputs``から、
-HTMLに依存しない``DocumentProjection``を生成します。生成時にソースを再解析せず、ファイルシステム、ネットワーク、
-DBまたはアプリ固有のschemaへアクセスしません。
+``adocweave::output::projection``は、一つの``Analysis``から必要な構造情報だけを取得するqueryを提供します。
+各queryはHTMLを生成せず、ソースを再解析せず、ファイルシステム、ネットワーク、DBまたはアプリ固有のschemaへ
+アクセスしません。
 
-構造情報には次を含みます。
+[cols="1,3",options="header"]
+|===
+|query |取得する情報
 
-* 文書タイトル、見出し、明示anchorおよび文書構造
-* 通常の外部linkと、文書内・文書間・任意schemeのxref
-* Source block、数式の表示形式・言語・未加工のソース・rangeおよびmedia resource
-* admonition、quote、verse、example、sidebar、open、collapsible、figure、tableの各block presentation（title、role、展開状態、
-  番号付きcaption）と、文書内のcaption一覧
-* Footnote、bibliographyおよび階層indexのcatalog
-* TOC、appendix、book partおよびmanpage header
-* 検索用文字列と元のソースのrange
-* 生成元の``SourceId``とパッケージバージョン
+|``document_title``
+|文書タイトル、表示文字列および元のrange
 
-通常linkは``ExternalLink``、xrefは``ReferenceEdge``として区別します。xrefの参照先は文書内、別文書または
-任意schemeのいずれかです。``RenderInputs``を渡した場合はソースのrangeが一致するedgeだけへ解決結果を
-追加し、構造情報の生成中には参照を解決しません。
+|``external_links``
+|通常の外部link、その表示文字列、対象およびrange
+
+|``reference_edges``
+|文書内、文書間または任意schemeを参照するxrefと、その解決結果
+
+|``source_blocks``
+|Source blockの言語、未加工の本文、表示情報およびrange
+
+|``formulas``
+|inlineまたはblockの数式、その言語、未加工の式およびrange
+
+|``ordered_lists``
+|番号付きlistの開始番号、並び順、番号形式およびrange
+
+|``block_presentations``
+|admonition、quote、verse、example、sidebar、open、collapsible、figure、tableのtitle、role、展開状態、
+番号付きcaptionおよびrange
+
+|``searchable_text``
+|検索用文字列と、各部分に対応する元のrange
+|===
+
+``reference_edges``だけは、同じrevisionに対応する``RenderInputs``も受け取ります。ソースのrangeが一致する解決結果が
+一つだけあるedgeへ結果を付け、対象不在または重複時には付けません。このquery自体は参照先へアクセスしません。
+ほかのqueryは``Analysis``だけを受け取ります。
+
+文書の``SourceId``、明示anchorと見出しの対象、Footnote・bibliography・階層indexのcatalog、見出し・appendix・
+book part・manpage headerの構造、および番号・TOC・captionなどの表示情報は、``Analysis``の``source_id``、
+``reference_targets``、``catalogs``、``structure``および``presentation``から直接借用します。これらを一つの
+構造体へ複製して保持しません。
+
+WASM adapterは、利用者がprojectionを要求した場合だけ、これらのqueryと``Analysis``から借用した値を
+``WasmDocumentProjection``へ集約します。公開するbrowser／Worker protocolのfield名、列挙値、配列順および
+projectionを要求しない場合の``null``は、このadapterが保証します。Rustのqueryは公開protocolの構造へ依存しません。
+
+Language Serverはsemantic tokensやdocument linksの処理で必要なlinkやrangeだけを参照します。検索用文字列、数式、
+Source block、catalogなどを同時に生成しません。
 
 数式の``FormulaProjection.kind``は表示形式を表す``inline``または``block``です。Rust APIの
 ``MathLanguage::Latex``は``as_asciidoc_name()``で``latexmath``を返します。JSON／WASM protocolの既存enum値は
@@ -61,14 +91,14 @@ Source blockの``sourceRange``は、開始区切り行の行頭から終了区�
 native APIの``VerbatimBlock.metadata.range``またはsyntax treeの先行する``BlockTitle``、``BlockAnchor``、
 ``BlockAttribute``を参照します。保存した構造情報とrange索引はAdocWeaveの更新時に再生成します。
 
-``DocumentProjection::rendering_features()``は、描画に追加対応が必要な数式言語、Source block言語および
+``rendering_features``は、描画に追加対応が必要な数式言語、Source block言語および
 TOC出力の有無を``RenderingFeatures``として返します。言語は重複を除きます。数式言語は固定順の
 ``latexmath``、``typst``で返し、将来の言語はこの順序表へ追加します。Source block言語はHTMLの言語classと
 同じ規則でASCII英字を小文字化し、ASCII英数字、``-``および``_``以外を``-``へ置き換えてから文字列の
 昇順で返します。言語指定のないSource blockは含めません。TOCは有効化され、かつ実際の投影結果に
 一つ以上の項目がある場合にだけ``true``です。
 
-このqueryはpreprocess後の``Analysis``から作ったprojectionを対象とし、展開されたincludeの内容も反映します。
+このqueryは``Analysis``を直接受け取り、preprocessで展開されたincludeの内容も反映します。
 返す値は文書が持つ意味上の機能だけであり、HTML構造、renderer、JavaScriptライブラリ、themeおよび資産URLを
 選択しません。``RenderingFeatures``は非網羅的な公開型です。将来fieldを追加する場合や返す言語名を増やす
 場合はminor版の変更としてRelease Notesに記録します。既存の``MathLanguage``へvariantを追加すると
@@ -78,12 +108,11 @@ TOC出力の有無を``RenderingFeatures``として返します。言語は重�
 解決失敗は安定した種類だけを保持し、自由形式のmessageや表示名を含めません。権限拒否、対象不在または
 内部障害から、非公開のタイトル、DB情報または内部例外を構造情報へ漏らしません。
 
-同じパッケージバージョン、``Analysis``および解決結果からは同じ順序のJSONを生成します。保存した構造情報は
-AdocWeaveの更新時に再生成してください。
+同じパッケージバージョン、``Analysis``および解決結果からは、WASM adapterが同じ順序のJSONを生成します。
+保存した構造情報はAdocWeaveの更新時に再生成してください。
 公開protocolのfield、列挙値またはtag付きunionを変更する場合は``schemaVersion``を更新し、
 ``workerProtocolVersion``はworker envelope自体を変更する場合だけ更新します。Package versionは
-リリース用Pull Requestでrelease manifestと
-公開protocolへ同時に反映します。
+リリース用Pull Requestで、対象製品のversionの正本と公開protocolへ同時に反映します。
 
 === 識別子と文書構造
 
@@ -128,7 +157,7 @@ macroの文章部分は、``is_plain_inline_text``で文書解析と同じ有界
 === 利用側アプリの拡張
 
 アプリ固有のID、tag、DB列、アクセス制御および検索engine固有のtokenを標準の構造情報へ追加しません。
-利用側アプリは``DocumentProjection``を入力として、固有の構造情報や検索索引を別に構築します。
+利用側アプリは用途別queryの結果と``Analysis``から借用した情報を使い、固有の構造情報や検索索引を別に構築します。
 
 == 処理の上限
 

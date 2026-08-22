@@ -2,7 +2,7 @@
 
 use adocweave::output::diagnostics::{Applicability, Diagnostic, Severity, sort_diagnostics};
 use adocweave::output::projection::{
-    BlockPresentationKind, DocumentProjection, FormulaKind, ProjectedText, SearchTextKind,
+    self, BlockPresentationKind, FormulaKind, ProjectedText, SearchTextKind,
 };
 use adocweave::resolution::{
     ReferenceKey, ResolutionFailureKind, ResolutionNoticeKind, ResolutionOutcome,
@@ -88,14 +88,17 @@ fn wasm_document_symbol(symbol: DocumentSymbol) -> WasmDocumentSymbol {
     }
 }
 
-pub(crate) fn wasm_document_projection(doc: DocumentProjection) -> WasmDocumentProjection {
-    let headings = doc
-        .structure
+pub(crate) fn wasm_document_projection(
+    analysis: &adocweave::Analysis,
+    inputs: &adocweave::resolution::RenderInputs,
+) -> WasmDocumentProjection {
+    let headings = analysis
+        .structure()
         .headings()
         .iter()
         .map(|heading| {
-            let presentation = doc
-                .presentation
+            let presentation = analysis
+                .presentation()
                 .heading_at(heading.range)
                 .expect("every projected heading has presentation facts");
             WasmStructuredHeading {
@@ -111,8 +114,13 @@ pub(crate) fn wasm_document_projection(doc: DocumentProjection) -> WasmDocumentP
             }
         })
         .collect();
-    let toc = doc.presentation.toc().iter().map(wasm_toc_entry).collect();
-    let manpage = doc.structure.manpage().map(|manpage| WasmManpage {
+    let toc = analysis
+        .presentation()
+        .toc()
+        .iter()
+        .map(wasm_toc_entry)
+        .collect();
+    let manpage = analysis.structure().manpage().map(|manpage| WasmManpage {
         name: manpage.name.clone(),
         section: manpage.section.clone(),
         purpose: manpage.purpose.clone(),
@@ -120,8 +128,8 @@ pub(crate) fn wasm_document_projection(doc: DocumentProjection) -> WasmDocumentP
         name_range: wasm_text_range(manpage.name_range),
         purpose_range: wasm_text_range(manpage.purpose_range),
     });
-    let footnotes = doc
-        .catalogs
+    let footnotes = analysis
+        .catalogs()
         .footnotes()
         .iter()
         .map(|footnote| WasmFootnote {
@@ -137,8 +145,8 @@ pub(crate) fn wasm_document_projection(doc: DocumentProjection) -> WasmDocumentP
                 .collect(),
         })
         .collect();
-    let bibliography = doc
-        .catalogs
+    let bibliography = analysis
+        .catalogs()
         .bibliography()
         .iter()
         .map(|entry| WasmBibliographyEntry {
@@ -152,8 +160,8 @@ pub(crate) fn wasm_document_projection(doc: DocumentProjection) -> WasmDocumentP
                 .collect(),
         })
         .collect();
-    let index = doc
-        .catalogs
+    let index = analysis
+        .catalogs()
         .index()
         .iter()
         .map(|entry| WasmIndexEntry {
@@ -169,9 +177,10 @@ pub(crate) fn wasm_document_projection(doc: DocumentProjection) -> WasmDocumentP
         .collect();
 
     WasmDocumentProjection {
-        source_id: doc.source_id.map(|source_id| source_id.as_str().to_owned()),
-        source_blocks: doc
-            .source_blocks
+        source_id: analysis
+            .source_id()
+            .map(|source_id| source_id.as_str().to_owned()),
+        source_blocks: projection::source_blocks(analysis)
             .into_iter()
             .map(|source| WasmSourceBlockProjection {
                 source_range: wasm_text_range(source.source_range),
@@ -185,8 +194,7 @@ pub(crate) fn wasm_document_projection(doc: DocumentProjection) -> WasmDocumentP
                 caption: source.caption,
             })
             .collect(),
-        formulas: doc
-            .formulas
+        formulas: projection::formulas(analysis)
             .into_iter()
             .map(|formula| WasmFormulaProjection {
                 kind: match formula.kind {
@@ -199,8 +207,8 @@ pub(crate) fn wasm_document_projection(doc: DocumentProjection) -> WasmDocumentP
                 source: formula.source,
             })
             .collect(),
-        citations: doc
-            .citations
+        citations: analysis
+            .citations()
             .into_iter()
             .map(|citation| WasmCitationProjection {
                 order: citation.order,
@@ -224,8 +232,7 @@ pub(crate) fn wasm_document_projection(doc: DocumentProjection) -> WasmDocumentP
                     .collect(),
             })
             .collect(),
-        block_presentations: doc
-            .block_presentations
+        block_presentations: projection::block_presentations(analysis)
             .into_iter()
             .map(|block| WasmBlockPresentationProjection {
                 kind: block_presentation_kind(block.kind),
@@ -239,8 +246,7 @@ pub(crate) fn wasm_document_projection(doc: DocumentProjection) -> WasmDocumentP
                 caption: block.caption,
             })
             .collect(),
-        ordered_lists: doc
-            .ordered_lists
+        ordered_lists: projection::ordered_lists(analysis)
             .into_iter()
             .map(|list| WasmOrderedListProjection {
                 source_range: wasm_text_range(list.source_range),
@@ -249,8 +255,7 @@ pub(crate) fn wasm_document_projection(doc: DocumentProjection) -> WasmDocumentP
                 style: ordered_list_style(list.style),
             })
             .collect(),
-        reference_edges: doc
-            .reference_edges
+        reference_edges: projection::reference_edges(analysis, inputs)
             .into_iter()
             .map(|edge| WasmReferenceEdge {
                 source_id: edge
@@ -261,8 +266,7 @@ pub(crate) fn wasm_document_projection(doc: DocumentProjection) -> WasmDocumentP
                 resolution: edge.resolution.map(resolution_outcome),
             })
             .collect(),
-        external_links: doc
-            .external_links
+        external_links: projection::external_links(analysis)
             .into_iter()
             .map(|link| WasmExternalLink {
                 source_range: wasm_text_range(link.source_range),
@@ -271,21 +275,23 @@ pub(crate) fn wasm_document_projection(doc: DocumentProjection) -> WasmDocumentP
                 label: link.label,
             })
             .collect(),
-        searchable_text: WasmSearchableText {
-            text: doc.searchable_text.text,
-            segments: doc
-                .searchable_text
-                .segments
-                .into_iter()
-                .map(|segment| WasmSearchTextSegment {
-                    kind: match segment.kind {
-                        SearchTextKind::Prose => WasmSearchTextKind::Prose,
-                        SearchTextKind::Code => WasmSearchTextKind::Code,
-                    },
-                    source_range: wasm_text_range(segment.source_range),
-                    text: segment.text,
-                })
-                .collect(),
+        searchable_text: {
+            let searchable = projection::searchable_text(analysis);
+            WasmSearchableText {
+                text: searchable.text,
+                segments: searchable
+                    .segments
+                    .into_iter()
+                    .map(|segment| WasmSearchTextSegment {
+                        kind: match segment.kind {
+                            SearchTextKind::Prose => WasmSearchTextKind::Prose,
+                            SearchTextKind::Code => WasmSearchTextKind::Code,
+                        },
+                        source_range: wasm_text_range(segment.source_range),
+                        text: segment.text,
+                    })
+                    .collect(),
+            }
         },
         structure: WasmDocumentStructure {
             headings,
@@ -297,18 +303,18 @@ pub(crate) fn wasm_document_projection(doc: DocumentProjection) -> WasmDocumentP
             bibliography,
             index,
         },
-        targets: doc
-            .targets
-            .into_iter()
+        targets: analysis
+            .reference_targets()
+            .iter()
             .map(|target| WasmReferenceTarget {
                 kind: reference_target_kind(target.kind),
-                id: target.id,
-                label: target.label,
+                id: target.id.clone(),
+                label: target.label.clone(),
                 id_range: wasm_text_range(target.id_range),
                 target_range: wasm_text_range(target.target_range),
             })
             .collect(),
-        title: doc.title.map(wasm_projected_text),
+        title: projection::document_title(analysis).map(wasm_projected_text),
     }
 }
 

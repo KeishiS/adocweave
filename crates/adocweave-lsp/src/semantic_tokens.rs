@@ -1,7 +1,6 @@
 //! Pure Semantic Tokens projection over an adopted analysis snapshot.
 
 use adocweave::Analysis;
-use adocweave::output::projection::project;
 use adocweave::semantic::{Inline, ReferenceTargetKind};
 use adocweave::text::{SourceDocument, TextRange};
 use async_lsp::lsp_types as lsp;
@@ -17,7 +16,7 @@ pub(crate) fn tokens(
     cancellation.check_now()?;
     let source_document = analysis.source_document();
     let mut raw = Vec::<(lsp::Position, u32, u32)>::new();
-    for link in project(analysis, &adocweave::resolution::RenderInputs::default()).external_links {
+    for link in analysis.links() {
         cancellation.checkpoint()?;
         push_range(
             &mut raw,
