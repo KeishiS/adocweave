@@ -129,14 +129,14 @@ GitHub Releaseへ公開します。公開APIはtextlintの``Processor``に限定
 検査対象一覧および文書検査taskは収録しません。
 
 パッケージにはProcessor、TxtAST adapter、UTF-16位置変換、型定義、README、license、第三者依存の通知、
-``parseText``だけを公開するNode.js向けWebAssemblyとwrapperを収録します。JavaScriptとWebAssemblyの境界は
-``ADAPTER_API_VERSION``で検査し、別のWebAssemblyへの差し替えは認めません。install時のscript、実行時npm依存、
+``parseText``だけを公開するNode.js向けWebAssemblyとwrapperを収録します。WebAssemblyは同じパッケージへ固定して
+収録し、別のWebAssemblyへの差し替えは認めません。install時のscript、実行時npm依存、
 ``node_modules``、source mapおよび機械固有pathを収録せず、実行時の追加downloadも行いません。
 
 入力は10 MiB、TxtAST planは50 MiB、planのnodeは1,000,000件、``sourceId``は4 KiBを上限とします。
-WebAssemblyのlinear memory、tarball、展開後の内容および収録file数の上限は、
-link:../../release/textlint-plugin-package-contract.json[`release/textlint-plugin-package-contract.json`]で管理し、
-生成した配布物をその配布仕様に照らして検査します。実CLIの受入検査はNode.jsのheapを128 MiBに制限して実行します。
+WebAssemblyのlinear memory、tarballおよび展開後の内容の上限は、成果物検証器で管理します。
+収録fileはlink:../../packages/textlint-plugin-asciidoc/package.json[`package.json`]の``files``を正本とし、
+生成した配布物を照合します。実CLIの受入検査はNode.jsのheapを128 MiBに制限して実行します。
 
 自動修正は公開範囲に含めません。Processorはtextlint規則が返した診断から``fix``を除去します。
 ``textlint --fix``を実行しても入力のbyte列が変化しないことを受入検査で確認します。includeは展開せず、
@@ -146,7 +146,7 @@ link:../../release/textlint-plugin-package-contract.json[`release/textlint-plugi
 Pull Requestでは、完成したarchiveを独立した検証器へ1回だけ渡します。続いて、固定したNode.jsとtextlintを持つ
 consumer fixtureへ同じarchiveを1回だけ導入し、
 ``.adoc``、``.asciidoc``、``.asc``、標準入力、LF、CRLF、日本語、結合文字および絵文字について、診断位置と
-``--fix``による非変更を検査します。対応するNode.jsとtextlintの範囲は、固定consumerで検証する値をpackage metadataと
+``--fix``による非変更を検査します。対応するNode.jsとtextlintの版は、固定consumerで検証する値をpackage metadataと
 利用手順へ記載します。
 
 再現性を手動で調べる場合は、検証済みのcandidateと、追跡しているsourceを一時ディレクトリへ複製して1回だけ

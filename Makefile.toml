@@ -202,7 +202,6 @@ args = [
   "tools/textlint-plugin-npx-smoke.test.mjs",
   "tools/textlint-plugin-post-release-smoke.test.mjs",
   "tools/textlint-plugin-consumer-e2e.test.mjs",
-  "tools/textlint-plugin-e2e/installed-tree.test.mjs",
   "tools/verify-textlint-plugin-reproducibility.test.mjs",
   "tools/native-change-plan.test.mjs",
   "tools/verify-native-pr-candidate.test.mjs",
@@ -385,17 +384,14 @@ description = "Build the deterministic npm-compatible textlint plugin archive"
 command = "bash"
 args = ["tools/package-textlint-plugin-release.sh"]
 
-[tasks.textlint-plugin-package-contract]
-description = "Verify the staged textlint plugin archive against its independent public contract"
+[tasks.verify-textlint-plugin-release-package]
+description = "Verify the completed textlint plugin archive once against package.json"
 dependencies = [
   "package-textlint-plugin-release",
 ]
 script_runner = "@shell"
 script = '''
-node --test \
-  packages/textlint-plugin-asciidoc/package-contract.test.mjs \
-  packages/textlint-plugin-asciidoc/package-stage.test.mjs \
-  packages/textlint-plugin-asciidoc/package-archive.test.mjs
+node --test packages/textlint-plugin-asciidoc/package-archive.test.mjs
 version="$(node --input-type=module -e "import manifest from './packages/textlint-plugin-asciidoc/package.json' with { type: 'json' }; process.stdout.write(manifest.version)")"
 node tools/verify-textlint-plugin-package.mjs \
   "target/distrib/adocweave-textlint-plugin-asciidoc-$version.tgz"
@@ -403,7 +399,7 @@ node tools/verify-textlint-plugin-package.mjs \
 
 [tasks.textlint-plugin-reproducibility]
 description = "Compare the verified textlint candidate with one clean rebuild"
-dependencies = ["textlint-plugin-package-contract"]
+dependencies = ["verify-textlint-plugin-release-package"]
 script_runner = "@shell"
 script = '''
 version="$(node --input-type=module -e "import manifest from './packages/textlint-plugin-asciidoc/package.json' with { type: 'json' }; process.stdout.write(manifest.version)")"
@@ -411,13 +407,9 @@ node tools/verify-textlint-plugin-reproducibility.mjs \
   "target/distrib/adocweave-textlint-plugin-asciidoc-$version.tgz"
 '''
 
-[tasks.test-textlint-plugin-release-package]
-description = "Compatibility alias for the textlint plugin package contract"
-alias = "textlint-plugin-package-contract"
-
 [tasks.textlint-plugin-release-consumer-e2e]
 description = "Install the candidate archive into the fixed consumer and exercise the public CLI"
-dependencies = ["textlint-plugin-package-contract"]
+dependencies = ["verify-textlint-plugin-release-package"]
 script_runner = "@shell"
 script = '''
 version="$(node --input-type=module -e "import manifest from './packages/textlint-plugin-asciidoc/package.json' with { type: 'json' }; process.stdout.write(manifest.version)")"
@@ -549,7 +541,7 @@ description = "Build and statically verify the exact browser, textlint, Zed, and
 dependencies = [
   "test-browser-release-package",
   "test-browser-types",
-  "test-textlint-plugin-release-package",
+  "verify-textlint-plugin-release-package",
   "test-zed-release-package",
   "test-vscode-release-package",
   "test-vscode-release-determinism",

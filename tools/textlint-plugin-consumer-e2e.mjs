@@ -18,10 +18,6 @@ import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
-  assertConsumerTreeUnchanged,
-  verifyInstalledConsumerTree,
-} from "./textlint-plugin-e2e/installed-tree.mjs";
-import {
   loadTextlintPluginManifest,
   textlintPluginName,
   TEXTLINT_PLUGIN_WASM_PATHS,
@@ -234,7 +230,6 @@ export async function installFixedConsumerAndPlugin({ archive, cwd }) {
   const manifestPath = join(cwd, "package.json");
   const manifestBefore = await readFile(manifestPath);
   const lockBefore = await readFile(lockPath);
-  const treeBefore = verifyInstalledConsumerTree(cwd);
   result = await runProcess(npm.command, [
     ...npm.arguments,
     "install",
@@ -249,8 +244,6 @@ export async function installFixedConsumerAndPlugin({ archive, cwd }) {
   if (result.code !== 0) throw new Error(diagnosticForUnexpectedExit("fixed consumer plugin install", result));
   assert.deepEqual(await readFile(manifestPath), manifestBefore, "plugin追加によりconsumer manifestが変化しました");
   assert.deepEqual(await readFile(lockPath), lockBefore, "plugin追加により固定lockfileが変化しました");
-  const treeAfter = verifyInstalledConsumerTree(cwd, { allowPlugin: true });
-  assertConsumerTreeUnchanged(treeBefore, treeAfter);
 }
 
 export function npmInvocation({

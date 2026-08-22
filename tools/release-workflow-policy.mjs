@@ -188,7 +188,7 @@ export function validateTextlintReleaseGates(workflows, makefile) {
   const artifacts = taskSection(makefile, "release-global-artifacts");
   const candidate = taskSection(makefile, "release-global-candidate");
   const hostInstallation = taskSection(makefile, "release-installation-e2e-host");
-  if (occurrences(artifacts, '"test-textlint-plugin-release-package"') !== 1 ||
+  if (occurrences(artifacts, '"verify-textlint-plugin-release-package"') !== 1 ||
       artifacts.includes("textlint-plugin-reproducibility")) {
     fail("global artifact gate must run only the completed textlint archive verifier");
   }

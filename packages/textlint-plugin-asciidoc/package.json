@@ -28,7 +28,7 @@
     "wasm/adocweave_textlint_wasm_bg.wasm"
   ],
   "engines": {
-    "node": ">=22.18.0 <27"
+    "node": "24.19.0"
   },
   "peerDependencies": {
     "@textlint/types": "15.8.0",

@@ -185,7 +185,7 @@ test("textlintのPR検査を完成archiveと固定consumerの各1回に限定す
   };
   const makefile = `
 [tasks.release-global-artifacts]
-dependencies = ["test-textlint-plugin-release-package"]
+dependencies = ["verify-textlint-plugin-release-package"]
 [tasks.release-global-candidate]
 dependencies = ["release-global-artifacts", "textlint-plugin-release-consumer-e2e"]
 [tasks.release-installation-e2e-host]
