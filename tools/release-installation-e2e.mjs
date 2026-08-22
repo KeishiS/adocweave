@@ -275,7 +275,6 @@ function verifyTextlintArchive() {
 async function verifyBrowserContract() {
   const modulePath = join(browserRoot, "wasm", "adocweave_wasm.js");
   const wasmPath = join(browserRoot, "wasm", "adocweave_wasm_bg.wasm");
-  const contracts = await import(pathToFileURL(join(browserRoot, "worker", "contracts.mjs")));
   const wasm = await import(pathToFileURL(modulePath));
   await wasm.default({ module_or_path: readFileSync(wasmPath) });
 
@@ -288,10 +287,7 @@ async function verifyBrowserContract() {
     return { sourceStart, sourceEnd: sourceStart + Buffer.byteLength(text) };
   });
   const response = wasm.process({
-    packageVersion: contracts.PACKAGE_VERSION,
     sourceId: "acceptance:resolved-display-text",
-    version: 1,
-    generation: 1,
     source,
     renderInputs: {
       references: [

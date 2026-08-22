@@ -499,6 +499,7 @@ printf '%s\n' \
   "$package/wasm/adocweave_wasm_bg.wasm" \
   "$package/worker/" \
   "$package/worker/client.mjs" \
+  "$package/worker/contracts.mjs" \
   "$package/worker/index.d.mts" \
   "$package/worker/index.mjs" \
   "$package/worker/protocol.d.mts" \

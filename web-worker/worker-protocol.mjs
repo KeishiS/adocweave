@@ -3,8 +3,6 @@
 
 export const PROTOCOL_SCHEMA_VERSION = 15;
 export const WORKER_PROTOCOL_VERSION = 3;
-// 配布metadata用の値であり、WASMとの通信には使用しません。
-export const PACKAGE_VERSION = "0.46.2";
 
 const string = (value) => typeof value === "string";
 const u32 = (value) => Number.isInteger(value) && value >= 0 && value <= 4294967295;

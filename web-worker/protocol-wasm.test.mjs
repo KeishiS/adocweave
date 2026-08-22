@@ -6,7 +6,6 @@ import { fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
 import {
   PROTOCOL_SCHEMA_VERSION,
-  PACKAGE_VERSION,
   validateWorkerMessage,
   WORKER_PROTOCOL_VERSION,
 } from "./worker-protocol.mjs";
@@ -20,17 +19,11 @@ const corpus = JSON.parse(
 );
 
 function currentRequest() {
-  return {
-    ...structuredClone(corpus.defaultRequest),
-    packageVersion: PACKAGE_VERSION,
-  };
+  return structuredClone(corpus.defaultRequest);
 }
 
 function currentPreprocessRequest() {
-  return {
-    ...structuredClone(corpus.preprocessRequest),
-    packageVersion: PACKAGE_VERSION,
-  };
+  return structuredClone(corpus.preprocessRequest);
 }
 
 function wasmError(operation) {
@@ -45,14 +38,10 @@ function wasmError(operation) {
 test("generated wasm-bindgen accepts the current default requests", () => {
   assert.equal(wasm.protocolSchemaVersion(), PROTOCOL_SCHEMA_VERSION);
   const response = wasm.process(currentRequest());
-  assert.equal(response.packageVersion, PACKAGE_VERSION);
-  assert.equal(response.version, 1);
-  assert.equal(response.generation, 1);
   assert.equal(validateWorkerMessage({
     protocolVersion: WORKER_PROTOCOL_VERSION,
     type: "result",
-    version: response.version,
-    generation: response.generation,
+    requestId: 1,
     result: response,
   }, "responses"), true);
 
@@ -63,13 +52,11 @@ test("generated wasm-bindgen accepts the current default requests", () => {
   assert.equal(validateWorkerMessage({
     protocolVersion: WORKER_PROTOCOL_VERSION,
     type: "result",
-    version: disabledResponse.version,
-    generation: disabledResponse.generation,
+    requestId: 2,
     result: disabledResponse,
   }, "responses"), true);
 
   const preprocessed = wasm.preprocess(currentPreprocessRequest());
-  assert.equal(preprocessed.packageVersion, PACKAGE_VERSION);
   assert.equal(preprocessed.source, "included\n");
 });
 
@@ -146,31 +133,25 @@ test("generated wasm-bindgen rejects unknown and missing fields", () => {
     assert.equal(wasmError(() => wasm.process(request)).code, "invalid-request", path);
   }
 
-  for (const field of ["packageVersion", "version", "generation", "source"]) {
-    const request = currentRequest();
-    delete request[field];
-    assert.equal(wasmError(() => wasm.process(request)).code, "invalid-request", field);
-  }
+  const missingSource = currentRequest();
+  delete missingSource.source;
+  assert.equal(wasmError(() => wasm.process(missingSource)).code, "invalid-request", "source");
 
   const preprocess = currentPreprocessRequest();
   preprocess.options.unexpected = true;
   assert.equal(wasmError(() => wasm.preprocess(preprocess)).code, "invalid-request");
 });
 
-test("generated wasm-bindgen rejects old package versions", () => {
-  const request = currentRequest();
-  request.packageVersion = corpus.oldVersion;
-  assert.equal(
-    wasmError(() => wasm.process(request)).code,
-    "unsupported-api-version",
-  );
+test("generated wasm-bindgen rejects removed identity fields", () => {
+  for (const field of ["packageVersion", "version", "generation"]) {
+    const request = currentRequest();
+    request[field] = 1;
+    assert.equal(wasmError(() => wasm.process(request)).code, "invalid-request", field);
+  }
 
   const preprocess = currentPreprocessRequest();
-  preprocess.packageVersion = corpus.oldVersion;
-  assert.equal(
-    wasmError(() => wasm.preprocess(preprocess)).code,
-    "unsupported-api-version",
-  );
+  preprocess.packageVersion = "0.46.2";
+  assert.equal(wasmError(() => wasm.preprocess(preprocess)).code, "invalid-request");
 });
 
 function setPointer(rootValue, pointer, value) {

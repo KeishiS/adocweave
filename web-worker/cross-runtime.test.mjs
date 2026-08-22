@@ -5,7 +5,6 @@ import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { PACKAGE_VERSION } from "./worker-protocol.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -25,10 +24,7 @@ function requestFor(entry) {
     ? readFileSync(resolve(fixtureRoot, entry.sourceFile), "utf8")
     : entry.source;
   return {
-    packageVersion: PACKAGE_VERSION,
     sourceId: entry.sourceId ?? `conformance:${entry.name}`,
-    version: 1,
-    generation: 1,
     source,
     preprocess: entry.preprocess ?? null,
     products: {
