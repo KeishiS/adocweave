@@ -248,15 +248,14 @@ pub struct LocalFilesystemSession {
 #[derive(Debug)]
 struct LocalFilesystemState {
     roots: Vec<PathBuf>,
+    /// Root-local caches whose combined inspection count is the session-wide
+    /// path budget. Draft clones copy the caches; detached jobs separately
+    /// retain attempted-I/O charges when a draft is discarded.
     sessions: Vec<LocalTargetSession>,
     limits: FilesystemReadLimits,
     budget: ResourceBudget,
     charged: BTreeMap<PathBuf, FilesystemCharge>,
     candidates: BTreeMap<PathBuf, FilesystemCandidateBinding>,
-    /// Shared with every [`LocalTargetSession`] above and with any draft cloned
-    /// from this state, so discovery and reads land in one set of counters and a
-    /// discarded draft does not un-count the work it performed.
-
     #[cfg(test)]
     clone_count: Arc<AtomicU64>,
 }
