@@ -82,7 +82,7 @@
       "type": "literal",
       "path": "release/notes.md",
       "template": "{version}",
-      "count": 6
+      "count": "all"
     },
     {
       "type": "literal",

@@ -121,6 +121,62 @@ function generatedRunner({ id, mode, root, current, version, generator }) {
   }
 }
 
+test("countがallの対象は件数を数えずすべてのversion記録を置き換える", () => {
+  // 散文では版表記の数が文面ごとに変わります。件数を宣言すると、記録を1つ足すたびに
+  // registryの数値を手で直す必要があり、置換漏れではなく数え直しの手間だけが増えます。
+  const scope = fixture();
+  try {
+    writeFileSync(join(scope.directory, "notes.md"), "# v1.2.3\n\n1.2.3へ更新します。\n");
+    const inventory = registry();
+    inventory.targets.push({
+      type: "literal",
+      path: "notes.md",
+      template: "{version}",
+      count: "all",
+    });
+    assert.doesNotThrow(() => validateRegistry(inventory));
+    syncReleaseVersion({
+      root: scope.root,
+      mode: "update",
+      version: "1.3.0",
+      registry: inventory,
+      runGenerator: generatedRunner,
+    });
+    assert.equal(
+      readFileSync(join(scope.directory, "notes.md"), "utf8"),
+      "# v1.3.0\n\n1.3.0へ更新します。\n",
+    );
+
+    // 記録の数が変わってもregistryの更新は要りません。
+    writeFileSync(join(scope.directory, "notes.md"), "# v1.3.0\n\n1.3.0と1.3.0。\n");
+    assert.doesNotThrow(() =>
+      syncReleaseVersion({
+        root: scope.root,
+        mode: "check",
+        version: "1.3.0",
+        registry: inventory,
+        runGenerator: generatedRunner,
+      }),
+    );
+
+    // 記録が1件も無い場合は、置換漏れとして拒否します。
+    writeFileSync(join(scope.directory, "notes.md"), "# 版の記載なし\n");
+    assert.throws(
+      () =>
+        syncReleaseVersion({
+          root: scope.root,
+          mode: "check",
+          version: "1.3.0",
+          registry: inventory,
+          runGenerator: generatedRunner,
+        }),
+      /version記録がありません/,
+    );
+  } finally {
+    scope.cleanup();
+  }
+});
+
 test("更新と検査を一つのallowlistから決定的に実行する", () => {
   const scope = fixture();
   try {

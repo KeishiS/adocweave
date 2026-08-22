@@ -68,6 +68,14 @@ function versionTemplate(template, label) {
   }
 }
 
+/// `count`の代わりに書ける宣言。そのfileに現れるversion記録をすべて置き換えます。
+///
+/// 件数を数で宣言すると、記録を1つ足すたびにこのregistryの数値を手で直す必要があります。
+/// Release Notesのような散文では文面を変えるたびに件数が動き、置換漏れではなく数え直しの
+/// 手間だけが増えていました。fileの中のversion記録をすべて管理する対象では、件数そのものに
+/// 意味がないため、1件以上あることだけを求めます。
+export const ALL_OCCURRENCES = "all";
+
 function positiveCount(count, label, allowZero = false) {
   if (
     !Number.isInteger(count) ||
@@ -108,7 +116,7 @@ export function validateRegistry(registry) {
     if (target?.type === "literal") {
       exactKeys(target, ["type", "path", "template", "count"], label);
       versionTemplate(target.template, label);
-      positiveCount(target.count, label);
+      if (target.count !== ALL_OCCURRENCES) positiveCount(target.count, label);
     } else if (target?.type === "cargo-lock") {
       exactKeys(target, ["type", "path", "packages"], label);
       if (
@@ -227,6 +235,12 @@ function validateLocator(root, locator, version, label) {
   }
   const literal = render(locator.template, version);
   const actual = occurrences(read(root, locator.path), literal);
+  if (locator.count === ALL_OCCURRENCES) {
+    if (actual === 0) {
+      fail(`${label} ${locator.path} にversion記録がありません`);
+    }
+    return;
+  }
   if (actual !== locator.count) {
     fail(
       `${label} ${locator.path} のversion記録数が不正です：期待${locator.count}件、実際${actual}件`,
@@ -318,6 +332,7 @@ function expectedVersionOccurrences(registry, version) {
     expected.set(path, (expected.get(path) ?? 0) + count);
   add(registry.authority.path, registry.authority.count);
   for (const target of registry.targets) {
+    if (target.type === "literal" && target.count === ALL_OCCURRENCES) continue;
     add(
       target.path,
       target.type === "literal"
@@ -355,6 +370,13 @@ function foreignCargoLockVersionOccurrences(source, version) {
 
 function validateInventory(root, registry, version) {
   const expected = expectedVersionOccurrences(registry, version);
+  // 件数を宣言しないpath。version記録をすべて置き換える対象なので、件数の一致ではなく
+  // 1件以上あることだけを求めます。
+  const flexiblePaths = new Set(
+    registry.targets
+      .filter((target) => target.type === "literal" && target.count === ALL_OCCURRENCES)
+      .map((target) => target.path),
+  );
   const cargoLockPaths = new Set(
     registry.targets
       .filter((target) => target.type === "cargo-lock")
@@ -372,6 +394,10 @@ function validateInventory(root, registry, version) {
   for (const path of [...paths].sort()) {
     const expectedCount = expected.get(path) ?? 0;
     const actualCount = actual.get(path) ?? 0;
+    if (flexiblePaths.has(path)) {
+      if (actualCount === 0) fail(`version inventoryが不一致です：${path} にversion記録がありません`);
+      continue;
+    }
     if (expectedCount !== actualCount) {
       fail(
         `version inventoryが不一致です：${path} は期待${expectedCount}件、実際${actualCount}件`,
@@ -499,7 +525,7 @@ function updateLocators(root, locators, current, next) {
     const from = render(locator.template, current);
     const to = render(locator.template, next);
     const actual = occurrences(source, from);
-    if (actual !== locator.count) {
+    if (locator.count === ALL_OCCURRENCES ? actual === 0 : actual !== locator.count) {
       fail(
         `${locator.path}を更新できません：期待${locator.count}件、実際${actual}件`,
       );
