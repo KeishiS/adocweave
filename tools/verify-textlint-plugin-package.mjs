@@ -88,11 +88,14 @@ export async function verifyTextlintPluginPackage(archivePath, { maximumPackedBy
   if (unpacked > unpackedLimit) fail(`unpacked size exceeds ${unpackedLimit} bytes`);
   const byName = new Map(members.map((member) => [member.name.slice("package/".length), member.data]));
   const manifest = JSON.parse(byName.get("package.json").toString("utf8"));
-  const release = JSON.parse(await readFile(new URL("../release-manifest.json", import.meta.url), "utf8"));
+  const sourceManifest = JSON.parse(await readFile(
+    new URL("../packages/textlint-plugin-asciidoc/package.json", import.meta.url),
+    "utf8",
+  ));
   const expectedFiles = contract.files.filter(({ path }) => path !== "package.json").map(({ path }) => path);
   const manifestKeys = ["bugs", "description", "engines", "exports", "files", "homepage", "keywords", "license", "main", "name", "peerDependencies", "private", "repository", "type", "types", "version"].sort();
   if (JSON.stringify(Object.keys(manifest).sort()) !== JSON.stringify(manifestKeys)) fail("package.json fields do not match the public allowlist");
-  if (manifest.name !== contract.identity.packageName || manifest.private !== true || manifest.version !== release.packageVersion) fail("package identity does not match the contract and release");
+  if (manifest.name !== contract.identity.packageName || manifest.private !== true || manifest.version !== sourceManifest.version) fail("package identity does not match the contract and source package");
   if (manifest.engines?.node !== contract.compatibility.nodeEngine || manifest.peerDependencies?.textlint !== contract.compatibility.textlintVersion || manifest.peerDependencies?.["@textlint/types"] !== contract.compatibility.textlintTypesVersion) fail("package compatibility does not match the contract");
   if (JSON.stringify(manifest.files) !== JSON.stringify(expectedFiles)) fail("package.json files do not match the contract");
   if (manifest.description !== "AsciiDoc Processor Plugin for textlint powered by AdocWeave" || manifest.type !== "module" ||

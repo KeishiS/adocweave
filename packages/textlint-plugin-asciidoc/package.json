@@ -1,6 +1,6 @@
 {
   "name": "adocweave-textlint-plugin-development",
-  "version": "0.0.0",
+  "version": "0.46.2",
   "private": true,
   "type": "module"
 }

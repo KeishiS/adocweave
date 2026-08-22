@@ -918,8 +918,8 @@ fn cli_reports_machine_readable_release_contracts() {
 
     assert!(output.status.success());
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("version JSON");
+    assert_eq!(value["name"], "adocweave");
     assert_eq!(value["packageVersion"], env!("CARGO_PKG_VERSION"));
-    assert_eq!(value["packageVersion"], adocweave::VERSION);
 }
 
 #[test]
@@ -1761,7 +1761,7 @@ fn list_rules_accepts_the_canonical_format_option() {
 
 #[test]
 fn check_accepts_relative_targets_without_activating_them_in_html() {
-    let source = b"link:../release-manifest.json[release manifest]\n\
+    let source = b"link:../toolchains.json[toolchain manifest]\n\
                    xref:../guide.adoc[guide]\n";
     let checked = run_with_stdin(&["check", "--json", "-"], source);
     let converted = run_with_stdin(&["convert", "-"], source);
@@ -1770,7 +1770,7 @@ fn check_accepts_relative_targets_without_activating_them_in_html() {
     assert_eq!(checked.stdout, b"[]");
     assert!(checked.stderr.is_empty());
     assert!(converted.status.success());
-    assert_eq!(converted.stdout, b"<p>release manifest guide</p>\n");
+    assert_eq!(converted.stdout, b"<p>toolchain manifest guide</p>\n");
     assert!(converted.stderr.is_empty());
 }
 

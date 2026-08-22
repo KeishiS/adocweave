@@ -20,6 +20,7 @@ pub struct ReleaseAsset {
     pub byte_size: u64,
     pub archive: &'static str,
     pub executable: &'static str,
+    pub lsp_api_version: u64,
     pub source_commit: String,
 }
 
@@ -150,20 +151,42 @@ fn parse_platform_contract() -> Result<Vec<PlatformContract>, String> {
 
 pub fn select_lsp_asset(
     manifest: &str,
-    version: &str,
+    product_version: &str,
+    supported_lsp_api_versions: &[u64],
     target: &str,
 ) -> Result<ReleaseAsset, String> {
     let root: zed_extension_api::serde_json::Value =
         zed_extension_api::serde_json::from_str(manifest)
             .map_err(|error| format!("invalid distribution manifest: {error}"))?;
-    if root.get("schemaVersion").and_then(|value| value.as_u64()) != Some(2) {
+    let object = root
+        .as_object()
+        .ok_or_else(|| "distribution manifest root is not an object".to_owned())?;
+    if object.keys().map(String::as_str).collect::<HashSet<_>>()
+        != HashSet::from([
+            "assets",
+            "lspApiVersion",
+            "product",
+            "productVersion",
+            "schemaVersion",
+            "sourceCommit",
+        ])
+        || root.get("schemaVersion").and_then(|value| value.as_u64()) != Some(3)
+    {
         return Err("unsupported distribution manifest schema".to_owned());
     }
-    if root.get("packageVersion").and_then(|value| value.as_str()) != Some(version) {
+    if root.get("product").and_then(|value| value.as_str()) != Some("lsp")
+        || root.get("productVersion").and_then(|value| value.as_str()) != Some(product_version)
+    {
         return Err(format!(
-            "distribution manifest does not describe AdocWeave {version}"
+            "distribution manifest does not describe adocweave-lsp {product_version}"
         ));
     }
+    let lsp_api_version = root
+        .get("lspApiVersion")
+        .and_then(|value| value.as_u64())
+        .filter(|value| *value > 0)
+        .filter(|value| supported_lsp_api_versions.contains(value))
+        .ok_or_else(|| "distribution manifest has an incompatible LSP API version".to_owned())?;
     let source_commit = root
         .get("sourceCommit")
         .and_then(|value| value.as_str())
@@ -173,21 +196,42 @@ pub fn select_lsp_asset(
 
     let (archive, executable) = target_asset_contract(target)?;
     let expected_name = format!("adocweave-lsp-{target}.{archive}");
-    let matches = root
+    let assets = root
         .get("assets")
         .and_then(|value| value.as_array())
         .ok_or_else(|| "distribution manifest has no asset list".to_owned())?
         .iter()
-        .filter(|asset| {
-            asset.get("kind").and_then(|value| value.as_str()) == Some("lsp")
-                && asset.get("target").and_then(|value| value.as_str()) == Some(target)
+        .map(|asset| {
+            if asset.get("kind").and_then(|value| value.as_str()) != Some("lsp") {
+                return Err("distribution manifest contains a non-LSP asset".to_owned());
+            }
+            Ok(asset)
         })
+        .collect::<Result<Vec<_>, String>>()?;
+    let matches = assets
+        .iter()
+        .filter(|asset| asset.get("target").and_then(|value| value.as_str()) == Some(target))
         .collect::<Vec<_>>();
     let [asset] = matches.as_slice() else {
         return Err(format!(
             "distribution manifest must contain exactly one LSP asset for {target}"
         ));
     };
+    if asset
+        .as_object()
+        .map(|fields| fields.keys().map(String::as_str).collect::<HashSet<_>>())
+        != Some(HashSet::from([
+            "archive",
+            "byteSize",
+            "executable",
+            "kind",
+            "name",
+            "sha256",
+            "target",
+        ]))
+    {
+        return Err(format!("invalid LSP asset fields for {target}"));
+    }
     if asset.get("name").and_then(|value| value.as_str()) != Some(expected_name.as_str())
         || asset.get("archive").and_then(|value| value.as_str()) != Some(archive)
         || asset.get("executable").and_then(|value| value.as_str()) != Some(executable)
@@ -212,6 +256,7 @@ pub fn select_lsp_asset(
         byte_size,
         archive,
         executable,
+        lsp_api_version,
         source_commit,
     })
 }
@@ -348,14 +393,16 @@ pub struct CachePaths {
 
 pub fn write_marker(
     path: &Path,
-    version: &str,
+    lsp_version: &str,
+    lsp_api_version: u64,
     target: &str,
     asset: &ReleaseAsset,
     binary_hash: &str,
 ) -> Result<(), String> {
     let marker = zed_extension_api::serde_json::json!({
-        "schemaVersion": 1,
-        "packageVersion": version,
+        "schemaVersion": 2,
+        "lspVersion": lsp_version,
+        "lspApiVersion": lsp_api_version,
         "target": target,
         "asset": asset.name,
         "assetByteSize": asset.byte_size,
@@ -367,7 +414,12 @@ pub fn write_marker(
         .map_err(|error| format!("failed to write cache marker: {error}"))
 }
 
-pub fn verified_cache(paths: &CachePaths, version: &str, target: &str) -> bool {
+pub fn verified_cache(
+    paths: &CachePaths,
+    lsp_version: &str,
+    supported_lsp_api_versions: &[u64],
+    target: &str,
+) -> bool {
     let Ok(marker) = fs::read_to_string(&paths.marker) else {
         return false;
     };
@@ -380,12 +432,13 @@ pub fn verified_cache(paths: &CachePaths, version: &str, target: &str) -> bool {
         return false;
     };
     let expected_asset = format!("adocweave-lsp-{target}.zip");
-    marker.as_object().is_some_and(|fields| fields.len() == 8)
-        && marker.get("schemaVersion").and_then(|value| value.as_u64()) == Some(1)
+    marker.as_object().is_some_and(|fields| fields.len() == 9)
+        && marker.get("schemaVersion").and_then(|value| value.as_u64()) == Some(2)
+        && marker.get("lspVersion").and_then(|value| value.as_str()) == Some(lsp_version)
         && marker
-            .get("packageVersion")
-            .and_then(|value| value.as_str())
-            == Some(version)
+            .get("lspApiVersion")
+            .and_then(|value| value.as_u64())
+            .is_some_and(|value| supported_lsp_api_versions.contains(&value))
         && marker.get("target").and_then(|value| value.as_str()) == Some(target)
         && marker.get("asset").and_then(|value| value.as_str()) == Some(expected_asset.as_str())
         && marker
@@ -415,7 +468,7 @@ mod tests {
 
     fn manifest(sha256: &str, byte_size: u64) -> String {
         format!(
-            r#"{{"schemaVersion":2,"packageVersion":"0.1.0-rc.1","sourceCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","assets":[{{"archive":"zip","byteSize":{byte_size},"executable":"adocweave-lsp","kind":"lsp","name":"adocweave-lsp-x86_64-unknown-linux-musl.zip","sha256":"{sha256}","target":"x86_64-unknown-linux-musl"}}]}}"#
+            r#"{{"schemaVersion":3,"product":"lsp","productVersion":"0.1.0-rc.1","lspApiVersion":1,"sourceCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","assets":[{{"archive":"zip","byteSize":{byte_size},"executable":"adocweave-lsp","kind":"lsp","name":"adocweave-lsp-x86_64-unknown-linux-musl.zip","sha256":"{sha256}","target":"x86_64-unknown-linux-musl"}}]}}"#
         )
     }
 
@@ -445,6 +498,7 @@ mod tests {
         let asset = select_lsp_asset(
             &manifest(&hash, 42),
             "0.1.0-rc.1",
+            &[1],
             "x86_64-unknown-linux-musl",
         )
         .unwrap();
@@ -453,18 +507,28 @@ mod tests {
         assert!(select_lsp_asset(
             &manifest(&"b".repeat(63), 42),
             "0.1.0-rc.1",
+            &[1],
             "x86_64-unknown-linux-musl"
         )
         .is_err());
         assert!(select_lsp_asset(
             &manifest(&"b".repeat(64), 0),
             "0.1.0-rc.1",
+            &[1],
             "x86_64-unknown-linux-musl"
         )
         .is_err());
         assert!(select_lsp_asset(
             &manifest(&"b".repeat(64), 42),
             "0.2.0",
+            &[1],
+            "x86_64-unknown-linux-musl"
+        )
+        .is_err());
+        assert!(select_lsp_asset(
+            &manifest(&"b".repeat(64), 42),
+            "0.1.0-rc.1",
+            &[2],
             "x86_64-unknown-linux-musl"
         )
         .is_err());
@@ -481,6 +545,7 @@ mod tests {
             byte_size: 7,
             archive: "zip",
             executable: "adocweave-lsp",
+            lsp_api_version: 1,
             source_commit: "a".repeat(40),
         };
         assert!(verify_download(&root, &asset)
@@ -519,12 +584,14 @@ mod tests {
             byte_size: 1,
             archive: "zip",
             executable: "adocweave-lsp",
+            lsp_api_version: 1,
             source_commit: "a".repeat(40),
         };
         let hash = sha256_file(&paths.binary).unwrap();
         write_marker(
             &paths.marker,
             "0.1.0-rc.1",
+            1,
             "x86_64-unknown-linux-musl",
             &asset,
             &hash,
@@ -533,12 +600,20 @@ mod tests {
         assert!(verified_cache(
             &paths,
             "0.1.0-rc.1",
+            &[1],
+            "x86_64-unknown-linux-musl"
+        ));
+        assert!(!verified_cache(
+            &paths,
+            "0.1.0-rc.1",
+            &[2],
             "x86_64-unknown-linux-musl"
         ));
         fs::write(&paths.binary, b"tampered").unwrap();
         assert!(!verified_cache(
             &paths,
             "0.1.0-rc.1",
+            &[1],
             "x86_64-unknown-linux-musl"
         ));
         fs::remove_dir_all(root).unwrap();
@@ -571,6 +646,7 @@ mod tests {
             byte_size: fs::metadata(&archive_path).unwrap().len(),
             archive: "zip",
             executable: "adocweave-lsp.exe",
+            lsp_api_version: 1,
             source_commit: "a".repeat(40),
         };
         extract_binary(&archive_path, &binary, "x86_64-pc-windows-msvc", &asset).unwrap();

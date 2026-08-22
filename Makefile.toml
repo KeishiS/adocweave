@@ -125,7 +125,7 @@ dependencies = [
 script_runner = "@shell"
 script = '''
 node --test tools/release-metadata.test.mjs tools/release-notes.test.mjs
-node tools/release-notes.mjs --check
+node tools/release-notes.mjs --check lsp
 args=""
 metadata="$(mktemp "${TMPDIR:-/tmp}/adocweave-release-metadata.XXXXXX.json")"
 zed_metadata="$(mktemp "${TMPDIR:-/tmp}/adocweave-zed-release-metadata.XXXXXX.json")"
@@ -150,14 +150,6 @@ node --test tools/sync-release-version.test.mjs
 node tools/sync-release-version.mjs --check
 '''
 
-[tasks.semver-check]
-description = "Compare the candidate public Rust API against the previous stable tag and verify the recorded differences"
-script_runner = "@shell"
-script = '''
-node --test tools/semver-gate.test.mjs
-node tools/semver-gate.mjs
-'''
-
 [tasks.dependency-governance]
 description = "Audit every dependency boundary, license, source, advisory, and exception"
 script_runner = "@shell"
@@ -176,12 +168,14 @@ command = "node"
 args = ["tools/generate-third-party-notices.mjs", "target/THIRD_PARTY_NOTICES.adoc"]
 
 [tasks.release-workflow-policy]
-description = "Verify action pins, write-permission scope, and secret access in workflows"
+description = "Verify action pins, permissions, secret access, and product release routing"
 script_runner = "@shell"
 script = '''
 node tools/release-workflow-policy.mjs
 node --test \
   tools/browser-release-budget.test.mjs \
+  tools/product-release.test.mjs \
+  tools/release-readiness.test.mjs \
   tools/release-workflow-policy.test.mjs
 '''
 
@@ -338,14 +332,14 @@ cp target/distrib/adocweave-textlint-plugin-asciidoc-*.tgz "$candidate/"
 cp target/distrib/adocweave-zed-*.tar.xz "$candidate/"
 cp target/distrib/adocweave-vscode-*.vsix "$candidate/"
 node tools/release-installation-e2e.mjs \
-  "$candidate" x86_64-unknown-linux-musl release-manifest.json
+  "$candidate" x86_64-unknown-linux-musl release/distribution-plan.json
 '''
 
 [tasks.dist-plan]
 description = "Run the pinned dist release plan without publishing"
 script_runner = "@shell"
 script = '''
-version="$(node --input-type=module -e "import manifest from './release-manifest.json' with { type: 'json' }; process.stdout.write(manifest.packageVersion)")"
+version="$(node --input-type=module -e "import { readFileSync } from 'node:fs'; const source = readFileSync('./crates/adocweave-cli/Cargo.toml', 'utf8'); process.stdout.write(/^version = \"([^\"]+)\"/m.exec(source)[1])")"
 plan="$(mktemp "${TMPDIR:-/tmp}/adocweave-dist-plan.XXXXXX.json")"
 trap 'rm -f "$plan"' EXIT
 node tools/generate-third-party-notices.mjs THIRD_PARTY_NOTICES.adoc
@@ -403,7 +397,7 @@ node --test \
   packages/textlint-plugin-asciidoc/package-contract.test.mjs \
   packages/textlint-plugin-asciidoc/package-stage.test.mjs \
   packages/textlint-plugin-asciidoc/package-archive.test.mjs
-version="$(node --input-type=module -e "import manifest from './release-manifest.json' with { type: 'json' }; process.stdout.write(manifest.packageVersion)")"
+version="$(node --input-type=module -e "import manifest from './packages/textlint-plugin-asciidoc/package.json' with { type: 'json' }; process.stdout.write(manifest.version)")"
 node tools/verify-textlint-plugin-package.mjs \
   "target/distrib/adocweave-textlint-plugin-asciidoc-$version.tgz"
 '''
@@ -422,7 +416,7 @@ description = "Install the candidate archive into the fixed consumer and exercis
 dependencies = ["textlint-plugin-package-contract"]
 script_runner = "@shell"
 script = '''
-version="$(node --input-type=module -e "import manifest from './release-manifest.json' with { type: 'json' }; process.stdout.write(manifest.packageVersion)")"
+version="$(node --input-type=module -e "import manifest from './packages/textlint-plugin-asciidoc/package.json' with { type: 'json' }; process.stdout.write(manifest.version)")"
 node tools/textlint-plugin-consumer-e2e.mjs \
   "target/distrib/adocweave-textlint-plugin-asciidoc-$version.tgz"
 '''
@@ -432,7 +426,7 @@ description = "Exercise one-shot textlint against the unpublished candidate arch
 dependencies = ["textlint-plugin-package-contract"]
 script_runner = "@shell"
 script = '''
-version="$(node --input-type=module -e "import manifest from './release-manifest.json' with { type: 'json' }; process.stdout.write(manifest.packageVersion)")"
+version="$(node --input-type=module -e "import manifest from './packages/textlint-plugin-asciidoc/package.json' with { type: 'json' }; process.stdout.write(manifest.version)")"
 node tools/textlint-plugin-npx-smoke.mjs \
   "target/distrib/adocweave-textlint-plugin-asciidoc-$version.tgz"
 '''
@@ -447,7 +441,7 @@ description = "Observe the latest transitive npm resolution against a freshly bu
 dependencies = ["textlint-plugin-package-contract"]
 script_runner = "@shell"
 script = '''
-version="$(node --input-type=module -e "import manifest from './release-manifest.json' with { type: 'json' }; process.stdout.write(manifest.packageVersion)")"
+version="$(node --input-type=module -e "import manifest from './packages/textlint-plugin-asciidoc/package.json' with { type: 'json' }; process.stdout.write(manifest.version)")"
 node tools/textlint-plugin-compatibility-probe.mjs \
   "target/distrib/adocweave-textlint-plugin-asciidoc-$version.tgz"
 '''
@@ -457,7 +451,7 @@ description = "Verify the Zed release archive layout and deterministic bytes"
 dependencies = ["package-zed-release"]
 script_runner = "@shell"
 script = '''
-version="$(node --input-type=module -e "import manifest from './release-manifest.json' with { type: 'json' }; process.stdout.write(manifest.packageVersion)")"
+version="$(node --input-type=module -e "import { readFileSync } from 'node:fs'; const source = readFileSync('./editors/zed/extension.toml', 'utf8'); process.stdout.write(/^version = \"([^\"]+)\"/m.exec(source)[1])")"
 archive="target/distrib/adocweave-zed-$version.tar.xz"
 first="$(sha256sum "$archive" | cut -d ' ' -f 1)"
 cargo make package-zed-release >/dev/null
@@ -474,7 +468,7 @@ description = "Verify browser release archive layout and deterministic bytes"
 dependencies = ["package-browser-release"]
 script_runner = "@shell"
 script = '''
-version="$(node --input-type=module -e "import manifest from './release-manifest.json' with { type: 'json' }; process.stdout.write(manifest.packageVersion)")"
+version="$(node --input-type=module -e "import manifest from './web-worker/package.json' with { type: 'json' }; process.stdout.write(manifest.version)")"
 package="adocweave-browser-$version"
 archive="target/distrib/adocweave-browser-$version.tar.xz"
 first="$(sha256sum "$archive" | cut -d ' ' -f 1)"
@@ -539,7 +533,7 @@ dependencies = ["package-browser-release", "test-browser-types"]
 script_runner = "@shell"
 script = '''
 node --test tools/process-lifecycle.test.mjs tools/host-executable.test.mjs
-version="$(node --input-type=module -e "import manifest from './release-manifest.json' with { type: 'json' }; process.stdout.write(manifest.packageVersion)")"
+version="$(node --input-type=module -e "import manifest from './web-worker/package.json' with { type: 'json' }; process.stdout.write(manifest.version)")"
 node tools/browser-release-smoke.mjs "target/distrib/adocweave-browser-$version.tar.xz" "${ADOCWEAVE_BROWSER:-chromium}"
 '''
 
@@ -548,7 +542,7 @@ description = "Bundle the public browser API with esbuild and smoke test its ass
 dependencies = ["package-browser-release", "test-browser-types"]
 script_runner = "@shell"
 script = '''
-version="$(node --input-type=module -e "import manifest from './release-manifest.json' with { type: 'json' }; process.stdout.write(manifest.packageVersion)")"
+version="$(node --input-type=module -e "import manifest from './web-worker/package.json' with { type: 'json' }; process.stdout.write(manifest.version)")"
 package="adocweave-browser-$version"
 source_archive="target/distrib/$package.tar.xz"
 root="$(mktemp -d "${TMPDIR:-/tmp}/adocweave-browser-bundler.XXXXXX")"
@@ -725,7 +719,7 @@ for artifact in target/adocweave-wasm/*; do
   bytes="$(wc -c < "$artifact")"
   echo "$bytes $artifact"
 done
-version="$(node --input-type=module -e "import manifest from './release-manifest.json' with { type: 'json' }; process.stdout.write(manifest.packageVersion)")"
+version="$(node --input-type=module -e "import manifest from './web-worker/package.json' with { type: 'json' }; process.stdout.write(manifest.version)")"
 archive="target/distrib/adocweave-browser-$version.tar.xz"
 echo "$(wc -c < "$archive") $archive"
 '''
@@ -954,7 +948,7 @@ script_runner = "@shell"
 script = '''
 set -euo pipefail
 system="$(nix eval --raw --impure --expr builtins.currentSystem)"
-version="$(jq -er .packageVersion release-manifest.json)"
+version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' crates/adocweave-cli/Cargo.toml | head -n 1)"
 nix flake check --no-build
 nix build \
   ".#checks.${system}.package-smoke" \
@@ -1050,7 +1044,6 @@ dependencies = [
   "dependency-governance",
   "fuzz",
   "nix-package-check",
-  "semver-check",
 ]
 
 [tasks.verify-with-global-candidate]

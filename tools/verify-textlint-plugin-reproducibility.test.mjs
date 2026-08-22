@@ -14,10 +14,10 @@ test("別のsource、Cargo targetおよびnpm cacheで同じarchiveを構築す�
     const hash = await verifyTextlintPluginReproducibility({
       repositoryRoot: root,
       prepareSource: async (_repositoryRoot, sourceDirectory) => {
-        await mkdir(sourceDirectory, { recursive: true });
+        await mkdir(join(sourceDirectory, "packages/textlint-plugin-asciidoc"), { recursive: true });
         await writeFile(
-          join(sourceDirectory, "release-manifest.json"),
-          JSON.stringify({ packageVersion: "1.2.3" }),
+          join(sourceDirectory, "packages/textlint-plugin-asciidoc/package.json"),
+          JSON.stringify({ version: "1.2.3" }),
         );
       },
       buildPackage: async (directories) => {
@@ -56,10 +56,10 @@ test("clean build間のbyte差を拒否する", async () => {
       verifyTextlintPluginReproducibility({
         repositoryRoot: root,
         prepareSource: async (_repositoryRoot, sourceDirectory) => {
-          await mkdir(sourceDirectory, { recursive: true });
+          await mkdir(join(sourceDirectory, "packages/textlint-plugin-asciidoc"), { recursive: true });
           await writeFile(
-            join(sourceDirectory, "release-manifest.json"),
-            JSON.stringify({ packageVersion: "1.2.3" }),
+            join(sourceDirectory, "packages/textlint-plugin-asciidoc/package.json"),
+            JSON.stringify({ version: "1.2.3" }),
           );
         },
         buildPackage: async ({ outputDirectory }) => {

@@ -4,7 +4,12 @@ import { dirname, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
-import { validateWorkerMessage, WORKER_PROTOCOL_VERSION } from "./worker-protocol.mjs";
+import {
+  PROTOCOL_SCHEMA_VERSION,
+  PACKAGE_VERSION,
+  validateWorkerMessage,
+  WORKER_PROTOCOL_VERSION,
+} from "./worker-protocol.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -13,19 +18,18 @@ const wasm = require(resolve(root, "target/adocweave-wasm-node/adocweave_wasm.js
 const corpus = JSON.parse(
   readFileSync(resolve(root, "fixtures/protocol/request-corpus.json"), "utf8"),
 );
-const release = JSON.parse(readFileSync(resolve(root, "release-manifest.json"), "utf8"));
 
 function currentRequest() {
   return {
     ...structuredClone(corpus.defaultRequest),
-    packageVersion: release.packageVersion,
+    packageVersion: PACKAGE_VERSION,
   };
 }
 
 function currentPreprocessRequest() {
   return {
     ...structuredClone(corpus.preprocessRequest),
-    packageVersion: release.packageVersion,
+    packageVersion: PACKAGE_VERSION,
   };
 }
 
@@ -39,8 +43,9 @@ function wasmError(operation) {
 }
 
 test("generated wasm-bindgen accepts the current default requests", () => {
+  assert.equal(wasm.protocolSchemaVersion(), PROTOCOL_SCHEMA_VERSION);
   const response = wasm.process(currentRequest());
-  assert.equal(response.packageVersion, release.packageVersion);
+  assert.equal(response.packageVersion, PACKAGE_VERSION);
   assert.equal(response.version, 1);
   assert.equal(response.generation, 1);
   assert.equal(validateWorkerMessage({
@@ -64,7 +69,7 @@ test("generated wasm-bindgen accepts the current default requests", () => {
   }, "responses"), true);
 
   const preprocessed = wasm.preprocess(currentPreprocessRequest());
-  assert.equal(preprocessed.packageVersion, release.packageVersion);
+  assert.equal(preprocessed.packageVersion, PACKAGE_VERSION);
   assert.equal(preprocessed.source, "included\n");
 });
 

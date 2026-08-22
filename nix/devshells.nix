@@ -89,7 +89,7 @@ in
   default = shell {
     rust = developmentRust pkgs;
     rustSource = true;
-    extra = [ pkgs.rust-analyzer adocweave-fuzz pkgs.cargo-semver-checks ]
+    extra = [ pkgs.rust-analyzer adocweave-fuzz ]
       ++ lib.optionals stdenv.isLinux [ pkgs.chromium pkgs.xvfb ];
   };
 
@@ -101,11 +101,6 @@ in
   ci-fuzz = shell {
     rust = ciRust pkgs;
     extra = [ adocweave-fuzz ];
-  };
-
-  ci-semver = shell {
-    rust = ciRust pkgs;
-    extra = [ pkgs.cargo-semver-checks ];
   };
 
   # The browser acceptance gate must run against a browser this repository pins,

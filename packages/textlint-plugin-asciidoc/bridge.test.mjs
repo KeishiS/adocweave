@@ -1,23 +1,22 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { createParseText } from "./bridge.mjs";
+import { createParseText, TEXTLINT_ADAPTER_API_VERSION } from "./bridge.mjs";
 
-const componentVersion = JSON.parse(
-  readFileSync(new URL("./package.json", import.meta.url), "utf8")
-).version;
+const compatibleBridge = (parseText) => ({
+  adapterApiVersion: () => TEXTLINT_ADAPTER_API_VERSION,
+  parseText,
+});
 
-test("component version、sourceIdおよびsourceをWASMへ渡す", () => {
+test("adapter API、sourceIdおよびsourceをWASM境界で検査する", () => {
   let request;
   const parseText = createParseText({
-    componentVersion,
-    bridgeLoader: () => ({
-      parseText(value) {
+    bridgeLoader: () => compatibleBridge(
+      (value) => {
         request = value;
         return { type: "Document", range: [0, 0], children: [] };
-      }
-    })
+      },
+    ),
   });
   assert.deepEqual(parseText("", "doc.adoc"), {
     type: "Document",
@@ -25,7 +24,6 @@ test("component version、sourceIdおよびsourceをWASMへ渡す", () => {
     children: []
   });
   assert.deepEqual(request, {
-    componentVersion,
     sourceId: "doc.adoc",
     source: ""
   });
@@ -33,19 +31,17 @@ test("component version、sourceIdおよびsourceをWASMへ渡す", () => {
 
 test("WASMのJSON errorをcode付きErrorへ変換する", () => {
   for (const code of [
-    "component-version-mismatch",
     "input-too-large",
     "output-too-large",
     "node-limit",
     "invalid-request"
   ]) {
     const parseText = createParseText({
-      componentVersion,
-      bridgeLoader: () => ({
-        parseText() {
+      bridgeLoader: () => compatibleBridge(
+        () => {
           throw JSON.stringify({ code, message: `${code}の説明` });
-        }
-      })
+        },
+      ),
     });
     assert.throws(
       () => parseText(""),
@@ -55,19 +51,14 @@ test("WASMのJSON errorをcode付きErrorへ変換する", () => {
 });
 
 test("factoryが設定、requestおよびWASM exportを検証する", () => {
-  assert.throws(() => createParseText({ componentVersion, bridgeLoader: null }), /bridgeLoader/);
-  assert.throws(
-    () => createParseText({ componentVersion: "", bridgeLoader: () => ({}) }),
-    /componentVersion/
-  );
-  const missingExport = createParseText({ componentVersion, bridgeLoader: () => ({}) });
+  assert.throws(() => createParseText({ bridgeLoader: null }), /bridgeLoader/);
+  const missingExport = createParseText({ bridgeLoader: () => ({}) });
   assert.throws(
     () => missingExport(""),
     (error) => error.code === "wasm-initialization-failed" && /parseText/.test(error.message)
   );
   const parseText = createParseText({
-    componentVersion,
-    bridgeLoader: () => ({ parseText: () => ({}) })
+    bridgeLoader: () => compatibleBridge(() => ({})),
   });
   assert.throws(() => parseText(new Uint8Array()), /文字列/);
   assert.throws(() => parseText("", 42), /sourceId/);
@@ -75,7 +66,6 @@ test("factoryが設定、requestおよびWASM exportを検証する", () => {
 
 test("初期化失敗と未知のthrow値を利用者向けErrorへ変換する", () => {
   const initializationFailure = createParseText({
-    componentVersion,
     bridgeLoader: () => {
       throw new Error("module load failed");
     }
@@ -89,11 +79,23 @@ test("初期化失敗と未知のthrow値を利用者向けErrorへ変換する"
   );
 
   const unknownFailure = createParseText({
-    componentVersion,
-    bridgeLoader: () => ({ parseText: () => { throw 42; } })
+    bridgeLoader: () => compatibleBridge(() => { throw 42; }),
   });
   assert.throws(
     () => unknownFailure(""),
     (error) => error instanceof Error && error.code === "adocweave-error"
+  );
+});
+
+test("異なるtextlint adapter API世代を拒否する", () => {
+  const parseText = createParseText({
+    bridgeLoader: () => ({
+      adapterApiVersion: () => TEXTLINT_ADAPTER_API_VERSION + 1,
+      parseText: () => ({}),
+    }),
+  });
+  assert.throws(
+    () => parseText(""),
+    (error) => error.code === "wasm-initialization-failed" && /互換性/.test(error.message),
   );
 });

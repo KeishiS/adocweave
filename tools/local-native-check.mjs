@@ -4,9 +4,9 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 
-const [mode] = process.argv.slice(2);
-if (!["installation", "smoke"].includes(mode)) {
-  process.stderr.write("usage: node tools/local-native-check.mjs installation|smoke\n");
+const [mode, product = process.env.RELEASE_PRODUCT] = process.argv.slice(2);
+if (!["installation", "smoke"].includes(mode) || !["cli", "lsp"].includes(product)) {
+  process.stderr.write("usage: node tools/local-native-check.mjs installation|smoke cli|lsp\n");
   process.exit(2);
 }
 
@@ -26,7 +26,7 @@ if (!existsSync(candidate)) {
 }
 
 const script = mode === "smoke" ? "native-release-smoke.mjs" : "release-installation-e2e.mjs";
-const args = [fileURLToPath(new URL(script, import.meta.url)), candidate, platform.triple];
+const args = [fileURLToPath(new URL(script, import.meta.url)), product, candidate, platform.triple];
 if (mode === "installation" && process.env.NATIVE_MANIFEST) {
   args.push(resolve(process.env.NATIVE_MANIFEST));
 }

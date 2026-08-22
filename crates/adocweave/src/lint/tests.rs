@@ -1517,7 +1517,7 @@ fn expanded_xref_target_does_not_keep_the_authored_safety_diagnostic() {
 #[test]
 fn relative_links_and_cross_document_targets_do_not_require_host_resolution() {
     let diagnostics = lint(
-        "link:../release-manifest.json[release manifest]\n\
+        "link:../toolchains.json[toolchain manifest]\n\
          link:../%2e%2e/secret[encoded relative]\n\
          xref:../guide.adoc[guide]\n",
         &LintConfig::default(),

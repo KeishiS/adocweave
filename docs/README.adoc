@@ -4,8 +4,8 @@
 
 == Version方針
 
-現在のパッケージバージョン、RustおよびNode.jsのバージョンは次のファイルを基準とします。
-link:../release-manifest.json[release manifest]
+各製品のバージョンは``release/distribution-plan.json``の``versionSource``が指すmanifestを基準とします。
+RustおよびNode.jsのバージョンはlink:../toolchains.json[toolchain manifest]を基準とします。
 
 version固有の変更内容と移行手順は
 https://github.com/KeishiS/adocweave/releases[GitHub Releases]を参照してください。

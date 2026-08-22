@@ -10,6 +10,7 @@ import {
 } from "vscode-languageclient/node";
 
 import { configuredServerPath } from "./configuration.js";
+import { MANAGED_LSP_VERSION, SUPPORTED_LSP_API_VERSIONS } from "./lsp-contract.js";
 import { platformForHost, type ManagedPlatform } from "./platform.js";
 import { selectServer, type SelectedServer } from "./server-selection.js";
 
@@ -97,7 +98,6 @@ export class ServerController implements vscode.Disposable {
         "Ignored the Language Server path configured by an untrusted workspace.",
       );
     }
-    const version = String(this.#context.extension.packageJSON.version);
     let platform: ManagedPlatform | undefined;
     try {
       platform = platformForHost();
@@ -108,12 +108,12 @@ export class ServerController implements vscode.Disposable {
       allowDownload: configuration.get<boolean>("server.download", true),
       configuredPath: configured.path,
       installer: {
+        managedLspVersion: MANAGED_LSP_VERSION,
         signal,
         storagePath: this.#managedStoragePath(),
-        version,
+        supportedLspApiVersions: SUPPORTED_LSP_API_VERSIONS,
       },
       platform,
-      version,
       warning: (code) => this.#output.appendLine(`Rejected a Language Server candidate: ${code}`),
     });
     if (generation !== this.#generation || signal.aborted) return undefined;

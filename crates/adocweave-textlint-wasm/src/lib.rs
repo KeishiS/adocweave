@@ -1,6 +1,6 @@
 //! Node.js-only WebAssembly request, resource-limit, and binding boundary.
 
-use adocweave::{AnalysisInputs, AnalysisOptions, Engine, SourceId, VERSION};
+use adocweave::{AnalysisInputs, AnalysisOptions, Engine, SourceId};
 use adocweave_textlint::{PlanError, PlanLimits, TxtAstPlan, plan};
 use serde::{Deserialize, Serialize};
 
@@ -12,11 +12,11 @@ pub const MAX_OUTPUT_BYTES: usize = 50 * 1024 * 1024;
 pub const MAX_PLAN_NODES: usize = 1_000_000;
 /// Maximum accepted logical source identifier size.
 pub const MAX_SOURCE_ID_BYTES: usize = 4 * 1024;
+pub const ADAPTER_API_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ParseTextRequest {
-    pub component_version: String,
     pub source_id: Option<String>,
     pub source: String,
 }
@@ -46,15 +46,6 @@ fn parse_text_request_with_limits(
     max_output_bytes: usize,
     max_plan_nodes: usize,
 ) -> Result<TxtAstPlan, ParseTextError> {
-    if request.component_version != VERSION {
-        return Err(ParseTextError::new(
-            "component-version-mismatch",
-            format!(
-                "component version {} does not match {VERSION}",
-                request.component_version
-            ),
-        ));
-    }
     if request.source.len() > max_input_bytes {
         return Err(ParseTextError::new(
             "input-too-large",
@@ -166,6 +157,11 @@ mod bindings {
 
     use super::*;
 
+    #[wasm_bindgen(js_name = adapterApiVersion)]
+    pub fn adapter_api_version_js() -> u32 {
+        ADAPTER_API_VERSION
+    }
+
     #[wasm_bindgen(js_name = parseText)]
     pub fn parse_text_js(request: JsValue) -> Result<JsValue, JsValue> {
         let request = deserialize_request(request)?;
@@ -202,7 +198,6 @@ mod tests {
 
     fn request(source: &str) -> ParseTextRequest {
         ParseTextRequest {
-            component_version: VERSION.to_owned(),
             source_id: Some("docs:test.adoc".to_owned()),
             source: source.to_owned(),
         }
@@ -231,11 +226,9 @@ mod tests {
     }
 
     #[test]
-    fn rejects_a_different_component_version() {
-        let mut request = request("");
-        request.component_version = "0.0.0".to_owned();
-        let error = parse_text_request(request).expect_err("version mismatch");
-        assert_eq!(error.code, "component-version-mismatch");
+    fn adapter_api_generation_is_independent_from_the_package_version() {
+        assert_eq!(ADAPTER_API_VERSION, 1);
+        assert_ne!(ADAPTER_API_VERSION.to_string(), env!("CARGO_PKG_VERSION"));
     }
 
     #[test]
@@ -282,7 +275,6 @@ mod tests {
     #[test]
     fn request_rejects_unknown_fields() {
         let error = serde_json::from_value::<ParseTextRequest>(serde_json::json!({
-            "componentVersion": VERSION,
             "sourceId": null,
             "source": "",
             "unknown": true

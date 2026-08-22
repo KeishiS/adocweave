@@ -3,7 +3,10 @@
 use adocweave::preprocess::{
     PreprocessInputs, PreprocessedAnalysisError, ProjectionFailure, ProjectionLimits, preprocess,
 };
-use adocweave::{CancellationCheck, NeverCancel, ParseError, SourceId, VERSION};
+use adocweave::{CancellationCheck, NeverCancel, ParseError, SourceId};
+
+/// Browser package version accepted and returned by this adapter.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 mod preprocess_projection;
 mod preprocess_wire;
@@ -222,6 +225,11 @@ mod bindings {
     use wasm_bindgen::prelude::*;
 
     use super::*;
+
+    #[wasm_bindgen(js_name = protocolSchemaVersion)]
+    pub fn protocol_schema_version_js() -> u16 {
+        PROTOCOL_SCHEMA_VERSION
+    }
 
     struct JsCancellation(Option<Function>);
 

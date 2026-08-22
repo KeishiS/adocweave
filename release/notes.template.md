@@ -1,43 +1,29 @@
-# AdocWeave vX.Y.Z
+# AdocWeave PRODUCT vX.Y.Z
 
 ## 主な変更
 
-- （利用者から見える変更を、変更の理由と影響が分かる文で箇条書きにします。1件目を記載してから公開）
+- （利用者から見える変更を、理由と影響が分かる文で記載してから公開）
 
 ## 対応環境
 
-CLIとLanguage Serverのnative archiveは、次に挙げるLinux、macOSおよびWindowsのtargetへ配布します。macOSとWindowsのbinaryはOSのsystem libraryへ動的linkします。browser package、Zed拡張、VS Code拡張およびtextlint用Processorはtargetに依存しません。
+（選択した製品の対応環境と制約を記載してから公開）
 
-（target一覧とRust／Node.jsの版は生成器が追記するため書きません。対応環境に変更がなければこの段落のまま公開できます。変更があればこの行を消し、内容を記載してから公開）
+## 対応関係
 
-## 公開契約と破壊的変更
-
-（CLI引数、Language Server protocol、設定schema、WASM protocolなど、前の版から変更した仕様の内容と影響を書きます。WASM protocolを変えた場合は「WASM protocol schema versionをNからMへ更新しました。理由。」の形で書くと、到達値を生成器が正本と照合します。利用者の操作は移行節へ記載してから公開）
-
-consumerは記載されたpackage versionを厳密に一致させてください。異なるversionのCLI、LSP、browser、Zed、VS Codeまたはtextlint向け配布物を混在させないでください。
+（ほかの製品や外部APIとの互換性を、判断に使うAPI世代を示して説明してから公開。製品バージョンと関連API世代は生成器が追記）
 
 ## vX.Y.Zへの移行
 
-- Browser向けWASMのJSON requestを直接構築している場合は、X.Y.ZのpackageとAPIへ更新し、requestの``packageVersion``も``X.Y.Z``にそろえてください。``schemaVersion``はrequestの項目ではありません。requestには追加しないでください。保存済みの結果やcacheは、packageが公開する``PROTOCOL_SCHEMA_VERSION``を使って区別してください。
-- CLI、LSP、browser、Zed、VS Codeおよびtextlint向け配布物のversionをX.Y.Zへそろえてください。バージョンの異なる配布物を混ぜて使えないため、更新する場合はすべてを入れ替えます。
-- （Rust APIの破壊的変更に伴う移行は``release/breaking-rust-api.json``から生成器が追記するため書きません。それ以外に利用者の作業が必要な変更があれば箇条書きで記載し、なければこの行を消してから公開）
+- （利用者の作業が必要な変更を記載し、なければその旨を記載してから公開）
 
 ## 更新とロールバック
 
-native archiveはversion別directoryへ展開し、`--version --json`が`X.Y.Z`を返すことを確認してから選択先を切り替えてください。
-
-VS Codeでは検証済みVSIXを手動導入し、拡張とLanguage Serverのversion一致を確認してください。受入確認が成功するまで以前のVSIXとnative directoryを保持します。
-
-Zedでは新versionのmanaged Language Server取得とeditor機能を確認するまで旧versionのZed directoryを保持します。rollback時は旧directoryをdev extensionとして選び直し、Zedを再起動してください。
-
-textlint用Processorは新しいReleaseのtarball URLへ変更してlockfileを更新します。rollback時は以前の検証済みURLへ戻し、lockfileから依存を再導入してください。
-
-rollback時は以前のversion別directoryまたはVSIXへ戻します。詳細は`docs/user-guide/release-installation.adoc`を参照してください。
+（選択した製品の更新手順と、以前の版へ戻す手順を記載してから公開）
 
 ## 既知の制約
 
-（前の版の``release/notes.md``の一覧を引き継ぎ、解消した制約を消し、新しい制約を足します。textlint用Processorの対応範囲は生成器が追記するため書きません。記載してから公開）
+- （選択した製品に残る制約を記載してから公開）
 
 ## 配布物の検証
 
-すべてのrelease assetをdownloadし、`sha256sum --check sha256.sum`を実行してください。その後、必要なassetを`gh attestation verify <asset> --repo KeishiS/adocweave`で検証してください。配布manifest（`adocweave-dist-manifest.json`）とSPDX SBOMには、公開したarchiveの名前、対象環境、byte数およびSHA-256を記録しています。
+対象Releaseの`sha256.sum`でarchiveを検査し、`gh attestation verify <asset> --repo KeishiS/adocweave`でattestationを検証してください。

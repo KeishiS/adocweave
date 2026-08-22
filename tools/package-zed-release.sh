@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-version="$(node --input-type=module -e "import manifest from './release-manifest.json' with { type: 'json' }; process.stdout.write(manifest.packageVersion)")"
+version="$(node --input-type=module -e "import { readFileSync } from 'node:fs'; const source = readFileSync('./editors/zed/extension.toml', 'utf8'); process.stdout.write(/^version = \"([^\"]+)\"/m.exec(source)[1])")"
 package="adocweave-zed-$version"
 stage="target/zed-release/$package"
 archive="target/distrib/$package.tar.xz"

@@ -46,7 +46,7 @@ fn adversarial_fixture_never_emits_active_input_or_unsafe_urls() {
 
 #[test]
 fn relative_targets_are_valid_analysis_inputs_but_not_active_html_urls() {
-    let source = "link:../release-manifest.json[release manifest]\n\
+    let source = "link:../toolchains.json[toolchain manifest]\n\
                   xref:../guide.adoc[guide]\n";
     let analysis = Engine::new(AnalysisOptions::default())
         .analyze(source)
@@ -60,7 +60,7 @@ fn relative_targets_are_valid_analysis_inputs_but_not_active_html_urls() {
     }));
 
     let output = render(analysis.document(), &RenderPolicy::default());
-    assert_eq!(output.html, "<p>release manifest guide</p>\n");
+    assert_eq!(output.html, "<p>toolchain manifest guide</p>\n");
     assert!(!output.html.contains("href="));
     assert!(
         output

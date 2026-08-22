@@ -9,7 +9,9 @@ const ROOT = fileURLToPath(new URL("../", import.meta.url));
 
 export async function stageTextlintPluginPackage(stageDirectory, wasmDirectory, noticeFile) {
   const contract = loadTextlintPluginPackageContract();
-  const release = JSON.parse(await readFile(join(ROOT, "release-manifest.json"), "utf8"));
+  const sourceManifest = JSON.parse(
+    await readFile(join(ROOT, "packages/textlint-plugin-asciidoc/package.json"), "utf8"),
+  );
   const stage = resolve(stageDirectory);
   await rm(stage, { recursive: true, force: true });
   await mkdir(stage, { recursive: true });
@@ -26,7 +28,7 @@ export async function stageTextlintPluginPackage(stageDirectory, wasmDirectory, 
     else if (entry.generator === "package-manifest") {
       const manifest = {
         name: contract.identity.packageName,
-        version: release.packageVersion,
+        version: sourceManifest.version,
         description: "AsciiDoc Processor Plugin for textlint powered by AdocWeave",
         private: contract.identity.private,
         type: "module",

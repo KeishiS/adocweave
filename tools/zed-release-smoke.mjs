@@ -7,7 +7,9 @@ import process from "node:process";
 const [archive] = process.argv.slice(2);
 if (!archive) throw new Error("usage: node tools/zed-release-smoke.mjs ARCHIVE");
 
-const version = JSON.parse(readFileSync(new URL("../release-manifest.json", import.meta.url), "utf8")).packageVersion;
+const extension = readFileSync(new URL("../editors/zed/extension.toml", import.meta.url), "utf8");
+const version = /^version\s*=\s*"([^"]+)"$/m.exec(extension)?.[1];
+if (!version) throw new Error("Zed extension version is missing");
 const packageName = `adocweave-zed-${version}`;
 if (basename(archive) !== `${packageName}.tar.xz`) throw new Error("unexpected Zed archive name");
 const expected = [

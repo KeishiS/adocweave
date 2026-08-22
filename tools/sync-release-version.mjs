@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = new URL("../", import.meta.url);
 const STABLE_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+export const PRODUCT_IDS = ["cli", "lsp", "browser", "textlint", "vscode", "zed"];
 const IGNORED_DIRECTORIES = new Set([
   ".agents",
   ".git",
@@ -85,40 +86,27 @@ function positiveCount(count, label, allowZero = false) {
   }
 }
 
-export function validateRegistry(registry) {
-  exactKeys(
-    registry,
-    ["schemaVersion", "authority", "targets", "generators"],
-    "version同期registry",
-  );
-  if (registry.schemaVersion !== 1) {
-    fail("version同期registryのschemaVersionは1である必要があります");
+function validateProduct(product, label) {
+  exactKeys(product, ["id", "authority", "targets", "generators"], label);
+  if (!PRODUCT_IDS.includes(product.id)) fail(`${label}.idが未対応です：${product.id}`);
+  exactKeys(product.authority, ["type", "path", "template", "count"], `${label}.authority`);
+  if (product.authority.type !== "literal") {
+    fail(`${label}.authorityのtypeはliteralである必要があります`);
   }
+  safePath(product.authority.path, `${label}.authority`);
+  versionTemplate(product.authority.template, `${label}.authority`);
+  positiveCount(product.authority.count, `${label}.authority`);
 
-  exactKeys(
-    registry.authority,
-    ["type", "path", "template", "count"],
-    "authority",
-  );
-  if (registry.authority.type !== "literal") {
-    fail("authorityのtypeはliteralである必要があります");
-  }
-  safePath(registry.authority.path, "authority");
-  versionTemplate(registry.authority.template, "authority");
-  positiveCount(registry.authority.count, "authority");
-
-  if (!Array.isArray(registry.targets) || registry.targets.length === 0) {
-    fail("targetsは空でないarrayである必要があります");
-  }
+  if (!Array.isArray(product.targets)) fail(`${label}.targetsはarrayである必要があります`);
   const locators = new Set();
-  for (const [index, target] of registry.targets.entries()) {
-    const label = `targets[${index}]`;
+  for (const [index, target] of product.targets.entries()) {
+    const targetLabel = `${label}.targets[${index}]`;
     if (target?.type === "literal") {
-      exactKeys(target, ["type", "path", "template", "count"], label);
-      versionTemplate(target.template, label);
-      if (target.count !== ALL_OCCURRENCES) positiveCount(target.count, label);
+      exactKeys(target, ["type", "path", "template", "count"], targetLabel);
+      versionTemplate(target.template, targetLabel);
+      if (target.count !== ALL_OCCURRENCES) positiveCount(target.count, targetLabel);
     } else if (target?.type === "cargo-lock") {
-      exactKeys(target, ["type", "path", "packages"], label);
+      exactKeys(target, ["type", "path", "packages"], targetLabel);
       if (
         !Array.isArray(target.packages) ||
         target.packages.length === 0 ||
@@ -127,45 +115,40 @@ export function validateRegistry(registry) {
         ) ||
         new Set(target.packages).size !== target.packages.length
       ) {
-        fail(`${label}.packagesは重複のないpackage名である必要があります`);
+        fail(`${targetLabel}.packagesは重複のないpackage名である必要があります`);
       }
     } else {
-      fail(`${label}.typeはliteralまたはcargo-lockである必要があります`);
+      fail(`${targetLabel}.typeはliteralまたはcargo-lockである必要があります`);
     }
-    safePath(target.path, label);
+    safePath(target.path, targetLabel);
     const identity = target.type === "literal"
       ? `${target.path}\0literal\0${target.template}`
       : `${target.path}\0cargo-lock\0${target.packages.join(",")}`;
-    if (locators.has(identity)) fail(`${label}は重複しています`);
+    if (locators.has(identity)) fail(`${targetLabel}は重複しています`);
     locators.add(identity);
   }
   const authorityIdentity =
-    `${registry.authority.path}\0literal\0${registry.authority.template}`;
+    `${product.authority.path}\0literal\0${product.authority.template}`;
   if (locators.has(authorityIdentity)) {
-    fail("authorityをtargetsへ重複登録できません");
+    fail(`${label}.authorityをtargetsへ重複登録できません`);
   }
 
-  if (
-    !Array.isArray(registry.generators) ||
-    registry.generators.length === 0
-  ) {
-    fail("generatorsは空でないarrayである必要があります");
-  }
+  if (!Array.isArray(product.generators)) fail(`${label}.generatorsはarrayである必要があります`);
   const generatorIds = new Set();
   const outputPaths = new Set();
-  for (const [index, generator] of registry.generators.entries()) {
-    const label = `generators[${index}]`;
-    exactKeys(generator, ["id", "outputs"], label);
+  for (const [index, generator] of product.generators.entries()) {
+    const generatorLabel = `${label}.generators[${index}]`;
+    exactKeys(generator, ["id", "outputs"], generatorLabel);
     if (!["protocol", "public-conformance"].includes(generator.id)) {
-      fail(`${label}のgenerator IDは許可されていません`);
+      fail(`${generatorLabel}のgenerator IDは許可されていません`);
     }
-    if (generatorIds.has(generator.id)) fail(`${label}のIDは重複しています`);
+    if (generatorIds.has(generator.id)) fail(`${generatorLabel}のIDは重複しています`);
     generatorIds.add(generator.id);
     if (!Array.isArray(generator.outputs) || generator.outputs.length === 0) {
-      fail(`${label}.outputsは空でないarrayである必要があります`);
+      fail(`${generatorLabel}.outputsは空でないarrayである必要があります`);
     }
     for (const [outputIndex, output] of generator.outputs.entries()) {
-      const outputLabel = `${label}.outputs[${outputIndex}]`;
+      const outputLabel = `${generatorLabel}.outputs[${outputIndex}]`;
       exactKeys(output, ["path"], outputLabel);
       safePath(output.path, outputLabel);
       if (outputPaths.has(output.path)) {
@@ -174,12 +157,19 @@ export function validateRegistry(registry) {
       outputPaths.add(output.path);
     }
   }
-  if (
-    generatorIds.size !== 2 ||
-    !generatorIds.has("protocol") ||
-    !generatorIds.has("public-conformance")
-  ) {
-    fail("protocolとpublic-conformanceのgeneratorを1件ずつ登録してください");
+}
+
+export function validateRegistry(registry) {
+  exactKeys(registry, ["schemaVersion", "products"], "version同期registry");
+  if (registry.schemaVersion !== 2) {
+    fail("version同期registryのschemaVersionは2である必要があります");
+  }
+  if (!Array.isArray(registry.products)) fail("productsはarrayである必要があります");
+  registry.products.forEach((product, index) => validateProduct(product, `products[${index}]`));
+  const ids = registry.products.map(({ id }) => id);
+  if (new Set(ids).size !== ids.length) fail("product IDが重複しています");
+  if (JSON.stringify([...ids].sort()) !== JSON.stringify([...PRODUCT_IDS].sort())) {
+    fail(`productsは${PRODUCT_IDS.join("、")}を1件ずつ含める必要があります`);
   }
   return registry;
 }
@@ -306,10 +296,10 @@ function sourceFiles(root) {
 // 主要なmanifestの版はrelease-contractがrelease manifestと突き合わせるため、
 // 二重の検査を維持する価値より保守の負担が上回ると判断しています。
 
-function validateState(root, registry, version) {
-  validateLocator(root, registry.authority, version, "authority");
-  for (const [index, target] of registry.targets.entries()) {
-    validateLocator(root, target, version, `targets[${index}]`);
+function validateState(root, product, version) {
+  validateLocator(root, product.authority, version, `${product.id}.authority`);
+  for (const [index, target] of product.targets.entries()) {
+    validateLocator(root, target, version, `${product.id}.targets[${index}]`);
   }
 }
 
@@ -443,6 +433,7 @@ function updateLocators(root, locators, current, next) {
 export function syncReleaseVersion({
   root = ROOT,
   mode,
+  product: productId,
   version,
   registry,
   runGenerator = runRepositoryGenerator,
@@ -451,13 +442,15 @@ export function syncReleaseVersion({
     fail("rootはfile URLである必要があります");
   }
   validateRegistry(registry);
-  const authoritySource = read(root, registry.authority.path);
-  const authorityPattern = registry.authority.template
+  const product = registry.products.find(({ id }) => id === productId);
+  if (!product) fail(`未対応のproductです：${productId ?? "<missing>"}`);
+  const authoritySource = read(root, product.authority.path);
+  const authorityPattern = product.authority.template
     .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
     .replace("\\{version\\}", "([0-9]+\\.[0-9]+\\.[0-9]+)");
   const matches = [...authoritySource.matchAll(new RegExp(authorityPattern, "g"))];
-  if (matches.length !== registry.authority.count) {
-    fail("authorityから現在のversionを一意に取得できません");
+  if (matches.length !== product.authority.count) {
+    fail(`${product.id}のauthorityから現在のversionを一意に取得できません`);
   }
   const current = matches[0][1];
   if (!STABLE_VERSION.test(current)) fail(`authorityのversionが不正です：${current}`);
@@ -473,11 +466,11 @@ export function syncReleaseVersion({
     fail(`更新先versionは現在のversionより大きい必要があります：${version}`);
   }
 
-  validateState(root, registry, current);
+  validateState(root, product, current);
   const before = sourceFiles(root);
   if (mode === "check") {
     try {
-      for (const generator of registry.generators) {
+      for (const generator of product.generators) {
         runGenerator({ id: generator.id, mode, root, generator });
       }
       const after = sourceFiles(root);
@@ -489,23 +482,23 @@ export function syncReleaseVersion({
       restore(root, before, sourceFiles(root));
       throw error;
     }
-    process.stdout.write(`release version同期を検査しました：${current}\n`);
+    process.stdout.write(`${product.id}のrelease version同期を検査しました：${current}\n`);
     return { current, version: current, changed: [] };
   }
 
   if (version === current) {
-    process.stdout.write(`release versionはすでに${current}です\n`);
+    process.stdout.write(`${product.id}のrelease versionはすでに${current}です\n`);
     return { current, version, changed: [] };
   }
 
   try {
     updateLocators(
       root,
-      [...registry.targets, registry.authority],
+      [...product.targets, product.authority],
       current,
       version,
     );
-    for (const generator of registry.generators) {
+    for (const generator of product.generators) {
       runGenerator({
         id: generator.id,
         mode,
@@ -515,12 +508,12 @@ export function syncReleaseVersion({
         version,
       });
     }
-    validateState(root, registry, version);
+    validateState(root, product, version);
     const after = sourceFiles(root);
     const allowed = new Set([
-      registry.authority.path,
-      ...registry.targets.map(({ path }) => path),
-      ...registry.generators.flatMap(({ outputs }) =>
+      product.authority.path,
+      ...product.targets.map(({ path }) => path),
+      ...product.generators.flatMap(({ outputs }) =>
         outputs.map(({ path }) => path)),
     ]);
     const unexpected = changedPaths(before, after).filter(
@@ -529,7 +522,7 @@ export function syncReleaseVersion({
     if (unexpected.length > 0) {
       fail(`同期処理が管理対象外を変更しました：${unexpected.join(", ")}`);
     }
-    process.stdout.write(`release versionを${current}から${version}へ同期しました\n`);
+    process.stdout.write(`${product.id}のrelease versionを${current}から${version}へ同期しました\n`);
     return { current, version, changed: changedPaths(before, after) };
   } catch (error) {
     restore(root, before, sourceFiles(root));
@@ -539,13 +532,20 @@ export function syncReleaseVersion({
 
 function parseArguments(args) {
   if (args.length === 1 && args[0] === "--check") {
-    return { mode: "check", version: undefined };
+    return { mode: "check", product: undefined, version: undefined };
   }
-  if (args.length === 2 && args[0] === "--version") {
-    return { mode: "update", version: args[1] };
+  if (args.length === 3 && args[0] === "--product" && args[2] === "--check") {
+    return { mode: "check", product: args[1], version: undefined };
+  }
+  if (
+    args.length === 4 &&
+    args[0] === "--product" &&
+    args[2] === "--version"
+  ) {
+    return { mode: "update", product: args[1], version: args[3] };
   }
   fail(
-    "使用方法：node tools/sync-release-version.mjs --check | --version X.Y.Z",
+    "使用方法：node tools/sync-release-version.mjs --check | --product PRODUCT --check | --product PRODUCT --version X.Y.Z",
   );
 }
 
@@ -554,6 +554,13 @@ export function main(args) {
   const registry = JSON.parse(
     readFileSync(new URL("release/version-sync.json", ROOT), "utf8"),
   );
+  validateRegistry(registry);
+  if (options.mode === "check" && options.product === undefined) {
+    for (const { id: product } of registry.products) {
+      syncReleaseVersion({ ...options, product, registry });
+    }
+    return;
+  }
   syncReleaseVersion({ ...options, registry });
 }
 

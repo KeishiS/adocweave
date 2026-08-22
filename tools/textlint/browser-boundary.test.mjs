@@ -6,10 +6,6 @@ import { fileURLToPath } from "node:url";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const require = createRequire(import.meta.url);
-const packageVersion = JSON.parse(
-  readFileSync(`${repositoryRoot}release-manifest.json`, "utf8")
-).packageVersion;
-
 function errorPayload(operation) {
   try {
     operation();
@@ -36,25 +32,17 @@ test("文章校正用exportをBrowser成果物から分離する", () => {
         `${repositoryRoot}target/adocweave-textlint-wasm-node/adocweave_textlint_wasm.js`
       )
     ),
-    ["parseText"]
+    ["adapterApiVersion", "parseText"]
   );
 });
 
-test("実WebAssembly境界がversionとrequest上限をcode付きで拒否する", () => {
-  const { parseText } = require(
+test("実WebAssembly境界がadapter API世代を公開しrequest上限をcode付きで拒否する", () => {
+  const { adapterApiVersion, parseText } = require(
     `${repositoryRoot}target/adocweave-textlint-wasm-node/adocweave_textlint_wasm.js`
   );
+  assert.equal(adapterApiVersion(), 1);
   assert.equal(
     errorPayload(() => parseText({
-      componentVersion: "0.0.0",
-      source: "",
-      sourceId: null
-    })).code,
-    "component-version-mismatch"
-  );
-  assert.equal(
-    errorPayload(() => parseText({
-      componentVersion: packageVersion,
       source: "x".repeat(10 * 1024 * 1024 + 1),
       sourceId: null
     })).code,
@@ -62,7 +50,6 @@ test("実WebAssembly境界がversionとrequest上限をcode付きで拒否する
   );
   assert.equal(
     errorPayload(() => parseText({
-      componentVersion: packageVersion,
       source: "",
       sourceId: "x".repeat(4 * 1024 + 1)
     })).code,

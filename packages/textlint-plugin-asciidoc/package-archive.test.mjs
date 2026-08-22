@@ -79,8 +79,8 @@ test("公開manifestの未知fieldを拒否する", async () => {
 });
 
 function entries() {
-  const release = JSON.parse(readFileSync(new URL("../../release-manifest.json", import.meta.url), "utf8"));
-  const manifest = { name: contract.identity.packageName, version: release.packageVersion,
+  const sourceManifest = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
+  const manifest = { name: contract.identity.packageName, version: sourceManifest.version,
     description: "AsciiDoc Processor Plugin for textlint powered by AdocWeave", private: true, type: "module",
     main: "./index.mjs", types: "./index.d.mts",
     exports: { ".": { types: "./index.d.mts", import: "./index.mjs", default: "./index.mjs" } },
@@ -91,7 +91,8 @@ function entries() {
     repository: { type: "git", url: "https://github.com/KeishiS/adocweave.git", directory: "packages/textlint-plugin-asciidoc" } };
   return contract.files.map(({ path }) => regular(`package/${path}`,
     path === "package.json" ? `${JSON.stringify(manifest)}\n`
-      : path === contract.wasm.wrapperPath ? "module.exports = { parseText() {} };\n"
+      : path === contract.wasm.wrapperPath
+        ? "module.exports = { adapterApiVersion() { return 1; }, parseText() {} };\n"
         : path === contract.wasm.binaryPath ? minimalWasm() : sourceFor(path)));
 }
 

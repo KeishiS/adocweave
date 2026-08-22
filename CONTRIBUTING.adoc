@@ -22,7 +22,7 @@ cargo make docs-prose-lint
 
 ``cargo make verify``はPull Request用の標準検査であり、``cargo make``の既定taskです。ソース、依存関係、
 Nixパッケージ、browserおよびeditor adapter、HTML5標準適合性、文書をまとめて検査し、fuzz targetが既知の入力で
-落ちないことと、公開Rust APIの差分が選んだバージョンとRelease Notesに整合することを確認します。
+落ちないことを確認します。
 
 次のtask名は、並行して開発するMarginalis、Renkanと共通の外向きの名前です。repositoryが変わっても
 同じ名前で同じ意味の検査を実行できます。
@@ -229,7 +229,7 @@ pull requestを作成するときは、link:.github/pull_request_template.md[Pul
 変更の目的、主な変更点、実行した検証を簡潔に記載し、未実施の検証がある場合は理由を記載してください。
 
 CIの必須checkは``verify``の一つだけです。``verify``は、dependency governance、source quality、fuzz、
-Nixパッケージ、公開Rust API差分に加え、変更に応じて選択したcandidate build、smoke testおよび
+Nixパッケージに加え、変更に応じて選択したcandidate build、smoke testおよび
 installation E2Eの結果を``always()``で集約します。個々の検査がskipされた場合も、必要な検査が成功したか
 どうかをこのjobが判定するため、検査のskipを成功と取り違えません。失敗した場合は、該当する``cargo make``
 taskをNix開発環境で再実行し、設定の基準である``.github/workflows``と``Makefile.toml``を確認してください。
@@ -240,8 +240,7 @@ source qualityは、書式や生成ファイルなどの短い検査、Rustワ�
 変更pathの分類を``cargo make ci-preflight``で先に確認します。global成果物へ影響する場合は、
 実Chromiumによるarchiveの受入検査もPull Requestで実行します。
 
-``cargo make verify``はsource gate、dependency governance、fuzz、Nixパッケージおよび公開Rust APIの
-互換性検査を含みますが、
+``cargo make verify``はsource gate、dependency governance、fuzzおよびNixパッケージ検査を含みますが、
 実Chromiumによる受入検査は含みません。browser、ZedまたはVS Code向けの成果物へ影響する変更では、
 次を実行してCIの``build-global``と同じ範囲を手元で確認してください。
 
@@ -295,6 +294,7 @@ git fetch upstream main
 candidate_sha="$(git rev-parse upstream/main)"
 gh workflow run release-dispatch.yml \
   --ref main \
+  -f product=lsp \
   -f candidate_sha="$candidate_sha"
 ----
 . workflowが候補SHAとdispatch時点のmain先端の一致、同じSHAのcandidate成功、既存tagとReleaseの不在を検査し、
@@ -303,11 +303,10 @@ gh workflow run release-dispatch.yml \
 . GitHub Releaseがstableとして公開され、予定されたassetだけを含むことを確認します。
 . checksumとattestationを検証し、xref:#release-checklist[Release checklist]に従って受け入れ結果を記録します。
 
-Release Notesの本文は``release/notes.md``に人が書きます。題名は``# AdocWeave vX.Y.Z``とし、
+Release Notesの本文は``release/notes.md``に人が書きます。題名は``# AdocWeave <product> vX.Y.Z``とし、
 ``## 主な変更``、``## 対応環境``、``## 公開契約と破壊的変更``、``## vX.Y.Zへの移行``、
 ``## 更新とロールバック``、``## 既知の制約``、``## 配布物の検証``の7見出しをこの順に一度ずつ置いて、
-各節に本文を書きます。この見出しはMarginalis、Renkanと共通です。配布target、公開仕様の現在のversion、
-検出済みのRust API破壊的変更と移行、textlintの対応範囲は``tools/release-notes.mjs``が正本のfileから生成して
+各節に本文を書きます。選択した製品のversionと互換性判断に使うAPI世代は``tools/release-notes.mjs``が正本のfileから生成して
 各節の後ろへ追記するため、本文には書きません。``cargo make release-contract``（``verify``に含む）がこの形を
 検査し、公開workflowが同じtoolでGitHub Releaseの本文を生成します。
 
@@ -351,12 +350,11 @@ clean環境で、公開assetだけを使って実行します。
 
 === 公開前
 
-* [ ] ``flake.lock``で固定したRust stable、``release-manifest.json``の``rustVersion``、rootワークスペースと
+* [ ] ``flake.lock``で固定したRust stable、``toolchains.json``の``rustVersion``、rootワークスペースと
       Zed crateの``rust-version``が一致しています。
-* [ ] Rustワークスペース、WASM、browser package、Zed拡張、textlint用パッケージ、配布planのパッケージバージョンが
-      ``release-manifest.json``と一致しています。
-* [ ] ``release/notes.md``が公開する版の内容になっており、題名と移行の見出しの版が
-      ``release-manifest.json``と一致しています（``cargo make release-contract``で検査します）。
+* [ ] 公開する製品のmanifestと製品内の生成物が同じ製品バージョンを持ち、ほかの製品の版を変更していません。
+* [ ] ``release/notes.md``が公開する製品と版の内容になっており、題名と移行の見出しが
+      ``versionSource``の値と一致しています（``cargo make release-contract``で検査します）。
 * [ ] ``cargo make release-check``が成功しています。このtaskはClippy、文書、Zed、WASM、native／実WASM
       conformance、短時間fuzz、Web Worker、release fixture、WASM sizeおよび配布planを検査します。
 * [ ] ``github-release`` Environmentが``main``だけを許可しています。workflowはこの外部設定を

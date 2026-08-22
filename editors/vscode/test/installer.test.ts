@@ -80,7 +80,7 @@ function response(body: string | Uint8Array, url: string): Response {
 
 function releaseFetcher(
   archive: Uint8Array,
-  options: { archiveHash?: string; includeAsset?: boolean } = {},
+  options: { archiveHash?: string; includeAsset?: boolean; lspApiVersion?: number } = {},
 ): typeof fetch {
   const platform = platformForHost("linux", "x64");
   const manifest = {
@@ -98,12 +98,15 @@ function releaseFetcher(
               target: platform.target,
             },
           ],
-    packageVersion: "0.16.0",
-    schemaVersion: 2,
+    lspApiVersion: options.lspApiVersion ?? 1,
+    product: "lsp",
+    productVersion: "0.16.0",
+    schemaVersion: 3,
     sourceCommit: "a".repeat(40),
   };
   return (async (input) => {
     const url = String(input);
+    assert.match(url, /\/releases\/download\/adocweave-lsp%2Fv0\.16\.0\//);
     if (url.endsWith("adocweave-dist-manifest.json")) {
       return response(
         `${JSON.stringify(manifest)}\n`,
@@ -121,11 +124,12 @@ test("managed binaryを検証して原子的cacheへ保存し、offlineでも再
   try {
     const installed = await installManagedServer(platform, {
       fetcher: releaseFetcher(archive),
+      managedLspVersion: "0.16.0",
       storagePath,
-      version: "0.16.0",
+      supportedLspApiVersions: [1],
     });
     assert.equal(await readFile(installed, "utf8"), "server");
-    assert.equal(await findVerifiedCache(storagePath, "0.16.0", platform), installed);
+    assert.equal(await findVerifiedCache(storagePath, "0.16.0", [1], platform), installed);
     assert.equal(
       (await readFile(join(installed, "..", "verified.json"), "utf8")).endsWith("\n"),
       true,
@@ -142,26 +146,38 @@ test("hash不一致と欠落assetは既存の検証済みcacheを破壊しませ
   try {
     const installed = await installManagedServer(platform, {
       fetcher: releaseFetcher(archive),
+      managedLspVersion: "0.16.0",
       storagePath,
-      version: "0.16.0",
+      supportedLspApiVersions: [1],
     });
     await assert.rejects(
       installManagedServer(platform, {
-        fetcher: releaseFetcher(archive, { archiveHash: "0".repeat(64) }),
+        fetcher: releaseFetcher(archive, { lspApiVersion: 2 }),
+        managedLspVersion: "0.16.0",
         storagePath,
-        version: "0.16.0",
+        supportedLspApiVersions: [1],
+      }),
+      /invalid-manifest:identity/,
+    );
+    await assert.rejects(
+      installManagedServer(platform, {
+        fetcher: releaseFetcher(archive, { archiveHash: "0".repeat(64) }),
+        managedLspVersion: "0.16.0",
+        storagePath,
+        supportedLspApiVersions: [1],
       }),
       /managed-download-hash-mismatch/,
     );
     await assert.rejects(
       installManagedServer(platform, {
         fetcher: releaseFetcher(archive, { includeAsset: false }),
+        managedLspVersion: "0.16.0",
         storagePath,
-        version: "0.16.0",
+        supportedLspApiVersions: [1],
       }),
       /lsp-asset-count/,
     );
-    assert.equal(await findVerifiedCache(storagePath, "0.16.0", platform), installed);
+    assert.equal(await findVerifiedCache(storagePath, "0.16.0", [1], platform), installed);
   } finally {
     await removeTemporaryDirectory(storagePath);
   }
@@ -173,11 +189,12 @@ test("改変cacheを採用せず、所有markerを残してmanaged serverだけ�
   const archive = zipSync({ [platform.executable]: new TextEncoder().encode("server") });
   const installed = await installManagedServer(platform, {
     fetcher: releaseFetcher(archive),
+    managedLspVersion: "0.16.0",
     storagePath,
-    version: "0.16.0",
+    supportedLspApiVersions: [1],
   });
   await writeFile(installed, "tampered");
-  assert.equal(await findVerifiedCache(storagePath, "0.16.0", platform), undefined);
+  assert.equal(await findVerifiedCache(storagePath, "0.16.0", [1], platform), undefined);
   await clearManagedServers(storagePath);
   assert.deepEqual(await readdir(storagePath), [".adocweave-vscode-managed-cache"]);
 
@@ -213,8 +230,9 @@ test("Content-Lengthがない巨大manifestを受信中の上限で拒否しま�
     await assert.rejects(
       installManagedServer(platform, {
         fetcher,
+        managedLspVersion: "0.16.0",
         storagePath,
-        version: "0.16.0",
+        supportedLspApiVersions: [1],
       }),
       /managed-download-size-mismatch/,
     );
@@ -236,7 +254,12 @@ test("同時installはarchiveを一度だけ取得して同じcacheを返しま�
   try {
     const results = await Promise.all(
       Array.from({ length: 8 }, () =>
-        installManagedServer(platform, { fetcher, storagePath, version: "0.16.0" }),
+        installManagedServer(platform, {
+          fetcher,
+          managedLspVersion: "0.16.0",
+          storagePath,
+          supportedLspApiVersions: [1],
+        }),
       ),
     );
     assert.ok(results.every((result) => result === results[0]));
@@ -261,12 +284,13 @@ test("以前のfile形式の所有markerを引き続き受け入れます", asyn
   try {
     const installed = await installManagedServer(platform, {
       fetcher: releaseFetcher(archive),
+      managedLspVersion: "0.16.0",
       storagePath,
-      version: "0.16.0",
+      supportedLspApiVersions: [1],
     });
     assert.equal(await readFile(installed, "utf8"), "server");
     await clearManagedServers(storagePath);
-    assert.equal(await findVerifiedCache(storagePath, "0.16.0", platform), undefined);
+    assert.equal(await findVerifiedCache(storagePath, "0.16.0", [1], platform), undefined);
     assert.equal(
       await readFile(join(storagePath, ".adocweave-vscode-managed-cache"), "utf8"),
       "adocweave-vscode-managed-cache-v1\n",
@@ -287,8 +311,9 @@ test("内容のあるdirectory markerを所有証明として受け入れませ�
     await assert.rejects(
       installManagedServer(platformForHost("linux", "x64"), {
         fetcher: releaseFetcher(zipSync({ "adocweave-lsp": new TextEncoder().encode("server") })),
+        managedLspVersion: "0.16.0",
         storagePath,
-        version: "0.16.0",
+        supportedLspApiVersions: [1],
       }),
       /managed-cache-owner-mismatch/,
     );
@@ -323,8 +348,9 @@ test("clearは進行中のinstall完了後にcacheだけを削除します", asy
   try {
     const installing = installManagedServer(platform, {
       fetcher,
+      managedLspVersion: "0.16.0",
       storagePath,
-      version: "0.16.0",
+      supportedLspApiVersions: [1],
     });
     let installFinished = false;
     void installing.then(() => {
@@ -336,7 +362,7 @@ test("clearは進行中のinstall完了後にcacheだけを削除します", asy
     await clearing;
     await installing;
     assert.equal(installFinished, true);
-    assert.equal(await findVerifiedCache(storagePath, "0.16.0", platform), undefined);
+    assert.equal(await findVerifiedCache(storagePath, "0.16.0", [1], platform), undefined);
     assert.deepEqual(await readdir(storagePath), [".adocweave-vscode-managed-cache"]);
   } finally {
     await removeTemporaryDirectory(storagePath);
@@ -355,8 +381,9 @@ test("書込み権限がないstorageでは既存内容を変更しません", {
     await assert.rejects(
       installManagedServer(platform, {
         fetcher: releaseFetcher(archive),
+        managedLspVersion: "0.16.0",
         storagePath,
-        version: "0.16.0",
+        supportedLspApiVersions: [1],
       }),
     );
     assert.equal(await readFile(join(storagePath, "keep"), "utf8"), "user");
@@ -383,8 +410,9 @@ test("Content-Lengthを返さない配信でもmanaged binaryを導入します"
   try {
     const installed = await installManagedServer(platform, {
       fetcher: withoutContentLength,
+      managedLspVersion: "0.16.0",
       storagePath,
-      version: "0.16.0",
+      supportedLspApiVersions: [1],
     });
     assert.equal(await readFile(installed, "utf8"), "server");
   } finally {
@@ -410,8 +438,9 @@ test("Content-Lengthが期待sizeと違う配信は本文を読む前に拒否�
     await assert.rejects(
       installManagedServer(platform, {
         fetcher: wrongContentLength,
+        managedLspVersion: "0.16.0",
         storagePath,
-        version: "0.16.0",
+        supportedLspApiVersions: [1],
       }),
       /managed-download-size-mismatch/,
     );

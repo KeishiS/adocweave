@@ -7,6 +7,7 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { PACKAGE_VERSION } from "../web-worker/worker-protocol.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const conformanceConsumers = JSON.parse(
@@ -24,9 +25,6 @@ const conformanceDirectory = resolve(root, conformanceConsumers.fixtureRoot);
 const validator = process.env.ADOCWEAVE_HTML_VALIDATOR;
 const conformanceManifest = JSON.parse(
   readFileSync(resolve(root, conformanceConsumers.manifest), "utf8"),
-);
-const release = JSON.parse(
-  readFileSync(resolve(root, "release-manifest.json"), "utf8"),
 );
 
 function fail(message) {
@@ -192,7 +190,7 @@ function conformanceRequest(name, expectedMode) {
     ? readFileSync(resolve(conformanceDirectory, entry.sourceFile), "utf8")
     : entry.source;
   return {
-    packageVersion: release.packageVersion,
+    packageVersion: PACKAGE_VERSION,
     sourceId: `html5:${name}`,
     version: 1,
     generation: 1,

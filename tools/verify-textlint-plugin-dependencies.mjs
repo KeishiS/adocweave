@@ -21,10 +21,11 @@ const fixedDependencies = {
   textlint: contract.compatibility.textlintVersion,
 };
 
+const { version: productVersion, ...manifestIdentity } = manifest;
 if (
-  JSON.stringify(manifest) !== JSON.stringify({
+  !/^\d+\.\d+\.\d+$/.test(productVersion) ||
+  JSON.stringify(manifestIdentity) !== JSON.stringify({
     name: "adocweave-textlint-plugin-development",
-    version: "0.0.0",
     private: contract.identity.private,
     type: "module",
   }) ||

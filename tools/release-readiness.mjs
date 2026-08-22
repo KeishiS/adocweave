@@ -1,15 +1,16 @@
-import { readFileSync } from "node:fs";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
+
+import { productIdentity } from "./product-release.mjs";
 
 // Publication is guarded by the GitHub side: the `github-release` Environment
-// restricts which branch may run the publish job, and the `v*` tag ruleset
-// restricts tag creation. This script only pins the dispatched candidate to
+// restricts which branch may run the publish job, and the stable product tag
+// ruleset restricts tag creation. This script only pins the dispatched candidate to
 // the current main tip, locates its successful candidate run, and refuses to
 // publish a version that already has a tag or a Release.
 
-const ROOT = new URL("../", import.meta.url);
+const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const COMMIT_SHA = /^[0-9a-f]{40}$/;
-const STABLE_TAG = /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
 
 function fail(message) {
   throw new Error(message);
@@ -41,8 +42,17 @@ async function requestJson(repository, token, path, {
   return response.json();
 }
 
-export async function assertTagAbsent({ repository, token, tag, fetchImpl = globalThis.fetch }) {
-  if (!STABLE_TAG.test(tag)) fail("確認するstable tagが不正です");
+export async function assertTagAbsent({
+  repository,
+  token,
+  product,
+  tag,
+  fetchImpl = globalThis.fetch,
+  root = ROOT,
+}) {
+  if (productIdentity(product, { root }).tag !== tag) {
+    fail("確認するproduct stable tagが不正です");
+  }
   const existing = await requestJson(repository, token, `git/ref/tags/${tag}`, {
     allowMissing: true,
     fetchImpl,
@@ -55,6 +65,7 @@ export async function resolveReleaseCandidate({
   token,
   candidateSha,
   dispatchSha,
+  product,
   fetchImpl = globalThis.fetch,
   root = ROOT,
 }) {
@@ -64,8 +75,8 @@ export async function resolveReleaseCandidate({
   if (dispatchSha !== candidateSha) {
     fail("candidate SHAは信頼済みmain dispatch SHAと一致する必要があります");
   }
-  const manifest = JSON.parse(readFileSync(new URL("release-manifest.json", root), "utf8"));
-  const tag = `v${manifest.packageVersion}`;
+  const release = productIdentity(product, { root });
+  const tag = release.tag;
   const [runs, existingTag, existingRelease] = await Promise.all([
     requestJson(repository, token, "actions/workflows/release.yml/runs", {
       fetchImpl,
@@ -82,35 +93,49 @@ export async function resolveReleaseCandidate({
   if (candidates.length === 0) fail("同じSHAの成功済みmain release candidateがありません");
   const runId = Math.max(...candidates.map((run) => Number(run.id)).filter(Number.isSafeInteger));
   if (!Number.isSafeInteger(runId)) fail("main candidate run IDを決定できません");
-  return { candidateSha, runId, tag };
+  return {
+    candidateArtifact: release.candidateArtifact,
+    candidateSha,
+    product: release.product,
+    runId,
+    tag,
+    version: release.version,
+  };
 }
 
 async function main(args = process.argv.slice(2)) {
   const repository = process.env.GITHUB_REPOSITORY;
   const token = process.env.GH_TOKEN;
   if (args[0] === "--assert-tag-absent") {
-    if (args.length !== 2 || !repository || !token) {
-      fail("使用方法：node tools/release-readiness.mjs --assert-tag-absent vX.Y.Z");
+    if (args.length !== 3 || !repository || !token) {
+      fail("使用方法：node tools/release-readiness.mjs --assert-tag-absent PRODUCT TAG");
     }
-    await assertTagAbsent({ repository, token, tag: args[1] });
-    process.stdout.write(`stable tagが存在しないことを確認しました：${args[1]}\n`);
+    await assertTagAbsent({ product: args[1], repository, token, tag: args[2] });
+    process.stdout.write(`product stable tagが存在しないことを確認しました：${args[2]}\n`);
     return;
   }
-  if (args.length !== 0) {
-    fail("使用方法：node tools/release-readiness.mjs");
+  if (args.length !== 1) {
+    fail("使用方法：node tools/release-readiness.mjs PRODUCT");
   }
+  const product = args[0];
   const candidateSha = process.env.CANDIDATE_SHA;
   const dispatchSha = process.env.DISPATCH_SHA;
   if (!repository || !token || !candidateSha || !dispatchSha) {
     fail("GITHUB_REPOSITORY、GH_TOKEN、CANDIDATE_SHAおよびDISPATCH_SHAが必要です");
   }
-  const result = await resolveReleaseCandidate({ repository, token, candidateSha, dispatchSha });
+  const result = await resolveReleaseCandidate({
+    repository,
+    token,
+    candidateSha,
+    dispatchSha,
+    product,
+  });
   const output = process.env.GITHUB_OUTPUT;
   if (!output) fail("GITHUB_OUTPUTが必要です");
   const { appendFileSync } = await import("node:fs");
   appendFileSync(
     output,
-    `candidate_sha=${result.candidateSha}\nrun_id=${result.runId}\ntag=${result.tag}\n`,
+    `candidate_artifact=${result.candidateArtifact}\ncandidate_sha=${result.candidateSha}\nproduct=${result.product}\nrun_id=${result.runId}\ntag=${result.tag}\nversion=${result.version}\n`,
   );
   process.stdout.write(`release candidateを固定しました：${result.tag} ${result.candidateSha}\n`);
 }

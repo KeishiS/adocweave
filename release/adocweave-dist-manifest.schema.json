@@ -1,18 +1,21 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/KeishiS/adocweave/blob/main/release/adocweave-dist-manifest.schema.json",
-  "title": "AdocWeave distribution manifest",
+  "title": "AdocWeave product distribution manifest",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "schemaVersion",
-    "packageVersion",
+    "product",
+    "productVersion",
     "sourceCommit",
     "assets"
   ],
   "properties": {
-    "schemaVersion": { "const": 2 },
-    "packageVersion": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "schemaVersion": { "const": 3 },
+    "product": { "enum": ["cli", "lsp", "browser", "textlint", "vscode", "zed"] },
+    "productVersion": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "lspApiVersion": { "type": "integer", "minimum": 1 },
     "sourceCommit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
     "assets": {
       "type": "array",
@@ -24,7 +27,7 @@
         "required": ["name", "kind", "target", "archive", "byteSize", "sha256", "executable"],
         "properties": {
           "name": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
-          "kind": { "enum": ["cli", "lsp", "browser", "textlint-plugin", "zed", "vscode"] },
+          "kind": { "enum": ["cli", "lsp", "browser", "textlint-plugin", "vscode", "zed"] },
           "target": { "type": ["string", "null"] },
           "archive": { "enum": ["tar.xz", "tgz", "vsix", "zip"] },
           "byteSize": { "type": "integer", "minimum": 1 },
@@ -33,5 +36,12 @@
         }
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "product": { "const": "lsp" } }, "required": ["product"] },
+      "then": { "required": ["lspApiVersion"] },
+      "else": { "not": { "required": ["lspApiVersion"] } }
+    }
+  ]
 }

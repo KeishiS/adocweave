@@ -18,7 +18,9 @@ esac
 
 executable_count="$(
   jq --arg target "$target" \
-    '[.assets[] | select(.target == $target and .executable != null)] | length' \
+    '. as $plan |
+     [$plan.products[] | select(.build == "cargo-dist" and .executable != null)] as $products |
+     [$plan.targets[] | select(.triple == $target) | $products[]] | length' \
     release/distribution-plan.json
 )"
 if [ "$executable_count" -eq 0 ]; then
@@ -62,6 +64,10 @@ while IFS=$'\t' read -r archive_name executable; do
   mv "$normalized" "$archive"
 done < <(
   jq -r --arg target "$target" \
-    '.assets[] | select(.target == $target and .executable != null) | [.name, .executable] | @tsv' \
+    '. as $plan |
+     $plan.products[] | select(.build == "cargo-dist" and .executable != null) as $product |
+     $plan.targets[] | select(.triple == $target) as $platform |
+     [($product.assetName | gsub("\\{target\\}"; $platform.triple)),
+      ($product.executable | gsub("\\{executableSuffix\\}"; $platform.executableSuffix))] | @tsv' \
     release/distribution-plan.json
 )

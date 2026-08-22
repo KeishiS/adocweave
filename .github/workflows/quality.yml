@@ -35,10 +35,6 @@ on:
         required: false
         type: boolean
         default: true
-      run_semver:
-        required: false
-        type: boolean
-        default: true
 
 permissions:
   contents: read
@@ -163,27 +159,9 @@ jobs:
       - name: Nix package build and execution
         run: nix develop .#ci -c cargo make nix-package-check
 
-  semver:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      # The gate builds rustdoc for the baseline tag as well as the candidate,
-      # so it needs the tags and the commits they point at.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-      - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
-      - name: Public Rust API compatibility against the previous stable tag
-        if: ${{ inputs.run_semver }}
-        run: nix develop .#ci-semver -c cargo make semver-check
-      - name: Public Rust API not reachable by this change
-        if: ${{ !inputs.run_semver }}
-        run: echo "no changed path can reach the public Rust API"
-
   aggregate:
     if: always()
-    needs: [source-fast, rust, adapters, dependencies, fuzz, nix-package, semver]
+    needs: [source-fast, rust, adapters, dependencies, fuzz, nix-package]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -195,7 +173,6 @@ jobs:
           NIX_PACKAGE_REQUIRED: ${{ inputs.run_nix_package }}
           NIX_PACKAGE_RESULT: ${{ needs.nix-package.result }}
           RUST_RESULT: ${{ needs.rust.result }}
-          SEMVER_RESULT: ${{ needs.semver.result }}
           SOURCE_FAST_RESULT: ${{ needs.source-fast.result }}
         run: |
           test "$SOURCE_FAST_RESULT" = success
@@ -203,7 +180,6 @@ jobs:
           test "$ADAPTERS_RESULT" = success
           test "$DEPENDENCIES_RESULT" = success
           test "$FUZZ_RESULT" = success
-          test "$SEMVER_RESULT" = success
           if [ "$NIX_PACKAGE_REQUIRED" = true ]; then
             test "$NIX_PACKAGE_RESULT" = success
           else

@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import process from "node:process";
 
-import releaseManifest from "../release-manifest.json" with { type: "json" };
+import toolchains from "../toolchains.json" with { type: "json" };
+import { productRelease } from "./release-policy.mjs";
 
 const [path, zedPath] = process.argv.slice(2);
 if (!path || !zedPath) {
@@ -23,8 +24,20 @@ try {
   ];
   const packages = metadata.packages.filter((pkg) => expectedNames.includes(pkg.name));
   if (packages.length !== expectedNames.length) throw new Error("cargo metadata is missing a workspace package");
+  const workspaceSource = readFileSync(new URL("../Cargo.toml", import.meta.url), "utf8");
+  const workspaceVersion = /^\[workspace\.package\][\s\S]*?^version\s*=\s*"([^"]+)"/m.exec(workspaceSource)?.[1];
+  if (!workspaceVersion) throw new Error("workspace package version is missing");
+  const versions = {
+    adocweave: workspaceVersion,
+    "adocweave-cli": productRelease("cli").version,
+    "adocweave-host": workspaceVersion,
+    "adocweave-lsp": productRelease("lsp").version,
+    "adocweave-textlint": workspaceVersion,
+    "adocweave-textlint-wasm": productRelease("textlint").version,
+    "adocweave-wasm": productRelease("browser").version,
+  };
   for (const pkg of packages) {
-    if (pkg.version !== releaseManifest.packageVersion) throw new Error(`${pkg.name}: cargo metadata version mismatch`);
+    if (pkg.version !== versions[pkg.name]) throw new Error(`${pkg.name}: cargo metadata version mismatch`);
     if (pkg.repository !== "https://github.com/KeishiS/adocweave" || pkg.homepage !== pkg.repository) {
       throw new Error(`${pkg.name}: cargo metadata repository mismatch`);
     }
@@ -32,13 +45,13 @@ try {
     if (!Array.isArray(pkg.publish) || pkg.publish.length !== 0) {
       throw new Error(`${pkg.name}: Cargo registry publication must be disabled`);
     }
-    if (pkg.rust_version !== releaseManifest.rustVersion) {
+    if (pkg.rust_version !== toolchains.rustVersion) {
       throw new Error(`${pkg.name}: cargo metadata Rust version mismatch`);
     }
   }
   const zed = zedMetadata.packages.find((pkg) => pkg.name === "adocweave-zed");
   if (!zed) throw new Error("cargo metadata is missing the Zed package");
-  if (zed.rust_version !== releaseManifest.rustVersion) {
+  if (zed.rust_version !== toolchains.rustVersion) {
     throw new Error("adocweave-zed: cargo metadata Rust version mismatch");
   }
   process.stdout.write("cargo release metadata verified\n");

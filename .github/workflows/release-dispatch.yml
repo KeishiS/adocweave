@@ -3,6 +3,17 @@ name: Stable release
 on:
   workflow_dispatch:
     inputs:
+      product:
+        description: Product to publish from the selected candidate
+        required: true
+        type: choice
+        options:
+          - cli
+          - lsp
+          - browser
+          - textlint
+          - vscode
+          - zed
       candidate_sha:
         description: Exact main tip commit to publish as the stable release
         required: true
@@ -14,7 +25,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: stable-release
+  group: stable-release-${{ inputs.product }}
   cancel-in-progress: false
 
 jobs:
@@ -23,9 +34,12 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
+      candidate_artifact: ${{ steps.readiness.outputs.candidate_artifact }}
       candidate_sha: ${{ steps.readiness.outputs.candidate_sha }}
       candidate_run_id: ${{ steps.readiness.outputs.run_id }}
+      product: ${{ steps.readiness.outputs.product }}
       tag: ${{ steps.readiness.outputs.tag }}
+      version: ${{ steps.readiness.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -39,7 +53,7 @@ jobs:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           DISPATCH_SHA: ${{ github.sha }}
           GH_TOKEN: ${{ github.token }}
-        run: node tools/release-readiness.mjs
+        run: node tools/release-readiness.mjs "${{ inputs.product }}"
 
   plan:
     needs: [readiness]
@@ -56,8 +70,15 @@ jobs:
       - id: plan
         env:
           CANDIDATE_TAG: ${{ needs.readiness.outputs.tag }}
+          PRODUCT: ${{ needs.readiness.outputs.product }}
         run: |
-          tools/run-pinned-dist.sh plan --tag="$CANDIDATE_TAG" --output-format=json > plan.json
+          build="$(node tools/product-release.mjs "$PRODUCT" | jq -r .entry.build)"
+          if [ "$build" = cargo-dist ]; then
+            tools/run-pinned-dist.sh plan --tag="$CANDIDATE_TAG" --output-format=json \
+              | node tools/product-release.mjs --publication-plan "$PRODUCT" > plan.json
+          else
+            node tools/product-release.mjs --publication-plan "$PRODUCT" > plan.json
+          fi
           echo "manifest=$(jq -c . plan.json)" >> "$GITHUB_OUTPUT"
 
   reuse-candidate:
@@ -71,7 +92,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: release-candidate
+          name: ${{ needs.readiness.outputs.candidate_artifact }}
           path: artifacts
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
@@ -79,10 +100,13 @@ jobs:
       - name: Reused candidate verification
         env:
           CANDIDATE_SHA: ${{ needs.readiness.outputs.candidate_sha }}
-        run: node tools/release-metadata.mjs verify artifacts "$CANDIDATE_SHA"
+          PRODUCT: ${{ needs.readiness.outputs.product }}
+        run: |
+          node tools/product-release.mjs --verify-candidate "$PRODUCT" artifacts
+          node tools/release-metadata.mjs verify "$PRODUCT" artifacts "$CANDIDATE_SHA"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: release-candidate
+          name: ${{ needs.readiness.outputs.candidate_artifact }}
           if-no-files-found: error
           retention-days: 1
           path: artifacts/*
@@ -93,6 +117,7 @@ jobs:
     with:
       candidate_sha: ${{ needs.readiness.outputs.candidate_sha }}
       plan: ${{ needs.plan.outputs.manifest }}
+      product: ${{ needs.readiness.outputs.product }}
       tag: ${{ needs.readiness.outputs.tag }}
     permissions:
       attestations: write
@@ -100,6 +125,7 @@ jobs:
       id-token: write
 
   textlint-plugin-post-release-smoke:
+    if: needs.readiness.outputs.product == 'textlint'
     needs: [readiness, publish]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -115,6 +141,7 @@ jobs:
   # Stable releaseの公開が成功したら、公開済みのVSIXをOpen VSX Registryへ公開する。
   # 送信だけが失敗した場合はopen-vsx-publish.ymlを同じtagで実行して回復する。
   open-vsx:
+    if: needs.readiness.outputs.product == 'vscode'
     needs: [readiness, publish]
     uses: ./.github/workflows/open-vsx-publish.yml
     with:
@@ -126,6 +153,7 @@ jobs:
   # AdocWeaveをsource buildせずに取得できる。push対象はstable releaseだけに限り、
   # pull requestやmainへのpushではcacheの書き込みtokenを参照しない。
   binary-cache:
+    if: needs.readiness.outputs.product == 'cli'
     needs: [readiness, publish]
     strategy:
       fail-fast: false

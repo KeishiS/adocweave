@@ -27,6 +27,21 @@ fn run_server(messages: &[Value]) -> std::process::Output {
 }
 
 #[test]
+fn version_json_reports_the_product_and_lsp_api_versions() {
+    let output = Command::new(env!("CARGO_BIN_EXE_adocweave-lsp"))
+        .args(["--version", "--json"])
+        .output()
+        .expect("run language server version command");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let value: Value = serde_json::from_slice(&output.stdout).expect("version JSON");
+    assert_eq!(value["name"], "adocweave-lsp");
+    assert_eq!(value["packageVersion"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(value["lspApiVersion"], adocweave_lsp::LSP_API_VERSION);
+}
+
+#[test]
 fn exit_without_shutdown_uses_a_nonzero_process_status() {
     let output = run_server(&[json!({
         "jsonrpc":"2.0",

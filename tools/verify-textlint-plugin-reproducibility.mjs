@@ -48,11 +48,11 @@ export async function verifyTextlintPluginReproducibility({
         wasmOutputDirectory,
       });
       const manifest = JSON.parse(
-        await readFile(join(sourceDirectory, "release-manifest.json"), "utf8"),
+        await readFile(join(sourceDirectory, "packages/textlint-plugin-asciidoc/package.json"), "utf8"),
       );
       const archive = join(
         outputDirectory,
-        `adocweave-textlint-plugin-asciidoc-${manifest.packageVersion}.tgz`,
+        `adocweave-textlint-plugin-asciidoc-${manifest.version}.tgz`,
       );
       const bytes = await readFile(archive);
       await verifyPackage({ archive, sourceDirectory });

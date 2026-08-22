@@ -3,19 +3,34 @@ import { createHash } from "node:crypto";
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 
-import { canonicalJson, validateDistributionManifest } from "./release-contract.mjs";
 import { cargoTreePackageKeys } from "./generate-third-party-notices.mjs";
+import {
+  loadDistributionPlan,
+  productAssetContracts,
+  productVersion,
+  selectProduct,
+} from "./product-release.mjs";
 import { loadTextlintPluginPackageContract } from "./textlint-plugin-package-contract.mjs";
 
-export const RELEASE_METADATA_TOOL_VERSION = 1;
+export const RELEASE_METADATA_TOOL_VERSION = 2;
 const ROOT = new URL("../", import.meta.url);
 const readJson = (path) => JSON.parse(readFileSync(new URL(path, ROOT), "utf8"));
-const plan = readJson("release/distribution-plan.json");
 const compareText = (left, right) => left < right ? -1 : left > right ? 1 : 0;
 const escapeUnzipMember = (member) => member.replace(/[\\[\]*?]/g, "\\$&");
 
 function fail(message) {
   throw new Error(message);
+}
+
+function canonicalJson(value) {
+  const normalize = (entry) => {
+    if (Array.isArray(entry)) return entry.map(normalize);
+    if (entry && typeof entry === "object") {
+      return Object.fromEntries(Object.keys(entry).sort().map((key) => [key, normalize(entry[key])]));
+    }
+    return entry;
+  };
+  return `${JSON.stringify(normalize(value), null, 2)}\n`;
 }
 
 function digest(algorithm, bytes) {
@@ -148,8 +163,8 @@ function frontendPackage() {
 
 function textlintPluginPackage() {
   const contract = loadTextlintPluginPackageContract();
-  const release = readJson("release-manifest.json");
-  return npmPackage(contract.identity.packageName, release.packageVersion, "MIT OR Apache-2.0");
+  const manifest = readJson("packages/textlint-plugin-asciidoc/package.json");
+  return npmPackage(contract.identity.packageName, manifest.version, "MIT OR Apache-2.0");
 }
 
 function npmPackage(name, version, license = "NOASSERTION") {
@@ -199,9 +214,12 @@ function commitTimestamp(commit) {
   return new Date(value).toISOString().replace(".000Z", "Z");
 }
 
-export function buildMetadata(directory, sourceCommit) {
+export function buildMetadata(directory, sourceCommit, product, plan = loadDistributionPlan()) {
   if (!/^[0-9a-f]{40}$/.test(sourceCommit)) fail("source commit must be a lowercase 40-character Git commit");
-  const assets = plan.assets.map((planned) => {
+  const selectedProduct = selectProduct(plan, product);
+  const version = productVersion(selectedProduct);
+  const plannedAssets = productAssetContracts(selectedProduct, plan, version);
+  const assets = plannedAssets.map((planned) => {
     const path = join(directory, planned.name);
     let bytes;
     try {
@@ -220,23 +238,24 @@ export function buildMetadata(directory, sourceCommit) {
 
   const distributionManifest = {
     assets: assets.map(({ path: _path, ...asset }) => asset),
-    packageVersion: plan.packageVersion,
-    schemaVersion: 2,
+    product,
+    productVersion: version,
+    schemaVersion: 3,
     sourceCommit,
   };
-  validateDistributionManifest(distributionManifest, plan);
+  if (product === "lsp") distributionManifest.lspApiVersion = 1;
 
-  const cargo = cargoPackages();
-  const textlintCargo = cargoPackages(
-    undefined,
-    "adocweave-textlint-wasm",
-    "wasm32-unknown-unknown",
-  );
-  const zedCargo = cargoPackages("editors/zed/Cargo.toml");
-  const allCargo = [...new Map([...cargo, ...zedCargo].map((entry) => [entry.SPDXID, entry])).values()];
-  const frontend = frontendPackage();
-  const textlintPlugin = textlintPluginPackage();
-  const vscodeNpm = vscodePackages();
+  const dependencies = product === "cli"
+    ? cargoPackages(undefined, "adocweave-cli")
+    : product === "lsp"
+      ? cargoPackages(undefined, "adocweave-lsp")
+      : product === "browser"
+        ? [...cargoPackages(undefined, "adocweave-wasm", "wasm32-unknown-unknown"), frontendPackage()]
+        : product === "textlint"
+          ? [...cargoPackages(undefined, "adocweave-textlint-wasm", "wasm32-unknown-unknown"), textlintPluginPackage()]
+          : product === "vscode"
+            ? vscodePackages()
+            : cargoPackages("editors/zed/Cargo.toml", "adocweave-zed");
   const archivePackages = [];
   const files = [];
   const relationships = [];
@@ -262,26 +281,17 @@ export function buildMetadata(directory, sourceCommit) {
           .sort(compareText)
           .join("")),
       },
-      versionInfo: plan.packageVersion,
+      versionInfo: version,
     });
     relationships.push({ spdxElementId: "SPDXRef-DOCUMENT", relationshipType: "DESCRIBES", relatedSpdxElement: packageId });
     for (const file of archiveEntries) {
       relationships.push({ spdxElementId: packageId, relationshipType: "CONTAINS", relatedSpdxElement: file.SPDXID });
     }
-    const dependencies = asset.kind === "browser"
-      ? [...cargo, frontend]
-      : asset.kind === "textlint-plugin"
-        ? [...textlintCargo, textlintPlugin]
-      : asset.kind === "zed"
-        ? zedCargo
-        : asset.kind === "vscode"
-          ? vscodeNpm
-          : cargo;
     for (const dependency of dependencies) {
       relationships.push({ spdxElementId: packageId, relationshipType: "DEPENDS_ON", relatedSpdxElement: dependency.SPDXID });
     }
   }
-  const packages = [...archivePackages, ...allCargo, frontend, textlintPlugin, ...vscodeNpm]
+  const packages = [...archivePackages, ...new Map(dependencies.map((entry) => [entry.SPDXID, entry])).values()]
     .sort((left, right) => compareText(left.SPDXID, right.SPDXID));
   relationships.sort((left, right) =>
     compareText(
@@ -295,9 +305,9 @@ export function buildMetadata(directory, sourceCommit) {
       creators: [`Tool: adocweave-release-metadata/${RELEASE_METADATA_TOOL_VERSION}`],
     },
     dataLicense: "CC0-1.0",
-    documentNamespace: `${plan.repository}/releases/sbom/${sourceCommit}`,
+    documentNamespace: `${plan.repository}/releases/sbom/${product}/${version}/${sourceCommit}`,
     files,
-    name: `AdocWeave ${plan.packageVersion} release assets`,
+    name: `adocweave-${product} ${version} release assets`,
     packages,
     relationships,
     spdxVersion: "SPDX-2.3",
@@ -314,15 +324,15 @@ export function buildMetadata(directory, sourceCommit) {
   return { manifestText, sbomText, checksumText };
 }
 
-export function writeMetadata(directory, sourceCommit) {
-  const metadata = buildMetadata(directory, sourceCommit);
+export function writeMetadata(directory, sourceCommit, product, plan = loadDistributionPlan()) {
+  const metadata = buildMetadata(directory, sourceCommit, product, plan);
   writeFileSync(join(directory, "adocweave-dist-manifest.json"), metadata.manifestText);
   writeFileSync(join(directory, "adocweave.spdx.json"), metadata.sbomText);
   writeFileSync(join(directory, "sha256.sum"), metadata.checksumText);
 }
 
-export function verifyMetadata(directory, sourceCommit) {
-  const expected = buildMetadata(directory, sourceCommit);
+export function verifyMetadata(directory, sourceCommit, product, plan = loadDistributionPlan()) {
+  const expected = buildMetadata(directory, sourceCommit, product, plan);
   for (const [name, text] of [
     ["adocweave-dist-manifest.json", expected.manifestText],
     ["adocweave.spdx.json", expected.sbomText],
@@ -335,22 +345,27 @@ export function verifyMetadata(directory, sourceCommit) {
     fail("release directory must contain public asset files only");
   }
   const actual = new Set(entries.map((entry) => entry.name));
-  const expectedNames = new Set([...plan.assets.map((asset) => asset.name), ...plan.releaseMetadata.map((entry) => entry.name)]);
+  const selectedProduct = selectProduct(plan, product);
+  const expectedNames = new Set([
+    ...productAssetContracts(selectedProduct, plan, productVersion(selectedProduct))
+      .map((asset) => asset.name),
+    ...plan.releaseMetadata.map((entry) => entry.name),
+  ]);
   if (actual.size !== expectedNames.size || [...actual].some((name) => !expectedNames.has(name))) {
     fail("release directory contains a missing, duplicate, or unplanned public asset");
   }
 }
 
 function main(args) {
-  const [command, directoryArg, commitArg] = args;
-  if (!new Set(["generate", "verify"]).has(command) || !directoryArg) {
-    fail("usage: release-metadata.mjs generate|verify ARTIFACT_DIRECTORY [SOURCE_COMMIT]");
+  const [command, product, directoryArg, commitArg] = args;
+  if (!new Set(["generate", "verify"]).has(command) || !product || !directoryArg) {
+    fail("usage: release-metadata.mjs generate|verify PRODUCT ARTIFACT_DIRECTORY [SOURCE_COMMIT]");
   }
   const directory = resolve(directoryArg);
   const commit = commitArg ?? execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-  if (command === "generate") writeMetadata(directory, commit);
-  else verifyMetadata(directory, commit);
-  process.stdout.write(`release metadata ${command}d: ${basename(directory)} @ ${commit}\n`);
+  if (command === "generate") writeMetadata(directory, commit, product);
+  else verifyMetadata(directory, commit, product);
+  process.stdout.write(`release metadata ${command}d: ${product} ${basename(directory)} @ ${commit}\n`);
 }
 
 if (process.argv[1] && import.meta.url === new URL(process.argv[1], "file:").href) {

@@ -8,6 +8,7 @@ import {
 import { AdocWeaveWorkerClient } from "./client.mjs";
 import { PACKAGE_VERSION } from "./contracts.mjs";
 import {
+  PROTOCOL_SCHEMA_VERSION,
   WORKER_MESSAGE_FIELDS,
   WORKER_PROTOCOL_VERSION as GENERATED_WORKER_PROTOCOL_VERSION,
   validateClientError,
@@ -117,7 +118,7 @@ test("worker ready envelope matches the generated contract", async () => {
       data: {
         protocolVersion: WORKER_PROTOCOL_VERSION,
         type: "initialize",
-        moduleUrl: "data:text/javascript,export default async function init(){};export function process(){}",
+        moduleUrl: `data:text/javascript,export default async function init(){};export function process(){};export function protocolSchemaVersion(){return ${PROTOCOL_SCHEMA_VERSION}}`,
         wasmUrl: "unused.wasm",
         debounceMs: 0,
         cancellationBuffer: null,
@@ -125,6 +126,33 @@ test("worker ready envelope matches the generated contract", async () => {
     });
     assertMessageFields(messages[0], "responses.ready");
     assertWorkerContract(messages[0], "responses");
+  } finally {
+    globalThis.self = previousSelf;
+  }
+});
+
+test("worker rejects a WASM module from another protocol schema", async () => {
+  const previousSelf = globalThis.self;
+  const messages = [];
+  globalThis.self = {
+    postMessage: (message) => messages.push(message),
+  };
+  try {
+    await import(`./worker.mjs?incompatible-protocol=${Date.now()}`);
+    await assert.rejects(
+      globalThis.self.onmessage({
+        data: {
+          protocolVersion: WORKER_PROTOCOL_VERSION,
+          type: "initialize",
+          moduleUrl: "data:text/javascript,export default async function init(){};export function process(){};export function protocolSchemaVersion(){return 0}",
+          wasmUrl: "unused.wasm",
+          debounceMs: 0,
+          cancellationBuffer: null,
+        },
+      }),
+      /incompatible AdocWeave WASM protocol schema/,
+    );
+    assert.deepEqual(messages, []);
   } finally {
     globalThis.self = previousSelf;
   }

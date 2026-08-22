@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { validateNoDirectSecretAccess } from "./release-workflow-policy.mjs";
+import {
+  validateNoDirectSecretAccess,
+  validateProductReleaseRouting,
+} from "./release-workflow-policy.mjs";
 
 const CACHE_STEP = { uses: "cachix/cachix-action@sha", with: { authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}" } };
 const CACHE_SOURCE = "authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}\n";
@@ -95,4 +98,73 @@ test("a secret reference outside every job is rejected", () => {
     "env:\n  CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}\n",
   );
   assert.throws(() => validateNoDirectSecretAccess(sources, workflows), /outside an allowed job/);
+});
+
+function productRoutingWorkflows() {
+  return {
+    "release-dispatch.yml": {
+      on: {
+        workflow_dispatch: {
+          inputs: {
+            product: {
+              options: ["cli", "lsp", "browser", "textlint", "vscode", "zed"],
+              required: true,
+              type: "choice",
+            },
+          },
+        },
+      },
+      jobs: {
+        readiness: { outputs: { product: "${{ steps.readiness.outputs.product }}" } },
+        plan: {
+          steps: [{
+            id: "plan",
+            run: 'if [ "$build" = cargo-dist ]; then\n  node product-release --publication-plan "$PRODUCT"\nfi',
+          }],
+        },
+        publish: { with: { product: "${{ needs.readiness.outputs.product }}" } },
+        "textlint-plugin-post-release-smoke": {
+          if: "needs.readiness.outputs.product == 'textlint'",
+        },
+        "open-vsx": { if: "needs.readiness.outputs.product == 'vscode'" },
+        "binary-cache": { if: "needs.readiness.outputs.product == 'cli'" },
+      },
+    },
+    "release-publish.yml": {
+      on: { workflow_call: { inputs: { product: { required: true, type: "string" } } } },
+      jobs: {
+        publish: {
+          steps: [
+            {
+              uses: "actions/download-artifact@0000000000000000000000000000000000000000",
+              with: { name: "release-candidate-${{ inputs.product }}" },
+            },
+            {
+              name: "Immutable release input verification",
+              run: 'node product-release --verify-publication "$PRODUCT"',
+            },
+          ],
+        },
+      },
+    },
+  };
+}
+
+test("product release routing accepts the separated product contracts", () => {
+  validateProductReleaseRouting(productRoutingWorkflows());
+});
+
+test("product release routing rejects a post-release job shared by every product", () => {
+  const workflows = productRoutingWorkflows();
+  workflows["release-dispatch.yml"].jobs["open-vsx"].if = "success()";
+  assert.throws(() => validateProductReleaseRouting(workflows), /open-vsx must run only for vscode/);
+});
+
+test("product release routing rejects a generic candidate artifact", () => {
+  const workflows = productRoutingWorkflows();
+  workflows["release-publish.yml"].jobs.publish.steps[0].with.name = "release-candidate";
+  assert.throws(
+    () => validateProductReleaseRouting(workflows),
+    /download only the selected product candidate/,
+  );
 });

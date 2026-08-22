@@ -29,9 +29,10 @@ const fixedDependencies = {
 };
 
 test("公開textlint pluginの実行時npm依存を0件に固定する", () => {
-  assert.deepEqual(manifest, {
+  const { version, ...identity } = manifest;
+  assert.match(version, /^\d+\.\d+\.\d+$/);
+  assert.deepEqual(identity, {
     name: "adocweave-textlint-plugin-development",
-    version: "0.0.0",
     private: contract.identity.private,
     type: "module",
   });

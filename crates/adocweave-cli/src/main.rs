@@ -19,6 +19,7 @@ mod local_target;
 mod preview;
 
 static PREVIEW_SHUTDOWN: AtomicBool = AtomicBool::new(false);
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[cfg(unix)]
 fn install_preview_signal_handlers() {
@@ -1254,11 +1255,11 @@ fn run() -> Result<ExitCode, CliError> {
                     "{}",
                     serde_json::json!({
                         "name": "adocweave",
-                        "packageVersion": adocweave::VERSION,
+                        "packageVersion": VERSION,
                     })
                 );
             } else {
-                println!("adocweave {}", adocweave::VERSION);
+                println!("adocweave {VERSION}");
             }
             Ok(ExitCode::SUCCESS)
         }
