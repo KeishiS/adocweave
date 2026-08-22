@@ -492,14 +492,23 @@ fn include_selected(arguments: &Arguments, configured: bool) -> bool {
     arguments.include || configured
 }
 
-const MAX_SCAN_ENTRIES: usize = 100_000;
+/// The same ceiling the host applies to one recursive scan.
+///
+/// The command line counts what it collected across every input directory,
+/// which the host cannot see because it charges each session separately.
+const MAX_SCAN_ENTRIES: usize = adocweave_host::LocalFilesystemSession::MAX_SCAN_ENTRIES;
 
-fn charge_scan_entry(scanned_entries: &mut usize) -> Result<(), CliError> {
+fn charge_scan_entry(scanned_entries: &mut usize, reached_at: &Path) -> Result<(), CliError> {
     *scanned_entries = scanned_entries.saturating_add(1);
     if *scanned_entries > MAX_SCAN_ENTRIES {
-        return Err(CliError::Path(
-            "directory scan entry limit exceeded".to_owned(),
-        ));
+        // Unlike the Language Server, the command line has no exclusion
+        // setting: its inputs are the ones the caller named. Reporting where
+        // the count ran out is the only thing that lets the caller narrow them.
+        return Err(CliError::Path(format!(
+            "input scan reached its limit of {MAX_SCAN_ENTRIES} directory entries at {}. \
+             Name narrower directories or globs.",
+            reached_at.display(),
+        )));
     }
     Ok(())
 }
@@ -659,9 +668,10 @@ fn collect_input_paths(
     }
     let mut scanned_entries = pending.len();
     if scanned_entries > MAX_SCAN_ENTRIES {
-        return Err(CliError::Path(
-            "directory scan entry limit exceeded".to_owned(),
-        ));
+        return Err(CliError::Path(format!(
+            "{scanned_entries} input paths exceed the limit of {MAX_SCAN_ENTRIES} entries. \
+             Name narrower directories or globs.",
+        )));
     }
     pending.sort();
     let mut files = std::collections::BTreeSet::new();
@@ -740,7 +750,7 @@ fn collect_input_paths(
             .map_err(local_include::LocalIncludeError::Host)
             .map_err(CliError::Include)?
         {
-            charge_scan_entry(&mut scanned_entries)?;
+            charge_scan_entry(&mut scanned_entries, &path)?;
             let explicitly_selected = explicit_directories
                 .iter()
                 .any(|root| path.starts_with(root));
@@ -2073,11 +2083,17 @@ mod tests {
 
     #[test]
     fn scan_candidate_counter_rejects_the_first_entry_past_the_cap() {
+        let entry = std::path::Path::new("/workspace/generated/one.adoc");
         let mut scanned = MAX_SCAN_ENTRIES - 1;
-        charge_scan_entry(&mut scanned).expect("exact scan boundary");
+        charge_scan_entry(&mut scanned, entry).expect("exact scan boundary");
         assert_eq!(scanned, MAX_SCAN_ENTRIES);
-        let error = charge_scan_entry(&mut scanned).expect_err("entry past scan boundary");
-        assert!(error.to_string().contains("scan entry limit"));
+        let error = charge_scan_entry(&mut scanned, entry).expect_err("entry past scan boundary");
+        let message = error.to_string();
+        assert!(message.contains(&MAX_SCAN_ENTRIES.to_string()), "{message}");
+        assert!(
+            message.contains("/workspace/generated/one.adoc"),
+            "{message}"
+        );
     }
 
     #[test]
