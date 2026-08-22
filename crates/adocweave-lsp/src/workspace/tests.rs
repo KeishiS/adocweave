@@ -297,6 +297,41 @@ fn workspace_scan_read_limit_is_shared_across_project_scopes() {
 }
 
 #[test]
+fn a_projects_read_budget_skips_its_documents_without_voiding_the_workspace() {
+    // A project may allow fewer reads than it holds documents. Before, the
+    // first refusal ended the whole load, so one such project made every other
+    // document in the workspace unanalysable.
+    let root = TestDirectory::new();
+    std::fs::write(root.0.join("outside.adoc"), "outside\n").expect("outside source");
+    let limited = root.0.join("limited");
+    std::fs::create_dir(&limited).expect("limited project");
+    std::fs::write(
+        limited.join(adocweave_config::FILE_NAME),
+        "schema-version = 1\n[resources]\nmax-files = 1\n",
+    )
+    .expect("limited project configuration");
+    for name in ["a.adoc", "b.adoc", "c.adoc"] {
+        std::fs::write(limited.join(name), "text\n").expect("limited source");
+    }
+    let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+    let mut resources = WorkspaceResources::default();
+
+    resources
+        .load_roots(std::slice::from_ref(&root_uri))
+        .expect("a limited project must not void the workspace");
+
+    assert!(!resources.last_load_failed_closed());
+    let outside = Url::from_file_path(root.0.join("outside.adoc")).expect("outside URI");
+    assert!(
+        resources.resource_text(&outside).is_some(),
+        "documents outside the limited project stay registered"
+    );
+    let notice = resources.scan_notice().expect("the skip is reported");
+    assert!(notice.contains("resources.max-files"), "{notice}");
+    assert!(notice.contains("limited"), "{notice}");
+}
+
+#[test]
 fn workspace_scan_entry_budget_keeps_the_workspace_and_reports_a_notice() {
     let root = TestDirectory::new();
     std::fs::write(root.0.join("root.adoc"), "root\n").expect("root source");
@@ -1957,13 +1992,23 @@ fn shared_scope_fixture_has_the_same_root_and_include_count_contract() {
     )
     .expect("included source");
     let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+    let document_uri = Url::from_file_path(&root_path).expect("document URI");
     let mut resources = WorkspaceResources::default();
 
-    let error = resources
+    // A count of one against two documents means the scan registers one of them
+    // and says so, rather than refusing to load the workspace.
+    resources
         .load_roots(&[root_uri])
-        .expect_err("root and include exceed count");
-
-    assert!(error.contains("file limit"), "{error}");
+        .expect("a count limit must not void the workspace");
+    let notice = resources.scan_notice().expect("the skip is reported");
+    assert!(notice.contains("resources.max-files"), "{notice}");
+    let error = resources
+        .input(&document_uri)
+        .expect_err("the skipped document is not an analysis root");
+    assert!(error.contains("missing"), "{error}");
+    // That the root and its include share one count is fixed by the
+    // command line, which analyses the same fixture in one process:
+    // `analysis_resource_count_includes_root_and_includes`.
 }
 
 #[test]
