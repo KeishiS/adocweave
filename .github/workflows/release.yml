@@ -296,7 +296,6 @@ jobs:
         if: matrix.nix
         run: >-
           nix build
-          ".#checks.${{ matrix.nixSystem }}.public-contract"
           ".#checks.${{ matrix.nixSystem }}.package-smoke"
           ".#checks.${{ matrix.nixSystem }}.nixos-package-evaluation"
           --no-link

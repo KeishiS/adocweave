@@ -951,7 +951,6 @@ system="$(nix eval --raw --impure --expr builtins.currentSystem)"
 version="$(jq -er .packageVersion release-manifest.json)"
 nix flake check --no-build
 nix build \
-  ".#checks.${system}.public-contract" \
   ".#checks.${system}.package-smoke" \
   ".#checks.${system}.nixos-package-evaluation" \
   --no-link

@@ -6,6 +6,7 @@ const COMMON_RELEASE_ROOTS = [
   ".cargo/",
   ".github/workflows/",
   "config/",
+  "nix/",
   "release/",
 ];
 const COMMON_RELEASE_FILES = new Set([
@@ -315,7 +316,7 @@ const DOCUMENT_FILES = new Set([
 /// Editing the toolchain pin, the task graph or a workflow can change the
 /// outcome of any check, so those changes are verified in full rather than
 /// scoped by what they appear to touch.
-const CHECK_DEFINITION_ROOTS = [".github/workflows/", ".cargo/"];
+const CHECK_DEFINITION_ROOTS = [".github/workflows/", ".cargo/", "nix/"];
 const CHECK_DEFINITION_FILES = new Set([
   "Makefile.toml",
   "flake.lock",
