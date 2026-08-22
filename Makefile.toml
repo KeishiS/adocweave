@@ -642,7 +642,6 @@ dependencies = [
 script_runner = "@shell"
 script = '''
 node --test \
-  packages/textlint-plugin-asciidoc/adapter.test.mjs \
   packages/textlint-plugin-asciidoc/bridge.test.mjs \
   packages/textlint-plugin-asciidoc/package.test.mjs \
   packages/textlint-plugin-asciidoc/position.test.mjs \

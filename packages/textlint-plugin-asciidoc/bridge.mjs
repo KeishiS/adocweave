@@ -1,7 +1,6 @@
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-export const TEXTLINT_ADAPTER_API_VERSION = 1;
 
 let bundledBridge;
 
@@ -60,11 +59,6 @@ export function createParseText({ bridgeLoader }) {
       }
       if (typeof loaded?.parseText !== "function") {
         const error = new Error("AdocWeave WebAssemblyにparseTextがありません。");
-        error.code = "wasm-initialization-failed";
-        throw error;
-      }
-      if (loaded.adapterApiVersion?.() !== TEXTLINT_ADAPTER_API_VERSION) {
-        const error = new Error("AdocWeave WebAssemblyのtextlint adapter APIに互換性がありません。");
         error.code = "wasm-initialization-failed";
         throw error;
       }

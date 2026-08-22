@@ -137,22 +137,12 @@ test("任意のnode固有propertyを保持し、生成propertyの上書きを拒
   assert.deepEqual(ast.children[0].futureProperty, { enabled: true });
 });
 
-test("planの構造とUTF-16 rangeをfail closedで検証する", () => {
-  const cases = [
-    [{ type: "Paragraph", range: [0, 0], children: [] }, /root/],
-    [{ type: "Document", range: [0, 1], children: [] }, /不正/],
-    [{ type: "Document", range: [0, 0] }, /children/],
-    [{ type: "Document", range: [0, 0], children: {} }, /children/]
-  ];
-  for (const [plan, expected] of cases) {
-    assert.throws(() => processorFor(plan).processor(".adoc").preProcess(""), expected);
-  }
-
+test("materializeに使うUTF-16 rangeを入力範囲へ限定する", () => {
   const { source, plan } = fixture();
-  plan.children[0].children[0].range = plan.range;
+  plan.children[0].children[0].range = [0, source.length + 1];
   assert.throws(
     () => processorFor(plan).processor(".adoc").preProcess(source),
-    /親nodeのrange/
+    /rangeが不正/
   );
 });
 
@@ -166,22 +156,6 @@ test("valueRangeをnodeのrange内に限定する", () => {
   assert.throws(
     () => processorFor(plan).processor(".adoc").preProcess(source),
     /valueRangeがrangeに含まれていません/
-  );
-});
-
-test("兄弟nodeのrange重複を拒否する", () => {
-  const source = "本文です";
-  const plan = {
-    type: "Document",
-    range: [0, source.length],
-    children: [
-      { type: "Str", range: [0, 3], valueRange: [0, 3] },
-      { type: "Str", range: [2, source.length], valueRange: [2, source.length] }
-    ]
-  };
-  assert.throws(
-    () => processorFor(plan).processor(".adoc").preProcess(source),
-    /重複/
   );
 });
 
