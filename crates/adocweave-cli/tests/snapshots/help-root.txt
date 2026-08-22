@@ -32,7 +32,8 @@ Options:
   --dry-run   Report changes without writing them
   --glob PATTERN  Add files matching a glob pattern
   --color WHEN  Use auto, always, or never for terminal colors
-  --include   Enable bounded local include processing
+  --include   Process local includes even when configuration disables them
+  --no-include  Leave include directives unresolved
   --base-dir DIR    Resolve root document includes from DIR
   --allow-root DIR  Permit include resources below DIR; repeatable
   --local-targets     Check local file targets; check only

@@ -566,7 +566,7 @@ impl ResolvedResourceLimitPlan {
 }
 
 /// Include policy and bounded local resource settings.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResourceSettings {
     /// Whether include preprocessing is enabled.
     pub include: bool,
@@ -574,6 +574,23 @@ pub struct ResourceSettings {
     pub roots: Vec<PathBuf>,
     /// Resource limits no greater than built-in ceilings.
     pub limit_plan: ResolvedResourceLimitPlan,
+}
+
+/// Include preprocessing is on unless a project turns it off.
+///
+/// `include::` is part of the document, not an extension of it: a manual split
+/// across files is one document that happens to live in several. Reading it as
+/// separate files produces diagnostics about text that is not there. What the
+/// setting still decides is the reachable set, through `roots` and the host
+/// filesystem boundary, so turning this on grants no path that was closed.
+impl Default for ResourceSettings {
+    fn default() -> Self {
+        Self {
+            include: true,
+            roots: Vec::new(),
+            limit_plan: ResolvedResourceLimitPlan::default(),
+        }
+    }
 }
 
 /// Language Server workspace discovery settings.
@@ -796,15 +813,16 @@ pub struct ResolvedProjectConfig {
 
 impl Default for ResolvedProjectConfig {
     fn default() -> Self {
+        let resources = ResourceSettings::default();
         let preprocess = PreprocessOptions {
-            enable_includes: false,
+            enable_includes: resources.include,
             ..PreprocessOptions::default()
         };
         Self {
             schema_version: SCHEMA_VERSION,
             analysis: AnalysisOptions::default(),
             preprocess,
-            resources: ResourceSettings::default(),
+            resources,
             workspace: WorkspaceSettings::default(),
             local_targets: LocalTargetSettings::default(),
             format: FormatConfig::default(),
@@ -1078,16 +1096,33 @@ struct RuleWire {
     severity: Option<SeverityWire>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 struct ResourcesWire {
-    #[serde(default)]
+    #[serde(default = "include_preprocessing")]
     include: bool,
     #[serde(default)]
     roots: Vec<PathBuf>,
     max_files: Option<usize>,
     max_total_bytes: Option<u64>,
     max_resource_bytes: Option<u64>,
+}
+
+const fn include_preprocessing() -> bool {
+    true
+}
+
+/// Matches the resolved default, for a project file with no `[resources]`.
+impl Default for ResourcesWire {
+    fn default() -> Self {
+        Self {
+            include: include_preprocessing(),
+            roots: Vec::new(),
+            max_files: None,
+            max_total_bytes: None,
+            max_resource_bytes: None,
+        }
+    }
 }
 
 impl ResourcesWire {
@@ -1472,6 +1507,36 @@ roles = ["definition", "theorem"]
 
     /// A role that is not a class token cannot reach a stylesheet, so the
     /// configuration rejects it by field instead of dropping it silently.
+    #[test]
+    fn include_preprocessing_does_not_depend_on_the_project_file_existing() {
+        // The trap this replaces: a project file added for an unrelated setting
+        // used to turn include resolution off, because the parsed default said
+        // false while a workspace without a project file said true.
+        for source in [
+            "schema-version = 1\n",
+            "schema-version = 1\n[lint]\nmax-line-length = 100\n",
+            "schema-version = 1\n[resources]\nroots = [\"docs\"]\n",
+            "schema-version = 1\n[resources]\ninclude = true\n",
+        ] {
+            let config =
+                ResolvedProjectConfig::parse(source, Path::new("/workspace")).expect("valid");
+            assert!(config.resources.include, "{source}");
+            assert!(config.preprocess.enable_includes, "{source}");
+        }
+
+        let default = ResolvedProjectConfig::default();
+        assert!(default.resources.include);
+        assert!(default.preprocess.enable_includes);
+
+        let disabled = ResolvedProjectConfig::parse(
+            "schema-version = 1\n[resources]\ninclude = false\n",
+            Path::new("/workspace"),
+        )
+        .expect("valid");
+        assert!(!disabled.resources.include);
+        assert!(!disabled.preprocess.enable_includes);
+    }
+
     #[test]
     fn html_roles_must_be_class_tokens() {
         let error = ResolvedProjectConfig::parse(

@@ -32,13 +32,13 @@
 自動処理では``--format json``、``--format github``または``--format sarif``を指定し、変更される可能性があるmessageではなく
 codeを判定に使用してください。``--json``は``--format json``の互換aliasです。
 同じ入力、設定およびパッケージバージョンからは同じ順序で問題を返します。
-``--include``を使用した場合も、問題の位置は展開後の仮想文書ではなく、
+includeを展開した場合も、問題の位置は展開後の仮想文書ではなく、
 問題がある元ファイルのパス、行および桁として表示します。
 
 ``--format json``は、問題1件を1つのobjectとして配列で返します。すべてのobjectが同じ項目を持ちます。
 ``sourceId``は問題がある元ファイル、``related``は関連位置、``fixes``は自動修正候補です。
 該当がない場合、``related``と``fixes``は空の配列、``sourceId``は``null``になります。
-``--include``の有無、入力ファイルの数および参照先の検査結果によって項目が増減することはありません。
+includeの展開の有無、入力ファイルの数および参照先の検査結果によって項目が増減することはありません。
 参照先の検査で報告する問題は、これらに加えて``target``、``line``および``column``を持ちます。
 
 ``asciidoc-file-link``は、``.adoc``または``.asciidoc``で終わる文書を``link``で参照した場合に、
@@ -221,16 +221,27 @@ xref:project-configuration.adoc[プロジェクト設定]を参照してくだ�
 
 == ローカルファイルの展開
 
-ローカルファイルの展開は``--include``を指定した場合だけ有効になります。
+``include::``で指定したローカルファイルは既定で展開します。
 
 [source,console]
 ----
-adocweave convert --include docs/manual.adoc
-adocweave check --include docs/manual.adoc
+adocweave convert docs/manual.adoc
+adocweave check docs/manual.adoc
+----
+
+展開したくない場合は``--no-include``を指定します。プロジェクト設定で
+``resources.include = false``としている場合に、一度だけ展開するには``--include``を指定します。
+この二つは同時に指定できません。
+
+[source,console]
+----
+adocweave convert --no-include docs/manual.adoc
 ----
 
 ファイル入力では、``--base-dir``を省略するとroot文書の親ディレクトリを基準にします。
-標準入力は位置を持たないため、``--include``と同時に``--base-dir DIR``が必須です。
+標準入力は位置を持たないため、基準ディレクトリを決められません。``--base-dir DIR``を指定した場合だけ
+展開し、指定しない場合はinclude指示をそのまま残します。``--include``を明示した上で``--base-dir``が
+ない場合はエラーになります。
 ``--allow-root DIR``は複数指定でき、省略時はbase ディレクトリだけを許可します。
 
 [source,console]
@@ -250,7 +261,7 @@ adocweave convert --include --base-dir docs --allow-root docs - < root.adoc
 ``include:``で始まるIDを使用し、正規化したパスは診断へ公開しません。
 ``format``はincludeの展開先を安全性検査しますが、展開結果をrootのファイルへ書き戻さずroot入力だけを整形します。
 
-``check --include --local-targets --project-root DIR``では、includeの読み取りとほかのlocal targetの
+``check --local-targets --project-root DIR``では、includeの読み取りとほかのlocal targetの
 実在検査が同じキャッシュと上限を使用します。この組み合わせでは、正規化後もproject root内に収まる``..``を
 許可し、``--allow-root``は使用しません。``optional``を指定したincludeの欠落はerrorにしません。
 
@@ -263,7 +274,7 @@ adocweave convert --include --base-dir docs --allow-root docs - < root.adoc
 
 [source,console]
 ----
-adocweave preview --include manual.adoc
+adocweave preview manual.adoc
 adocweave preview --port 8080 --css theme.css manual.adoc
 ----
 

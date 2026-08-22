@@ -50,6 +50,7 @@ pub(crate) enum OptionId {
     Glob,
     Color,
     Include,
+    NoInclude,
     BaseDir,
     AllowRoot,
     LocalTargets,
@@ -306,8 +307,18 @@ pub(crate) const OPTIONS: &[OptionSpec] = &[
         commands: INPUT_COMMANDS,
         root: false,
         version: false,
-        root_help_line: "  --include   Enable bounded local include processing\n",
-        command_help_line: Some("  --include  上限を設けてローカルincludeを展開\n"),
+        root_help_line: "  --include   Process local includes even when configuration disables them\n",
+        command_help_line: Some("  --include  設定で無効にしていてもローカルincludeを展開\n"),
+    },
+    OptionSpec {
+        id: OptionId::NoInclude,
+        names: &["--no-include"],
+        value: OptionValue::Flag,
+        commands: INPUT_COMMANDS,
+        root: false,
+        version: false,
+        root_help_line: "  --no-include  Leave include directives unresolved\n",
+        command_help_line: Some("  --no-include  include指示を展開しない\n"),
     },
     OptionSpec {
         id: OptionId::BaseDir,
@@ -518,7 +529,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
   このサーバーは利用者認証とTLSによる通信の暗号化を提供しません。
 
 例:
-  adocweave preview --include manual.adoc
+  adocweave preview --port 8080 manual.adoc
 ",
         ),
         help_options: &[
@@ -527,6 +538,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             OptionId::Debounce,
             OptionId::AllowExternal,
             OptionId::Include,
+            OptionId::NoInclude,
             OptionId::BaseDir,
             OptionId::AllowRoot,
             OptionId::Css,
@@ -982,7 +994,7 @@ mod tests {
     #[test]
     fn option_model_is_complete_and_has_exact_command_applicability() {
         assert_eq!(validate_options(OPTIONS, COMMANDS), Ok(()));
-        assert_eq!(OPTIONS.len(), 29);
+        assert_eq!(OPTIONS.len(), 30);
         assert_eq!(
             OPTIONS
                 .iter()
@@ -1005,6 +1017,7 @@ mod tests {
                 OptionId::Glob,
                 OptionId::Color,
                 OptionId::Include,
+                OptionId::NoInclude,
                 OptionId::BaseDir,
                 OptionId::AllowRoot,
                 OptionId::LocalTargets,
@@ -1033,6 +1046,7 @@ mod tests {
                 OptionId::NoConfig,
                 OptionId::Color,
                 OptionId::Include,
+                OptionId::NoInclude,
                 OptionId::BaseDir,
                 OptionId::AllowRoot,
                 OptionId::Complete,
@@ -1048,6 +1062,7 @@ mod tests {
                 OptionId::NoConfig,
                 OptionId::Color,
                 OptionId::Include,
+                OptionId::NoInclude,
                 OptionId::BaseDir,
                 OptionId::AllowRoot,
                 OptionId::Css,
@@ -1075,6 +1090,7 @@ mod tests {
                 OptionId::Glob,
                 OptionId::Color,
                 OptionId::Include,
+                OptionId::NoInclude,
                 OptionId::BaseDir,
                 OptionId::AllowRoot,
                 OptionId::LocalTargets,
@@ -1095,6 +1111,7 @@ mod tests {
                 OptionId::Glob,
                 OptionId::Color,
                 OptionId::Include,
+                OptionId::NoInclude,
                 OptionId::BaseDir,
                 OptionId::AllowRoot,
                 OptionId::Help,
@@ -1107,6 +1124,7 @@ mod tests {
                 OptionId::NoConfig,
                 OptionId::Color,
                 OptionId::Include,
+                OptionId::NoInclude,
                 OptionId::BaseDir,
                 OptionId::AllowRoot,
                 OptionId::Help,
