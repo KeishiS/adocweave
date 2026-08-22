@@ -31,6 +31,18 @@ if (
 ) {
   throw new Error("The VS Code extension entry point or language contribution is invalid");
 }
+const serverSettings = packageJson.contributes?.configuration?.properties;
+if (
+  packageJson.capabilities?.untrustedWorkspaces?.supported !== false ||
+  !packageJson.capabilities.untrustedWorkspaces.description?.trim() ||
+  serverSettings?.["adocweave.server.path"]?.scope !== "machine" ||
+  "adocweave.server.download" in (serverSettings ?? {}) ||
+  packageJson.contributes?.commands?.some(
+    ({ command }) => command === "adocweave.clearManagedServer",
+  )
+) {
+  throw new Error("The Language Server trust boundary or settings are invalid");
+}
 if (!Array.isArray(language.brackets) || grammar.scopeName !== "text.asciidoc") {
   throw new Error("The AsciiDoc language configuration or TextMate grammar is invalid");
 }

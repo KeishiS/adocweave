@@ -240,10 +240,9 @@ export function buildMetadata(directory, sourceCommit, product, plan = loadDistr
     assets: assets.map(({ path: _path, ...asset }) => asset),
     product,
     productVersion: version,
-    schemaVersion: 3,
+    schemaVersion: 4,
     sourceCommit,
   };
-  if (product === "lsp") distributionManifest.lspApiVersion = 1;
 
   const dependencies = product === "cli"
     ? cargoPackages(undefined, "adocweave-cli")

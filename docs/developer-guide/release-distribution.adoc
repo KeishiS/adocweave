@@ -19,7 +19,7 @@ CLI、Language Server、Browser、Zed拡張、VS Code拡張およびtextlint用A
 一製品の成果物だけを公開します。GitHubが自動生成するソースarchiveは、検証対象の配布物に含めません。
 
 VS Code拡張は、GitHub Releaseへ添付したVSIXと同一のfileをOpen VSX Registryへも公開します。Open VSX向けに
-成果物を作り直さず、公開はGitHub Releaseの公開後に行います（xref:adr/0013-vscode-release-boundary.adoc[ADR 0013]）。
+成果物を作り直さず、公開はGitHub Releaseの公開後に行います（xref:adr/0023-publication-boundary.adoc[ADR 0023]）。
 crates.io、npm、Homebrew、WinGet、Visual Studio MarketplaceおよびZed Extension Registryには公開しません。
 
 textlint用Processorはnpm互換の``.tgz``ですが、npm registryまたはGitHub Packagesへ公開しません。
@@ -105,11 +105,18 @@ devShellのNode.jsを使い、flakeはshellを構築する時点でNixpkgsのNod
 VSIXは固定したNode.js依存とlockfileからbundleし、runtimeの``node_modules``とsource mapを同梱しません。
 同梱fileが許可一覧と完全に一致すること、package sizeおよび機械固有pathの不在を確認します。公開するbyte列が
 入力だけから決まることは、成果物を公開する経路で同じsourceからもう一度構築してSHA-256を比較して確認します。
-VS Code拡張とZed拡張は、自身の製品バージョン、検証済みLanguage Serverを固定する
-``managedLspVersion``、対応する``lspApiVersion``を別々に持ちます。明示pathと``PATH``上のLanguage Serverは、
-製品バージョンが異なってもAPI世代が対応範囲なら利用できます。managed binaryは固定版の
-``adocweave-lsp/vX.Y.Z`` Releaseだけから取得します。この判断の背景は
-xref:adr/0027-product-release-trains.adoc[ADR 0027]を参照してください。
+VS Code拡張とZed拡張はLanguage Serverを同梱せず、取得、検証、展開、cache、更新および削除を実装しません。
+エディターで有効な設定に絶対pathで指定した実行ファイルを優先し、次にeditor processから見える``PATH``を使用します。
+見つからない場合は共通の導入文書へ案内します。未信頼のprojectまたはworktreeの設定から任意の実行ファイルを
+起動しません。VS Codeは未信頼ワークスペースで拡張を無効にし、ZedはWorktree Trustに従います。
+Language Server processの起動、標準入出力、初期化、終了および再起動は、
+各editorの標準LSP client APIへ委ねます。
+
+互換性は製品バージョンやAdocWeave固有のAPI世代ではなく、LSPの初期化で交換する標準capabilityから判断します。
+各editorのLSP clientは提供されたcapabilityに対応する機能だけを有効にし、初期化できない場合は起動失敗として
+理由を表示します。
+Language Serverとeditor拡張は引き続き独立した製品として構築、検証および公開します。この責務境界は
+xref:adr/0028-editor-language-server-boundary.adoc[ADR 0028]を参照してください。
 
 [#textlint-processor-package]
 == textlint用AsciiDoc Processorパッケージ

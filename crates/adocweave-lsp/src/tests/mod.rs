@@ -10,7 +10,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
-use super::{HostReferenceIndex, HostReferenceRequest, LSP_API_VERSION, PositionEncoding, run};
+use super::{HostReferenceIndex, HostReferenceRequest, PositionEncoding, run};
 use crate::service::LanguageService;
 use crate::state::{Adoption, AnalysisJob, WorkspaceProblem};
 

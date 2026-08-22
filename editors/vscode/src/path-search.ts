@@ -15,6 +15,7 @@ export async function findOnPath(
   if (!pathValue || isAbsolute(name)) return undefined;
   const pathDelimiter = os === "win32" ? ";" : ":";
   for (const directory of pathValue.split(pathDelimiter).filter(Boolean)) {
+    if (!isAbsolute(directory)) continue;
     for (const executable of executableNames(name, os)) {
       const candidate = join(directory, executable);
       try {

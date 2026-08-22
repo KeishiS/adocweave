@@ -19,7 +19,12 @@ import {
   removeNativeSmokeDirectory,
   smokeLsp,
 } from "./native-lsp-smoke.mjs";
-import { loadDistributionPlan, productIdentity, selectProduct } from "./product-release.mjs";
+import {
+  loadDistributionPlan,
+  productIdentity,
+  selectProduct,
+  validateDistributionManifest,
+} from "./product-release.mjs";
 
 const runtime = createRuntimeAdapters({
   fileSystem: nodeFileSystem,
@@ -65,15 +70,14 @@ const manifestPath = join(resolve(artifactDirectory), "adocweave-dist-manifest.j
 const identity = productIdentity(product, { plan });
 const manifest = existsSync(manifestPath)
   ? JSON.parse(readFileSync(manifestPath, "utf8"))
-  : {
-      lspApiVersion: product === "lsp" ? 1 : undefined,
-      product,
-      productVersion: identity.version,
-      schemaVersion: 3,
-    };
-if (manifest.schemaVersion !== 3 || manifest.product !== product || manifest.productVersion !== identity.version) {
-  throw new Error(`distribution manifest does not describe ${product}`);
+  : undefined;
+if (manifest) {
+  validateDistributionManifest(manifest, plan);
+  if (manifest.product !== product || manifest.productVersion !== identity.version) {
+    throw new Error(`distribution manifest does not describe ${product}`);
+  }
 }
+const productVersion = manifest?.productVersion ?? identity.version;
 const workspaceRoot = realpathSync(fileURLToPath(new URL("../", import.meta.url)));
 const scratch = mkdtempSync(join(tmpdir(), "adocweave-native-smoke-"));
 
@@ -186,10 +190,7 @@ function run(binary, args, options = {}) {
 
 function version(binary) {
   const value = JSON.parse(run(binary, ["--version", "--json"]));
-  if (value.packageVersion !== manifest.productVersion) throw new Error(`${value.name} package version mismatch`);
-  if (product === "lsp" && value.lspApiVersion !== manifest.lspApiVersion) {
-    throw new Error("LSP API version mismatch");
-  }
+  if (value.packageVersion !== productVersion) throw new Error(`${value.name} package version mismatch`);
 }
 
 async function smokeForcedProcessLifecycle(binary, deadline) {
@@ -241,7 +242,7 @@ try {
     run(binary, ["format", "--check", fixture]);
   } else {
     smokeDeadline = createNativeSmokeDeadline();
-    await smokeLsp(binary, manifest.productVersion, smokeDeadline, {
+    await smokeLsp(binary, productVersion, smokeDeadline, {
       documentUri: pathToFileURL(fixture).href,
     });
     await smokeForcedProcessLifecycle(binary, smokeDeadline);

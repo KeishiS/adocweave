@@ -15,7 +15,12 @@ import {
   validateArchiveEntries,
   vscodePackageContract,
 } from "./platform-contract.mjs";
-import { loadDistributionPlan, productIdentity, selectProduct } from "./product-release.mjs";
+import {
+  loadDistributionPlan,
+  productIdentity,
+  selectProduct,
+  validateDistributionManifest,
+} from "./product-release.mjs";
 
 const runtime = createRuntimeAdapters({
   fileSystem: nodeFileSystem,
@@ -67,20 +72,20 @@ const candidate = realpathSync(resolve(candidateArgument));
 const manifestPath = manifestArgument
   ? resolve(manifestArgument)
   : join(candidate, "adocweave-dist-manifest.json");
+if (manifestArgument && !existsSync(manifestPath)) {
+  throw new Error(`distribution manifest does not exist: ${manifestPath}`);
+}
 const identity = productIdentity(product, { plan: distributionPlan });
 const manifest = existsSync(manifestPath)
   ? JSON.parse(readFileSync(manifestPath, "utf8"))
-  : {
-      lspApiVersion: product === "lsp" ? 1 : undefined,
-      product,
-      productVersion: identity.version,
-      schemaVersion: 3,
-    };
-if (manifest.schemaVersion !== 3 || manifest.product !== product || manifest.productVersion !== identity.version) {
-  throw new Error(`distribution manifest does not describe ${product}`);
+  : undefined;
+if (manifest) {
+  validateDistributionManifest(manifest, distributionPlan);
+  if (manifest.product !== product || manifest.productVersion !== identity.version) {
+    throw new Error(`distribution manifest does not describe ${product}`);
+  }
 }
-const version = manifest.productVersion;
-if (typeof version !== "string" || !version) throw new Error("manifest has no productVersion");
+const version = manifest?.productVersion ?? identity.version;
 const requiredAssets = requiredProductInstallationAssets(product, target, version, platform.archive);
 const missingAssets = missingInstallationAssets(
   readdirSync(candidate, { withFileTypes: true })
@@ -361,9 +366,6 @@ try {
     for (const executable of executables) {
       const actual = JSON.parse(command(executable, ["--version", "--json"]));
       if (actual.packageVersion !== version) throw new Error(`${executable} version mismatch`);
-      if (product === "lsp" && actual.lspApiVersion !== manifest.lspApiVersion) {
-        throw new Error("LSP API version mismatch");
-      }
     }
     activateNative(previousRoot, `${version}-previous-fixture`, executables);
     if (readFileSync(activeMarker, "utf8") !== `${version}-previous-fixture\n`) {

@@ -50,7 +50,6 @@ try {
   writeFileSync(
     join(userData, "User", "settings.json"),
     `${JSON.stringify({
-      "adocweave.server.download": false,
       "adocweave.server.path": server,
     })}\n`,
   );

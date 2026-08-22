@@ -1,5 +1,5 @@
 = ADR 0027: 配布製品ごとのバージョンと公開単位
-:status: accepted
+:status: accepted; editor/LSP compatibility amended by ADR 0028
 
 == 文脈
 
@@ -83,3 +83,6 @@ ADR 0023のうち、単一バージョン、単一``vX.Y.Z`` tag、全成果物�
 
 ADR 0026のうち、``cargo-semver-checks``の結果と破壊的変更台帳からRust API差分をRelease Notesへ生成する決定も
 置き換えます。未検査の変更なし宣言を生成しない決定は維持します。
+
+本ADRのうち、``lspApiVersion``、``managedLspVersion``および拡張によるLanguage Serverの自動取得を使う決定は、
+xref:0028-editor-language-server-boundary.adoc[ADR 0028]で置き換えます。六製品の独立したバージョンと公開単位は維持します。

@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 
 /** The fields of the extension `package.json` these scripts read. */
 export interface ExtensionManifest {
+  capabilities?: { untrustedWorkspaces?: { description?: string; supported?: boolean } };
   name: string;
   publisher: string;
   version: string;
@@ -11,7 +12,11 @@ export interface ExtensionManifest {
   repository?: { type?: string; url?: string };
   scripts?: Record<string, string>;
   publishConfig?: unknown;
-  contributes?: { languages?: Array<{ id?: string }> };
+  contributes?: {
+    commands?: Array<{ command?: string }>;
+    configuration?: { properties?: Record<string, { scope?: string }> };
+    languages?: Array<{ id?: string }>;
+  };
 }
 
 /**

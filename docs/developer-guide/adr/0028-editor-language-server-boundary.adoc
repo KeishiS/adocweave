@@ -1,0 +1,64 @@
+= ADR 0028: エディターとLanguage Serverの導入境界
+:status: accepted
+
+== 文脈
+
+VS Code拡張とZed拡張はLanguage Serverのclientですが、これまで各拡張が配布manifestの取得、platform判定、
+archiveとhashの検証、展開、cache、排他制御および障害からの復旧も実装していました。同じ導入処理を異なる
+editor API上で保守する必要があり、Language Serverの配布仕様を変えるたびに両拡張の変更と検証が必要でした。
+
+ADR 0027は、六製品のrelease trainを分ける一方で、``lspApiVersion``と``managedLspVersion``によって拡張が
+特定のLanguage Serverを管理することを決めました。この仕組みは版番号の完全一致を避けますが、拡張が
+Language Serverを配布・更新する責務と、独自の互換性判定を残します。LSPには初期化時にclientとserverが
+対応機能を交換する標準のcapabilityがあります。
+
+== 決定
+
+=== 製品と導入の境界
+
+Language Server、VS Code拡張およびZed拡張は、引き続き異なる製品バージョン、tagおよびGitHub Releaseを持ちます。
+拡張へLanguage Serverを同梱せず、拡張はLanguage Serverのdownload、配布manifestとhashの検証、archive展開、
+cache、導入、更新および削除を行いません。Language Serverの導入、検証、更新、rollbackおよび削除は利用者が
+共通の導入手順で行います。
+
+拡張はエディターで有効な設定の絶対path、editor processから見える``PATH``の順で``adocweave-lsp``を探します。
+見つからない場合は自動取得せず、共通の導入文書を案内します。未信頼のprojectまたはworktreeの設定から
+任意の実行ファイルを起動しません。VS Codeは未信頼ワークスペースで拡張を無効にし、ZedはWorktree Trustに従います。
+
+Language Server processの起動、標準入出力による通信、初期化、停止、再起動および異常終了の処理は、
+VS CodeとZedが提供する標準LSP client APIへ委ねます。拡張独自のprocess監視と終了手順を設けません。
+
+=== 互換性の境界
+
+拡張とLanguage Serverの製品バージョン、``lspApiVersion``または固定した対応版の一覧を互換条件にしません。
+LSPの``initialize``で交換する標準capabilityを、利用できる機能の判定基準とします。editorのLSP clientはLanguage Serverが宣言した
+capabilityに対応する機能だけを有効にします。拡張は起動前の独自検査を追加せず、標準の初期化に失敗した場合だけ
+起動失敗として理由を利用者へ示します。
+
+AdocWeave固有のrequest、responseまたは通知を将来追加する場合は、その機能の有無を明示的に交渉します。
+製品全体を一つの整数へ対応付ける互換性検査には戻しません。
+
+== 検討した代替案
+
+**両拡張でmanaged downloadを維持する。** Language Serverを一度の操作で導入できますが、同じ配布client、
+archive検証、cacheおよび復旧処理を二つのeditor API向けに保守し続ける必要があります。利用者向けの共通導入手順へ
+集約する方が、拡張と配布工程の責務を小さくできます。
+
+**Language Serverを拡張へ同梱して同時に公開する。** 組み合わせは固定できますが、Language Serverだけの修正でも
+両拡張の再公開が必要になり、ADR 0027で分けたrelease trainを再び結合します。
+
+**製品バージョンまたは``lspApiVersion``を事前に検査する。** 実際に利用できるLSP機能を間接的な番号から推測する
+検査処理が増えます。標準の初期化処理で交換するcapabilityを直接確認します。
+
+== 帰結
+
+エディター拡張はLanguage Server clientとeditor固有の表示に集中します。拡張の導入だけでは文書解析機能を
+利用できないため、Language Serverがない場合は共通の導入手順を明示する必要があります。Language Serverの更新時期は
+利用者が選べます。標準capabilityの範囲内では、製品バージョンが異なる組み合わせを利用できます。
+
+managed downloadを提供していた旧拡張のcacheは更新だけでは削除されません。旧版の削除機能または共通導入文書の
+手動手順で一度だけ削除します。
+
+ADR 0013とADR 0023にある拡張とLanguage Serverを同時に配布して完全一致を要求する決定、およびADR 0027にある
+``lspApiVersion``、``managedLspVersion``と自動取得の決定を本ADRで置き換えます。ADR 0027の製品別release trainと、
+ADR 0023の公開先、候補SHA、検証済み成果物の再利用および権限境界は維持します。

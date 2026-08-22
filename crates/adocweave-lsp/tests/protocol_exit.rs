@@ -27,7 +27,7 @@ fn run_server(messages: &[Value]) -> std::process::Output {
 }
 
 #[test]
-fn version_json_reports_the_product_and_lsp_api_versions() {
+fn version_json_reports_the_product_version() {
     let output = Command::new(env!("CARGO_BIN_EXE_adocweave-lsp"))
         .args(["--version", "--json"])
         .output()
@@ -38,7 +38,7 @@ fn version_json_reports_the_product_and_lsp_api_versions() {
     let value: Value = serde_json::from_slice(&output.stdout).expect("version JSON");
     assert_eq!(value["name"], "adocweave-lsp");
     assert_eq!(value["packageVersion"], env!("CARGO_PKG_VERSION"));
-    assert_eq!(value["lspApiVersion"], adocweave_lsp::LSP_API_VERSION);
+    assert_eq!(value.as_object().expect("version object").len(), 2);
 }
 
 #[test]

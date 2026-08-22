@@ -171,6 +171,45 @@ export function productAssets(entry, plan, version) {
   return productAssetContracts(entry, plan, version).map((asset) => asset.name);
 }
 
+export function validateDistributionManifest(manifest, plan) {
+  const keys = Object.keys(manifest ?? {}).sort();
+  const expectedKeys = ["assets", "product", "productVersion", "schemaVersion", "sourceCommit"];
+  if (JSON.stringify(keys) !== JSON.stringify(expectedKeys)) {
+    fail("distribution manifest has unknown or missing fields");
+  }
+  if (manifest.schemaVersion !== 4) fail("distribution manifest schemaVersion must be 4");
+  const entry = selectProduct(plan, manifest.product);
+  if (!VERSION.test(manifest.productVersion)) fail("distribution manifest product version is invalid");
+  if (!/^[0-9a-f]{40}$/.test(manifest.sourceCommit)) {
+    fail("sourceCommit must be a lowercase 40-character Git commit");
+  }
+  const expected = new Map(
+    productAssetContracts(entry, plan, manifest.productVersion).map((asset) => [asset.name, asset]),
+  );
+  if (!Array.isArray(manifest.assets)) fail("distribution manifest assets must be an array");
+  const names = manifest.assets.map((asset) => asset?.name);
+  if (new Set(names).size !== names.length || names.some((name, index) => index && name < names[index - 1])) {
+    fail("distribution assets must have unique names sorted by name");
+  }
+  if (names.length !== expected.size) fail("distribution manifest asset count mismatch");
+  for (const asset of manifest.assets) {
+    const assetKeys = Object.keys(asset ?? {}).sort();
+    const expectedAssetKeys = ["archive", "byteSize", "executable", "kind", "name", "sha256", "target"];
+    if (JSON.stringify(assetKeys) !== JSON.stringify(expectedAssetKeys)) {
+      fail("distribution manifest asset has unknown or missing fields");
+    }
+    const planned = expected.get(asset.name);
+    if (!planned) fail(`unplanned distribution asset: ${asset.name}`);
+    for (const field of ["kind", "target", "archive", "executable"]) {
+      if (asset[field] !== planned[field]) fail(`asset ${asset.name} has invalid ${field}`);
+    }
+    if (!Number.isInteger(asset.byteSize) || asset.byteSize < 1) {
+      fail(`asset ${asset.name} has invalid byteSize`);
+    }
+    if (!/^[0-9a-f]{64}$/.test(asset.sha256)) fail(`asset ${asset.name} has invalid sha256`);
+  }
+}
+
 export function productIdentity(product, { root = ROOT, plan = loadDistributionPlan(root) } = {}) {
   const entry = selectProduct(plan, product);
   const version = productVersion(entry, root);
@@ -234,13 +273,8 @@ export function validatePublicationPlan(product, publicationPlan, options = {}) 
 export function validateProductCandidate(product, directory, options = {}) {
   const resolved = productIdentity(product, options);
   const manifest = JSON.parse(readFileSync(resolve(directory, MANIFEST_NAME), "utf8"));
-  if (
-    manifest.schemaVersion !== 3 ||
-    manifest.product !== product ||
-    manifest.productVersion !== resolved.version ||
-    !Array.isArray(manifest.assets) ||
-    manifest.assets.some((asset) => asset?.kind !== resolved.assetKind)
-  ) {
+  validateDistributionManifest(manifest, options.plan ?? loadDistributionPlan(options.root ?? ROOT));
+  if (manifest.product !== product || manifest.productVersion !== resolved.version) {
     fail(`candidate manifestがproduct ${product} の契約と一致しません`);
   }
   const names = manifest.assets.map((asset) => asset.name).sort();

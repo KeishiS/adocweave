@@ -6,8 +6,8 @@ xref:../user-guide/release-installation.adoc#vscode-installation[VS Codeへの�
 
 == 責務
 
-``editors/vscode/``はAsciiDocのlanguage登録、TextMate grammar、Language Server processの所有および
-managed binaryの取得を担当します。解析、診断、整形および意味問い合わせは``adocweave-lsp``だけが実装します。
+``editors/vscode/``はAsciiDocのlanguage登録、TextMate grammarおよびLanguage Clientの起動を担当します。
+Language Serverの導入と更新は利用者が行います。解析、診断、整形および意味問い合わせは``adocweave-lsp``だけが実装します。
 解析設定は``.adocweave.toml``を正本とし、VS Code設定へ複製しません。
 
 TextMate grammarはLanguage Server起動前の基本色付けを担当します。Semantic Tokensはlink、xref、anchor、
@@ -79,8 +79,7 @@ code \
 [source,json]
 ----
 {
-  "adocweave.server.path": "/absolute/path/to/target/debug/adocweave-lsp",
-  "adocweave.server.download": false
+  "adocweave.server.path": "/absolute/path/to/target/debug/adocweave-lsp"
 }
 ----
 
@@ -93,23 +92,19 @@ code \
 次の順序で選択します。
 
 . ``adocweave.server.path``で明示した絶対path
-. extension hostの``PATH``上にある互換バージョンの``adocweave-lsp``
-. 検証済みmanaged cache
-. 同じバージョンのGitHub Releaseから取得したmanaged binary
+. extension hostの``PATH``上にある``adocweave-lsp``
 
-明示pathは``--version --json``に失敗するかバージョンが一致しない場合に停止し、別のbinaryへfallbackしません。
-``PATH``上の不一致は警告してmanaged binaryへ進みます。workspace scopeの明示pathは、
-そのワークスペースが信頼済みの場合だけ使用します。引数、環境変数、download先および任意commandは設定できません。
+``adocweave.server.path``はmachine scopeの設定であり、workspace設定から実行fileを指定できません。
+拡張は未信頼workspaceでは起動しません。設定pathが相対pathの場合は``PATH``へ進まず停止します。
+``PATH``では絶対directory内にある実行fileだけを候補にします。どちらにも見つからない場合は、
+Language Serverの導入と設定方法を表示します。引数、環境変数および任意commandは設定できません。
 
-Managed binaryは配布manifestの対象コミット、バージョン、target、archive、実行ファイル名、byte数およびSHA-256を
-検証します。ZIPは展開量を制限し、絶対path、drive prefix、``..``、大小文字衝突および重複する実行ファイルを拒否します。
-検証済みキャッシュはバージョン、targetおよびasset digestごとに分離し、起動時にbinary digestを再確認します。
+拡張は製品versionを事前に問い合わせません。Language Server Protocolの``initialize``で機能を交換し、
+対応しない機能はLanguage Clientの標準処理に従います。
 
 == 清掃
 
-Extension Development Hostを終了するとLanguage Clientへ``shutdown``と``exit``を送り、期限内に終了しない
-processを停止します。コマンド``AdocWeave: Remove Managed Language Server``はLanguage Serverを停止してから、
-この拡張のglobal storage内にあるmanaged server専用ディレクトリだけを削除します。
+Extension Development Hostを終了すると、VS CodeのLanguage Clientが``shutdown``と``exit``を送り、
+Language Server processを停止します。拡張はprocess handle、download fileおよびcacheを独自に管理しません。
 
-自動testの隔離profileはtest runnerが削除します。通常profile全体、共有extensionディレクトリまたは親キャッシュを
-清掃目的で再帰削除しません。
+自動testの隔離profileはtest runnerが削除します。通常profile全体または共有extensionディレクトリは削除しません。

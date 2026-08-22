@@ -25,7 +25,9 @@ code --install-extension adocweave-vscode-<version>.vsix --force
 
 ## Requirements
 
-The extension and Language Server have independent product versions. Compatibility is determined by the `lspApiVersion` reported by `adocweave-lsp --version --json`. The extension pins one tested `managedLspVersion`, downloads it from the matching `adocweave-lsp/vX.Y.Z` GitHub Release, and verifies its product manifest and checksum before starting it. See `docs/user-guide/release-installation.adoc` in the repository for installation, update, rollback, and verification steps.
+Install `adocweave-lsp` separately before using the language features. The extension first uses the absolute executable path in the machine-level `adocweave.server.path` setting. When that setting is empty, it searches the extension host's `PATH`.
+
+The extension does not download or update the Language Server. If it cannot find the executable, follow the Language Server installation instructions in `docs/user-guide/release-installation.adoc` in the repository. The extension and Language Server negotiate supported features through the standard Language Server Protocol initialization.
 
 ## License
 

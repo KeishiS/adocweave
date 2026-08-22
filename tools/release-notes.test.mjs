@@ -47,12 +47,14 @@ test("distribution planのversionSourceから六製品の版を取得する", ()
 
 test("関連するAPI世代だけを製品ごとに返す", () => {
   assert.deepEqual(relatedApiVersions("cli"), []);
-  assert.deepEqual(relatedApiVersions("lsp"), [{ name: "LSP API", version: 1 }]);
+  assert.deepEqual(relatedApiVersions("lsp"), []);
   assert.deepEqual(relatedApiVersions("browser"), [
     { name: "WASM protocol schema", version: 14 },
     { name: "Worker protocol", version: 2 },
   ]);
   assert.deepEqual(relatedApiVersions("textlint"), [{ name: "textlint adapter API", version: 1 }]);
+  assert.deepEqual(relatedApiVersions("vscode"), []);
+  assert.deepEqual(relatedApiVersions("zed"), []);
 });
 
 test("選択した製品と版を題名および見出しで検査する", () => {
@@ -72,7 +74,7 @@ test("対応関係には製品版と関連API世代だけを追記する", () =>
   const parsed = parseReleaseNotesSource(`${releaseNotesTitle("lsp", version)}\n${rendered}`);
   const compatibility = parsed.sections.find(({ heading }) => heading === "## 対応関係").lines.join("\n");
   assert.match(compatibility, new RegExp(`製品バージョン：${version.replaceAll(".", "\\.")}`));
-  assert.match(compatibility, /LSP APIバージョン：1/);
+  assert.doesNotMatch(compatibility, /LSP API/);
   assert.doesNotMatch(rendered, /統一package version|release manifest|Rust APIの破壊的変更|Rust toolchain/);
 });
 

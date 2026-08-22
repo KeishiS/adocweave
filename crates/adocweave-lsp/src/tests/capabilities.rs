@@ -20,10 +20,7 @@ fn initialize_negotiates_encoding_and_advertises_existing_features() {
     );
     assert_eq!(value["serverInfo"]["name"], "adocweave-lsp");
     assert_eq!(value["serverInfo"]["version"], env!("CARGO_PKG_VERSION"));
-    assert_eq!(
-        value["capabilities"]["experimental"]["lspApiVersion"],
-        LSP_API_VERSION
-    );
+    assert!(value["capabilities"].get("experimental").is_none());
 }
 
 #[test]

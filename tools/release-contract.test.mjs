@@ -99,18 +99,19 @@ test("expected assets contain only the selected product", () => {
 test("distribution manifest fixture satisfies the LSP product contract", () => {
   assert.doesNotThrow(() => validateDistributionManifest(fixture, plan));
   assert.equal(fixture.product, "lsp");
-  assert.equal(fixture.lspApiVersion, 1);
+  assert.equal(fixture.schemaVersion, 4);
+  assert.equal("lspApiVersion" in fixture, false);
   assert.ok(fixture.assets.every(({ kind }) => kind === "lsp"));
   assert.equal(canonicalJson(fixture), `${JSON.stringify(fixture, null, 2)}\n`);
 });
 
-test("manifest rejects another product asset and invalid LSP API versions", () => {
+test("manifest rejects another product asset and unknown fields", () => {
   assert.throws(() => validateDistributionManifest({ ...fixture, unexpected: true }, plan));
   assert.throws(() => validateDistributionManifest({
     ...fixture,
     assets: [fixture.assets[1], fixture.assets[0], ...fixture.assets.slice(2)],
   }, plan));
-  assert.throws(() => validateDistributionManifest({ ...fixture, lspApiVersion: 0 }, plan));
+  assert.throws(() => validateDistributionManifest({ ...fixture, lspApiVersion: 1 }, plan));
   assert.throws(() => validateDistributionManifest({
     ...fixture,
     assets: fixture.assets.map((asset, index) => index === 0
