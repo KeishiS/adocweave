@@ -80,18 +80,28 @@ Mapとsetは規範順に並べるため、挿入順は結果へ影響しませ�
 ``ResourceSnapshot``を構築し、文書構造の解析前にプリプロセッサへ渡します。NativeとWASMは、同じスナップショットと
 設定から同じ展開結果を生成します。
 
-非同期にresourceを取得する場合は``preprocess_resumable``を使用します。利用側アプリは
-``SuspendedPreprocess``、文書revision、workspace generationおよび取消tokenを一つの実行単位として保持します。
-取得完了時にrevisionまたはgenerationが変わっていた場合は、``resume``を呼ばずに継続を破棄します。
-現在の要求から``found``、``not_found``または``load_failed``で応答を構築し、再開直前と結果採用前にも
-世代を確認します。``load_failed``と要求が一致しない応答は、その継続を消費する終端の
-``HostResourceError``です。再試行する場合は、現在のworkspace snapshotから新しい前処理を開始します。
+まだsnapshotにないresourceを取得するNative利用側は、I/O非依存の
+``WorkspaceSnapshot::preprocess_resumable``を使います。``WorkspacePreprocessStep``は、前処理完了、
+一件のresource要求、失敗、取消を型で区別します。CLIは``NeedResource``を同期的に読んですぐに再開し、
+Language Serverは同じ単回使用の継続をI/O完了まで保持します。両者はソースの先頭から前処理をやり直しません。
+
+利用側は現在の要求から``found``、``not_found``または``load_failed``で応答を作ります。
+CLIのように読込み診断を報告して残りの文書を解析する利用側は``failed_with_placeholder``を使い、
+Language Serverのように不完全な結果を公開しない利用側は``load_failed``でその実行を終了します。
+別の要求に対する応答は受理しません。非同期の利用側はrevision、workspace generationおよび取消tokenも継続と一緒に保持し、
+それらが変わった場合は``resume``を呼ばずに継続を破棄します。
 
 一回の処理中は``ResourceLookup``の参照内容を固定します。本文は``Arc<str>``で共有されますが、利用側アプリが
 保持するresourceは``max_includes``だけでは制限されません。workspaceのresource件数と総byte数には
-``RetainedResourceLimits``および``AnalysisSnapshotLimits``も適用します。
+``RetainedResourceBudget``および``AnalysisSnapshotBudget``も適用します。
 
-``WorkspaceSnapshot::analyze_resumable``では、結果の採用を二段階で判定します。workspace層の
+``WorkspacePreprocessStep::Complete``が返す``WorkspacePreprocessDraft``は、前処理済み文書とinclude journalを
+解析より先に公開します。``WorkspacePreprocessDraft::analyze``は保持済みの前処理結果から解析を続け、
+前処理を繰り返しません。完了したincludeのjournalは重複をまとめず実行順に保持し、
+snapshot内の本文、後から取得した本文、不在と確定したresourceおよび読込失敗を型で区別します。
+``WorkspacePreprocessFailure::dependencies``も、失敗までにsnapshotとhost応答から観測した依存先を返します。
+
+解析後の結果の採用は二段階で判定します。workspace層の
 ``Workspace::finalize_draft``は、rootのrevisionと本文、開始時のsnapshotから参照した本文、再開時に取得した本文、
 および不在と確定したresourceを現在のworkspaceと照合します。参照していないresourceだけが更新された場合は、
 workspace generationが変わっていても確定できます。root以外の本文は``Arc<str>``の同一性で照合するため、
@@ -102,10 +112,6 @@ generationと``EffectiveProcessingOptions``のcontractが現在の規範状態�
 設定値が同じでも、別に構築した``EffectiveProcessingOptions``は同じcontractではありません。設定変更時は
 古い継続とdraftを破棄します。この厳格な判定によって、workspace層で許可する無関係な更新と、Language Serverが
 一つだけ保持する規範的な解析結果を区別します。
-
-draftのinclude journalは、実行したincludeを順序どおり保持し、重複をまとめません。各eventは、開始時のsnapshotに
-存在したresource、停止後に取得したresource、または不在と確定したresourceを区別し、optional指定も保持します。
-resource取得の失敗と別requestに対する応答は``WorkspaceHostResourceErrorKind``で区別できます。
 
 WASMの解析requestでincludeを展開する場合は、``preprocess.resources``へ取得済みresourceを、
 ``preprocess.options``へ前処理設定を指定します。``preprocess``を省略した場合は入力のソースをそのまま解析し、
@@ -143,18 +149,14 @@ filesystem adapter、symlink判定および全rootで共有するファイル数
 直接構築できないprovenanceへ分離しますが、依存関係の監視を行うadapterはaccessorから参照できます。
 相対pathだけを渡して複数rootのどれかを暗黙に選ぶAPIは提供しません。
 
-呼出側がfilesystemの読込結果と別の状態更新をまとめて採用する場合は、処理全体の上限を持つ
-``FilesystemJobCoordinator``を作成し、sessionから排他的な``LocalFilesystemDraft``を作るときに渡します。
-draftは作成元のcoordinatorを保持し、候補上で読込、走査およびbinding解放を行います。
-途中の失敗または取消ではdraftを破棄します。
-``NotFound``はdraftを失敗状態にせず、同じ候補pathの旧bindingを候補stateから除去します。選択したrootのsessionに別名が
-残らない場合は本文cacheを除去し、全rootに別名が残らない場合は共有する保持量も除去します。draftを破棄した場合は
-live stateを維持し、採用した場合だけ不在の状態を反映します。
-sessionへ直接``*_outcome`` APIを呼び出した場合は、この不在状態を直ちにlive stateへ反映します。
-採用時は``prepare_commit``でsession ID、revisionおよびleaseを検証し、その後に失敗しないcommitでlive stateを
-置き換えます。
+Includeの取得側は、この低水準APIを直接組み立てません。``IncludeFilesystem::transaction``が
+``FilesystemJobCoordinator``、``LocalFilesystemDraft``、世代付きresource bindingおよびhandle相対の読込・検査をまとめます。
+呼出側は``IncludeFilesystemOwner``と``IncludeFilesystemRequest``を与え、``Found``、``NotFound``または``Failed``の
+型付き結果を受け取ります。``read``は本文と許可済みの監視候補を返し、``inspect``は本文を読まずに同じauthorityの
+対象を検証します。すべての読込みとWorkspace候補の構築が成功した場合だけtransactionをcommitします。
+取消し、失敗し、または古くなったtransactionは破棄し、live stateと所有者ごとのbindingを変更しません。
 
-coordinatorは同じ処理に参加する全sessionで、resource取得試行数、取得byte数、directory列挙試行数、
+内部のcoordinatorは同じ処理に参加する全sessionで、resource取得試行数、取得byte数、directory列挙試行数、
 列挙entry数、候補stateの変更数およびsession数を共有します。fileの読込とdirectory列挙はI/Oの前に残量を予約し、
 実際に得た量だけを確定します。上限の境界では、EOFと超過を区別するために設定したprobe量だけ追加で読みます。
 draftを破棄してもjobの使用量は戻りません。同じ論理処理を再試行する場合は同じcoordinatorを使い、文書revisionや
@@ -201,11 +203,14 @@ project設定の変更通知と本文の変更通知を同時に受け取った�
 CLIの複数path処理は、全入力のproject設定を本文読込前に解決します。同じproject scopeから異なる設定内容を
 観測した場合は処理を開始せず、各入力で別のplanを使いません。
 
-``ResolvedResourceLimitPlan``は、一つのproject設定からファイルシステム読込、diskとoverlayの保持、および
-解析スナップショットの三つの上限を構築します。これらは同じ設定値から作られますが、課金対象が異なるため別の型です。
+resourceの課金は、session単位の``FilesystemReadLimits``、論理処理単位の``FilesystemJobLimits``、
+diskとoverlayの保持を継続的に課金する``RetainedResourceBudget``、および一回の解析が参照する
+``AnalysisSnapshotBudget``の四つに分かれます。課金対象と寿命が異なるため、一つの型へ統合しません。
+利用側はproject設定から解決した``ResolvedResourceLimitPlan``と処理の種類からこれらを選びますが、
+include取得の呼出側へjobの課金とsessionの配線を公開しません。
 本文は``FilesystemReadLimits``を適用した後にだけ読み込み、diskまたはoverlayは
-``RetainedResourceLimits``を確認した後にだけWorkspaceへ取り込みます。解析時はroot文書に最も近い設定の
-``AnalysisSnapshotLimits``を、include許可範囲へ絞った有効resourceに適用します。
+``RetainedResourceBudget``を確認した後にだけWorkspaceへ取り込みます。解析時はroot文書に最も近い設定の
+上限で``AnalysisSnapshotBudget``を作り、include許可範囲へ絞った有効resourceに適用します。
 ファイルシステムの再読込後に保持上限またはWorkspace更新を拒否した場合は、再読込前の課金へ戻します。
 ``RetainedResourceBudget::try_replace_layers``とWorkspaceはresource数と保持byte数を差分更新し、
 候補の検証が成功した後にだけresourceと合計値を更新します。初期走査でも保持済みresource全体を

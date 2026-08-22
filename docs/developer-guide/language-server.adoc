@@ -26,11 +26,13 @@ Language Server Protocol 3.18]の固定revisionを使用します。
 Zedまたは他のLSP client
   -> async-lsp main loop
        -> protocol adapter
-            -> URI・filesystem adapter
+            -> URI adapter
+            -> adocweave-host::IncludeFilesystem
             -> LSP意味処理service
                  -> 状態を持たない機能投影module
                  -> adocweave-workspace::Workspace
                       -> immutable WorkspaceSnapshot
+                           -> I/O非依存のpreprocess_resumable
                            -> adocweave::Engine
                                 -> 所有型Analysis
 ----
@@ -39,16 +41,24 @@ Zedまたは他のLSP client
 
 * LSPのinitialize、shutdown、exitおよびstdio transport
 * URI、position encodingおよびLSP型とコア型の変換
-* file URIとcanonical pathの対応、および上限付きlocal resource読込
+* file URIとlocal resourceの論理IDの対応
 * 通知順序、要求並行数、CPU解析数、debounceおよび結果採用判定
 * clientへの診断、応答、通知および進捗報告
+
+``adocweave-host``は次を所有します。
+
+* local rootのauthority、symlink検証およびhandle相対の読込・検査
+* include取得jobの課金と取消
+* ownerごとの候補state、resource bindingおよびtransactionのcommit
+* 本文、不在と確定したresource、失敗および監視候補の型付き結果
 
 ``adocweave-workspace``は次を所有します。
 
 * disk resourceとopen overlay、および有効なリソーススナップショット
 * 文書revision、workspace generationおよび解析root
 * include依存graph、逆依存索引および影響root
-* runtime非依存のキャンセル可能な解析
+* runtime非依存の再開可能なinclude前処理とキャンセル可能な解析
+* 実行順と結果付きのinclude journal、および失敗までに観測した依存先
 * source origin付き解析結果と古い結果の採用拒否
 
 解析へ渡すリソーススナップショットは、除外されるリソースが1件もない場合、workspaceが保持する
@@ -217,14 +227,19 @@ workspaceが走査対象として保持する解析root、open overlayによっ�
 役割を失いません。走査対象ではないinclude先を開いてから閉じた場合はopenの役割だけを外し、include先である
 ことだけを理由に解析rootへ残しません。
 
-編集中に新しいincludeが追加され、前処理がsnapshotにないlocal resourceを要求した場合、解析workerは
-その場で一件読み込み、同じ処理状態から再開します。文書を先頭から解析し直さないため、includeの個数に
-かかわらず前処理は一度で済みます。読込はworkspaceの複製に対して行い、エディターが見ている状態は解析が
-完了して採用されるまで変わりません。採用されなかった解析は、読み込んだresourceを一切残しません。
+編集中に新しいincludeが追加された場合、解析workerは``WorkspaceSnapshot::preprocess_resumable``を開始します。
+``NeedResource``がsnapshotにないlocal resourceを要求すると、workerは一つの``IncludeFilesystem`` transactionにある
+``read``の型付き結果を応答に変換し、同じ継続を再開します。前処理は先頭からやり直しません。
+``Complete``は前処理済み文書を``WorkspacePreprocessDraft::analyze``へ渡し、前処理を繰り返さずに解析を続けます。
+
+読込はworkspaceとinclude bindingの候補stateに対して行います。revision、generation、設定の契約および解析が
+すべて現在の状態と一致する場合だけ、Workspace draftとinclude transactionを採用します。
+取消し、失敗し、または古くなった解析は両方の候補を破棄するため、エディターが見ているlive stateを変更しません。
 読込対象の探索と前処理は通知handlerでは実行しません。除外したinclude先を解析rootとして登録しない性質も
 維持します。別文書のresource追加によってworkspace世代だけが古くなった場合は、filesystemを変更せず
 現在のsnapshotで解析jobを作り直します。一つの解析が行う読込は、解析全体を対象とする一つの上限が制限します。
-先読みしたinclude先は、そのrevisionが問題診断で終わった場合も回復待ちの依存として保持します。include先の
+前処理完了時は型付きinclude journalから、失敗時は``WorkspacePreprocessFailure::dependencies``から、
+先読みしたinclude先を回復待ちの依存として保持します。include先の
 watch通知でrootを再解析し、次の文書revision、解析成功または文書closeで不要になった依存を回収します。
 許可範囲内でまだ存在しないinclude先と、UTF-8として読めなかったinclude先も回復待ちの依存へ含めます。
 作成または修復の通知を受けた場合は拡張子にかかわらず読み直します。許可範囲外の対象やsymlinkは保持しません。

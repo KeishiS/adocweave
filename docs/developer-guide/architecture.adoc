@@ -7,9 +7,12 @@
 [source,text]
 ----
 ソーステキスト
+  ├─ adocweave-host
+  │    └─ local authority、include job・transaction、検証済みread outcome
   └─ adocweave-workspace
        ├─ disk resourceとopen overlay
        ├─ immutable snapshotと依存graph
+       ├─ I/O非依存の再開可能なinclude前処理
        └─ adocweaveによる同一revisionの解析結果
             ├─ losslessな構文情報
             ├─ 出力形式に依存しない意味情報
@@ -55,28 +58,31 @@ HTMLやエディター固有の表示規則をParserへ持ち込みません。
 ``adocweave-workspace``は、disk resource、open overlay、解析root、include依存graphおよび世代付き
 スナップショットをruntime非依存かつI/O非依存の状態機械として提供します。ファイルシステム関連crateへ依存せず、
 検証済みのresource IDと本文だけを受け取ります。
+このcrateの``WorkspaceSnapshot::preprocess_resumable``がCLIとLanguage Serverに共通のinclude前処理を提供します。
+CLIは``NeedResource``を同期的な読込みですぐに再開し、Language Serverは継続をI/O完了まで保持します。
+完了時はincludeを実行順と結果付きで示す型付きjournalを返し、失敗時も失敗までに観測した依存先を返します。
 
-project設定のresource上限は``ResolvedResourceLimitPlan``として一度だけ解決します。このplanは、
-ファイルシステムから読む本文、Workspaceが保持するdiskとoverlayの層、および解析スナップショットが参照する有効resourceを
-別々の型で制約します。Language Serverは各文書に最も近いproject設定からplanを選び、読込と保持では
+project設定のresource上限は``ResolvedResourceLimitPlan``として一度だけ解決します。resourceの課金は、
+一つのsessionが読む本文の``FilesystemReadLimits``、一つの論理処理に参加するsession間で共有する
+``FilesystemJobLimits``、Workspaceが保持するdiskとoverlayの``RetainedResourceBudget``、および一回の解析が参照する
+有効resourceの``AnalysisSnapshotBudget``に分かれます。session、保持と解析の範囲はplan内の対応する上限を使い、
+jobの範囲は処理の種類から上限を導出します。
+四つの課金範囲は対象と寿命が異なるため、一つの予算型へ統合しません。
+CLIとLanguage Serverは各文書に最も近いproject設定からplanを選び、読込と保持では
 allocationまたは取り込みを始める前に上限を適用します。
 課金範囲はworkspace rootと最も近いproject設定の組で識別し、設定の新設や削除で範囲が変わる場合は、
 旧範囲の課金解放と新範囲への移行を一つの更新として確定します。
 
-Native adapterは``adocweave-host``の``LocalFilesystemPolicy``から、選択したrootと上限を絞った
-policyを導出し、用途別の``LocalFilesystemSession``を生成します。Linuxではpolicyが保持する
-rootのディレクトリhandleを起点にfileを開いてから読み取り、
-path検査後に別のfileを開き直しません。
-初期ディレクトリ列挙、symlink判定、UTF-8読込およびfile数・byte数の上限も同じsessionが担当します。
-policyが保持するroot数には128件の独立した上限を設けます。呼出側はroot pathの配列をsessionと別に保持せず、
-取得元のauthorityと選択済みrootの対応を導出したpolicyに保ちます。
-論理的なsource ID、不変な本文、filesystem provenanceおよび世代付きresource bindingは一つの読込結果として
-構築します。
-依存関係を監視するadapter以外はcanonical pathを利用せず、診断やsource mapの識別子にも使用しません。
+Nativeのinclude取得は``adocweave-host::IncludeFilesystem``の高水準な取得境界を使います。
+呼出側は``IncludeFilesystemOwner``ごとにtransactionを開き、論理的なsource ID、基準pathおよびtargetを含む
+``IncludeFilesystemRequest``を``read``または``inspect``に渡します。結果は本文、不在または失敗を区別する型で返り、
+許可済みの監視候補だけを公開します。処理の採用時はtransaction全体をcommitし、取消しまたは失敗したtransactionは
+live stateを変更しません。
 
-``LocalFilesystemSession``はプロセス内で一意な不透明IDを持ちます。一つのsessionで複数のfilesystem操作をまとめて
-採用する呼出側は、live stateから隔離した``LocalFilesystemDraft``で候補を構築します。候補を破棄してもlive stateは
-変わらず、session identity、revisionおよびleaseを検証した後のcommitだけが候補全体を置き換えます。
+``IncludeFilesystem``がjobの課金、候補state、resource bindingおよびhandle相対の読込・検査を内部で対応付けます。
+CLIとLanguage Serverはこれらの低水準な所有関係を組み立てず、処理のsession、ownerと予算を高水準な取得境界へ渡します。
+Linuxではこの境界の内部がrootのディレクトリhandleを起点にfileを開き、path検査後に開き直しません。
+依存関係を監視するadapter以外はcanonical pathを利用せず、診断やsource mapの識別子にも使用しません。
 
 ``adocweave-config``は、CLIとLanguage Serverが共有する設定schema、探索および型付き設定を提供します。
 このcrateは``adocweave``、``adocweave-host``および``adocweave-workspace``の型を使う統合層であり、
