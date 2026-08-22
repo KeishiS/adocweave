@@ -59,8 +59,8 @@ export class ServerController implements vscode.Disposable {
       .catch((error: unknown) => {
         if (abort.signal.aborted || generation !== this.#generation || this.#disposed) return;
         const code = error instanceof Error ? error.message : "unknown-error";
-        this.#output.appendLine(`Language Serverを起動できません：${code}`);
-        void vscode.window.showErrorMessage(`AdocWeave Language Serverを起動できません：${code}`);
+        this.#output.appendLine(`Cannot start the Language Server: ${code}`);
+        void vscode.window.showErrorMessage(`AdocWeave cannot start the Language Server: ${code}`);
       });
     return this.#queue;
   }
@@ -74,7 +74,7 @@ export class ServerController implements vscode.Disposable {
       .then(async () => {
         await this.#stop();
         await clearManagedServers(this.#managedStoragePath());
-        this.#output.appendLine("管理対象Language Serverを削除しました。");
+        this.#output.appendLine("Removed the managed Language Server.");
       });
     await this.#queue;
     if (!this.#disposed) await this.restart();
@@ -93,7 +93,9 @@ export class ServerController implements vscode.Disposable {
     const inspected = configuration.inspect<string>("server.path");
     const configured = configuredServerPath(inspected, vscode.workspace.isTrusted);
     if (configured.workspaceValueIgnored) {
-      this.#output.appendLine("未信頼workspaceのLanguage Server path設定を無視しました。");
+      this.#output.appendLine(
+        "Ignored the Language Server path configured by an untrusted workspace.",
+      );
     }
     const version = String(this.#context.extension.packageJSON.version);
     let platform: ManagedPlatform | undefined;
@@ -112,7 +114,7 @@ export class ServerController implements vscode.Disposable {
       },
       platform,
       version,
-      warning: (code) => this.#output.appendLine(`Language Server候補を使用しません：${code}`),
+      warning: (code) => this.#output.appendLine(`Rejected a Language Server candidate: ${code}`),
     });
     if (generation !== this.#generation || signal.aborted) return undefined;
     return selected;
@@ -131,11 +133,11 @@ export class ServerController implements vscode.Disposable {
       child.stderr.on("data", () => {
         if (!stderrReported) {
           stderrReported = true;
-          this.#output.appendLine("Language Serverがstderrへ出力しました。");
+          this.#output.appendLine("The Language Server wrote to stderr.");
         }
       });
       child.once("error", () => {
-        this.#output.appendLine("Language Server processでエラーが発生しました。");
+        this.#output.appendLine("The Language Server process reported an error.");
       });
       return { reader: child.stdout, writer: child.stdin };
     };
@@ -158,7 +160,7 @@ export class ServerController implements vscode.Disposable {
       await this.#stop();
       return;
     }
-    this.#output.appendLine(`Language Serverを起動しました（${selected.source}）。`);
+    this.#output.appendLine(`Started the Language Server (${selected.source}).`);
   }
 
   async #stop(): Promise<void> {
@@ -170,7 +172,7 @@ export class ServerController implements vscode.Disposable {
       try {
         await client.stop(STOP_TIMEOUT_MS);
       } catch {
-        this.#output.appendLine("Language Serverの正常終了が時間内に完了しませんでした。");
+        this.#output.appendLine("The Language Server did not shut down within the timeout.");
       }
     }
     if (child && child.exitCode === null && child.signalCode === null) {
