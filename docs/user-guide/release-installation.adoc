@@ -113,7 +113,7 @@ NixOS以外では、system全体の``nix.conf``へ同じ``extra-substituters``�
 
 targetはLinux ARM64の``aarch64-unknown-linux-musl``、Linux x86-64の``x86_64-unknown-linux-musl``、
 macOS ARM64の``aarch64-apple-darwin``、Windows x86-64の
-``x86_64-pc-windows-msvc``です。32-bit環境とWindows ARM64にはmanaged binaryを配布しません。
+``x86_64-pc-windows-msvc``です。32-bit環境とWindows ARM64向けのnative archiveは配布しません。
 Intel macOSも対応対象外です。
 
 Linux musl binaryは静的linkします。macOSは14.0以降、WindowsはWindows 10 version 1809以降を対象とし、
@@ -370,8 +370,8 @@ Remove-Item -Recurse (Join-Path $env:LOCALAPPDATA "AdocWeave\$Version")
 ``--version --json``を確認します。rollbackは``current``を以前のバージョン別のディレクトリへ戻すだけであり、動作確認が終わるまで
 旧ディレクトリを削除しません。CLI、Language Server、Browser、Zed拡張、VS Code拡張およびtextlint用
 Processorは、それぞれ独立した製品バージョンを持ちます。Browserとtextlint用Processorは、同じ製品archiveに
-JavaScriptとWebAssemblyを同梱するため、別々に組み合わせません。エディター拡張とLanguage Serverは、
-製品バージョンではなく``lspApiVersion``が対応する組み合わせを使用します。
+JavaScriptとWebAssemblyを同梱するため、別々に組み合わせません。エディター拡張とLanguage Serverの
+製品バージョンを一致させる必要はありません。利用できる機能は、接続時に交換する標準LSP capabilityから決まります。
 
 [#browser-library-deployment]
 == ブラウザーライブラリーの配備
@@ -432,6 +432,32 @@ URLにはバージョンまたはarchive digestを含め、WASMとJavaScriptへ�
 deploy記録へ残します。展開物の``example/index.html``と``example/app.mjs``はリアルタイム変換の最小例であり、同じserverから
 配信して入力更新、最新generationだけの表示およびfallback動作を確認できます。
 
+[#editor-language-server]
+== エディターからLanguage Serverを使う
+
+VS Code拡張とZed拡張はLanguage Serverを同梱せず、download、導入、更新および削除を行いません。
+先にこの文書の「配布物の選択」「取得と完全性の検証」と、利用環境に応じた導入手順に従って
+``adocweave-lsp``を導入してください。エディター拡張とLanguage Serverは独立した製品であり、
+更新とrollbackも別々に行います。
+
+拡張は次の順序でLanguage Serverを探します。
+
+. エディターの利用者設定で明示した絶対path
+. エディターprocessから見える``PATH``上の``adocweave-lsp``
+. この文書を参照する導入案内
+
+三つ目は実行ファイルを自動取得する処理ではありません。見つからない場合は導入案内を表示し、Language Serverを
+起動しません。エディターをGUIから起動すると、shellの起動ファイルで設定した``PATH``が反映されない場合があります。
+その場合はエディターを起動する環境へ``PATH``を設定するか、導入した実行ファイルの絶対pathを利用者設定へ記載します。
+
+共有されたprojectや未信頼ワークスペースの設定から実行ファイルを選びません。ワークスペース設定で明示したpathを
+利用できるのは、エディター上でそのワークスペースを信頼した場合だけです。信頼していない内容を開くときは、
+利用者設定または``PATH``を使用してください。
+
+拡張はLSPの初期化時にLanguage Serverが返す標準capabilityから、診断、補完および定義への移動などの
+利用可能な機能を判断します。拡張とLanguage Serverの製品バージョンや``lspApiVersion``の一致は要求しません。
+標準capabilityがない機能はeditorのLSP clientが有効にしません。初期化できない場合だけ起動失敗として理由を表示します。
+
 [#zed-installation]
 == Zedへの導入
 
@@ -442,42 +468,11 @@ Zed Extension Galleryへ公開しないため、展開済み``$HOME/.local/share
 [#zed-language-server-selection]
 === ZedのLanguage Server選択
 
-Zed拡張は、次の順序で最初に利用できる``adocweave-lsp``を選びます。
-
-. Zedの``lsp.adocweave.binary.path``で明示した実行ファイル
-. Zed processから見える``PATH``上の実行ファイル
-. 拡張が固定するLanguage Server製品のGitHub Releaseから取得したmanaged binary
-
-複数の由来を混在させません。明示した実行ファイルでは、同じ``binary``設定にある``arguments``と``env``も
-使用します。
-
-=== 管理対象バイナリー
-
-Managed binaryは、拡張に記録した``managedLspVersion``の``adocweave-lsp/vX.Y.Z`` Releaseから取得します。
-拡張は配布manifestの製品名、製品バージョン、``lspApiVersion``、target、asset名、byte数およびSHA-256を
-確認してからarchiveを展開します。所定の通常ファイルだけを上限付きで取り出し、
-検証markerとともにZedの拡張用working ディレクトリへ原子的に配置します。project、利用者の``PATH``および
-system ディレクトリへ書き込みません。
-
-CacheはLanguage Serverの製品バージョンとtargetごとに分けます。起動時にmarkerの``lspApiVersion``と
-binaryのSHA-256が一致すればネットワークへ接続せず
-再利用します。markerの欠落やbinaryの改変時は起動せず、onlineの場合だけ再取得します。更新に失敗した場合は
-検証済みの以前のバージョンを変更せず、同じバージョンの置換に失敗した場合は直前のキャッシュを復元します。
-
-対応するmanaged binaryがないplatform、manifestの不一致、assetの欠落、byte数またはhashの不一致は、
-実行ファイルを起動する前にエラーとして表示します。
-
-Zed extension APIからhost OSのバージョンは取得できません。そのためmacOSとWindowsの最小OSバージョンは
-download前には判定せず、配布binaryに設定したdeployment targetをOS loaderが強制します。最小バージョン未満では
-binaryを起動できません。
-
-初回buildではZedがRust extension用ツールチェーンと、固定コミットの``tree-sitter-asciidoc`` grammarを取得します。初回build後は
-拡張のworking ディレクトリにある検証済みLSP キャッシュをofflineでも利用できます。初回から完全offlineで導入できるという意味では
-ありません。Managed binaryを使用する場合は、Zed設定のbinary指定を外し、``PATH``上に別の
-``adocweave-lsp``がない状態でZedを起動します。
+Zedでは``lsp.adocweave.binary.path``へ導入済み実行ファイルの絶対pathを指定できます。同じ``binary``設定にある
+``arguments``と``env``も使用します。指定しない場合は、Zed processから見える``PATH``を使用します。
 
 更新時は新しいバージョンのZed ディレクトリを別に展開し、dev extensionをそのディレクトリへ再設定します。旧ディレクトリは、新しいバージョンの
-managed LSP取得とeditor機能を確認するまで保持します。
+拡張と、別に更新したLanguage Serverでeditor機能を確認するまで保持します。
 
 [#vscode-installation]
 == VS Codeへの導入
@@ -502,39 +497,34 @@ code --install-extension "adocweave-vscode-$VERSION.vsix" --force
 
 VS CodeのExtensions viewにAdocWeaveと対象バージョンが表示されることを確認します。更新時は新しいバージョンの
 VSIXを同じcommandで導入し、Windowを再読込します。rollbackでは以前のVS Code拡張製品のReleaseから
-検証済みVSIXを取得し、同じ方法で導入します。拡張とLanguage Serverの製品バージョンが異なっていても、
-``lspApiVersion``が拡張の対応範囲なら使用できます。
+検証済みVSIXを取得し、同じ方法で導入します。拡張とLanguage Serverの製品バージョンを一致させる必要はありません。
 
 [#vscode-language-server-selection]
 === VS CodeのLanguage Server選択
 
-VS Code拡張は次の順序でLanguage Serverを選びます。
+VS Codeでは``adocweave.server.path``へ導入済み実行ファイルの絶対pathを指定できます。ワークスペースscopeの値は、
+VS Codeがそのワークスペースを信頼している場合だけ使用します。未信頼ワークスペースでは利用者scopeの値または
+VS Code extension hostの``PATH``を使用します。Language Serverの再起動には
+``AdocWeave: Restart Language Server``を使用します（拡張のコマンド名は英語です）。
 
-. ``adocweave.server.path``で明示した絶対path
-. VS Code extension hostの``PATH``上にある互換なLSP API世代
-. 拡張のglobal storageにある検証済みmanaged キャッシュ
-. 拡張が固定するLanguage Server製品のGitHub Releaseにあるmanaged binary
+[#legacy-editor-managed-cache-removal]
+=== 旧拡張が残したLanguage Serverキャッシュの削除
 
-ワークスペースの``adocweave.server.path``は、VS Codeがそのワークスペースを信頼している
-場合だけ使用します。未信頼ワークスペースでは利用者scopeの値だけを使用します。明示pathの``lspApiVersion``が
-対応範囲外の場合は別のbinaryへfallbackしません。``PATH``上の不一致では警告を表示してmanaged binaryへ進みます。
+managed downloadに対応していた旧版の拡張は、更新後に使用されないLanguage Serverをeditorの保存領域へ残す場合があります。
+VS Code拡張を更新する前なら、旧版の``AdocWeave: Remove Managed Language Server``を実行すると、拡張が所有する
+キャッシュだけを削除できます。
 
-Managed binaryは配布manifestの製品名、製品バージョン、``lspApiVersion``、archive byte数、SHA-256、
-展開後binaryおよび``--version --json``を検証してから起動します。対応platformがない場合はdownloadしません。
-検証済みキャッシュはofflineでも利用できます。現在の固定Language Server版と対応API世代は、各拡張製品の
-Release Notesで確認できます。
-自動取得を無効にする場合は``adocweave.server.download``を``false``にし、互換binaryを明示設定または``PATH``へ
-配置します。
-
-拡張の再起動には``AdocWeave: Restart Language Server``、managed キャッシュだけの削除には
-``AdocWeave: Remove Managed Language Server``を使用します（拡張のコマンド名は英語です）。後者はLanguage Serverを停止してから
-AdocWeave拡張のglobal storage内にあるmanaged server専用ディレクトリだけを削除します。
+すでに更新した場合はeditorを終了し、VS Codeでは拡張のglobal storageにある
+``adocweave.adocweave-vscode/servers``、ZedではAdocWeave拡張のworking ディレクトリにある
+``adocweave-lsp-<version>-<target>``形式のディレクトリを手動で削除します。VS Codeでは削除前に``servers``内の
+``.adocweave-vscode-managed-cache`` marker、Zedでは対象ディレクトリ内の``verified.json``を確認してください。
+markerと同じ親ディレクトリだけを削除し、editorのglobal storageまたは拡張用working ディレクトリ全体は削除しません。
+このキャッシュを削除しても、利用者が別途``PATH``または任意のディレクトリへ導入したLanguage Serverは削除されません。
 
 == 削除
 
-Zedでは最初にExtension GalleryからAdocWeave dev extensionを削除し、Zedを終了します。VS Codeでは先に
-``AdocWeave: Remove Managed Language Server``を実行し、Extensions viewまたは次のcommandで拡張を削除して
-VS Codeを終了します。
+Zedでは最初にExtension GalleryからAdocWeave dev extensionを削除し、Zedを終了します。VS CodeではExtensions viewまたは
+次のcommandで拡張を削除してVS Codeを終了します。旧拡張のmanaged cacheが残っている場合は、前節の手順で削除します。
 
 [source,console]
 ----
