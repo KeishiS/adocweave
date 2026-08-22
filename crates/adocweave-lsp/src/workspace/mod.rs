@@ -11,9 +11,9 @@ use adocweave::preprocess::{
     EffectiveProcessingOptions, PreprocessOptions, ProjectionLimits, SafeMode,
 };
 use adocweave_host::{
-    FilesystemDraftError, FilesystemJobCoordinator, FilesystemJobLimits, FilesystemReadLimits,
-    FilesystemReadOutcome, FilesystemResourceBinding, LocalFilesystemDraft, LocalFilesystemPolicy,
-    LocalFilesystemSession, LogicalSourceId,
+    FilesystemDraftError, FilesystemJobCoordinator, FilesystemJobError, FilesystemJobLimit,
+    FilesystemJobLimits, FilesystemReadLimits, FilesystemReadOutcome, FilesystemResourceBinding,
+    LocalFilesystemDraft, LocalFilesystemPolicy, LocalFilesystemSession, LogicalSourceId,
 };
 use adocweave_workspace::{
     Generation, ResourceId, RetainedLayerCharge, RetainedResourceBudget, RetainedResourceLimits,
@@ -844,7 +844,7 @@ impl WorkspaceResources {
                             },
                             || cancellation.is_cancelled(),
                         )
-                        .map_err(|error| error.to_string())?
+                        .map_err(describe_scan_failure)?
                 }
                 None => Vec::new(),
             };
@@ -2397,6 +2397,26 @@ fn config_for_path_typed(
             )
         })?;
     adocweave_config::discover_and_load_with_policy(path, policy).map_err(ScopeConfigError::Config)
+}
+
+/// Turns a failed initial scan into something the reader can act on.
+///
+/// Reaching the entry limit is the one failure a project can resolve by itself,
+/// and the underlying message names only the limit. The rest keep the wording
+/// of the layer that produced them.
+fn describe_scan_failure(error: FilesystemDraftError) -> String {
+    if let FilesystemDraftError::Job(FilesystemJobError::Limit(
+        FilesystemJobLimit::DirectoryEntries { limit },
+    )) = error
+    {
+        return format!(
+            "the initial workspace scan reached its limit of {limit} directory entries. \
+             List the directories to leave out under workspace.scan.exclude in the \
+             .adocweave.toml at the workspace folder root. Documents inside them can \
+             still be opened and included.",
+        );
+    }
+    error.to_string()
 }
 
 fn scan_config_for_path(
