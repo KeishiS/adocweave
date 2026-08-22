@@ -1009,11 +1009,23 @@ impl WorkspaceResourceRequest {
 
     /// Supplies immutable UTF-8 text acquired for this request.
     pub fn found(&self, text: impl Into<Arc<str>>) -> WorkspaceResourceResponse {
+        self.found_as(self.target(), text)
+    }
+
+    /// Supplies text while preserving a host-defined diagnostic source identity.
+    ///
+    /// The request target remains the workspace dependency identity. `source_id`
+    /// identifies the loaded document in diagnostics and source projection.
+    pub fn found_as(
+        &self,
+        source_id: impl Into<String>,
+        text: impl Into<Arc<str>>,
+    ) -> WorkspaceResourceResponse {
         let text = text.into();
         let id = ResourceId::new(self.target()).expect("preprocessor returned a valid target");
         WorkspaceResourceResponse {
             inner: self.inner.found(ResourceDocument {
-                source_id: SourceId::new(id.to_string()),
+                source_id: SourceId::new(source_id),
                 source: Arc::clone(&text),
             }),
             evidence: WorkspaceResourceEvidence::Found { id, text },
@@ -1046,11 +1058,22 @@ impl WorkspaceResourceRequest {
     /// of the document. A host that cannot publish a partial result should use
     /// [`Self::load_failed`] instead.
     pub fn failed_with_placeholder(&self) -> WorkspaceResourceResponse {
+        self.failed_with_placeholder_as(self.target())
+    }
+
+    /// Continues with an empty placeholder carrying a host-defined source identity.
+    ///
+    /// As with [`Self::found_as`], the journal records the request target while
+    /// diagnostics and source projection use `source_id`.
+    pub fn failed_with_placeholder_as(
+        &self,
+        source_id: impl Into<String>,
+    ) -> WorkspaceResourceResponse {
         let id = ResourceId::new(self.target()).expect("preprocessor returned a valid target");
         let text = Arc::<str>::from("");
         WorkspaceResourceResponse {
             inner: self.inner.found(ResourceDocument {
-                source_id: SourceId::new(id.to_string()),
+                source_id: SourceId::new(source_id),
                 source: Arc::clone(&text),
             }),
             evidence: WorkspaceResourceEvidence::FailedWithPlaceholder { id, text },
@@ -3033,6 +3056,42 @@ mod tests {
         assert_eq!(event.resolution(), WorkspaceIncludeResolution::Failed);
         assert_eq!(draft.source(&missing), Some(""));
         assert!(draft.document().source.contains("before\nafter\n"));
+    }
+
+    #[test]
+    fn host_source_identity_is_independent_from_the_dependency_target() {
+        let mut workspace = Workspace::default();
+        let root = id("file:///book/root.adoc");
+        let target = id("file:///book/part.adoc");
+        workspace
+            .upsert_disk(root.clone(), Revision::new(1), "include::part.adoc[]\n")
+            .expect("root");
+        workspace.register_root(root.clone()).expect("root");
+        let snapshot = workspace.snapshot();
+        let WorkspacePreprocessStep::NeedResource(continuation) =
+            snapshot.preprocess_resumable(&root, &effective_options(), &NeverCancelled)
+        else {
+            panic!("missing resource must suspend preprocessing");
+        };
+        let response = continuation
+            .request()
+            .found_as("include:part.adoc", "part\n");
+        let WorkspacePreprocessStep::Complete(draft) =
+            continuation.resume(response, &NeverCancelled)
+        else {
+            panic!("host response must complete preprocessing");
+        };
+
+        assert_eq!(draft.dependencies(), BTreeSet::from([target.clone()]));
+        assert_eq!(draft.source(&target), Some("part\n"));
+        assert_eq!(
+            draft.document().source_map()[0]
+                .origin
+                .source_id
+                .as_ref()
+                .map(SourceId::as_str),
+            Some("include:part.adoc")
+        );
     }
 
     #[test]
