@@ -53,7 +53,6 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
-      candidate_required: ${{ steps.plan.outputs.candidate_required }}
       global_required: ${{ steps.plan.outputs.global_required }}
       native_required: ${{ steps.plan.outputs.native_required }}
       native_matrix: ${{ steps.plan.outputs.native_matrix }}

@@ -22,7 +22,8 @@ Pull Requestでは配布candidateを構築しません。cross targetの構築�
 Nixパッケージ検査、全配布成果物の構築および成果物を使うruntime受入検査は、``main``へ統合したcommitで実行します。
 公開workflowは、これらに成功した同じ``main`` commitのcandidateを再利用します。
 
-追跡pathの分類表と分類漏れの監査を設けません。実行条件を真偽値として各jobへ渡す構成、実行しない代わりのstep、
+追跡pathの分類表と分類漏れの監査を設けません。Pull Requestのsource検査条件を真偽値として各jobへ渡す構成、
+実行しない代わりのstep、
 および``success``と``skipped``を最後に照合する集約jobも設けません。Pull Requestの成否は標準source gate自身の
 終了状態で決まります。
 
@@ -49,4 +50,3 @@ Nixパッケージ検査、全配布成果物の構築および成果物を使�
 
 一方、cross target、実統合、fuzz、Nixおよび配布candidateの失敗は``main``への統合後に判明します。
 ``main``では全targetと全成果物を検査し、失敗したcommitを公開candidateとして使用しません。
-

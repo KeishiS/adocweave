@@ -837,7 +837,7 @@ npm run test:vsix-installation --prefix editors/vscode
 
 [tasks.test-vscode-release-determinism]
 description = "Rebuild the VSIX and require the published bytes to be reproducible"
-dependencies = ["vscode-dependencies"]
+dependencies = ["test-vscode-release-package"]
 script_runner = "@shell"
 script = '''
 npm run package --prefix editors/vscode -- --verify-determinism

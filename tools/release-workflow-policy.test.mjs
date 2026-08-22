@@ -231,13 +231,21 @@ function sourceAndCandidateWorkflow() {
         needs: ["candidate-plan"],
         steps: [{ run: "cargo make global-candidate" }],
       },
-      "installation-e2e": {
+      "verify-native-candidate": {
         needs: ["native-smoke"],
+        steps: [{ run: "node tools/product-release.mjs --verify-candidate" }],
+      },
+      "verify-global-candidate": {
+        needs: ["build-global"],
+        steps: [{ run: "node tools/product-release.mjs --verify-candidate" }],
+      },
+      "installation-e2e": {
+        needs: ["verify-native-candidate"],
         steps: [{ run: "node tools/release-installation-e2e.mjs" }],
       },
-      "verify-candidate": {
-        needs: ["installation-e2e", "build-global"],
-        steps: [{ run: "node tools/product-release.mjs --verify-candidate" }],
+      "global-installation-e2e": {
+        needs: ["verify-global-candidate"],
+        steps: [{ run: "node tools/release-installation-e2e.mjs" }],
       },
     },
   };

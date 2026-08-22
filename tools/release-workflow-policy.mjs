@@ -203,7 +203,7 @@ const occurrences = (source, value) => source.split(value).length - 1;
 const REMOVED_RELEASE_ROUTING = [
   ["native-change-plan", /native-change-plan/],
   ["git diffによるpath判定", /\bgit\s+diff\b/],
-  ["candidate必要性flag", /\b(?:candidate|global|native|preflight)_required\b/],
+  ["Pull Request candidate必要性flag", /\b(?:candidate|preflight)_required\b/],
   ["quality到達可能性input", /\b(?:common_preflight_scheduled|run_(?:rust_source|documents|adapters|dependencies|fuzz|nix_package)|quality_(?:rust_source|documents|adapters|dependencies|fuzz|nix_package))\b/],
   ["到達不能用step", /not reachable/i],
   ["always集約", /\balways\s*\(\s*\)/],
