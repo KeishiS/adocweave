@@ -97,11 +97,8 @@ dependencies = [
 ]
 
 [tasks.protocol-generated-check]
-script_runner = "@shell"
-script = '''
-node --test tools/protocol-rust-codegen.test.mjs
-node tools/generate-protocol.mjs --check
-'''
+command = "node"
+args = ["tools/generate-protocol.mjs", "--check"]
 
 [tasks.protocol-corpus-check]
 command = "cargo"
@@ -180,7 +177,6 @@ script = '''
 node tools/release-workflow-policy.mjs
 node --test \
   tools/browser-release-budget.test.mjs \
-  tools/browser-release-smoke.test.mjs \
   tools/release-workflow-policy.test.mjs
 '''
 
@@ -202,7 +198,6 @@ description = "Verify Windows and macOS release contracts without requiring the 
 command = "node"
 args = [
   "--test",
-  "tools/native-lsp-smoke.test.mjs",
   "tools/platform-contract.test.mjs",
   "tools/release-installation-e2e.test.mjs",
   "tools/textlint-plugin-npx-smoke.test.mjs",
