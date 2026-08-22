@@ -314,23 +314,9 @@ xref:command-line.adoc[コマンドライン]の``adocweave completion``で生�
 
 == システム全体への導入
 
-複数利用者向けにはバージョン別のrootを``/opt/adocweave/<version>``へ置き、``/usr/local/bin``からsymlinkします。
-archiveの検証と展開は通常利用者で行い、検証済みのファイルの配置だけを管理者権限で実行します。既存のファイルを
-上書きする前に、symlinkの参照先がAdocWeave管理下であることを確認します。
-
-[source,console]
-----
-VERSION=X.Y.Z
-TARGET=x86_64-unknown-linux-musl
-sudo install -d "/opt/adocweave/$VERSION/bin"
-sudo install -m 0755 "cli-$VERSION/adocweave" \
-  "/opt/adocweave/$VERSION/bin/adocweave"
-sudo install -m 0755 "lsp-$VERSION/adocweave-lsp" \
-  "/opt/adocweave/$VERSION/bin/adocweave-lsp"
-sudo ln -sfn "/opt/adocweave/$VERSION" /opt/adocweave/current
-sudo ln -sfn /opt/adocweave/current/bin/adocweave /usr/local/bin/adocweave
-sudo ln -sfn /opt/adocweave/current/bin/adocweave-lsp /usr/local/bin/adocweave-lsp
-----
+複数利用者向けには、上の手順の``$PREFIX``を``/opt/adocweave``へ、symlinkの置き場所を``/usr/local/bin``へ
+読み替えます。archiveの検証と展開は通常利用者で行い、検証済みのファイルの配置だけを管理者権限で実行します。
+既存のファイルを上書きする前に、symlinkの参照先がAdocWeave管理下であることを確認します。
 
 browser library、Zed拡張およびVS Code拡張は利用者ごとの設定を伴うため、原則としてuser-local配置を使用します。
 
