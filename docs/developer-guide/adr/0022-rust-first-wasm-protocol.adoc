@@ -1,6 +1,6 @@
 = ADR 0022: WASM protocolの型をRust定義から導出する
 
-:status: proposed
+:status: accepted
 
 == 文脈
 
@@ -15,7 +15,7 @@ Browser向けWASMとJavaScriptがやり取りするJSONの形は、``protocol/pu
 生成器を兼ねています。合計3,001行の自作codeが、1,967行の出力を作っています。
 
 この構成には二つの負担があります。第一に、型を追加するときはJSONだけでは足りず、生成器の内部にある
-所有型の一覧を手で更新する必要があります。Issue #580〜#598の作業では、この更新漏れでCIが繰り返し
+所有型の一覧を手で更新する必要があります。Issue 580から598の作業では、この更新漏れでCIが繰り返し
 失敗しました。第二に、Rustのserdeが属性として標準で表現できる意味(``#[serde(default)]``、
 ``deny_unknown_fields``、``#[serde(tag = "status")]``)を、JSONの語彙と生成器の分岐で再実装しています。
 
@@ -31,10 +31,11 @@ Rustの型定義を正本とし、ほかの成果物を既製のlibraryで導出
   serdeの属性でそのまま表現します。いま生成している1,269行と同じ内容が手書きへ移ります
 * **TypeScript宣言**: ``ts-rs``の``#[derive(TS)]``でtestとして書き出します。wasm-bindgenと併用する場合は
   ``tsify``も候補です
-* **機械可読な公開契約**: ``schemars``でJSON Schemaを生成し、``protocol/public-api.json``の後継とします。
-  derive実装が配布するWebAssemblyへ入らないよう、schema生成はfeatureで分離し、別のbinまたはtestで実行します
-* **実行時検証**: JSON Schemaから``ajv``のstandalone出力(依存のない単独JavaScript)を生成します。
-  出力の大きさがbrowser archiveの上限に収まらない場合は、worker messageの検査だけを手書きで残します
+* **機械可読な公開仕様**: 生成した``web-worker/protocol.d.mts``を公開仕様の正本とし、``release-claims``が
+  tag間の差分をこのfileで照合します。``protocol/public-api.json``は廃止します
+* **実行時検証**: workerとclientが交換する封筒の形だけを手書きの``worker-protocol.mjs``が検査します。
+  封筒の中身(requestとresponse)はWebAssembly側のserdeが``deny_unknown_fields``付きで検査するため、
+  JavaScript側で同じ検査を持ちません
 
 移行の安全網として、既存の``fixtures/protocol/request-corpus.json``を使う受理・拒否の検査
 (``protocol-corpus-check``と``protocol-wasm-corpus-check``)をそのまま使います。これらは同じ入力に対する
@@ -56,9 +57,9 @@ Rustの型定義を正本とし、ほかの成果物を既製のlibraryで導出
 * 自作の生成器3,001行が不要になります。手書きへ移るRust 1,269行は現在の生成結果と同じ内容であるため、
   リポジトリ全体では生成器の分だけ減ります
 * 型の追加はRustの変更だけで完結します。生成器の所有型一覧という、忘れやすい二重管理がなくなります
-* 公開契約の形が``protocol/public-api.json``からJSON Schemaへ変わります。これは公開仕様の変更であり、
-  ``PUBLIC_PROTOCOL_SCHEMA_VERSION``の更新、``release-claims``と``release-contract``の照合先の変更、
-  Release Notesへの記載が必要です
+* 公開仕様の正本が``protocol/public-api.json``から生成TypeScript宣言へ変わります。``release-claims``と
+  ``release-contract``の照合先を移し、protocolの版と識別子は``web-worker/worker-protocol.mjs``が持ちます。
+  TypeScriptの型名がRustの名前(``WasmRequest``など)になるため、公開仕様の変更としてRelease Notesへ記載します
 * 依存が増えます(``ts-rs``または``tsify``、``schemars``、場合により``ajv``)。いずれもMITまたはApache-2.0で、
   dependency governanceの許可範囲に収まります。配布するWebAssemblyへ入らないよう、schema生成のderiveは
   featureで分離します

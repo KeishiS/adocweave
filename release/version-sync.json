@@ -92,6 +92,12 @@
     },
     {
       "type": "literal",
+      "path": "fixtures/protocol/request-corpus.json",
+      "template": "\"packageVersion\": \"{version}\"",
+      "count": 1
+    },
+    {
+      "type": "literal",
       "path": "release/breaking-rust-api.json",
       "template": "\"releaseVersion\": \"{version}\"",
       "count": 1
@@ -142,12 +148,6 @@
       "type": "literal",
       "path": "dist-workspace.toml",
       "template": "adocweave-textlint-plugin-asciidoc-{version}.tgz",
-      "count": 1
-    },
-    {
-      "type": "literal",
-      "path": "protocol/public-api.json",
-      "template": "\"packageVersion\": \"{version}\"",
       "count": 1
     },
     {

@@ -71,7 +71,7 @@ test("global archiveへ影響する入力だけを選択する", () => {
     "tools/textlint-plugin-package-contract.mjs",
     "release/textlint-plugin-package-contract.json",
     "release/textlint-plugin-package-contract.schema.json",
-    "protocol/public-api.json",
+    "protocol/README.adoc",
   ]) {
     assert.equal(affectsGlobalCandidate(pathname), true, pathname);
   }
@@ -167,7 +167,7 @@ test("crateへ埋め込むconformance manifestは両candidateへ含める", () =
 
 test("dist設定はcommon、protocolはglobalだけに分類する", () => {
   assert.deepEqual(candidateImpact("dist-workspace.toml"), { global: true, native: true });
-  assert.deepEqual(candidateImpact("protocol/public-api.json"), { global: true, native: false });
+  assert.deepEqual(candidateImpact("protocol/README.adoc"), { global: true, native: false });
 });
 
 test("native pull requestではWindowsとmacOSだけを実OS検証する", () => {
