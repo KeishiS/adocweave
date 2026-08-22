@@ -73,6 +73,72 @@ test("generated wasm-bindgen accepts the current default requests", () => {
   assert.equal(preprocessed.source, "included\n");
 });
 
+test("generated wasm-bindgen returns typed products and explicit disabled sentinels", () => {
+  const enabled = currentRequest();
+  enabled.source = "= Title\n\nxref:missing[] \n";
+  enabled.analysisOptions = structuredClone(corpus.defaultRequestExpansion.analysisOptions);
+  enabled.analysisOptions.diagnostics.rules["trailing-whitespace"] = {
+    enabled: true,
+    severity: "warning",
+  };
+  enabled.products = Object.fromEntries(
+    Object.keys(corpus.browserProductDefault).map((name) => [name, true]),
+  );
+  const response = wasm.process(enabled);
+
+  assert.match(response.syntax, /Document/);
+  assert.equal(JSON.parse(response.ast).schemaVersion, 2);
+  assert.match(response.html, /<h1[^>]*>Title<\/h1>/);
+  assert.ok(response.diagnostics.length > 0);
+  assert.ok(response.renderDiagnostics.length > 0);
+  assert.equal(response.symbols[0].name, "Title");
+  assert.equal(response.projection.title.text, "Title");
+  assert.equal(response.projection.structure.headings[0].title, "Title");
+  assert.ok(Array.isArray(response.attributeOccurrences));
+  assert.ok(Array.isArray(response.attributeQueries.bindings));
+  assert.ok(Array.isArray(response.resourceQueries));
+
+  const disabled = currentRequest();
+  disabled.products = Object.fromEntries(
+    Object.keys(corpus.browserProductDefault).map((name) => [name, false]),
+  );
+  const disabledResponse = wasm.process(disabled);
+  assert.equal(disabledResponse.syntax, "");
+  assert.equal(disabledResponse.ast, "");
+  assert.equal(disabledResponse.html, "");
+  assert.deepEqual(disabledResponse.attributeOccurrences, []);
+  assert.deepEqual(disabledResponse.attributeQueries, { bindings: [], references: [] });
+  assert.deepEqual(disabledResponse.resourceQueries, []);
+  assert.deepEqual(disabledResponse.diagnostics, []);
+  assert.deepEqual(disabledResponse.renderDiagnostics, []);
+  assert.deepEqual(disabledResponse.symbols, []);
+  assert.equal(disabledResponse.projection, null);
+});
+
+test("generated wasm-bindgen measures the exact UTF-8 JSON output boundary", () => {
+  const source = "= 日本語 😀\n\n\\\"引用\\\"\n";
+  const unrestricted = currentRequest();
+  unrestricted.source = source;
+  unrestricted.outputLimits = { maxOutputBytes: 0xffff_ffff };
+  const response = wasm.process(unrestricted);
+  const exactBytes = Buffer.byteLength(JSON.stringify(response), "utf8");
+
+  const exact = currentRequest();
+  exact.source = source;
+  exact.outputLimits = { maxOutputBytes: exactBytes };
+  wasm.process(exact);
+
+  const tooSmall = currentRequest();
+  tooSmall.source = source;
+  tooSmall.outputLimits = { maxOutputBytes: exactBytes - 1 };
+  const error = wasmError(() => wasm.process(tooSmall));
+  assert.equal(error.code, "limit-exceeded");
+  assert.equal(
+    error.message,
+    `output bytes limit exceeded (limit ${exactBytes - 1}, actual ${exactBytes})`,
+  );
+});
+
 test("generated wasm-bindgen rejects unknown and missing fields", () => {
   for (const { path, value } of corpus.unknownFieldCases) {
     const request = currentRequest();

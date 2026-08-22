@@ -105,6 +105,23 @@ async function runArchiveSmoke(archive, chromium, packageVersion, root) {
           state.wasmPackageVersion !== packageVersion) {
         throw new Error(`browser package version mismatch: ${JSON.stringify(state)}`);
       }
+      const expectedProducts = {
+        syntax: false,
+        canonicalAst: false,
+        html: true,
+        attributeOccurrences: false,
+        attributeQueries: false,
+        resourceQueries: true,
+        diagnostics: true,
+        symbols: false,
+        projection: true,
+      };
+      if (Object.keys(state.products).length !== Object.keys(expectedProducts).length ||
+          Object.entries(expectedProducts).some(([name, enabled]) => state.products[name] !== enabled) ||
+          !state.diagnosticsAreArrays || state.projectionTitle !== "Latest browser result" ||
+          state.projectionHeadingTitle !== "Latest browser result") {
+        throw new Error(`browser result products mismatch: ${JSON.stringify(state)}`);
+      }
       console.log(`browser release smoke: passed ${context} context`);
     }
   } finally {
@@ -268,6 +285,11 @@ export async function inspectPageAttempt(
               packageVersion: globalThis.adocweavePackageVersion,
               resultPackageVersion: response.packageVersion,
               wasmPackageVersion: response.packageVersion,
+              products: response.products,
+              diagnosticsAreArrays: Array.isArray(response.diagnostics)
+                && Array.isArray(response.renderDiagnostics),
+              projectionTitle: response.projection?.title?.text,
+              projectionHeadingTitle: response.projection?.structure?.headings?.[0]?.title,
             });
           } else if (Date.now() >= deadline) {
             reject(new Error('result timeout: ' + status));

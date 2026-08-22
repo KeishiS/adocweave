@@ -12,7 +12,8 @@ use adocweave::semantic::{
     TocEntry,
 };
 
-use crate::*;
+use crate::response_wire::*;
+use crate::{WasmMathLanguage, WasmSeverity};
 
 pub(crate) fn wasm_diagnostics(diagnostics: &[Diagnostic]) -> Vec<WasmDiagnostic> {
     let mut diagnostics = diagnostics.to_vec();
@@ -444,5 +445,161 @@ pub(crate) fn wasm_text_range(range: adocweave::text::TextRange) -> WasmTextRang
     WasmTextRange {
         start: range.start().to_u32(),
         end: range.end().to_u32(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use adocweave::resolution::{ResolutionNotice, ResolverFailure};
+
+    use super::*;
+
+    #[test]
+    fn every_core_projection_enum_has_the_intended_wire_variant() {
+        for (core, wire) in [
+            (MathLanguage::Latex, WasmMathLanguage::Latex),
+            (MathLanguage::Typst, WasmMathLanguage::Typst),
+        ] {
+            assert_eq!(math_language(core), wire);
+        }
+        for (core, wire) in [
+            (SectionKind::DocumentTitle, WasmSectionKind::DocumentTitle),
+            (SectionKind::Part, WasmSectionKind::Part),
+            (SectionKind::Section, WasmSectionKind::Section),
+            (SectionKind::Appendix, WasmSectionKind::Appendix),
+            (SectionKind::Discrete, WasmSectionKind::Discrete),
+        ] {
+            assert_eq!(section_kind(core), wire);
+        }
+        for (core, wire) in [
+            (
+                ReferenceTargetKind::DocumentTitle,
+                WasmReferenceTargetKind::DocumentTitle,
+            ),
+            (ReferenceTargetKind::Part, WasmReferenceTargetKind::Part),
+            (
+                ReferenceTargetKind::Section,
+                WasmReferenceTargetKind::Section,
+            ),
+            (
+                ReferenceTargetKind::ExplicitAnchor,
+                WasmReferenceTargetKind::ExplicitAnchor,
+            ),
+            (
+                ReferenceTargetKind::InlineAnchor,
+                WasmReferenceTargetKind::InlineAnchor,
+            ),
+        ] {
+            assert_eq!(reference_target_kind(core), wire);
+        }
+        for (core, wire) in [
+            (
+                BlockPresentationKind::Admonition,
+                WasmBlockPresentationKind::Admonition,
+            ),
+            (
+                BlockPresentationKind::Quote,
+                WasmBlockPresentationKind::Quote,
+            ),
+            (
+                BlockPresentationKind::Verse,
+                WasmBlockPresentationKind::Verse,
+            ),
+            (
+                BlockPresentationKind::Example,
+                WasmBlockPresentationKind::Example,
+            ),
+            (
+                BlockPresentationKind::Sidebar,
+                WasmBlockPresentationKind::Sidebar,
+            ),
+            (BlockPresentationKind::Open, WasmBlockPresentationKind::Open),
+            (
+                BlockPresentationKind::Collapsible,
+                WasmBlockPresentationKind::Collapsible,
+            ),
+            (
+                BlockPresentationKind::Figure,
+                WasmBlockPresentationKind::Figure,
+            ),
+            (
+                BlockPresentationKind::Table,
+                WasmBlockPresentationKind::Table,
+            ),
+        ] {
+            assert_eq!(block_presentation_kind(core), wire);
+        }
+        for (core, wire) in [
+            (OrderedListStyle::Arabic, WasmOrderedListStyle::Arabic),
+            (OrderedListStyle::Decimal, WasmOrderedListStyle::Decimal),
+            (
+                OrderedListStyle::LowerAlpha,
+                WasmOrderedListStyle::Loweralpha,
+            ),
+            (
+                OrderedListStyle::UpperAlpha,
+                WasmOrderedListStyle::Upperalpha,
+            ),
+            (
+                OrderedListStyle::LowerRoman,
+                WasmOrderedListStyle::Lowerroman,
+            ),
+            (
+                OrderedListStyle::UpperRoman,
+                WasmOrderedListStyle::Upperroman,
+            ),
+            (
+                OrderedListStyle::LowerGreek,
+                WasmOrderedListStyle::Lowergreek,
+            ),
+        ] {
+            assert_eq!(ordered_list_style(core), wire);
+        }
+    }
+
+    #[test]
+    fn every_reference_resolution_variant_has_the_intended_wire_variant() {
+        for (core, wire) in [
+            (
+                ResolutionFailureKind::MissingTarget,
+                WasmProjectedReferenceFailureKind::MissingReferenceTarget,
+            ),
+            (
+                ResolutionFailureKind::MissingAnchor,
+                WasmProjectedReferenceFailureKind::MissingReferenceAnchor,
+            ),
+            (
+                ResolutionFailureKind::AmbiguousTarget,
+                WasmProjectedReferenceFailureKind::AmbiguousReferenceTarget,
+            ),
+            (
+                ResolutionFailureKind::OutsideRoot,
+                WasmProjectedReferenceFailureKind::ReferenceOutsideRoot,
+            ),
+            (
+                ResolutionFailureKind::ResolverFailure,
+                WasmProjectedReferenceFailureKind::ReferenceResolverFailure,
+            ),
+        ] {
+            assert_eq!(
+                resolution_outcome(ResolutionOutcome::Failed(ResolverFailure { kind: core })),
+                WasmProjectedResolutionOutcome::Failed { kind: wire },
+            );
+        }
+
+        assert_eq!(
+            resolution_outcome(ResolutionOutcome::Resolved {
+                href: "#target".to_owned(),
+                display_text: Some("Target".to_owned()),
+                notices: vec![ResolutionNotice {
+                    kind: ResolutionNoticeKind::Fallback,
+                }],
+            }),
+            WasmProjectedResolutionOutcome::Resolved {
+                href: "#target".to_owned(),
+                display_text: Some("Target".to_owned()),
+                notices: vec![WasmProjectedReferenceNotice::ReferenceResolutionFallback],
+            },
+        );
     }
 }

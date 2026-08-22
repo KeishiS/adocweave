@@ -461,6 +461,20 @@ mod tests {
     use super::*;
     use crate::local_include::DependencyObserver as _;
 
+    #[test]
+    fn preview_build_keeps_typed_diagnostics_until_the_response_boundary() {
+        const SOURCE: &str = include_str!("preview.rs");
+        let production = SOURCE
+            .split_once("#[cfg(test)]")
+            .expect("preview module has tests")
+            .0;
+
+        assert!(!production.contains("diagnostic::render_json"));
+        assert!(!production.contains("serde_json::from_str"));
+        assert!(production.contains("PreviewDiagnostic::analysis"));
+        assert!(production.contains("serialize_diagnostics(&diagnostics)"));
+    }
+
     fn test_authorities(
         root: &Path,
         project: &adocweave_config::ResolvedProjectConfig,

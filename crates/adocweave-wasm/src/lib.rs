@@ -995,7 +995,7 @@ mod tests {
 
     #[test]
     fn wasm_output_limit_accepts_the_exact_serialized_response_size() {
-        let source = "= Title\n\ntext";
+        let source = "= 日本語 😀\n\n\\\"引用\\\"";
         let mut unrestricted = request(source);
         unrestricted.output_limits.max_output_bytes = u32::MAX;
         let response = process_request(unrestricted, &NeverCancel).expect("response");
@@ -1014,6 +1014,13 @@ mod tests {
         too_small.output_limits.max_output_bytes = exact_size - 1;
         let error = process_request(too_small, &NeverCancel).expect_err("one byte over limit");
         assert_eq!(error.code, "limit-exceeded");
+        assert_eq!(
+            error.message,
+            format!(
+                "output bytes limit exceeded (limit {}, actual {exact_size})",
+                exact_size - 1
+            )
+        );
     }
 
     #[test]
