@@ -176,12 +176,14 @@ command = "node"
 args = ["tools/generate-third-party-notices.mjs", "target/THIRD_PARTY_NOTICES.adoc"]
 
 [tasks.release-workflow-policy]
-description = "Verify action pins, write-permission scope, and secret access in workflows"
+description = "Verify action pins, permissions, secret access, and product release routing"
 script_runner = "@shell"
 script = '''
 node tools/release-workflow-policy.mjs
 node --test \
   tools/browser-release-budget.test.mjs \
+  tools/product-release.test.mjs \
+  tools/release-readiness.test.mjs \
   tools/release-workflow-policy.test.mjs
 '''
 

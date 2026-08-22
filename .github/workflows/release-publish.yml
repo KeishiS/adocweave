@@ -9,6 +9,9 @@ on:
       plan:
         required: true
         type: string
+      product:
+        required: true
+        type: string
       tag:
         required: true
         type: string
@@ -30,12 +33,13 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: release-candidate
+          name: release-candidate-${{ inputs.product }}
           path: artifacts
       - name: Immutable release input verification
         env:
           GH_TOKEN: ${{ github.token }}
           PLAN: ${{ inputs.plan }}
+          PRODUCT: ${{ inputs.product }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           RELEASE_TAG: ${{ inputs.tag }}
         run: |
@@ -45,7 +49,8 @@ jobs:
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
           git diff --exit-code
           git diff --cached --exit-code
-          node tools/release-contract.mjs "--tag=$tag"
+          printf '%s' "$PLAN" | node tools/product-release.mjs --verify-publication "$PRODUCT" artifacts
+          node tools/release-contract.mjs "--product=$PRODUCT" "--tag=$tag"
           node tools/release-metadata.mjs verify artifacts "$CANDIDATE_SHA"
           releases="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100")"
           existing="$(jq --arg tag "$tag" -r '.[][] | select(.tag_name == $tag) | .id' <<<"$releases")"
@@ -53,7 +58,7 @@ jobs:
             echo "release already exists: $tag" >&2
             exit 1
           fi
-          node tools/release-readiness.mjs --assert-tag-absent "$tag"
+          node tools/release-readiness.mjs --assert-tag-absent "$PRODUCT" "$tag"
       - name: Public asset attestations
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
@@ -62,11 +67,12 @@ jobs:
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           GH_TOKEN: ${{ github.token }}
+          PRODUCT: ${{ inputs.product }}
           RELEASE_TAG: ${{ inputs.tag }}
         run: |
           tag_object="$(gh api --method POST "repos/$GITHUB_REPOSITORY/git/tags" \
             -f tag="$RELEASE_TAG" \
-            -f message="AdocWeave $RELEASE_TAG" \
+            -f message="AdocWeave $PRODUCT $RELEASE_TAG" \
             -f object="$CANDIDATE_SHA" \
             -f type=commit)"
           tag_sha="$(jq -er .sha <<<"$tag_object")"
@@ -80,9 +86,9 @@ jobs:
           PLAN: ${{ inputs.plan }}
         run: |
           tag="$(jq -r '.announcement_tag' <<<"$PLAN")"
-          title="$(jq -r '.announcement_title' <<<"$PLAN")"
-          body="$(jq -r '.announcement_github_body' <<<"$PLAN")"
-          body="$(node tools/release-notes.mjs "$tag" <<<"$body")"
+          title="$(jq -r '.title' <<<"$PLAN")"
+          version="$(jq -r '.productVersion' <<<"$PLAN")"
+          body="$(node tools/release-notes.mjs "v$version" </dev/null)"
           draft="$(gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
             -f tag_name="$tag" \
             -f name="$title" \

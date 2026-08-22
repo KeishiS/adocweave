@@ -3,10 +3,9 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// This policy intentionally checks only what other gates cannot: supply-chain
-// pinning, write-permission scope, and direct secret access. Workflow syntax
-// is actionlint's job (the `workflow-lint` task), and everything a workflow
-// *does* is verified by running it, not by re-stating its script text here.
+// This policy checks what other gates cannot: supply-chain pinning,
+// write-permission scope, direct secret access, and product-specific release
+// routing. Workflow syntax is actionlint's job (the `workflow-lint` task).
 
 const ROOT = new URL("../", import.meta.url);
 const read = (path) => readFileSync(new URL(path, ROOT), "utf8");
@@ -29,6 +28,7 @@ const ALLOWED_SECRET_REFERENCES = new Map([
   ["open-vsx-publish.yml job publish", new Set(["secrets.OPEN_VSX_TOKEN"])],
 ]);
 const SECRET_REFERENCE = /secrets\.[A-Za-z_][A-Za-z0-9_]*/g;
+const RELEASE_PRODUCTS = ["cli", "lsp", "browser", "textlint", "vscode", "zed"];
 
 function fail(message) {
   throw new Error(message);
@@ -110,6 +110,61 @@ export function validateNoDirectSecretAccess(sources, workflows) {
   }
 }
 
+export function validateProductReleaseRouting(workflows) {
+  const dispatch = workflows["release-dispatch.yml"];
+  const publish = workflows["release-publish.yml"];
+  const productInput = dispatch?.on?.workflow_dispatch?.inputs?.product;
+  if (
+    productInput?.required !== true ||
+    productInput.type !== "choice" ||
+    JSON.stringify(productInput.options) !== JSON.stringify(RELEASE_PRODUCTS)
+  ) {
+    fail("release dispatch must require one supported product");
+  }
+  const readinessOutputs = dispatch.jobs?.readiness?.outputs ?? {};
+  if (readinessOutputs.product !== "${{ steps.readiness.outputs.product }}") {
+    fail("release readiness must expose the resolved product");
+  }
+  const publishProduct = dispatch.jobs?.publish?.with?.product;
+  if (publishProduct !== "${{ needs.readiness.outputs.product }}") {
+    fail("release publish must receive the resolved product");
+  }
+  const planRun = dispatch.jobs?.plan?.steps?.find((step) => step.id === "plan")?.run;
+  if (
+    typeof planRun !== "string" ||
+    !planRun.includes("--publication-plan \"$PRODUCT\"") ||
+    !planRun.includes('if [ "$build" = cargo-dist ]')
+  ) {
+    fail("release plan must normalize both cargo-dist and script products");
+  }
+  for (const [job, product] of [
+    ["textlint-plugin-post-release-smoke", "textlint"],
+    ["open-vsx", "vscode"],
+    ["binary-cache", "cli"],
+  ]) {
+    const condition = dispatch.jobs?.[job]?.if;
+    if (typeof condition !== "string" || !condition.includes(`needs.readiness.outputs.product == '${product}'`)) {
+      fail(`release dispatch job ${job} must run only for ${product}`);
+    }
+  }
+  const publishInput = publish?.on?.workflow_call?.inputs?.product;
+  if (publishInput?.required !== true || publishInput.type !== "string") {
+    fail("release publish must require product input");
+  }
+  const download = publish.jobs?.publish?.steps?.find(
+    (step) => typeof step.uses === "string" && step.uses.includes("actions/download-artifact"),
+  );
+  if (download?.with?.name !== "release-candidate-${{ inputs.product }}") {
+    fail("release publish must download only the selected product candidate");
+  }
+  const verification = publish.jobs?.publish?.steps?.find(
+    (step) => step.name === "Immutable release input verification",
+  )?.run;
+  if (typeof verification !== "string" || !verification.includes("--verify-publication \"$PRODUCT\"")) {
+    fail("release publish must verify the normalized product publication plan");
+  }
+}
+
 export function loadWorkflowPolicyInputs() {
   const sources = {};
   for (const file of readdirSync(new URL(".github/workflows/", ROOT))) {
@@ -127,6 +182,7 @@ export function validateReleaseWorkflowPolicy({ sources, workflows }) {
   validatePinnedActions(workflows);
   validateWritePermissionGrants(workflows);
   validateNoDirectSecretAccess(sources, workflows);
+  validateProductReleaseRouting(workflows);
 }
 
 export function main() {
