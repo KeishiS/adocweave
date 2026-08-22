@@ -2330,7 +2330,7 @@ fn source_block_shorthand_default_and_listing_are_consistent_on_crlf_input() {
 }
 
 #[test]
-fn local_includes_require_an_explicit_option_and_are_deterministic() {
+fn local_includes_resolve_by_default_and_are_deterministic() {
     let root = concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../fixtures/includes/root.adoc"
@@ -2338,9 +2338,9 @@ fn local_includes_require_an_explicit_option_and_are_deterministic() {
     let expected = include_bytes!("../../../fixtures/includes/root.html");
 
     let disabled = adocweave()
-        .args(["convert", root])
+        .args(["convert", "--no-include", root])
         .output()
-        .expect("disabled conversion");
+        .expect("conversion without includes");
     assert!(disabled.status.success());
     assert!(
         !disabled
@@ -2350,15 +2350,15 @@ fn local_includes_require_an_explicit_option_and_are_deterministic() {
     );
 
     let first = adocweave()
-        .args(["convert", "--include", root])
+        .args(["convert", root])
         .output()
         .expect("included conversion");
     let second = adocweave()
-        .args(["convert", "--include", root])
+        .args(["convert", root])
         .output()
         .expect("repeated conversion");
     let symbols = adocweave()
-        .args(["symbols", "--include", root])
+        .args(["symbols", root])
         .output()
         .expect("included symbols");
     assert!(
@@ -2369,6 +2369,35 @@ fn local_includes_require_an_explicit_option_and_are_deterministic() {
     assert_eq!(first.stdout, expected);
     assert_eq!(second.stdout, first.stdout);
     assert!(String::from_utf8_lossy(&symbols.stdout).contains("Included section"));
+
+    let conflicting = adocweave()
+        .args(["convert", "--include", "--no-include", root])
+        .output()
+        .expect("conflicting options");
+    assert_eq!(conflicting.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&conflicting.stderr)
+            .contains("--no-include cannot be combined with --include")
+    );
+}
+
+#[test]
+fn standard_input_converts_without_a_base_directory_but_still_reports_an_explicit_request() {
+    let source = b"include::part.adoc[]\n";
+
+    let default = run_with_stdin(&["convert", "-"], source);
+    assert!(
+        default.status.success(),
+        "{}",
+        String::from_utf8_lossy(&default.stderr)
+    );
+
+    let requested = run_with_stdin(&["convert", "--include", "-"], source);
+    assert_eq!(requested.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&requested.stderr)
+            .contains("--include with standard input requires --base-dir")
+    );
 }
 
 #[test]

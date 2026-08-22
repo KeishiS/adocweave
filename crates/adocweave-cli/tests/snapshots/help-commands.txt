@@ -16,7 +16,8 @@ Example:
   --port PORT  待ち受けるポート（既定値: 4000）
   --debounce-ms MILLISECONDS  連続した変更をまとめる待ち時間（既定値: 100）
   --allow-external  ループバック以外のIPアドレスでの待ち受けを許可
-  --include  上限を設けてローカルincludeを展開
+  --include  設定で無効にしていてもローカルincludeを展開
+  --no-include  include指示を展開しない
   --base-dir DIR  起点文書のincludeをDIRから解決
   --allow-root DIR  includeを許可する範囲（複数指定可）
   --css FILE  完全なHTML文書へCSSを埋め込み（複数指定可）
@@ -31,7 +32,7 @@ Example:
   このサーバーは利用者認証とTLSによる通信の暗号化を提供しません。
 
 例:
-  adocweave preview --include manual.adoc
+  adocweave preview --port 8080 manual.adoc
 === check ===
 Usage:
   adocweave check [OPTIONS] [FILE...]

@@ -67,7 +67,16 @@ export function main() {
   let diagnostics = 0;
   let failed = false;
   for (const entry of plan) {
-    const result = run(executable, ["check", "--fail-on", entry.failOn, entry.path]);
+    // Every tracked document is checked on its own, include parts included, so
+    // include directives stay unresolved here. Some fixtures deliberately
+    // resolve only under a base directory this loop does not pass.
+    const result = run(executable, [
+      "check",
+      "--no-include",
+      "--fail-on",
+      entry.failOn,
+      entry.path,
+    ]);
     const output = `${result.stdout}${result.stderr}`;
     if (result.status !== 0) {
       showFailure(entry.path, result);
@@ -86,6 +95,7 @@ export function main() {
   for (const entry of localEntries) {
     const result = run(executable, [
       "check",
+      "--no-include",
       "--fail-on",
       "warning",
       "--local-targets",
