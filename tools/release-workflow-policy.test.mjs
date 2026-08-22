@@ -24,14 +24,14 @@ const OPEN_VSX_SOURCE = "OPEN_VSX_TOKEN: ${{ secrets.OPEN_VSX_TOKEN }}\n";
 
 test("the Open VSX job may read the registry publish token", () => {
   const { sources, workflows } = policyInput(
-    "release-dispatch.yml",
-    { jobs: { "open-vsx": { steps: [OPEN_VSX_STEP] } } },
+    "open-vsx-publish.yml",
+    { jobs: { publish: { steps: [OPEN_VSX_STEP] } } },
     OPEN_VSX_SOURCE,
   );
   validateNoDirectSecretAccess(sources, workflows);
 });
 
-test("the Open VSX token outside its job is rejected", () => {
+test("the Open VSX token outside its workflow is rejected", () => {
   const { sources, workflows } = policyInput(
     "release-dispatch.yml",
     { jobs: { "binary-cache": { steps: [OPEN_VSX_STEP] } } },
