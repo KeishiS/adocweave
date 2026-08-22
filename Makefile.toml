@@ -97,8 +97,14 @@ dependencies = [
 ]
 
 [tasks.protocol-generated-check]
-command = "node"
-args = ["tools/generate-protocol.mjs", "--check"]
+description = "Regenerate the TypeScript declarations from the Rust wire types and require no diff"
+script_runner = "@shell"
+script = '''
+# ts-rsは既存fileへ追記するため、消えた型が残らないよう作り直します。
+rm -f web-worker/protocol.d.mts
+cargo test --locked -p adocweave-wasm --features ts-rs export_bindings
+git diff --exit-code -- web-worker/protocol.d.mts
+'''
 
 [tasks.protocol-corpus-check]
 command = "cargo"
@@ -504,8 +510,9 @@ printf '%s\n' \
   "$package/worker/controller.mjs" \
   "$package/worker/index.d.mts" \
   "$package/worker/index.mjs" \
-  "$package/worker/protocol.generated.d.mts" \
-  "$package/worker/protocol.generated.mjs" \
+  "$package/worker/protocol.d.mts" \
+  "$package/worker/worker-protocol.d.mts" \
+  "$package/worker/worker-protocol.mjs" \
   "$package/worker/worker.mjs" | LC_ALL=C sort > "$expected"
 diff -u "$expected" "$actual"
 root="$(mktemp -d "${TMPDIR:-/tmp}/adocweave-browser-import.XXXXXX")"
@@ -518,7 +525,7 @@ node --input-type=module -e '
   if (publicApi.PROTOCOL_SCHEMA_VERSION !== protocol.PROTOCOL_SCHEMA_VERSION) {
     throw new Error("browser archive protocol schema version mismatch");
   }
-' "$root/$package/worker/index.mjs" "$root/$package/worker/protocol.generated.mjs" "$version"
+' "$root/$package/worker/index.mjs" "$root/$package/worker/worker-protocol.mjs" "$version"
 echo "browser release package verified: $second"
 '''
 

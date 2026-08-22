@@ -1,5 +1,5 @@
 import { createController, WORKER_PROTOCOL_VERSION } from "./controller.mjs";
-import { validateWorkerMessage } from "./protocol.generated.mjs";
+import { validateWorkerMessage } from "./worker-protocol.mjs";
 
 let controller;
 let currentGeneration = 0;

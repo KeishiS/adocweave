@@ -4,9 +4,12 @@ import test from "node:test";
 import { EXPECTED_RELEASE_METADATA, SUPPORTED_PUBLIC_PROTOCOL_SCHEMA_VERSION, canonicalJson, expectedAssets, validateDistributionManifest, validateDistPlan, validatePublicClientReleaseContract, validateReleaseTrainVersions, versionFromTag, workflowMatrix } from "./release-contract.mjs";
 import plan from "../release/distribution-plan.json" with { type: "json" };
 import fixture from "../release/adocweave-dist-manifest.fixture.json" with { type: "json" };
-import protocol from "../protocol/public-api.json" with { type: "json" };
 import vscodeLock from "../editors/vscode/package-lock.json" with { type: "json" };
 import vscodePackage from "../editors/vscode/package.json" with { type: "json" };
+import {
+  PACKAGE_VERSION as WORKER_PACKAGE_VERSION,
+  PROTOCOL_SCHEMA_VERSION as WORKER_PROTOCOL_SCHEMA_VERSION,
+} from "../web-worker/worker-protocol.mjs";
 import conformance from "../crates/adocweave/conformance/cases.json" with { type: "json" };
 import publicConformance from "../fixtures/public-conformance.json" with { type: "json" };
 
@@ -89,18 +92,17 @@ test("dist plan validation rejects an incomplete plan", () => {
 test("public client manifests match the release train and remain private", () => {
   const version = plan.packageVersion;
   assert.doesNotThrow(() =>
-    validatePublicClientReleaseContract(version, vscodePackage, vscodeLock, protocol));
+    validatePublicClientReleaseContract(version, vscodePackage, vscodeLock));
 
   const mutations = [
-    [new RegExp("VS Code package version"), { ...vscodePackage, version: "9.9.9" }, vscodeLock, protocol],
-    [/must remain private/, { ...vscodePackage, private: false }, vscodeLock, protocol],
-    [new RegExp("VS Code package lock version"), vscodePackage, { ...vscodeLock, version: "9.9.9" }, protocol],
+    [new RegExp("VS Code package version"), { ...vscodePackage, version: "9.9.9" }, vscodeLock],
+    [/must remain private/, { ...vscodePackage, private: false }, vscodeLock],
+    [new RegExp("VS Code package lock version"), vscodePackage, { ...vscodeLock, version: "9.9.9" }],
     [new RegExp("VS Code package lock root"), vscodePackage, {
       ...vscodeLock,
       packages: { ...vscodeLock.packages, "": { ...vscodeLock.packages[""], version: "9.9.9" } },
-    }, protocol],
-    [/lockfileVersion must be 3/, vscodePackage, { ...vscodeLock, lockfileVersion: 2 }, protocol],
-    [new RegExp("public protocol"), vscodePackage, vscodeLock, { ...protocol, packageVersion: "9.9.9" }],
+    }],
+    [/lockfileVersion must be 3/, vscodePackage, { ...vscodeLock, lockfileVersion: 2 }],
   ];
   for (const [pattern, packageManifest, lock, publicProtocol] of mutations) {
     assert.throws(
@@ -120,22 +122,11 @@ test("release trainの不一致は名前付きで拒否する", () => {
   );
 });
 
-test("公開WASM protocolは対応schemaを必須とする", () => {
+test("公開WASM protocolは対応schemaと同じ版を宣言する", () => {
+  // protocolの版と識別子はbrowser packageのworker-protocol.mjsが持ちます。
+  // release toolが参照する値と、release policyが対応するschema versionが揃っていることを固定します。
   assert.doesNotThrow(() =>
-    validatePublicClientReleaseContract(
-      plan.packageVersion,
-      vscodePackage,
-      vscodeLock,
-      protocol,
-    ));
-  assert.throws(
-    () =>
-      validatePublicClientReleaseContract(
-        plan.packageVersion,
-        vscodePackage,
-        vscodeLock,
-        { ...protocol, schemaVersion: SUPPORTED_PUBLIC_PROTOCOL_SCHEMA_VERSION - 1 },
-      ),
-    new RegExp(`public protocol schemaVersion must be ${SUPPORTED_PUBLIC_PROTOCOL_SCHEMA_VERSION}`),
-  );
+    validatePublicClientReleaseContract(plan.packageVersion, vscodePackage, vscodeLock));
+  assert.equal(WORKER_PROTOCOL_SCHEMA_VERSION, SUPPORTED_PUBLIC_PROTOCOL_SCHEMA_VERSION);
+  assert.equal(WORKER_PACKAGE_VERSION, plan.packageVersion);
 });

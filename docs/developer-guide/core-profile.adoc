@@ -227,8 +227,8 @@ unset後の参照は``undefined-attribute``、循環と展開上限超過は``at
 エラーは安定した``code``と利用者向けの``message``だけを返します。source、応答およびエラーは呼び出しごとの
 所有値であり、次回の呼び出しで無効になるpointerを公開しません。
 
-JSONの要求、前処理の入出力、応答およびエラーのwire型は``protocol/public-api.json``から生成します。
-生成された型はコアの型へ依存しません。要求はwire型のfield間制約を検査してからコアの設定へ変換し、
+JSONの要求、前処理の入出力、応答およびエラーのwire型は``crates/adocweave-wasm``のRust定義が正本です。
+TypeScript宣言``web-worker/protocol.d.mts``はここから生成します。wire型はコアの型へ依存しません。要求はwire型のfield間制約を検査してからコアの設定へ変換し、
 未検査の値を実行処理へ渡しません。前処理と通常の応答では、コアの結果を生成されたwire型へ投影する処理だけを
 WASM adapterに置きます。field、列挙値またはtag付きunionを変更する場合は、schemaを更新して生成物と
 protocol検査を同時に更新します。

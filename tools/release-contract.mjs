@@ -2,6 +2,10 @@ import { readFileSync } from "node:fs";
 import process from "node:process";
 
 import { PUBLIC_PROTOCOL_SCHEMA_VERSION } from "./release-policy.mjs";
+import {
+  PACKAGE_VERSION as WORKER_PACKAGE_VERSION,
+  PROTOCOL_SCHEMA_VERSION as WORKER_SCHEMA_VERSION,
+} from "../web-worker/worker-protocol.mjs";
 import { loadTextlintPluginPackageContract } from "./textlint-plugin-package-contract.mjs";
 
 const ROOT = new URL("../", import.meta.url);
@@ -182,12 +186,13 @@ export function validateReleaseTrainVersions(version, components) {
   }
 }
 
-export function validatePublicClientReleaseContract(version, vscodePackage, vscodeLock, protocol) {
+export function validatePublicClientReleaseContract(version, vscodePackage, vscodeLock) {
   validateReleaseTrainVersions(version, {
     "VS Code package": vscodePackage.version,
     "VS Code package lock": vscodeLock.version,
     "VS Code package lock root": vscodeLock.packages?.[""]?.version,
-    "public protocol": protocol.packageVersion,
+    // 公開protocolの版と識別子は、browser packageが配布するworker-protocol.mjsが持ちます。
+    "public protocol": WORKER_PACKAGE_VERSION,
   });
   if (vscodePackage.private !== true) {
     fail("VS Code package must remain private");
@@ -195,7 +200,7 @@ export function validatePublicClientReleaseContract(version, vscodePackage, vsco
   if (vscodeLock.lockfileVersion !== 3) {
     fail("VS Code package lockfileVersion must be 3");
   }
-  if (protocol.schemaVersion !== SUPPORTED_PUBLIC_PROTOCOL_SCHEMA_VERSION) {
+  if (WORKER_SCHEMA_VERSION !== SUPPORTED_PUBLIC_PROTOCOL_SCHEMA_VERSION) {
     fail(
       `public protocol schemaVersion must be ${SUPPORTED_PUBLIC_PROTOCOL_SCHEMA_VERSION}`,
     );
@@ -275,7 +280,6 @@ function verifyRepository() {
   const vscodePlatforms = json("editors/vscode/resources/platforms.json");
   const vscodePackage = json("editors/vscode/package.json");
   const vscodeLock = json("editors/vscode/package-lock.json");
-  const protocol = json("protocol/public-api.json");
   const worker = json("web-worker/package.json");
   const textlintPlugin = json("packages/textlint-plugin-asciidoc/package.json");
   const textlintContract = loadTextlintPluginPackageContract();
@@ -338,7 +342,7 @@ function verifyRepository() {
     "Zed extension": tomlValue(extension, "version"),
     "Zed crate": tomlValue(extensionCargo, "version"),
   });
-  validatePublicClientReleaseContract(version, vscodePackage, vscodeLock, protocol);
+  validatePublicClientReleaseContract(version, vscodePackage, vscodeLock);
   if (plan.repository !== repository || tomlValue(extension, "repository") !== repository) {
     fail("repository URL mismatch in release train");
   }
