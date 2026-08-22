@@ -202,11 +202,14 @@ tag rulesetを使わない理由はxref:adr/0006-direct-stable-releases.adoc[ADR
 再構築せず、metadataを再検証してattestationを作成してから、同じSHAへtagを作成します。
 その後private draftへ成果物を追加し、成果物集合が揃った後にstable releaseとして公開します。
 
-公開の成功後、同じrunの``open-vsx`` jobがGitHub Releaseに添付されたVSIXをdownloadし、checksumとattestationを
-検証してからOpen VSX Registryへ公開します。Open VSXのAPIはOIDCによる委任へ対応しないため、このjobだけが
-repository secret``OPEN_VSX_TOKEN``(namespace``adocweave``のpublish token)を参照します。このjobはGitHubへの
-書き込み権限を持たず、公開に失敗してもtagとGitHub Releaseへ影響しないため、同じrunのjobを再実行して回復します。
-同じversionの再公開はOpen VSXが拒否するため、公開済みの版を上書きしません。
+公開の成功後、同じrunが``open-vsx-publish.yml``を呼び出し、GitHub Releaseに添付されたVSIXをdownloadして
+checksumとattestationを検証してからOpen VSX Registryへ公開します。Open VSXのAPIはOIDCによる委任へ対応しないため、
+このworkflowだけがrepository secret``OPEN_VSX_TOKEN``(namespace``adocweave``のpublish token)を参照します。
+書き込み権限を持たず、送信に失敗してもtagとGitHub Releaseへ影響しません。
+
+``open-vsx-publish.yml``はtagを指定して単独でも実行できます。GitHub Releaseは公開済みで作り直せないため、
+Open VSXへの送信だけが失敗した場合は、同じtagでこのworkflowを実行して回復します。同じversionの再公開は
+Open VSXが拒否するため、公開済みの版を上書きしません。
 
 公開の成功後、同じrunの``binary-cache`` jobが候補SHAをcheckoutし、x86_64-linuxとaarch64-linuxの
 Nixパッケージをbuildしてruntime closureをbinary cache``keishis.cachix.org``へpushします。Cachixへの

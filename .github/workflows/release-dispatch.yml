@@ -113,46 +113,13 @@ jobs:
         run: nix develop .#ci -c cargo make textlint-plugin-post-release-npx-smoke
 
   # Stable releaseの公開が成功したら、公開済みのVSIXをOpen VSX Registryへ公開する。
-  # 成果物は作り直さず、GitHub Releaseのassetをdownloadしてchecksumとattestationを検証してから
-  # 送信する。Open VSXのAPIはOIDCへ対応しないため、このjobだけがrepository secretの
-  # publish token(OPEN_VSX_TOKEN)を参照する。publishに失敗してもtagとGitHub Releaseへは
-  # 影響しないため、同じrunのこのjobを再実行して回復する。同じversionの再公開はOpen VSXが
-  # 拒否するため、公開済みの版を上書きしない。
+  # 送信だけが失敗した場合はopen-vsx-publish.ymlを同じtagで実行して回復する。
   open-vsx:
     needs: [readiness, publish]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.readiness.outputs.candidate_sha }}
-          persist-credentials: false
-      - name: Published VSIX download and verification
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.readiness.outputs.tag }}
-        run: |
-          mkdir -p open-vsx
-          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-            --pattern 'adocweave-vscode-*.vsix' --pattern sha256.sum --dir open-vsx
-          vsix="$(ls open-vsx/adocweave-vscode-*.vsix)"
-          (cd open-vsx && grep -F "$(basename "$vsix")" sha256.sum | sha256sum --check --strict -)
-          gh attestation verify "$vsix" --repo "$GITHUB_REPOSITORY"
-          echo "vsix=$vsix" >> "$GITHUB_ENV"
-      - name: Open VSX publication
-        env:
-          OPEN_VSX_TOKEN: ${{ secrets.OPEN_VSX_TOKEN }}
-        run: |
-          curl --silent --show-error --fail-with-body --max-time 120 \
-            --get --data-urlencode "token=$OPEN_VSX_TOKEN" \
-            --output verify-pat.json --write-out '%{http_code}\n' \
-            https://open-vsx.org/api/adocweave/verify-pat
-          curl --silent --show-error --fail-with-body --max-time 300 \
-            --request POST --header 'Content-Type: application/octet-stream' \
-            --get --data-urlencode "token=$OPEN_VSX_TOKEN" \
-            --data-binary "@$vsix" --output published.json \
-            https://open-vsx.org/api/-/publish
-          jq -e '.namespace == "adocweave" and .name == "adocweave-vscode"' published.json
+    uses: ./.github/workflows/open-vsx-publish.yml
+    with:
+      tag: ${{ needs.readiness.outputs.tag }}
+    secrets: inherit
 
   # Stable releaseの公開が成功したら、同じcandidate SHAのNixパッケージのruntime closureを
   # binary cache(keishis.cachix.org)へpushする。利用側はsubstituterを設定するだけで、
