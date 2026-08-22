@@ -6,7 +6,7 @@ use std::ops::ControlFlow;
 use std::sync::Arc;
 
 use adocweave::{CancellationCheck, CancellationToken};
-use adocweave_host::FilesystemJobCoordinator;
+use adocweave_host::IncludeFilesystemJob;
 use async_lsp::client_monitor::ClientProcessMonitorLayer;
 use async_lsp::concurrency::ConcurrencyLayer;
 use async_lsp::lsp_types::{
@@ -71,14 +71,14 @@ pub(crate) fn analyze_workspace_root(
     job: &AnalysisJob,
     input: &crate::workspace::WorkspaceInput,
 ) -> Result<AnalyzedRoot, WorkspaceProblem> {
-    let filesystem_job = FilesystemJobCoordinator::new(document_analysis_job_limits())
+    let filesystem_job = IncludeFilesystemJob::new(document_analysis_job_limits())
         .map_err(|error| workspace_input_problem(error.to_string()))?;
     let analyzed = workspace
         .analyze_root_detached(
             input,
             &job.request.options,
             job.cancellation.as_ref(),
-            &filesystem_job,
+            filesystem_job,
         )
         .map_err(workspace_input_problem)?;
     Ok(analyzed)

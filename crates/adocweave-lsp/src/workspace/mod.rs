@@ -12,8 +12,9 @@ use adocweave::preprocess::{
 };
 use adocweave_host::{
     FilesystemDraftError, FilesystemJobCoordinator, FilesystemJobLimits, FilesystemReadLimits,
-    FilesystemReadOutcome, FilesystemResourceBinding, LocalFilesystemDraft, LocalFilesystemPolicy,
-    LocalFilesystemSession, LogicalSourceId,
+    FilesystemReadOutcome, IncludeFilesystemBinding, IncludeFilesystemBudgetedOutcome,
+    IncludeFilesystemJob, IncludeFilesystemPathRequest, IncludeFilesystemTransaction,
+    LocalFilesystemDraft, LocalFilesystemPolicy, LocalFilesystemSession, LogicalSourceId,
 };
 use adocweave_workspace::{
     Generation, ResourceId, RetainedLayerCharge, RetainedResourceBudget, RetainedResourceLimits,
@@ -217,7 +218,7 @@ pub struct WorkspaceResources {
     /// established, rather than naming a path. A claim carries a generation, so
     /// a stale watcher notification cannot release a resource that has since
     /// been read again.
-    resource_bindings: Arc<BTreeMap<ResourceId, FilesystemResourceBinding>>,
+    resource_bindings: Arc<BTreeMap<ResourceId, IncludeFilesystemBinding>>,
     next_disk_version: i64,
     /// Reasons why the initial scan stopped at a budget instead of finishing.
     ///
@@ -233,14 +234,20 @@ pub struct WorkspaceResources {
 /// the explicit rollback the previous design needed.
 struct PreparedWorkspaceRead {
     text: Arc<str>,
-    binding: FilesystemResourceBinding,
+    binding: IncludeFilesystemBinding,
     filesystem: Arc<Mutex<LocalFilesystemSession>>,
-    draft: LocalFilesystemDraft,
+    transaction: IncludeFilesystemTransaction,
+    job: IncludeFilesystemJob,
 }
 
 struct WorkspaceFilesystemCandidate {
     session: Arc<Mutex<LocalFilesystemSession>>,
     draft: Option<LocalFilesystemDraft>,
+}
+
+struct IncludeFilesystemCandidate {
+    session: Arc<Mutex<LocalFilesystemSession>>,
+    transaction: Option<IncludeFilesystemTransaction>,
 }
 
 enum AdmittedIncludeTarget {
@@ -261,7 +268,7 @@ struct ExistingIncludeTarget {
 /// here rather than in the state the editor can see. Dropping this value leaves
 /// no trace of the attempt.
 pub struct AnalyzedRoot {
-    candidate: WorkspaceResources,
+    acquisition: Option<IncludeAcquisition>,
     root: ResourceId,
     canonical_options: EffectiveProcessingOptions,
     outcome: AnalyzedRootOutcome,
@@ -339,16 +346,16 @@ enum AcquiredInclude {
 /// The whole point of this type is that nothing it reads becomes visible until
 /// the analysis finishes and is adopted. It owns the copy, the filesystem drafts
 /// it reads through, and the authority that decides which targets are allowed.
-struct IncludeAcquisition<'a> {
+struct IncludeAcquisition {
     candidate: WorkspaceResources,
-    drafts: BTreeMap<ProjectScopeId, WorkspaceFilesystemCandidate>,
+    transactions: BTreeMap<ProjectScopeId, IncludeFilesystemCandidate>,
     root_scope: ProjectScopeId,
     allowed_roots: Vec<PathBuf>,
     admitted: BTreeSet<ResourceId>,
-    job: &'a FilesystemJobCoordinator,
+    job: IncludeFilesystemJob,
 }
 
-impl IncludeAcquisition<'_> {
+impl IncludeAcquisition {
     fn acquire(&mut self, target: &ResourceId) -> Result<AcquiredInclude, String> {
         let admitted =
             self.candidate
@@ -375,8 +382,8 @@ impl IncludeAcquisition<'_> {
             return Ok(AcquiredInclude::Found(Arc::clone(existing.text())));
         }
         let read = self
-            .draft_for(&scope, plan)
-            .and_then(|draft| read_scan_candidate(draft, &path).map_err(ScanReadError::message));
+            .transaction_for(&scope, plan)
+            .and_then(|transaction| read_include_candidate(transaction, &path));
         let candidate = match read {
             Ok(Some(candidate)) => candidate,
             Ok(None) => return Ok(AcquiredInclude::NotFound),
@@ -415,27 +422,33 @@ impl IncludeAcquisition<'_> {
             .collect()
     }
 
-    fn draft_for(
+    fn transaction_for(
         &mut self,
         scope: &ProjectScopeId,
         plan: adocweave_config::ResolvedResourceLimitPlan,
-    ) -> Result<&mut LocalFilesystemDraft, String> {
-        let candidate = match self.drafts.entry(scope.clone()) {
+    ) -> Result<&mut IncludeFilesystemTransaction, String> {
+        let candidate = match self.transactions.entry(scope.clone()) {
             std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
             std::collections::btree_map::Entry::Vacant(entry) => {
                 let session = self.candidate.session_for(scope, plan)?;
-                let draft = session
-                    .lock()
-                    .map_err(|_| "workspace resource session lock is poisoned".to_owned())?
-                    .draft(self.job)
-                    .map_err(|error| error.to_string())?;
-                entry.insert(WorkspaceFilesystemCandidate {
+                let transaction = {
+                    let session = session
+                        .lock()
+                        .map_err(|_| "workspace resource session lock is poisoned".to_owned())?;
+                    self.job
+                        .transaction(&session)
+                        .map_err(|error| error.to_string())?
+                };
+                entry.insert(IncludeFilesystemCandidate {
                     session,
-                    draft: Some(draft),
+                    transaction: Some(transaction),
                 })
             }
         };
-        Ok(candidate.draft.as_mut().expect("draft is active"))
+        Ok(candidate
+            .transaction
+            .as_mut()
+            .expect("include transaction is active"))
     }
 
     /// Commits every draft this run opened and returns the workspace copy.
@@ -444,19 +457,21 @@ impl IncludeAcquisition<'_> {
     /// cancelled run drops its drafts instead, which leaves the live sessions
     /// exactly as they were.
     fn commit(mut self) -> Result<WorkspaceResources, String> {
-        for candidate in self.drafts.values_mut() {
-            let draft = candidate.draft.take().expect("draft is active");
+        for candidate in self.transactions.values_mut() {
+            let transaction = candidate
+                .transaction
+                .take()
+                .expect("include transaction is active");
             let mut session = candidate
                 .session
                 .lock()
                 .map_err(|_| "workspace resource session lock is poisoned".to_owned())?;
-            draft
-                .prepare_commit(&mut session)
-                .map_err(|error| error.to_string())?
-                .commit()
+            transaction
+                .commit(&mut session)
                 .map_err(|error| error.to_string())?;
         }
-        for (scope, candidate) in &self.drafts {
+        self.job.finish().map_err(|error| error.to_string())?;
+        for (scope, candidate) in &self.transactions {
             Arc::make_mut(&mut self.candidate.filesystems)
                 .insert(scope.clone(), Arc::clone(&candidate.session));
         }
@@ -473,22 +488,15 @@ impl PreparedWorkspaceRead {
     /// recorded for a read that was never installed.
     fn commit(
         self,
-    ) -> Result<
-        (
-            Arc<Mutex<LocalFilesystemSession>>,
-            FilesystemResourceBinding,
-        ),
-        String,
-    > {
+    ) -> Result<(Arc<Mutex<LocalFilesystemSession>>, IncludeFilesystemBinding), String> {
         let mut session = self
             .filesystem
             .lock()
             .map_err(|_| "workspace resource session lock is poisoned".to_owned())?;
-        self.draft
-            .prepare_commit(&mut session)
-            .map_err(|error| error.to_string())?
-            .commit()
+        self.transaction
+            .commit(&mut session)
             .map_err(|error| error.to_string())?;
+        self.job.finish().map_err(|error| error.to_string())?;
         drop(session);
         Ok((self.filesystem, self.binding))
     }
@@ -944,7 +952,7 @@ impl WorkspaceResources {
                     // This project allows fewer reads than its documents need.
                     // The ones already read are registered, and the rest are
                     // reported rather than voiding every other project too.
-                    Err(ScanReadError::Budget(_)) => {
+                    Err(ScanReadError::Budget) => {
                         scan_notices.insert(WorkspaceScanNotice::ProjectResourceLimit {
                             project: scope
                                 .config_path
@@ -1400,26 +1408,42 @@ impl WorkspaceResources {
         plan: adocweave_config::ResolvedResourceLimitPlan,
     ) -> Result<PreparedWorkspaceRead, String> {
         let filesystem = self.session_for(scope, plan)?;
-        let job = FilesystemJobCoordinator::new(watched_file_job_limits())
+        let job = IncludeFilesystemJob::new(watched_file_job_limits())
             .map_err(|error| error.to_string())?;
-        let mut draft = filesystem
-            .lock()
-            .map_err(|_| "workspace resource session lock is poisoned".to_owned())?
-            .draft(&job)
-            .map_err(|error| error.to_string())?;
-        let loaded = draft
-            .reread_utf8(
-                LogicalSourceId::new(path.to_string_lossy().into_owned())
-                    .map_err(|error| error.to_string())?,
-                path,
-            )
-            .map_err(|error| error.to_string())?;
-        let (_, text, binding) = loaded.into_parts_with_binding();
+        let mut transaction = {
+            let mut session = filesystem
+                .lock()
+                .map_err(|_| "workspace resource session lock is poisoned".to_owned())?;
+            job.superseding_transaction(&mut session)
+                .map_err(|error| error.to_string())?
+        };
+        let request = IncludeFilesystemPathRequest::new(
+            LogicalSourceId::new(path.to_string_lossy().into_owned())
+                .map_err(|error| error.to_string())?,
+            path,
+        );
+        let loaded = match transaction.read_utf8_within_budget(request) {
+            IncludeFilesystemBudgetedOutcome::Found(loaded) => loaded,
+            IncludeFilesystemBudgetedOutcome::NotFound(_) => {
+                return Err(format!("local resource is missing: {}", path.display()));
+            }
+            IncludeFilesystemBudgetedOutcome::BudgetExhausted { .. } => {
+                return Err(format!(
+                    "the project read budget is spent before {}",
+                    path.display()
+                ));
+            }
+            IncludeFilesystemBudgetedOutcome::Failed(failed) => {
+                return Err(failed.error().to_string());
+            }
+        };
+        let (_, text, binding) = loaded.into_parts();
         Ok(PreparedWorkspaceRead {
             text,
             binding,
             filesystem,
-            draft,
+            transaction,
+            job,
         })
     }
 
@@ -1474,20 +1498,21 @@ impl WorkspaceResources {
         let Some(filesystem) = self.filesystems.get(scope).map(Arc::clone) else {
             return Ok(());
         };
-        let job = FilesystemJobCoordinator::new(watched_file_job_limits())
-            .map_err(|error| error.to_string())?;
         let mut session = filesystem
             .lock()
             .map_err(|_| "workspace resource session lock is poisoned".to_owned())?;
-        let mut draft = session.draft(&job).map_err(|error| error.to_string())?;
-        draft
-            .release_binding(&binding)
+        let job = IncludeFilesystemJob::new(watched_file_job_limits())
             .map_err(|error| error.to_string())?;
-        draft
-            .prepare_commit(&mut session)
-            .map_err(|error| error.to_string())?
-            .commit()
+        let mut transaction = job
+            .superseding_transaction(&mut session)
             .map_err(|error| error.to_string())?;
+        transaction
+            .release(&binding)
+            .map_err(|error| error.to_string())?;
+        transaction
+            .commit(&mut session)
+            .map_err(|error| error.to_string())?;
+        job.finish().map_err(|error| error.to_string())?;
         Ok(())
     }
 
@@ -1871,7 +1896,7 @@ impl WorkspaceResources {
         input: &WorkspaceInput,
         analysis_options: &adocweave::AnalysisOptions,
         cancellation: &dyn CancellationCheck,
-        job: &FilesystemJobCoordinator,
+        job: IncludeFilesystemJob,
     ) -> Result<AnalyzedRoot, String> {
         let options =
             EffectiveProcessingOptions::new(analysis_options.clone(), input.options.clone())
@@ -1892,7 +1917,7 @@ impl WorkspaceResources {
         };
         let mut acquisition = IncludeAcquisition {
             candidate: self.clone(),
-            drafts: BTreeMap::new(),
+            transactions: BTreeMap::new(),
             root_scope,
             allowed_roots,
             admitted: BTreeSet::new(),
@@ -1913,14 +1938,12 @@ impl WorkspaceResources {
                         &SharedCancellation(cancellation),
                     ) {
                         WorkspaceAnalysisStep::Complete(draft) => {
-                            (acquisition.commit()?, AnalyzedRootOutcome::Complete(draft))
+                            (Some(acquisition), AnalyzedRootOutcome::Complete(draft))
                         }
                         WorkspaceAnalysisStep::Failed(error) => {
-                            (self.clone(), AnalyzedRootOutcome::Failed(error))
+                            (None, AnalyzedRootOutcome::Failed(error))
                         }
-                        WorkspaceAnalysisStep::Cancelled => {
-                            (self.clone(), AnalyzedRootOutcome::Cancelled)
-                        }
+                        WorkspaceAnalysisStep::Cancelled => (None, AnalyzedRootOutcome::Cancelled),
                         WorkspaceAnalysisStep::NeedResource(_) => {
                             return Err(
                                 "analysis requested a resource after preprocessing completed"
@@ -1929,7 +1952,7 @@ impl WorkspaceResources {
                         }
                     };
                     return Ok(AnalyzedRoot {
-                        candidate,
+                        acquisition: candidate,
                         root: input.root.clone(),
                         canonical_options: options,
                         outcome,
@@ -1940,7 +1963,7 @@ impl WorkspaceResources {
                     let include_interests =
                         acquisition.admitted_dependencies(failure.dependencies());
                     return Ok(AnalyzedRoot {
-                        candidate: self.clone(),
+                        acquisition: None,
                         root: input.root.clone(),
                         canonical_options: options,
                         outcome: AnalyzedRootOutcome::Failed(failure.into_error()),
@@ -1949,7 +1972,7 @@ impl WorkspaceResources {
                 }
                 WorkspacePreprocessStep::Cancelled => {
                     return Ok(AnalyzedRoot {
-                        candidate: self.clone(),
+                        acquisition: None,
                         root: input.root.clone(),
                         canonical_options: options,
                         outcome: AnalyzedRootOutcome::Cancelled,
@@ -1982,7 +2005,7 @@ impl WorkspaceResources {
         analyzed: AnalyzedRoot,
     ) -> Result<Option<WorkspaceAnalysis>, String> {
         let AnalyzedRoot {
-            candidate,
+            acquisition,
             root,
             canonical_options,
             outcome,
@@ -1996,11 +2019,13 @@ impl WorkspaceResources {
             self.watch_include_interests(&root, include_interests);
             return Ok(None);
         }
+        let acquisition = acquisition
+            .ok_or_else(|| "completed analysis is missing include acquisition state".to_owned())?;
         // Publication is decided on the copy, so installing it below is the last
         // step and cannot fail. Finalising against the live state instead would
         // leave the acquired includes installed with no analysis to justify them
         // whenever that check rejected the draft.
-        let mut candidate = candidate;
+        let mut candidate = acquisition.commit()?;
         let analysis = candidate
             .inner
             .finalize_draft(draft)
@@ -2250,7 +2275,40 @@ impl WorkspaceResources {
 struct ReadCandidate {
     source_id: LogicalSourceId,
     text: Arc<str>,
-    binding: FilesystemResourceBinding,
+    binding: IncludeFilesystemBinding,
+}
+
+fn read_include_candidate(
+    transaction: &mut IncludeFilesystemTransaction,
+    path: &Path,
+) -> Result<Option<ReadCandidate>, String> {
+    let uri = Url::from_file_path(path)
+        .map_err(|()| format!("cannot convert workspace path to URI: {}", path.display()))?;
+    let source_id = LogicalSourceId::new(uri.to_string()).map_err(|error| error.to_string())?;
+    Ok(
+        match transaction
+            .read_utf8_within_budget(IncludeFilesystemPathRequest::new(source_id, path))
+        {
+            IncludeFilesystemBudgetedOutcome::Found(source) => {
+                let (source_id, text, binding) = source.into_parts();
+                Some(ReadCandidate {
+                    source_id,
+                    text,
+                    binding,
+                })
+            }
+            IncludeFilesystemBudgetedOutcome::NotFound(_) => None,
+            IncludeFilesystemBudgetedOutcome::BudgetExhausted { .. } => {
+                return Err(format!(
+                    "the project read budget is spent before {}",
+                    path.display()
+                ));
+            }
+            IncludeFilesystemBudgetedOutcome::Failed(failed) => {
+                return Err(failed.error().to_string());
+            }
+        },
+    )
 }
 
 /// Why one discovered document could not be read.
@@ -2263,17 +2321,9 @@ enum ScanReadError {
     /// allows, not that the filesystem cannot be trusted. The initial scan skips
     /// the document, while analysing one still fails on the same limits, because
     /// a document analysed without its includes is a different document.
-    Budget(String),
+    Budget,
     /// The read cannot be trusted or the request itself is invalid.
     Other(String),
-}
-
-impl ScanReadError {
-    fn message(self) -> String {
-        match self {
-            Self::Budget(message) | Self::Other(message) => message,
-        }
-    }
 }
 
 fn read_scan_candidate(
@@ -2291,19 +2341,14 @@ fn read_scan_candidate(
     let outcome = filesystem
         .read_utf8_within_budget(source_id, path)
         .map_err(|error| ScanReadError::Other(error.to_string()))?
-        .ok_or_else(|| {
-            ScanReadError::Budget(format!(
-                "the project read budget is spent before {}",
-                path.display()
-            ))
-        })?;
+        .ok_or(ScanReadError::Budget)?;
     Ok(match outcome {
         FilesystemReadOutcome::Found(file) => {
             let (source_id, text, binding) = file.into_parts_with_binding();
             Some(ReadCandidate {
                 source_id,
                 text,
-                binding,
+                binding: binding.into(),
             })
         }
         FilesystemReadOutcome::NotFound { .. } => None,

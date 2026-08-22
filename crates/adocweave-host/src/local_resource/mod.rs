@@ -837,6 +837,19 @@ impl LocalFilesystemSession {
         }
     }
 
+    pub(crate) fn supersede_active_draft(&mut self) -> Result<(), FilesystemDraftError> {
+        if self.active_draft.load(Ordering::Acquire) == 0 {
+            return Ok(());
+        }
+        let revision = self
+            .revision
+            .checked_add(1)
+            .ok_or(FilesystemDraftError::SessionRevisionExhausted)?;
+        self.revision = revision;
+        self.active_draft.store(0, Ordering::Release);
+        Ok(())
+    }
+
     #[cfg(test)]
     fn read_utf8_after_open(
         &mut self,
@@ -1550,6 +1563,9 @@ impl LocalFilesystemDraft {
     /// starts keeps that waste out of the counters, and keeps the draft from
     /// taking binding generations that no commit will ever justify.
     fn ensure_operation_can_start(&self) -> Result<(), FilesystemDraftError> {
+        if self.lease.active.load(Ordering::Acquire) != self.lease.token {
+            return Err(FilesystemDraftError::InvalidDraft);
+        }
         if self.poisoned {
             return Err(FilesystemDraftError::PoisonedDraft);
         }

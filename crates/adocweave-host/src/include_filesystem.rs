@@ -78,6 +78,13 @@ impl IncludeFilesystemPathRequest {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IncludeFilesystemBinding(FilesystemResourceBinding);
 
+impl From<FilesystemResourceBinding> for IncludeFilesystemBinding {
+    /// Wraps a claim returned by a lower-level scan without exposing it again.
+    fn from(binding: FilesystemResourceBinding) -> Self {
+        Self(binding)
+    }
+}
+
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct IncludeWatchCandidate(PathBuf);
 
@@ -126,6 +133,10 @@ impl IncludeFilesystemSource {
 
     pub fn watch_candidates(&self) -> &[IncludeWatchCandidate] {
         &self.watch_candidates
+    }
+
+    pub fn into_parts(self) -> (LogicalSourceId, Arc<str>, IncludeFilesystemBinding) {
+        (self.source_id, self.source, self.binding)
     }
 }
 
@@ -282,6 +293,19 @@ impl IncludeFilesystemJob {
             draft: Some(session.draft(&self.coordinator)?),
             coordinator: self.coordinator.clone(),
         })
+    }
+
+    /// Invalidates an older detached candidate and starts its replacement.
+    ///
+    /// Native watch updates use this when they must remain atomic while an
+    /// analysis still owns an unpublished transaction for the same session.
+    /// The superseded transaction can neither perform more I/O nor commit.
+    pub fn superseding_transaction(
+        &self,
+        session: &mut LocalFilesystemSession,
+    ) -> Result<IncludeFilesystemTransaction, FilesystemDraftError> {
+        session.supersede_active_draft()?;
+        self.transaction(session)
     }
 
     pub fn usage(&self) -> Result<FilesystemJobUsage, FilesystemJobError> {

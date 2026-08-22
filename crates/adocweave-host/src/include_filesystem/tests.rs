@@ -298,6 +298,46 @@ fn live_mutation_makes_an_atomic_transaction_stale() {
     );
 }
 
+#[test]
+fn superseding_transaction_rejects_old_work_and_commits_only_its_candidate() {
+    let root = TestDir::new("superseding-transaction");
+    let old_path = root.path().join("old.adoc");
+    let new_path = root.path().join("new.adoc");
+    fs::write(&old_path, "old").expect("old source");
+    fs::write(&new_path, "replacement").expect("new source");
+    let mut session = session(root.path(), 1_024);
+    let job = IncludeFilesystemJob::new(FilesystemJobLimits::unbounded()).expect("job");
+    let mut old = job.transaction(&session).expect("old transaction");
+    assert!(matches!(
+        old.read_utf8_within_budget(path_request("old", &old_path)),
+        IncludeFilesystemBudgetedOutcome::Found(_)
+    ));
+
+    let mut replacement = job
+        .superseding_transaction(&mut session)
+        .expect("replacement transaction");
+    let IncludeFilesystemBudgetedOutcome::Failed(failed) =
+        old.read_utf8_within_budget(path_request("old-again", &old_path))
+    else {
+        panic!("superseded transaction must reject later work");
+    };
+    assert_eq!(failed.error(), &FilesystemDraftError::InvalidDraft);
+    assert_eq!(
+        old.commit(&mut session),
+        Err(FilesystemDraftError::InvalidDraft)
+    );
+    assert!(matches!(
+        replacement.read_utf8_within_budget(path_request("new", &new_path)),
+        IncludeFilesystemBudgetedOutcome::Found(_)
+    ));
+    replacement
+        .commit(&mut session)
+        .expect("commit replacement");
+    job.finish().expect("finish job");
+
+    assert_eq!(session.budget().bytes(), "replacement".len() as u64);
+}
+
 #[cfg(unix)]
 #[test]
 fn live_read_and_inspection_reject_symlink_escape() {

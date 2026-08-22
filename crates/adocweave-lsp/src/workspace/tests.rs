@@ -31,13 +31,13 @@ impl Drop for TestDirectory {
 /// is installed with [`WorkspaceResources::apply_analyzed_root`].
 fn analyze_root(resources: &mut WorkspaceResources, root: &Url) -> Result<AnalyzedRoot, String> {
     let input = resources.input(root)?;
-    let job = FilesystemJobCoordinator::new(document_analysis_job_limits())
+    let job = IncludeFilesystemJob::new(document_analysis_job_limits())
         .map_err(|error| error.to_string())?;
     resources.analyze_root_detached(
         &input,
         &adocweave::AnalysisOptions::default(),
         &NeverCancel,
-        &job,
+        job,
     )
 }
 
@@ -583,7 +583,24 @@ fn a_result_from_an_older_generation_installs_nothing() {
     let included_uri = Url::from_file_path(&included).expect("included URI");
     let mut resources = WorkspaceResources::default();
     resources.load_roots(&[root_uri]).expect("load workspace");
+    let source_id = uri_id(&source_uri).expect("source ID");
+    let scope = resources.resource_projects[&source_id].clone();
+    let filesystem = Arc::clone(&resources.filesystems[&scope]);
+    let retained_before_analysis = filesystem
+        .lock()
+        .expect("filesystem session")
+        .budget()
+        .bytes();
     let analyzed = analyze_root(&mut resources, &source_uri).expect("workspace analysis");
+    assert_eq!(
+        filesystem
+            .lock()
+            .expect("filesystem session")
+            .budget()
+            .bytes(),
+        retained_before_analysis,
+        "detached analysis must not commit include bytes before adoption"
+    );
 
     // The workspace moves on before the result comes back.
     std::fs::write(&unrelated, "unrelated\n").expect("unrelated source");
