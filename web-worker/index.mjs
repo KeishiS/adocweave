@@ -14,7 +14,7 @@ export {
   BROWSER_PACKAGE_VERSION,
   PACKAGE_VERSION,
 } from "./contracts.mjs";
-export { PROTOCOL_SCHEMA_VERSION } from "./protocol.generated.mjs";
+export { PROTOCOL_SCHEMA_VERSION } from "./worker-protocol.mjs";
 
 export function defaultAssetUrls(baseUrl = import.meta.url) {
   return {

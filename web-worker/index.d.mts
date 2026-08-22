@@ -1,14 +1,16 @@
-import type {
-  AdocWeaveWasmResponse,
-  AdocWeaveError,
-  UpdateRequest,
-} from "./protocol.generated.d.mts";
+import type { WasmRequest, WasmResponse } from "./protocol.d.mts";
+import type { AdocWeaveError } from "./worker-protocol.d.mts";
 
-export type * from "./protocol.generated.d.mts";
-export { PROTOCOL_SCHEMA_VERSION } from "./protocol.generated.mjs";
+export type * from "./protocol.d.mts";
+export type { AdocWeaveError, WorkerRequest, WorkerResponse } from "./worker-protocol.d.mts";
+export { PROTOCOL_SCHEMA_VERSION } from "./worker-protocol.mjs";
+
+/// 利用側が使う名前。wire型はRustの定義から生成するため、公開名だけここで与えます。
+export type UpdateRequest = WasmRequest;
+export type AdocWeaveWasmResponse = WasmResponse;
 
 export type AdocWeaveResult =
-  Omit<AdocWeaveWasmResponse, "version"> & { sourceVersion: number };
+  Omit<WasmResponse, "version"> & { sourceVersion: number };
 
 export interface AdocWeaveClientOptions {
   workerUrl: string | URL;

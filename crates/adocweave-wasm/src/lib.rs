@@ -7,33 +7,29 @@ use adocweave::{CancellationCheck, NeverCancel, ParseError, SourceId, VERSION};
 
 mod preprocess_projection;
 mod preprocess_wire;
-mod preprocess_wire_generated;
-mod protocol_generated;
+mod protocol;
 mod render_input_conversion;
 mod render_input_normalization;
 mod render_input_wire;
-mod render_input_wire_generated;
 mod request_conversion;
-mod request_enum_generated;
+mod request_enums;
 mod request_normalization;
 mod request_wire;
-mod request_wire_generated;
 mod response_projection;
 mod response_wire;
-mod response_wire_generated;
-mod shared_wire_generated;
+mod shared_wire;
 pub use preprocess_wire::{
     WasmAnalysisPreprocessInput, WasmError, WasmPreprocessOptions, WasmPreprocessRequest,
     WasmPreprocessResponse, WasmResource, WasmSafeMode, WasmSourceMapSegment, WasmSourceMapping,
 };
-pub use protocol_generated::{PROTOCOL_SCHEMA_VERSION, WORKER_PROTOCOL_VERSION, WasmProductSet};
+pub use protocol::{PROTOCOL_SCHEMA_VERSION, WORKER_PROTOCOL_VERSION, WasmProductSet};
 pub use render_input_wire::{
     WasmCitationOutcome, WasmCitationSegment, WasmGeneratedBibliography,
     WasmGeneratedBibliographyEntry, WasmReferenceFailureKind, WasmReferenceNotice,
     WasmReferenceOutcome, WasmRenderInputs, WasmResolvedCitation, WasmResolvedReference,
     WasmResolvedResource, WasmResourceFailureKind, WasmResourceOutcome,
 };
-pub use request_enum_generated::{
+pub use request_enums::{
     WasmDocumentMode, WasmSyntaxMode, WasmUnknownRole, WasmUnknownSourceLanguage,
     WasmUnresolvedReferencePresentation,
 };
@@ -47,7 +43,7 @@ pub use request_wire::{
 use response_projection::parse_optional_product;
 use response_projection::{enforce_output_limit, project_response};
 pub use response_wire::*;
-pub use shared_wire_generated::{WasmMathLanguage, WasmSeverity};
+pub use shared_wire::{WasmMathLanguage, WasmSeverity};
 
 pub fn preprocess_request(
     request: WasmPreprocessRequest,

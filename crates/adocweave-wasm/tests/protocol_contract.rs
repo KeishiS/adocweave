@@ -226,22 +226,16 @@ fn public_request_wire_types_match_the_request_corpus_fixture() {
 fn request_modules_keep_wire_normalization_conversion_and_execution_one_way() {
     const FACADE: &str = include_str!("../src/lib.rs");
     const WIRE: &str = include_str!("../src/request_wire.rs");
-    const WIRE_GENERATED: &str = include_str!("../src/request_wire_generated.rs");
     const NORMALIZATION: &str = include_str!("../src/request_normalization.rs");
     const CONVERSION: &str = include_str!("../src/request_conversion.rs");
-    const RENDER_GENERATED: &str = include_str!("../src/render_input_wire_generated.rs");
     const RENDER_WIRE: &str = include_str!("../src/render_input_wire.rs");
     const RENDER_NORMALIZATION: &str = include_str!("../src/render_input_normalization.rs");
     const RENDER_CONVERSION: &str = include_str!("../src/render_input_conversion.rs");
 
-    assert!(WIRE.contains("protocol/public-api.json"));
-    assert!(WIRE.contains("request_wire_generated"));
+    assert!(WIRE.contains("pub struct WasmRequest"));
     assert!(!WIRE.contains("adocweave::"));
     assert!(!WIRE.contains("fn normalize"));
     assert!(!WIRE.contains("ExecutionRequest"));
-    assert!(WIRE_GENERATED.starts_with("// @generated"));
-    assert!(WIRE_GENERATED.contains("pub struct WasmRequest"));
-    assert!(!WIRE_GENERATED.contains("adocweave::"));
 
     assert!(NORMALIZATION.contains("pub(crate) struct NormalizedRequest"));
     assert!(!NORMALIZATION.contains("adocweave::"));
@@ -264,10 +258,7 @@ fn request_modules_keep_wire_normalization_conversion_and_execution_one_way() {
     assert!(FACADE.contains("request_conversion::convert(request)?"));
     assert!(FACADE.contains("fn execute_request("));
 
-    assert!(RENDER_GENERATED.starts_with("// @generated"));
-    assert!(RENDER_GENERATED.contains("pub struct WasmRenderInputs"));
-    assert!(!RENDER_GENERATED.contains("adocweave::"));
-    assert!(RENDER_WIRE.contains("render_input_wire_generated"));
+    assert!(RENDER_WIRE.contains("pub struct WasmRenderInputs"));
     assert!(!RENDER_WIRE.contains("adocweave::"));
     assert!(RENDER_NORMALIZATION.contains("pub(crate) struct NormalizedRenderInputs"));
     assert!(!RENDER_NORMALIZATION.contains("adocweave::"));
@@ -440,17 +431,15 @@ fn generated_preprocess_wire_keeps_the_public_api_and_schema_defaults() {
         &schema,
     );
 
-    const GENERATED: &str = include_str!("../src/preprocess_wire_generated.rs");
-    assert!(GENERATED.starts_with("// @generated"));
+    const PREPROCESS_WIRE: &str = include_str!("../src/preprocess_wire.rs");
     for name in [
         "WasmPreprocessResponse",
         "WasmSourceMapSegment",
         "WasmSourceMapping",
         "WasmError",
     ] {
-        assert!(GENERATED.contains(name), "{name}");
+        assert!(PREPROCESS_WIRE.contains(name), "{name}");
     }
-    assert!(!GENERATED.contains("adocweave::"));
 }
 
 #[test]
@@ -506,15 +495,14 @@ fn generated_request_enums_keep_the_public_api_and_schema_defaults() {
         assert_eq!(default_value, expected, "{name} default JSON value");
     }
 
-    const GENERATED: &str = include_str!("../src/request_enum_generated.rs");
-    assert!(GENERATED.starts_with("// @generated"));
+    const REQUEST_ENUMS: &str = include_str!("../src/request_enums.rs");
     for name in [
         "WasmSyntaxMode",
         "WasmDocumentMode",
         "WasmUnknownSourceLanguage",
         "WasmUnresolvedReferencePresentation",
     ] {
-        assert!(GENERATED.contains(&format!("pub enum {name}")));
+        assert!(REQUEST_ENUMS.contains(&format!("pub enum {name}")));
     }
 }
 

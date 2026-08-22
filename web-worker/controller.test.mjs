@@ -12,7 +12,7 @@ import {
   WORKER_PROTOCOL_VERSION as GENERATED_WORKER_PROTOCOL_VERSION,
   validateClientError,
   validateWorkerMessage,
-} from "./protocol.generated.mjs";
+} from "./worker-protocol.mjs";
 
 function harness(process = (request) => request) {
   const messages = [];

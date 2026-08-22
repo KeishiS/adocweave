@@ -1,6 +1,6 @@
 import { WORKER_PROTOCOL_VERSION } from "./controller.mjs";
 import { PACKAGE_VERSION } from "./contracts.mjs";
-import { validateWorkerMessage } from "./protocol.generated.mjs";
+import { validateWorkerMessage } from "./worker-protocol.mjs";
 
 export class AdocWeaveClient {
   #options;

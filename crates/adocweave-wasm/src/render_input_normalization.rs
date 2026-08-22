@@ -3,7 +3,7 @@
 use crate::render_input_wire::{
     WasmCitationOutcome, WasmReferenceOutcome, WasmRenderInputs, WasmResourceOutcome,
 };
-use crate::render_input_wire_generated::MAX_SAFE_INTEGER;
+use crate::render_input_wire::MAX_SAFE_INTEGER;
 use crate::{WasmError, WasmLimits, WasmOutputLimits};
 
 /// Render inputs whose count and allocation limits were validated.
