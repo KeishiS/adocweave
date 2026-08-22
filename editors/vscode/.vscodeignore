@@ -2,6 +2,7 @@
 !dist/extension.cjs
 !language-configuration.json
 !syntaxes/asciidoc.tmLanguage.json
+!resources/icon.png
 !README.md
 !LICENSE
 !package.json

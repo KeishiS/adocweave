@@ -27,6 +27,7 @@ const allowed: ReadonlySet<string> = new Set([
   "extension/dist/extension.cjs",
   "extension/language-configuration.json",
   "extension/package.json",
+  "extension/resources/icon.png",
   "extension/syntaxes/asciidoc.tmLanguage.json",
 ]);
 const maximumBytes = 5 * 1024 * 1024;
@@ -54,6 +55,7 @@ function normalizedPackage(scratch: string, suffix: string): NormalizedPackage {
   execFileSync("node", ["scripts/build.mts"], { cwd: extensionRoot, stdio: "inherit" });
   const stage = join(scratch, `stage-${suffix}`);
   mkdirSync(join(stage, "dist"), { recursive: true });
+  mkdirSync(join(stage, "resources"), { recursive: true });
   mkdirSync(join(stage, "syntaxes"), { recursive: true });
   for (const name of ["README.md", "language-configuration.json", "package.json"]) {
     copyFileSync(join(extensionRoot, name), join(stage, name));
@@ -62,6 +64,7 @@ function normalizedPackage(scratch: string, suffix: string): NormalizedPackage {
   // both texts: extension registries and editors only detect a file named LICENSE.
   copyFileSync(join(extensionRoot, "LICENSE"), join(stage, "LICENSE"));
   copyFileSync(join(extensionRoot, "dist", "extension.cjs"), join(stage, "dist", "extension.cjs"));
+  copyFileSync(join(extensionRoot, "resources", "icon.png"), join(stage, "resources", "icon.png"));
   copyFileSync(
     join(extensionRoot, "syntaxes", "asciidoc.tmLanguage.json"),
     join(stage, "syntaxes", "asciidoc.tmLanguage.json"),

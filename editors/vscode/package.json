@@ -24,6 +24,7 @@
     "adoc",
     "language-server"
   ],
+  "icon": "resources/icon.png",
   "main": "./dist/extension.cjs",
   "activationEvents": [
     "onLanguage:asciidoc"
