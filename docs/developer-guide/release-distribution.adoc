@@ -106,9 +106,10 @@ VSIXは固定したNode.js依存とlockfileからbundleし、runtimeの``node_mo
 同梱fileが許可一覧と完全に一致すること、package sizeおよび機械固有pathの不在を確認します。公開するbyte列が
 入力だけから決まることは、成果物を公開する経路で同じsourceからもう一度構築してSHA-256を比較して確認します。
 VS Code拡張とZed拡張はLanguage Serverを同梱せず、取得、検証、展開、cache、更新および削除を実装しません。
-利用者が絶対pathで指定した実行ファイルを優先し、次にeditor processから見える``PATH``を使用します。
-見つからない場合は共通の導入文書へ案内します。共有されたprojectや未信頼ワークスペースの設定から任意の
-実行ファイルを起動しません。Language Server processの起動、標準入出力、初期化、終了および再起動は、
+エディターで有効な設定に絶対pathで指定した実行ファイルを優先し、次にeditor processから見える``PATH``を使用します。
+見つからない場合は共通の導入文書へ案内します。未信頼のprojectまたはworktreeの設定から任意の実行ファイルを
+起動しません。VS Codeは未信頼ワークスペースで拡張を無効にし、ZedはWorktree Trustに従います。
+Language Server processの起動、標準入出力、初期化、終了および再起動は、
 各editorの標準LSP client APIへ委ねます。
 
 互換性は製品バージョンやAdocWeave固有のAPI世代ではなく、LSPの初期化で交換する標準capabilityから判断します。

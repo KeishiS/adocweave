@@ -31,7 +31,8 @@
   ],
   "capabilities": {
     "untrustedWorkspaces": {
-      "supported": false
+      "supported": false,
+      "description": "AdocWeave starts a Language Server process that reads documents in the workspace."
     }
   },
   "contributes": {

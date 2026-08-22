@@ -15,7 +15,12 @@ import {
   validateArchiveEntries,
   vscodePackageContract,
 } from "./platform-contract.mjs";
-import { loadDistributionPlan, productIdentity, selectProduct } from "./product-release.mjs";
+import {
+  loadDistributionPlan,
+  productIdentity,
+  selectProduct,
+  validateDistributionManifest,
+} from "./product-release.mjs";
 
 const runtime = createRuntimeAdapters({
   fileSystem: nodeFileSystem,
@@ -70,16 +75,14 @@ const manifestPath = manifestArgument
 const identity = productIdentity(product, { plan: distributionPlan });
 const manifest = existsSync(manifestPath)
   ? JSON.parse(readFileSync(manifestPath, "utf8"))
-  : {
-      product,
-      productVersion: identity.version,
-      schemaVersion: 4,
-    };
-if (manifest.schemaVersion !== 4 || manifest.product !== product || manifest.productVersion !== identity.version) {
-  throw new Error(`distribution manifest does not describe ${product}`);
+  : undefined;
+if (manifest) {
+  validateDistributionManifest(manifest, distributionPlan);
+  if (manifest.product !== product || manifest.productVersion !== identity.version) {
+    throw new Error(`distribution manifest does not describe ${product}`);
+  }
 }
-const version = manifest.productVersion;
-if (typeof version !== "string" || !version) throw new Error("manifest has no productVersion");
+const version = manifest?.productVersion ?? identity.version;
 const requiredAssets = requiredProductInstallationAssets(product, target, version, platform.archive);
 const missingAssets = missingInstallationAssets(
   readdirSync(candidate, { withFileTypes: true })

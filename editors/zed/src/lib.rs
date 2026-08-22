@@ -16,12 +16,9 @@ impl zed::Extension for AdocWeaveExtension {
         worktree: &zed::Worktree,
     ) -> zed::Result<zed::Command> {
         let settings = zed::settings::LspSettings::for_worktree(SERVER_NAME, worktree)?;
-        let command = if let Some(path) = settings.binary.and_then(|binary| binary.path) {
-            if !is_absolute_path(&path, zed::current_platform().0) {
-                return Err(format!(
-                    "lsp.{SERVER_NAME}.binary.path must be an absolute path"
-                ));
-            }
+        let command = if let Some(path) =
+            configured_server_path(settings, zed::current_platform().0)?
+        {
             path
         } else if let Some(command) = worktree.which(SERVER_EXECUTABLE) {
             command
@@ -32,6 +29,21 @@ impl zed::Extension for AdocWeaveExtension {
         };
         Ok(server_command(command, worktree.shell_env()))
     }
+}
+
+fn configured_server_path(
+    settings: zed::settings::LspSettings,
+    os: zed::Os,
+) -> Result<Option<String>, String> {
+    let Some(path) = settings.binary.and_then(|binary| binary.path) else {
+        return Ok(None);
+    };
+    if !is_absolute_path(&path, os) {
+        return Err(format!(
+            "lsp.{SERVER_NAME}.binary.path must be an absolute path"
+        ));
+    }
+    Ok(Some(path))
 }
 
 fn server_command(command: String, env: Vec<(String, String)>) -> zed::Command {
@@ -70,6 +82,8 @@ fn windows_unc_path(path: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
 
     #[test]
@@ -97,6 +111,35 @@ mod tests {
         assert!(!is_absolute_path("bin/adocweave-lsp", zed::Os::Linux));
         assert!(!is_absolute_path(r".\adocweave-lsp.exe", zed::Os::Windows));
         assert!(!is_absolute_path(r"\\server", zed::Os::Windows));
+    }
+
+    #[test]
+    fn configured_path_ignores_arguments_and_environment() {
+        let settings = zed::settings::LspSettings {
+            binary: Some(zed::settings::CommandSettings {
+                path: Some("/opt/adocweave-lsp".to_owned()),
+                arguments: Some(vec!["--unexpected".to_owned()]),
+                env: Some(HashMap::from([("UNEXPECTED".to_owned(), "1".to_owned())])),
+            }),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            configured_server_path(settings, zed::Os::Linux),
+            Ok(Some("/opt/adocweave-lsp".to_owned()))
+        );
+        assert!(configured_server_path(
+            zed::settings::LspSettings {
+                binary: Some(zed::settings::CommandSettings {
+                    path: Some("relative/adocweave-lsp".to_owned()),
+                    arguments: None,
+                    env: None,
+                }),
+                ..Default::default()
+            },
+            zed::Os::Linux,
+        )
+        .is_err());
     }
 }
 

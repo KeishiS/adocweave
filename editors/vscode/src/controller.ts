@@ -8,6 +8,10 @@ import {
 import { selectServer, type SelectedServer } from "./server-selection.js";
 
 const STOP_TIMEOUT_MS = 5_000;
+const INSTALLATION_GUIDE = vscode.Uri.parse(
+  "https://github.com/KeishiS/adocweave/blob/main/docs/user-guide/release-installation.adoc#editor-language-server",
+);
+const OPEN_INSTALLATION_GUIDE = "Open installation guide";
 
 export class ServerController implements vscode.Disposable {
   readonly #output: vscode.LogOutputChannel;
@@ -25,11 +29,11 @@ export class ServerController implements vscode.Disposable {
     this.#queue = this.#queue
       .catch(() => undefined)
       .then(async () => {
+        await this.#stop();
+        if (this.#disposed || generation !== this.#generation) return;
         const selected = await this.#select(generation);
         if (!selected || this.#disposed || generation !== this.#generation) return;
-        await this.#stop();
-        if (!this.#disposed && generation === this.#generation)
-          await this.#start(generation, selected);
+        await this.#start(generation, selected);
       })
       .catch((error: unknown) => {
         if (generation !== this.#generation || this.#disposed) return;
@@ -39,9 +43,11 @@ export class ServerController implements vscode.Disposable {
           code === "language-server-not-found"
             ? " Install adocweave-lsp and add it to PATH, or set adocweave.server.path to its absolute path."
             : "";
-        void vscode.window.showErrorMessage(
-          `AdocWeave cannot start the Language Server: ${code}.${guidance}`,
-        );
+        const message = `AdocWeave cannot start the Language Server: ${code}.${guidance}`;
+        void vscode.window.showErrorMessage(message, OPEN_INSTALLATION_GUIDE).then((selection) => {
+          if (selection === OPEN_INSTALLATION_GUIDE)
+            void vscode.env.openExternal(INSTALLATION_GUIDE);
+        });
       });
     return this.#queue;
   }

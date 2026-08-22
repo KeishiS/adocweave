@@ -1,8 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync } from "node:fs";
+import { copyFileSync, mkdirSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const tsc = fileURLToPath(new URL("../node_modules/typescript/bin/tsc", import.meta.url));
+rmSync("dist-test", { force: true, recursive: true });
 execFileSync(process.execPath, [tsc, "-p", "tsconfig.test.json"], { stdio: "inherit" });
 
 // The compiled extension host tests read these fixtures next to

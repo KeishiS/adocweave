@@ -442,7 +442,7 @@ VS Code拡張とZed拡張はLanguage Serverを同梱せず、download、導入�
 
 拡張は次の順序でLanguage Serverを探します。
 
-. エディターの利用者設定で明示した絶対path
+. エディターで有効な設定に明示した絶対path
 . エディターprocessから見える``PATH``上の``adocweave-lsp``
 . この文書を参照する導入案内
 
@@ -450,9 +450,9 @@ VS Code拡張とZed拡張はLanguage Serverを同梱せず、download、導入�
 起動しません。エディターをGUIから起動すると、shellの起動ファイルで設定した``PATH``が反映されない場合があります。
 その場合はエディターを起動する環境へ``PATH``を設定するか、導入した実行ファイルの絶対pathを利用者設定へ記載します。
 
-共有されたprojectや未信頼ワークスペースの設定から実行ファイルを選びません。VS Codeでは未信頼ワークスペースに対して
-拡張自体を起動しません。Zedでは本体のWorktree Trustに従い、未信頼worktreeの設定を読み込む処理やLanguage Serverを
-独自に導入する処理を拡張に設けません。
+VS Codeでは設定をmachine scopeに限定し、未信頼ワークスペースに対して拡張自体を起動しません。Zedでは本体の
+Worktree Trustに従います。未信頼worktreeではZedがproject設定を適用せず、Language Serverを起動しません。
+信頼したworktreeではproject設定の絶対pathも候補になります。拡張にはZedの信頼判定を迂回する処理を設けません。
 
 拡張はLSPの初期化時にLanguage Serverが返す標準capabilityから、診断、補完および定義への移動などの
 利用可能な機能を判断します。拡張とLanguage Serverの製品バージョンや``lspApiVersion``の一致は要求しません。
@@ -511,8 +511,9 @@ VS Codeではmachine scopeの``adocweave.server.path``へ導入済み実行フ�
 === 旧拡張が残したLanguage Serverキャッシュの削除
 
 managed downloadに対応していた旧版の拡張は、更新後に使用されないLanguage Serverをeditorの保存領域へ残す場合があります。
-VS Code拡張を更新する前なら、旧版の``AdocWeave: Remove Managed Language Server``を実行すると、拡張が所有する
-キャッシュだけを削除できます。
+VS Code拡張を更新する前なら、旧版で``adocweave.server.download``を``false``にしてから
+``AdocWeave: Remove Managed Language Server``を実行します。自動取得を無効にしてから削除することで、
+Language Serverの再起動時に同じキャッシュが再作成されることを防ぎます。
 
 すでに更新した場合はeditorを終了し、VS Codeでは拡張のglobal storageにある
 ``adocweave.adocweave-vscode/servers``、ZedではAdocWeave拡張のworking ディレクトリにある

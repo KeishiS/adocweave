@@ -32,6 +32,8 @@ function fixture() {
         tagPrefix: "adocweave-cli/v",
         assetKind: "cli",
         assetName: "adocweave-cli-{target}.zip",
+        archive: "zip",
+        executable: "adocweave{executableSuffix}",
         build: "cargo-dist",
         package: "tool",
       },
@@ -81,7 +83,10 @@ function fixture() {
         buildScript: "tools/package-zed.sh",
       },
     ],
-    targets: [{ triple: "a-target" }, { triple: "b-target" }],
+    targets: [
+      { archive: "zip", executableSuffix: "", triple: "a-target" },
+      { archive: "zip", executableSuffix: "", triple: "b-target" },
+    ],
     releaseMetadata: [
       { name: "adocweave-dist-manifest.json" },
       { name: "adocweave.spdx.json" },
@@ -152,7 +157,15 @@ test("candidateとpublication planへ他製品assetを混在させません", ()
       product: "cli",
       productVersion: "1.2.3",
       sourceCommit: "a".repeat(40),
-      assets: assets.map((name) => ({ kind: "cli", name })),
+      assets: assets.map((name) => ({
+        archive: "zip",
+        byteSize: 1,
+        executable: "adocweave",
+        kind: "cli",
+        name,
+        sha256: "0".repeat(64),
+        target: name.includes("a-target") ? "a-target" : "b-target",
+      })),
     })}\n`,
   );
   const cargoDistPlan = {

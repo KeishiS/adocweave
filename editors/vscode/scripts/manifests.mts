@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 
 /** The fields of the extension `package.json` these scripts read. */
 export interface ExtensionManifest {
-  capabilities?: { untrustedWorkspaces?: { supported?: boolean } };
+  capabilities?: { untrustedWorkspaces?: { description?: string; supported?: boolean } };
   name: string;
   publisher: string;
   version: string;

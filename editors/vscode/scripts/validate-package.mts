@@ -34,6 +34,7 @@ if (
 const serverSettings = packageJson.contributes?.configuration?.properties;
 if (
   packageJson.capabilities?.untrustedWorkspaces?.supported !== false ||
+  !packageJson.capabilities.untrustedWorkspaces.description?.trim() ||
   serverSettings?.["adocweave.server.path"]?.scope !== "machine" ||
   "adocweave.server.download" in (serverSettings ?? {}) ||
   packageJson.contributes?.commands?.some(
