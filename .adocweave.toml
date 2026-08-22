@@ -12,3 +12,17 @@ max-diagnostics = 1000
 newline = "lf"
 final-newline = true
 max-consecutive-blank-lines = 1
+
+# 初期走査から外すディレクトリ。前の4件は組込みの既定値で、書いた内容が既定値を
+# 置き換えるため並べ直しています。最後の1件はこのリポジトリ固有です。
+# permission-limit/limitは`resources.max-files = 1`で3件の文書を持つfixtureであり、
+# 走査すると必ず読み込み上限に達して、editorに解消できない警告が出続けます。
+# CLIの検査対象からは外れないため、このfixtureが固定する出力は引き続き検査します。
+[workspace.scan]
+exclude = [
+  "**/.git",
+  "**/.venv",
+  "**/node_modules",
+  "**/target",
+  "fixtures/local-target/permission-limit/limit",
+]

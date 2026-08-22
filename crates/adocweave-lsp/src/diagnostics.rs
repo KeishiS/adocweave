@@ -88,24 +88,6 @@ pub(super) fn project_problem(
     )
 }
 
-/// Reports something the workspace could not finish, beside results it kept.
-///
-/// Unlike [`workspace_error`], this does not mean the results are unusable: the
-/// severity is a warning because the editor still has a working workspace, just
-/// a smaller one than the folder holds.
-pub(super) fn workspace_notice(message: &str) -> lsp::Diagnostic {
-    lsp::Diagnostic {
-        range: lsp::Range::default(),
-        severity: Some(lsp::DiagnosticSeverity::WARNING),
-        code: Some(lsp::NumberOrString::String(
-            "workspace-scan-incomplete".to_owned(),
-        )),
-        source: Some("adocweave-project".to_owned()),
-        message: message.to_owned(),
-        ..lsp::Diagnostic::default()
-    }
-}
-
 pub(super) fn workspace_error(message: &str) -> lsp::Diagnostic {
     lsp::Diagnostic {
         range: lsp::Range::default(),

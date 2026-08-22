@@ -9,7 +9,9 @@ use adocweave::{CancellationCheck, CancellationToken};
 use adocweave_host::FilesystemJobCoordinator;
 use async_lsp::client_monitor::ClientProcessMonitorLayer;
 use async_lsp::concurrency::ConcurrencyLayer;
-use async_lsp::lsp_types::{PublishDiagnosticsParams, Url, notification, request};
+use async_lsp::lsp_types::{
+    MessageType, PublishDiagnosticsParams, ShowMessageParams, Url, notification, request,
+};
 use async_lsp::panic::CatchUnwindLayer;
 use async_lsp::router::Router;
 use async_lsp::tracing::TracingLayer;
@@ -313,6 +315,17 @@ impl Backend {
                     return ControlFlow::Continue(());
                 };
                 let (jobs, next, recovery_timer) = transition.into_parts();
+                // What the scan could not finish concerns the workspace, not
+                // any one document, so it is announced instead of marking every
+                // open file with a diagnostic nobody can act on from there.
+                if let Some(notice) = state.service.take_scan_notice() {
+                    let _ = state
+                        .client
+                        .notify::<notification::ShowMessage>(ShowMessageParams {
+                            typ: MessageType::WARNING,
+                            message: notice,
+                        });
+                }
                 for job in jobs {
                     state.schedule_analysis(job);
                 }
