@@ -70,7 +70,12 @@ const manifestPath = manifestArgument
 const identity = productIdentity(product, { plan: distributionPlan });
 const manifest = existsSync(manifestPath)
   ? JSON.parse(readFileSync(manifestPath, "utf8"))
-  : { product, productVersion: identity.version, schemaVersion: 3 };
+  : {
+      lspApiVersion: product === "lsp" ? 1 : undefined,
+      product,
+      productVersion: identity.version,
+      schemaVersion: 3,
+    };
 if (manifest.schemaVersion !== 3 || manifest.product !== product || manifest.productVersion !== identity.version) {
   throw new Error(`distribution manifest does not describe ${product}`);
 }
