@@ -43,114 +43,6 @@ pub fn fixture_source(name: &str) -> Option<String> {
         .and_then(|case| case.source)
 }
 
-/// Explicit selection of output products for one analysis.
-///
-/// Parsing always constructs the semantic `Document`; derived products are
-/// opt-in so hosts do not pay to serialize data they do not consume.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ProductSet {
-    pub syntax: bool,
-    pub canonical_ast: bool,
-    pub html: bool,
-    pub attribute_occurrences: bool,
-    pub attribute_queries: bool,
-    pub resource_queries: bool,
-    pub diagnostics: bool,
-    pub symbols: bool,
-    pub projection: bool,
-}
-
-impl ProductSet {
-    pub const fn all() -> Self {
-        Self {
-            syntax: true,
-            canonical_ast: true,
-            html: true,
-            attribute_occurrences: true,
-            attribute_queries: true,
-            resource_queries: true,
-            diagnostics: true,
-            symbols: true,
-            projection: true,
-        }
-    }
-
-    /// The smallest set consumed by the bundled browser client.
-    pub const fn browser_default() -> Self {
-        Self {
-            syntax: false,
-            canonical_ast: false,
-            html: true,
-            attribute_occurrences: false,
-            attribute_queries: false,
-            resource_queries: true,
-            diagnostics: true,
-            symbols: false,
-            projection: true,
-        }
-    }
-}
-
-impl Default for ProductSet {
-    fn default() -> Self {
-        Self::browser_default()
-    }
-}
-
-/// Requested products generated from one owned analysis snapshot.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct DocumentProducts {
-    pub syntax: Option<String>,
-    pub canonical_ast: Option<String>,
-    pub html: Option<String>,
-    pub attribute_occurrences: Option<Vec<crate::attributes::DocumentAttributeOccurrence>>,
-    pub attribute_queries: Option<crate::attributes::AttributeQueryProduct>,
-    pub resource_queries: Option<Vec<crate::resource::ResourceQuery>>,
-    pub diagnostics_json: Option<String>,
-    pub render_diagnostics_json: Option<String>,
-    pub symbols_json: Option<String>,
-    pub projection_json: Option<String>,
-}
-
-pub fn products(
-    analysis: &Analysis,
-    policy: &RenderPolicy,
-    inputs: &RenderInputs,
-    requested: ProductSet,
-) -> DocumentProducts {
-    let html = requested
-        .html
-        .then(|| render_with_inputs(analysis.document(), policy, inputs));
-    DocumentProducts {
-        syntax: requested.syntax.then(|| canonical_syntax(analysis)),
-        canonical_ast: requested
-            .canonical_ast
-            .then(|| canonical_ast(analysis.ast())),
-        attribute_occurrences: requested
-            .attribute_occurrences
-            .then(|| analysis.document_attribute_occurrences().to_vec()),
-        attribute_queries: requested
-            .attribute_queries
-            .then(|| analysis.attribute_query_product()),
-        resource_queries: requested
-            .resource_queries
-            .then(|| analysis.resource_queries()),
-        diagnostics_json: requested
-            .diagnostics
-            .then(|| render_diagnostics_json(analysis.diagnostics())),
-        render_diagnostics_json: requested
-            .html
-            .then(|| render_diagnostics_json(&html.as_ref().expect("HTML requested").diagnostics)),
-        symbols_json: requested
-            .symbols
-            .then(|| render_symbols_json(&document_symbols(analysis.document()))),
-        projection_json: requested
-            .projection
-            .then(|| project(analysis, inputs).render_json()),
-        html: html.map(|output| output.html),
-    }
-}
-
 /// Canonical products derived from exactly one owned analysis snapshot.
 ///
 /// Strings are used at this boundary so native, WASM, and non-Rust hosts compare
@@ -172,24 +64,16 @@ pub fn snapshot(
     policy: &RenderPolicy,
     inputs: &RenderInputs,
 ) -> ConformanceSnapshot {
-    let products = products(analysis, policy, inputs, ProductSet::all());
+    let html = render_with_inputs(analysis.document(), policy, inputs);
     ConformanceSnapshot {
         package_version: crate::VERSION,
-        syntax: products.syntax.expect("all products include syntax"),
-        ast: products
-            .canonical_ast
-            .expect("all products include canonical AST"),
-        diagnostics_json: products
-            .diagnostics_json
-            .expect("all products include diagnostics"),
-        render_diagnostics_json: products
-            .render_diagnostics_json
-            .expect("all products include render diagnostics"),
-        symbols_json: products.symbols_json.expect("all products include symbols"),
-        projection_json: products
-            .projection_json
-            .expect("all products include projection"),
-        html: products.html.expect("all products include HTML"),
+        syntax: canonical_syntax(analysis),
+        ast: canonical_ast(analysis),
+        diagnostics_json: render_diagnostics_json(analysis.diagnostics()),
+        render_diagnostics_json: render_diagnostics_json(&html.diagnostics),
+        symbols_json: render_symbols_json(&document_symbols(analysis.document())),
+        projection_json: project(analysis, inputs).render_json(),
+        html: html.html,
     }
 }
 
@@ -212,7 +96,7 @@ struct CanonicalNode {
     children: Vec<CanonicalNode>,
 }
 
-fn canonical_ast(document: &AstDocument) -> String {
+fn canonical_ast_document(document: &AstDocument) -> String {
     let dto = CanonicalAst {
         schema_version: 2,
         blocks: document.blocks().iter().map(block_node).collect(),
@@ -241,6 +125,14 @@ fn canonical_ast(document: &AstDocument) -> String {
             .collect(),
     };
     serde_json::to_string(&dto).expect("canonical DTO contains owned serializable values")
+}
+
+/// Returns the stable canonical AST JSON for one completed analysis.
+///
+/// This focused serializer is also used by production adapters whose public
+/// protocol intentionally exposes the canonical AST as a JSON string.
+pub fn canonical_ast(analysis: &Analysis) -> String {
+    canonical_ast_document(analysis.ast())
 }
 
 fn block_node(block: &AstBlock) -> CanonicalNode {
@@ -607,7 +499,7 @@ fn range(value: TextRange) -> [u32; 2] {
     [value.start().to_u32(), value.end().to_u32()]
 }
 
-fn canonical_syntax(analysis: &Analysis) -> String {
+pub fn canonical_syntax(analysis: &Analysis) -> String {
     let mut output = analysis.syntax().snapshot();
     output.push_str("Tokens\n");
     for token in analysis.syntax().tokens() {
@@ -660,7 +552,7 @@ mod tests {
             .analyze(".Title\n[#item.role%collapsible,kind=demo]\nText\n")
             .expect("analysis");
         let value: serde_json::Value =
-            serde_json::from_str(&canonical_ast(analysis.ast())).expect("canonical JSON");
+            serde_json::from_str(&canonical_ast(&analysis)).expect("canonical JSON");
         let children = value["blocks"][0]["children"].as_array().expect("children");
         assert_eq!(value["schemaVersion"], 2);
         assert_eq!(children[0]["kind"], "block-title");
@@ -676,7 +568,7 @@ mod tests {
             .analyze("====\ninside\n====\n\n++++\n<tag>\n++++\n")
             .expect("analysis");
         let value: serde_json::Value =
-            serde_json::from_str(&canonical_ast(analysis.ast())).expect("canonical JSON");
+            serde_json::from_str(&canonical_ast(&analysis)).expect("canonical JSON");
         assert_eq!(value["blocks"][0]["kind"], "example-block");
         assert_eq!(value["blocks"][0]["children"][0]["kind"], "paragraph");
         assert_eq!(value["blocks"][1]["kind"], "pass-block");
@@ -689,7 +581,7 @@ mod tests {
             .analyze(".Caption\n[frame=ends,grid=rows,stripes=odd,width=75%]\n|===\n|cell\n|===\n")
             .expect("analysis");
         let value: serde_json::Value =
-            serde_json::from_str(&canonical_ast(analysis.ast())).expect("canonical JSON");
+            serde_json::from_str(&canonical_ast(&analysis)).expect("canonical JSON");
         assert_eq!(value["blocks"][0]["kind"], "table-block");
         let presentation = value["blocks"][0]["children"]
             .as_array()

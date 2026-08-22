@@ -18,6 +18,7 @@ mod request_conversion;
 mod request_enums;
 mod request_normalization;
 mod request_wire;
+mod response_conversion;
 mod response_projection;
 mod response_wire;
 mod shared_wire;
@@ -42,9 +43,7 @@ pub use request_wire::{
     WasmResourceCapabilities, WasmRuleSettings, WasmSourceLanguagePolicy, WasmStylesheet,
     WasmSyntaxOptions,
 };
-#[cfg(test)]
-use response_projection::parse_optional_product;
-use response_projection::{enforce_output_limit, project_response};
+use response_projection::{ResponseProducts, enforce_output_limit, project_response};
 pub use response_wire::*;
 pub use shared_wire::{WasmMathLanguage, WasmSeverity};
 
@@ -141,24 +140,56 @@ fn execute_request(
     }
 
     let render_inputs = render_input_conversion::convert(request.render_inputs, analysis)?;
-    let products = adocweave::output::conformance::products(
-        analysis,
-        &request.render_policy,
-        &render_inputs,
-        request.products,
-    );
+    let requested = request.requested_products;
+    let html = requested.html.then(|| {
+        adocweave::output::html::render_with_inputs(
+            analysis.document(),
+            &request.render_policy,
+            &render_inputs,
+        )
+    });
+    let products = ResponseProducts {
+        syntax: requested
+            .syntax
+            .then(|| adocweave::output::canonical::canonical_syntax(analysis)),
+        canonical_ast: requested
+            .canonical_ast
+            .then(|| adocweave::output::canonical::canonical_ast(analysis)),
+        html,
+        attribute_occurrences: requested
+            .attribute_occurrences
+            .then(|| analysis.document_attribute_occurrences().to_vec()),
+        attribute_queries: requested
+            .attribute_queries
+            .then(|| analysis.attribute_query_product()),
+        resource_queries: requested
+            .resource_queries
+            .then(|| analysis.resource_queries()),
+        diagnostics: requested
+            .diagnostics
+            .then(|| analysis.diagnostics().to_vec()),
+        symbols: requested
+            .symbols
+            .then(|| adocweave::semantic::document_symbols(analysis.document())),
+        projection: requested
+            .projection
+            .then(|| adocweave::output::projection::project(analysis, &render_inputs)),
+    };
     if cancellation.is_cancelled() {
         return Err(cancelled_error());
     }
     let response = project_response(
         products,
-        request.requested_products,
+        requested,
         request.version,
         request.generation,
         analysis,
         request.source_id.as_ref(),
         attribute_projection.as_ref(),
     )?;
+    if cancellation.is_cancelled() {
+        return Err(cancelled_error());
+    }
     enforce_output_limit(&response, request.max_output_bytes)?;
     Ok(response)
 }
@@ -284,12 +315,11 @@ mod bindings {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, BTreeSet};
+    use std::collections::BTreeMap;
 
     use adocweave::output::diagnostics::{LintConfig, RuleSettings, Severity};
     use adocweave::preprocess::{PreprocessOptions, ResourceDocument, ResourceSnapshot};
     use adocweave::{AnalysisOptions, CancellationToken, DiagnosticProfile, Engine};
-    use serde::de::DeserializeOwned;
     use serde_json::json;
 
     use super::*;
@@ -363,180 +393,6 @@ mod tests {
         assert!(response.html.contains("<h1"));
         assert_eq!(response.symbols[0].name, "Title");
         assert_eq!(response.parse.reference_count, 0);
-    }
-
-    #[test]
-    fn core_json_products_reject_unknown_fields_at_every_object_boundary() {
-        let diagnostics = json!([{
-            "id": "diagnostic",
-            "code": "example",
-            "severity": "warning",
-            "message": "message",
-            "range": { "start": 0, "end": 1 },
-            "related": [{
-                "range": { "start": 1, "end": 2 },
-                "message": "related"
-            }],
-            "fixes": [{
-                "title": "fix",
-                "applicability": "always",
-                "edits": [{
-                    "range": { "start": 0, "end": 1 },
-                    "replacement": "replacement"
-                }]
-            }]
-        }]);
-        assert_product_rejects_unknown_fields::<Vec<WasmDiagnostic>>("diagnostics", &diagnostics);
-
-        let symbols: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../fixtures/conformance/full.symbols.json"
-        ))
-        .expect("symbol fixture");
-        assert_product_rejects_unknown_fields::<Vec<WasmDocumentSymbol>>("symbols", &symbols);
-
-        let mut projection: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../fixtures/conformance/full.projection.json"
-        ))
-        .expect("projection fixture");
-        projection["sourceBlocks"] = json!([{
-            "sourceRange": { "start": 0, "end": 4 },
-            "contentRange": { "start": 1, "end": 3 },
-            "title": {
-                "sourceRange": { "start": 0, "end": 1 },
-                "text": "source"
-            },
-            "languageRange": { "start": 1, "end": 2 },
-            "language": "rust",
-            "lineNumbers": true,
-            "startLine": 3,
-            "source": "fn main() {}",
-            "caption": null
-        }]);
-        projection["orderedLists"] = json!([{
-            "sourceRange": { "start": 0, "end": 4 },
-            "start": 1,
-            "reversed": false,
-            "style": "arabic"
-        }]);
-        projection["blockPresentations"] = json!([{
-            "kind": "admonition",
-            "sourceRange": { "start": 0, "end": 4 },
-            "contentRange": { "start": 1, "end": 3 },
-            "title": "Note",
-            "attribution": null,
-            "citation": null,
-            "roles": [],
-            "open": null,
-            "caption": null
-        }]);
-        projection["structure"]["manpage"] = json!({
-            "name": "tool",
-            "section": "1",
-            "purpose": "purpose",
-            "titleRange": { "start": 0, "end": 4 },
-            "nameRange": { "start": 0, "end": 1 },
-            "purposeRange": { "start": 2, "end": 4 }
-        });
-        projection["catalogs"]["footnotes"] = json!([{
-            "number": 1,
-            "id": "note",
-            "definitionRange": { "start": 0, "end": 4 },
-            "contentRange": { "start": 1, "end": 3 },
-            "text": "note",
-            "occurrences": [{ "start": 0, "end": 4 }]
-        }]);
-        projection["catalogs"]["bibliography"] = json!([{
-            "id": "reference",
-            "definitionRange": { "start": 0, "end": 4 },
-            "references": [{ "start": 1, "end": 2 }]
-        }]);
-        projection["catalogs"]["index"] = json!([{
-            "terms": ["term"],
-            "display": "term",
-            "occurrences": [{ "start": 1, "end": 2 }]
-        }]);
-        projection["referenceEdges"][0]["resolution"] = json!({
-            "status": "resolved",
-            "href": "#target",
-            "displayText": "target",
-            "notices": ["reference-resolution-fallback"]
-        });
-        projection["referenceEdges"][1]["resolution"] = json!({
-            "status": "failed",
-            "kind": "missing-reference-target"
-        });
-
-        let target_kinds = projection["referenceEdges"]
-            .as_array()
-            .expect("reference edges")
-            .iter()
-            .map(|edge| edge["target"]["kind"].as_str().expect("target kind"))
-            .collect::<BTreeSet<_>>();
-        assert_eq!(
-            target_kinds,
-            BTreeSet::from(["document", "local", "scheme"])
-        );
-        let resolution_statuses = projection["referenceEdges"]
-            .as_array()
-            .expect("reference edges")
-            .iter()
-            .filter_map(|edge| edge["resolution"]["status"].as_str())
-            .collect::<BTreeSet<_>>();
-        assert_eq!(resolution_statuses, BTreeSet::from(["failed", "resolved"]));
-        assert_product_rejects_unknown_fields::<WasmDocumentProjection>("projection", &projection);
-    }
-
-    fn assert_product_rejects_unknown_fields<T>(name: &str, product: &serde_json::Value)
-    where
-        T: DeserializeOwned,
-    {
-        let source = serde_json::to_string(product).expect("product JSON");
-        parse_optional_product::<T>(Some(&source))
-            .unwrap_or_else(|error| panic!("{name} fixture must be valid: {}", error.message));
-
-        let mut pointers = Vec::new();
-        collect_object_pointers(product, "", &mut pointers);
-        assert!(
-            !pointers.is_empty(),
-            "{name} must contain object boundaries"
-        );
-        for pointer in pointers {
-            let mut mutated = product.clone();
-            mutated
-                .pointer_mut(&pointer)
-                .and_then(serde_json::Value::as_object_mut)
-                .expect("object boundary")
-                .insert("unknownField".to_owned(), json!(true));
-            let source = serde_json::to_string(&mutated).expect("mutated product JSON");
-
-            let error = match parse_optional_product::<T>(Some(&source)) {
-                Ok(_) => panic!("{name}{pointer}: unknown field must fail"),
-                Err(error) => error,
-            };
-            assert_eq!(error.code, "serialization-failed", "{name}{pointer}");
-            assert!(
-                error.message.contains("unknown field `unknownField`"),
-                "{name}{pointer}: {}",
-                error.message
-            );
-        }
-    }
-
-    fn collect_object_pointers(value: &serde_json::Value, pointer: &str, output: &mut Vec<String>) {
-        match value {
-            serde_json::Value::Object(object) => {
-                output.push(pointer.to_owned());
-                for (field, value) in object {
-                    collect_object_pointers(value, &format!("{pointer}/{field}"), output);
-                }
-            }
-            serde_json::Value::Array(array) => {
-                for (index, value) in array.iter().enumerate() {
-                    collect_object_pointers(value, &format!("{pointer}/{index}"), output);
-                }
-            }
-            _ => {}
-        }
     }
 
     #[test]

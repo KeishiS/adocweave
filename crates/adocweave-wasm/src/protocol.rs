@@ -22,33 +22,16 @@ pub struct WasmProductSet {
 
 impl Default for WasmProductSet {
     fn default() -> Self {
-        let products = adocweave::output::conformance::ProductSet::browser_default();
         Self {
-            syntax: products.syntax,
-            canonical_ast: products.canonical_ast,
-            html: products.html,
-            attribute_occurrences: products.attribute_occurrences,
-            attribute_queries: products.attribute_queries,
-            resource_queries: products.resource_queries,
-            diagnostics: products.diagnostics,
-            symbols: products.symbols,
-            projection: products.projection,
-        }
-    }
-}
-
-impl From<WasmProductSet> for adocweave::output::conformance::ProductSet {
-    fn from(value: WasmProductSet) -> Self {
-        Self {
-            syntax: value.syntax,
-            canonical_ast: value.canonical_ast,
-            html: value.html,
-            attribute_occurrences: value.attribute_occurrences,
-            attribute_queries: value.attribute_queries,
-            resource_queries: value.resource_queries,
-            diagnostics: value.diagnostics,
-            symbols: value.symbols,
-            projection: value.projection,
+            syntax: false,
+            canonical_ast: false,
+            html: true,
+            attribute_occurrences: false,
+            attribute_queries: false,
+            resource_queries: true,
+            diagnostics: true,
+            symbols: false,
+            projection: true,
         }
     }
 }

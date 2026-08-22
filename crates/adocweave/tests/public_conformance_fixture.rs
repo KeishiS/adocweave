@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use adocweave::output::conformance::{ProductSet, products};
+use adocweave::output::conformance::{ConformanceSnapshot, snapshot};
 use adocweave::output::html::RenderPolicy;
 use adocweave::resolution::RenderInputs;
 use adocweave::{AnalysisInputs, AnalysisOptions, Engine, SourceId};
@@ -83,7 +83,7 @@ fn manifest() -> Manifest {
     serde_json::from_str(&read("fixtures/public-conformance.json")).expect("valid manifest")
 }
 
-fn generated(case: &Case) -> adocweave::output::conformance::DocumentProducts {
+fn generated(case: &Case) -> ConformanceSnapshot {
     let analysis = Engine::new(AnalysisOptions::default())
         .analyze_with(
             &read(&case.files.source),
@@ -93,11 +93,10 @@ fn generated(case: &Case) -> adocweave::output::conformance::DocumentProducts {
             },
         )
         .expect("public fixture analyzes");
-    products(
+    snapshot(
         &analysis,
         &RenderPolicy::default(),
         &RenderInputs::default(),
-        ProductSet::all(),
     )
 }
 
@@ -325,18 +324,13 @@ fn public_fixtures_match_declared_products_and_stable_contracts() {
         );
 
         let actual = generated(case);
-        let html = actual.html.as_deref().expect("HTML was requested");
+        let html = actual.html.as_str();
         assert_eq!(html, read(&case.files.html), "{}: HTML", case.name);
 
         let expected_projection: Value =
             serde_json::from_str(&read(&case.files.projection)).expect("projection JSON");
-        let actual_projection: Value = serde_json::from_str(
-            actual
-                .projection_json
-                .as_deref()
-                .expect("projection was requested"),
-        )
-        .expect("generated projection JSON");
+        let actual_projection: Value =
+            serde_json::from_str(&actual.projection_json).expect("generated projection JSON");
         assert_eq!(
             actual_projection, expected_projection,
             "{}: projection",
@@ -345,13 +339,8 @@ fn public_fixtures_match_declared_products_and_stable_contracts() {
 
         let expected_diagnostics: Value =
             serde_json::from_str(&read(&case.files.diagnostics)).expect("diagnostics JSON");
-        let actual_diagnostics: Value = serde_json::from_str(
-            actual
-                .diagnostics_json
-                .as_deref()
-                .expect("diagnostics were requested"),
-        )
-        .expect("generated diagnostics JSON");
+        let actual_diagnostics: Value =
+            serde_json::from_str(&actual.diagnostics_json).expect("generated diagnostics JSON");
         assert_eq!(
             actual_diagnostics, expected_diagnostics,
             "{}: diagnostics",
@@ -361,13 +350,9 @@ fn public_fixtures_match_declared_products_and_stable_contracts() {
         let expected_render_diagnostics: Value =
             serde_json::from_str(&read(&case.files.render_diagnostics))
                 .expect("render diagnostics JSON");
-        let actual_render_diagnostics: Value = serde_json::from_str(
-            actual
-                .render_diagnostics_json
-                .as_deref()
-                .expect("render diagnostics were requested"),
-        )
-        .expect("generated render diagnostics JSON");
+        let actual_render_diagnostics: Value =
+            serde_json::from_str(&actual.render_diagnostics_json)
+                .expect("generated render diagnostics JSON");
         assert_eq!(
             actual_render_diagnostics, expected_render_diagnostics,
             "{}: render diagnostics",
@@ -410,25 +395,17 @@ fn public_fixture_regeneration_is_clean() {
     for case in &manifest().cases {
         let actual = generated(case);
         assert_eq!(
-            actual.html.as_deref().expect("HTML was requested"),
+            actual.html,
             read(&case.files.html),
             "{}: regenerated HTML differs",
             case.name
         );
         for (path, generated) in [
-            (
-                &case.files.projection,
-                actual.projection_json.expect("projection was requested"),
-            ),
-            (
-                &case.files.diagnostics,
-                actual.diagnostics_json.expect("diagnostics were requested"),
-            ),
+            (&case.files.projection, actual.projection_json),
+            (&case.files.diagnostics, actual.diagnostics_json),
             (
                 &case.files.render_diagnostics,
-                actual
-                    .render_diagnostics_json
-                    .expect("render diagnostics were requested"),
+                actual.render_diagnostics_json,
             ),
         ] {
             assert_eq!(
@@ -447,35 +424,20 @@ fn public_fixture_regeneration_is_clean() {
 fn regenerate_public_fixture_products() {
     for case in &manifest().cases {
         let actual = generated(case);
-        fs::write(
-            root().join(&case.files.html),
-            actual.html.expect("HTML was requested"),
-        )
-        .expect("write HTML fixture");
+        fs::write(root().join(&case.files.html), actual.html).expect("write HTML fixture");
         fs::write(
             root().join(&case.files.projection),
-            format!(
-                "{}\n",
-                actual.projection_json.expect("projection was requested")
-            ),
+            format!("{}\n", actual.projection_json),
         )
         .expect("write projection fixture");
         fs::write(
             root().join(&case.files.diagnostics),
-            format!(
-                "{}\n",
-                actual.diagnostics_json.expect("diagnostics were requested")
-            ),
+            format!("{}\n", actual.diagnostics_json),
         )
         .expect("write diagnostics fixture");
         fs::write(
             root().join(&case.files.render_diagnostics),
-            format!(
-                "{}\n",
-                actual
-                    .render_diagnostics_json
-                    .expect("render diagnostics were requested")
-            ),
+            format!("{}\n", actual.render_diagnostics_json),
         )
         .expect("write render diagnostics fixture");
     }

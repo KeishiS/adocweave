@@ -112,10 +112,12 @@ pub mod semantic {
 
 /// Deterministic document output and serialization backends.
 pub mod output {
+    /// Stable textual representations used by public host protocols.
+    pub mod canonical {
+        pub use crate::conformance::{canonical_ast, canonical_syntax};
+    }
     pub mod conformance {
-        pub use crate::conformance::{
-            ConformanceSnapshot, DocumentProducts, ProductSet, fixture_source, products, snapshot,
-        };
+        pub use crate::conformance::{ConformanceSnapshot, fixture_source, snapshot};
     }
     pub mod diagnostics {
         pub use crate::diagnostic::{
