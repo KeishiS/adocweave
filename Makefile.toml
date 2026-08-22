@@ -332,15 +332,18 @@ done
 '''
 
 [tasks.dist-plan]
-description = "Run the pinned dist release plan without publishing"
+description = "Run each pinned native product dist plan without publishing"
 script_runner = "@shell"
 script = '''
-version="$(node --input-type=module -e "import { readFileSync } from 'node:fs'; const source = readFileSync('./crates/adocweave-cli/Cargo.toml', 'utf8'); process.stdout.write(/^version = \"([^\"]+)\"/m.exec(source)[1])")"
-plan="$(mktemp "${TMPDIR:-/tmp}/adocweave-dist-plan.XXXXXX.json")"
-trap 'rm -f "$plan"' EXIT
 node tools/generate-third-party-notices.mjs THIRD_PARTY_NOTICES.adoc
-dist plan --tag="v$version" --output-format=json > "$plan"
-node tools/verify-dist-plan.mjs "$plan" "v$version"
+root="$(mktemp -d "${TMPDIR:-/tmp}/adocweave-dist-plan.XXXXXX")"
+trap 'rm -rf "$root"' EXIT
+for product in cli lsp; do
+  tag="$(node tools/product-release.mjs "$product" | jq -r .tag)"
+  plan="$root/$product.json"
+  dist plan --tag="$tag" --output-format=json > "$plan"
+  node tools/verify-dist-plan.mjs "$plan" "$tag"
+done
 '''
 
 [tasks.check-wasm]
