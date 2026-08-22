@@ -297,6 +297,26 @@ fn workspace_scan_read_limit_is_shared_across_project_scopes() {
 }
 
 #[test]
+fn workspace_scan_entry_limit_names_the_setting_that_resolves_it() {
+    let root = TestDirectory::new();
+    std::fs::write(root.0.join("root.adoc"), "root\n").expect("root source");
+    let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+    let resources = WorkspaceResources::default();
+    let job = FilesystemJobCoordinator::new(FilesystemJobLimits {
+        max_directory_entries: 0,
+        ..workspace_scan_job_limits()
+    })
+    .expect("scan job");
+
+    let loaded =
+        resources.load_roots_detached_with_job(std::slice::from_ref(&root_uri), &NeverCancel, &job);
+
+    let error = loaded.error.as_deref().expect("scan must fail");
+    assert!(error.contains("workspace.scan.exclude"), "{error}");
+    assert!(error.contains("directory entries"), "{error}");
+}
+
+#[test]
 fn cancelled_workspace_scan_cancels_its_filesystem_job() {
     let root = TestDirectory::new();
     std::fs::write(root.0.join("document.adoc"), "document\n").expect("source");
