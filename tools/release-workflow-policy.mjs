@@ -179,9 +179,13 @@ function needs(job) {
 
 function hasMainCondition(job) {
   const condition = job?.if;
-  return typeof condition === "string" &&
-    condition.includes("github.event_name == 'push'") &&
-    condition.includes("github.ref == 'refs/heads/main'");
+  if (typeof condition !== "string") return false;
+  const normalized = condition
+    .replace(/^\s*\$\{\{\s*/, "")
+    .replace(/\s*\}\}\s*$/, "")
+    .trim()
+    .replace(/\s+/g, " ");
+  return normalized === "github.event_name == 'push' && github.ref == 'refs/heads/main'";
 }
 
 function isMainOnly(jobs, jobName, visiting = new Set()) {
@@ -256,8 +260,16 @@ export function validateGateTaskContract(makefile) {
     ["source-gate", SOURCE_GATE_DEPENDENCIES],
     ["main-gate", MAIN_GATE_DEPENDENCIES],
   ]) {
-    if (JSON.stringify(makeTaskDependencies(makefile, name)) !== JSON.stringify(expected)) {
-      fail(`${name}の検査依存が標準契約と一致しません`);
+    const dependencies = new Set(makeTaskDependencies(makefile, name));
+    const missing = expected.filter((dependency) => !dependencies.has(dependency));
+    if (missing.length > 0) {
+      fail(`${name}に必須の検査依存がありません: ${missing.join(", ")}`);
+    }
+  }
+  const mainDependencies = new Set(makeTaskDependencies(makefile, "main-gate"));
+  for (const candidate of ["release-global-candidate", "release-global-artifacts", "wasm-size"]) {
+    if (mainDependencies.has(candidate)) {
+      fail(`main-gateへ配布成果物task ${candidate}を含めないでください`);
     }
   }
   if (!/^\s*alias\s*=\s*"source-gate"\s*$/m.test(makeTaskBody(makefile, "verify"))) {
@@ -278,6 +290,7 @@ const REMOVED_RELEASE_ROUTING = [
   ["quality到達可能性input", /\b(?:common_preflight_scheduled|run_(?:rust_source|documents|adapters|dependencies|fuzz|nix_package)|quality_(?:rust_source|documents|adapters|dependencies|fuzz|nix_package))\b/],
   ["到達不能用step", /not reachable/i],
   ["always集約", /\balways\s*\(\s*\)/],
+  ["job結果の手動照合", /\bneeds\.[A-Za-z0-9_-]+\.result\b/],
   ["Pull Request用candidate分岐", /(?:artifact_key.{0,40}["']local|product.{0,40}["']pr)/],
 ];
 
@@ -285,9 +298,12 @@ export function validateStandardSourceAndCandidateGates(workflows, sources = {})
   const release = workflows["release.yml"];
   const triggers = release?.on;
   if (triggers?.pull_request === undefined ||
-      (triggers.pull_request !== null && Object.keys(triggers.pull_request).length !== 0) ||
+      triggers.pull_request?.paths !== undefined ||
+      triggers.pull_request?.["paths-ignore"] !== undefined ||
       !Array.isArray(triggers?.push?.branches) ||
-      !triggers.push.branches.includes("main")) {
+      !triggers.push.branches.includes("main") ||
+      triggers.push.paths !== undefined ||
+      triggers.push["paths-ignore"] !== undefined) {
     fail("release workflowはpath filterなしのPull Requestとmain pushでsource gateを実行してください");
   }
 
@@ -346,16 +362,15 @@ export function validateStandardSourceAndCandidateGates(workflows, sources = {})
       fail(`成果物job ${jobName}はmain candidate経路だけで実行してください`);
     }
   }
-  const globalCandidateRun = jobRuns(jobs["build-global"]);
-  for (const [product, task] of [
-    ["browser", "test-browser-release-candidate"],
-    ["textlint", "textlint-plugin-release-consumer-e2e"],
-    ["vscode", "test-vscode-release-determinism"],
-    ["zed", "test-zed-release-candidate"],
-  ]) {
-    if (!globalCandidateRun.includes(`${product}) task=${task}`)) {
-      fail(`build-globalは${product}の完成candidate task ${task}を実行してください`);
+  for (const jobName of Object.keys(jobs)) {
+    if (jobName === "candidate-plan" || candidateJobs.includes(jobName) ||
+        !/(?:^|-)(?:build|smoke|installation|candidate)(?:-|$)/.test(jobName)) continue;
+    if (!isMainOnly(jobs, jobName)) {
+      fail(`成果物job ${jobName}はmain candidate経路だけで実行してください`);
     }
+  }
+  if (occurrences(jobRuns(jobs["build-global"]), "cargo make test-global-product-candidate") !== 1) {
+    fail("build-globalは製品別の完成candidate taskを1回実行してください");
   }
 }
 

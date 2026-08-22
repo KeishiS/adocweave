@@ -173,15 +173,7 @@ jobs:
       - name: Complete product candidate build and runtime verification
         env:
           PRODUCT: ${{ matrix.product }}
-        run: |
-          case "$PRODUCT" in
-            browser) task=test-browser-release-candidate ;;
-            textlint) task=textlint-plugin-release-consumer-e2e ;;
-            vscode) task=test-vscode-release-determinism ;;
-            zed) task=test-zed-release-candidate ;;
-            *) exit 2 ;;
-          esac
-          nix develop .#ci-browser -c cargo make "$task"
+        run: nix develop .#ci-browser -c cargo make test-global-product-candidate
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: artifacts-build-${{ matrix.artifact_key }}

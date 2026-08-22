@@ -558,6 +558,20 @@ dependencies = [
   "test-zed-release-candidate",
 ]
 
+[tasks.test-global-product-candidate]
+description = "Build and completely verify PRODUCT as one global release candidate"
+script_runner = "@shell"
+script = '''
+case "${PRODUCT:-}" in
+  browser) task=test-browser-release-candidate ;;
+  textlint) task=textlint-plugin-release-consumer-e2e ;;
+  vscode) task=test-vscode-release-determinism ;;
+  zed) task=test-zed-release-candidate ;;
+  *) echo "unsupported global candidate product: ${PRODUCT:-<unset>}" >&2; exit 2 ;;
+esac
+cargo make "$task"
+'''
+
 [tasks.browser-runtime-check]
 description = "Run the release browser archive through static hosting and a package-name bundler import"
 dependencies = [

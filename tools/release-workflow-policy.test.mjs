@@ -241,12 +241,7 @@ function sourceAndCandidateWorkflow() {
       },
       "build-global": {
         needs: ["candidate-plan"],
-        steps: [{ run: `case "$PRODUCT" in
-          browser) task=test-browser-release-candidate ;;
-          textlint) task=textlint-plugin-release-consumer-e2e ;;
-          vscode) task=test-vscode-release-determinism ;;
-          zed) task=test-zed-release-candidate ;;
-        esac` }],
+        steps: [{ run: "cargo make test-global-product-candidate" }],
       },
       "verify-native-candidate": {
         needs: ["native-smoke"],
@@ -276,6 +271,7 @@ test("Pull Requestはpath条件なしで標準source gateを1回だけ直接実�
 
   for (const mutate of [
     (workflow) => { workflow.on.pull_request.paths = ["docs/**"]; },
+    (workflow) => { workflow.on.push.paths = ["src/**"]; },
     (workflow) => { workflow.jobs.source.name = "source"; },
     (workflow) => { workflow.jobs.source.if = "github.event_name == 'pull_request'"; },
     (workflow) => { workflow.jobs.source.needs = ["main-gate"]; },
@@ -287,6 +283,10 @@ test("Pull Requestはpath条件なしで標準source gateを1回だけ直接実�
     mutate(workflow);
     assert.throws(() => validateSourceAndCandidateWorkflow(workflow), /source|必須check/);
   }
+
+  const eventTypes = sourceAndCandidateWorkflow();
+  eventTypes.on.pull_request.types = ["opened", "synchronize", "reopened"];
+  validateSourceAndCandidateWorkflow(eventTypes);
 });
 
 test("削除したpath分類と手動aggregateをworkflowへ戻さない", () => {
@@ -297,6 +297,7 @@ test("削除したpath分類と手動aggregateをworkflowへ戻さない", () =>
     ["quality input", (workflow) => { workflow.jobs.source.with = { run_rust_source: true }; }],
     ["not reachable", (workflow) => { workflow.jobs.source.steps.push({ run: "echo not reachable" }); }],
     ["always aggregate", (workflow) => { workflow.jobs.source.if = "always()"; }],
+    ["result aggregate", (workflow) => { workflow.jobs["build-native"].if = "needs.main-gate.result == 'success'"; }],
     ["PR candidate", (workflow) => { workflow.jobs["candidate-plan"].strategy = { matrix: { product: ["pr"], artifact_key: ["local"] } }; }],
   ];
   for (const [name, mutate] of mutations) {
@@ -320,6 +321,8 @@ test("main candidate planはsourceとmain gateの成功後に製品計画を1回
     (workflow) => { workflow.jobs["candidate-plan"].steps = [{ run: "node custom-plan.mjs" }]; },
     (workflow) => { workflow.jobs["candidate-plan"].steps.push({ run: "node tools/product-candidate-plan.mjs" }); },
     (workflow) => { delete workflow.jobs["main-gate"].if; },
+    (workflow) => { workflow.jobs["main-gate"].if += " || github.event_name == 'pull_request'"; },
+    (workflow) => { workflow.jobs["main-gate"].if = `failure() && ${workflow.jobs["main-gate"].if}`; },
     (workflow) => { workflow.jobs["main-gate"].steps = []; },
     (workflow) => { workflow.jobs.source.steps.push({ run: "cargo make main-gate" }); },
   ]) {
@@ -338,6 +341,7 @@ test("成果物のbuild、smoke、installationおよびcandidate処理をmainへ
     (workflow) => { workflow.jobs["build-native"].needs = ["source"]; },
     (workflow) => { delete workflow.jobs["build-global"]; },
     (workflow) => { workflow.jobs["installation-e2e"].if = "failure()"; },
+    (workflow) => { workflow.jobs["preview-candidate"] = { needs: ["source"], steps: [{ run: "true" }] }; },
   ]) {
     const workflow = sourceAndCandidateWorkflow();
     mutate(workflow);
@@ -350,21 +354,23 @@ test("成果物のbuild、smoke、installationおよびcandidate処理をmainへ
 
 test("global成果物は製品別の完成candidate taskで検査する", () => {
   const workflow = sourceAndCandidateWorkflow();
-  workflow.jobs["build-global"].steps[0].run = workflow.jobs["build-global"].steps[0].run
-    .replace("test-browser-release-candidate", "browser-runtime-check");
+  workflow.jobs["build-global"].steps[0].run = "cargo make browser-runtime-check";
   assert.throws(
     () => validateSourceAndCandidateWorkflow(workflow),
-    /browserの完成candidate task/,
+    /製品別の完成candidate task/,
   );
 });
 
 test("sourceとmainの標準task境界をMakefileで固定する", () => {
   validateGateTaskContract(makefile);
+  validateGateTaskContract(
+    mutateTask(makefile, "main-gate", (body) => body.replace('  "nix-package-check",\n]', '  "nix-package-check",\n  "test-grammar",\n]')),
+  );
 
   for (const [name, mutate] of [
     ["source dependency", (source) => mutateTask(source, "source-gate", (body) => body.replace('  "fmt-check",\n', ""))],
     ["main dependency", (source) => mutateTask(source, "main-gate", (body) => body.replace('  "fuzz",\n', ""))],
-    ["main candidate", (source) => mutateTask(source, "main-gate", (body) => body.replace("]", '  "release-global-candidate",\n]'))],
+    ["main candidate", (source) => mutateTask(source, "main-gate", (body) => body.replace('  "nix-package-check",\n]', '  "nix-package-check",\n  "release-global-candidate",\n]'))],
     ["verify alias", (source) => mutateTask(source, "verify", (body) => body.replace('alias = "source-gate"', 'alias = "main-gate"'))],
     ["acceptance", (source) => mutateTask(source, "acceptance", (body) => body.replace('  "source-gate",\n', ""))],
     ["release-check", (source) => mutateTask(source, "release-check", (body) => body.replace('  "main-gate",\n', ""))],
