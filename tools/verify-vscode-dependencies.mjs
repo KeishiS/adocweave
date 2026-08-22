@@ -50,18 +50,15 @@ for (const [path, entry] of Object.entries(lock.packages)) {
   }
 }
 
-// The recorded set is compared exactly rather than as an allowlist. A build tool
-// arriving with a license nobody has read should be seen in review, and a
-// license that no dependency carries any more should leave the record.
-const recorded = [...buildLicenses.licenses].sort();
-const observed = [...observedBuildLicenses].sort();
-if (recorded.length !== observed.length || recorded.some((value, index) => value !== observed[index])) {
-  const added = observed.filter((value) => !recorded.includes(value));
-  const removed = recorded.filter((value) => !observed.includes(value));
+// 許可したライセンスの集合として扱います。完全一致を求めていた頃は、依存が減って
+// 使われなくなったライセンスを一覧から消す作業まで人へ課していました。読んでいない
+// ライセンスが入ったときに気付ければ目的は足ります。
+const allowed = new Set(buildLicenses.licenses);
+const unexpected = [...observedBuildLicenses].filter((license) => !allowed.has(license)).sort();
+if (unexpected.length > 0) {
   throw new Error(
-    "ビルド用依存のライセンス目録が実際と一致しません。" +
-      `security/vscode-build-licenses.jsonを更新してください：追加=${added.join("、") || "なし"}` +
-      ` 削除=${removed.join("、") || "なし"}`,
+    "ビルド用依存に許可していないライセンスがあります。内容を確認してから" +
+      `security/vscode-build-licenses.jsonへ追加してください：${unexpected.join("、")}`,
   );
 }
 
