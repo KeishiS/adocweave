@@ -35,7 +35,7 @@ pub(crate) enum Error {
 pub(crate) struct LocalContext<'context> {
     pub(crate) base: &'context Path,
     pub(crate) source_id: &'context str,
-    pub(crate) session: adocweave_host::LocalTargetSession,
+    pub(crate) session: adocweave_host::LocalFilesystemSession,
 }
 
 fn analysis_options(
@@ -260,6 +260,7 @@ pub(crate) fn process_preprocessed(
     prepared: &mut local_include::PreparedInput,
     check: &Options,
     base_analysis_options: &AnalysisOptions,
+    filesystem: Option<&mut adocweave_host::LocalFilesystemSession>,
 ) -> Result<CheckOutcome, Error> {
     let (projection, mut validation) = prepared.projection_and_validation_mut();
     let engine = Engine::new(analysis_options(
@@ -284,7 +285,13 @@ pub(crate) fn process_preprocessed(
         ))
     })?;
     let mut host = Vec::new();
+    if validation.is_some() && filesystem.is_none() {
+        return Err(Error::Include(local_include::LocalIncludeError::Analysis(
+            "local filesystem session is missing".to_owned(),
+        )));
+    }
     if let Some(validation) = validation.as_mut() {
+        let filesystem = filesystem.expect("validation requires a checked filesystem session");
         for target in &projected.local_targets {
             for origin in &target.target_origins {
                 let source_id = origin
@@ -335,7 +342,12 @@ pub(crate) fn process_preprocessed(
                     continue;
                 }
                 if optional && target.value.syntax == adocweave::LocalTargetSyntax::Candidate {
-                    match validation.session_mut().inspect(base, &target.value.path) {
+                    match local_target::inspect_with_session(
+                        source_id,
+                        base,
+                        &target.value.path,
+                        filesystem,
+                    ) {
                         Ok(_) | Err(adocweave_host::LocalTargetError::Missing(_)) => continue,
                         Err(_) => {}
                     }
@@ -347,7 +359,7 @@ pub(crate) fn process_preprocessed(
                     base,
                     source_id,
                     source,
-                    validation.session_mut(),
+                    filesystem,
                 ));
             }
         }

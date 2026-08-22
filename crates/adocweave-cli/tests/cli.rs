@@ -1964,7 +1964,7 @@ fn local_target_inspection_limit_has_stable_cli_contract() {
     assert!(human.stderr.is_empty());
     assert_eq!(
         human.stdout,
-        b"root.adoc:2:6: error[local-target-limit-exceeded]: local target inspection limit exceeded (target: second.adoc)\n"
+        b"root.adoc:1:6: error[local-target-limit-exceeded]: local target inspection limit exceeded (target: first.adoc)\nroot.adoc:2:6: error[local-target-limit-exceeded]: local target inspection limit exceeded (target: second.adoc)\n"
     );
 
     let json = run(true);
@@ -1972,18 +1972,29 @@ fn local_target_inspection_limit_has_stable_cli_contract() {
     assert!(json.stderr.is_empty());
     let diagnostics: serde_json::Value =
         serde_json::from_slice(&json.stdout).expect("inspection limit JSON");
-    assert_eq!(diagnostics.as_array().expect("array").len(), 1);
+    assert_eq!(diagnostics.as_array().expect("array").len(), 2);
     assert_eq!(
         diagnostics[0]["id"],
-        "local-target-limit-exceeded@root.adoc:28:39"
+        "local-target-limit-exceeded@root.adoc:5:15"
     );
     assert_eq!(diagnostics[0]["code"], "local-target-limit-exceeded");
     assert_eq!(diagnostics[0]["sourceId"], "root.adoc");
     assert_eq!(
         diagnostics[0]["range"],
+        serde_json::json!({ "start": 5, "end": 15 })
+    );
+    assert_eq!(diagnostics[0]["target"], "first.adoc");
+    assert_eq!(
+        diagnostics[1]["id"],
+        "local-target-limit-exceeded@root.adoc:28:39"
+    );
+    assert_eq!(diagnostics[1]["code"], "local-target-limit-exceeded");
+    assert_eq!(diagnostics[1]["sourceId"], "root.adoc");
+    assert_eq!(
+        diagnostics[1]["range"],
         serde_json::json!({ "start": 28, "end": 39 })
     );
-    assert_eq!(diagnostics[0]["target"], "second.adoc");
+    assert_eq!(diagnostics[1]["target"], "second.adoc");
 }
 
 #[test]

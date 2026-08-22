@@ -309,6 +309,7 @@ fn build_with_stage_hook(
             request.base_dir,
             request.project_root,
             &request.project.preprocess,
+            &request.project.analysis,
             &mut include_dependencies,
             &mut filesystem,
         );

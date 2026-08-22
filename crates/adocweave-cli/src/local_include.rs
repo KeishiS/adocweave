@@ -13,7 +13,7 @@ use adocweave::preprocess::{
 use adocweave_host::{
     FilesystemReadLimits, IncludeFilesystem, IncludeFilesystemOutcome, IncludeFilesystemRequest,
     LocalFilesystemPolicy, LocalFilesystemSession, LocalTargetError, LocalTargetPolicy,
-    LocalTargetSession, LogicalSourceId, ResourceError,
+    LogicalSourceId, ResourceError,
 };
 use adocweave_workspace::{
     NeverCancelled, ResourceId, Revision, Workspace, WorkspaceIncludeResolution, WorkspaceLimits,
@@ -51,7 +51,6 @@ pub struct ProjectionInput {
 }
 
 pub struct LocalValidationContext {
-    session: LocalTargetSession,
     include_errors: Vec<IncludeFailure>,
 }
 
@@ -142,10 +141,6 @@ impl ProjectionInput {
 }
 
 impl LocalValidationContext {
-    pub fn session_mut(&mut self) -> &mut LocalTargetSession {
-        &mut self.session
-    }
-
     pub fn include_error(
         &self,
         source_id: &str,
@@ -169,7 +164,7 @@ impl LocalValidationContext {
     }
 }
 
-fn include_target_error(error: ResourceError) -> LocalTargetError {
+pub(crate) fn include_target_error(error: ResourceError) -> LocalTargetError {
     match error {
         ResourceError::Missing(path) => LocalTargetError::Missing(path),
         ResourceError::PermissionDenied(path) => LocalTargetError::PermissionDenied(path),
@@ -285,9 +280,10 @@ fn prepare_with_driver(
     source_base: PathBuf,
     include_base: Option<PathBuf>,
     mut preprocess_options: PreprocessOptions,
+    analysis_options: &adocweave::AnalysisOptions,
     read_mode: IncludeReadMode,
     filesystem: &mut LocalFilesystemSession,
-    validation: Option<(LocalTargetPolicy, FilesystemReadLimits)>,
+    validate_local_targets: bool,
     dependencies: &mut DependencyJournal,
 ) -> Result<PreparedInput, LocalIncludeError> {
     let root_id = ResourceId::new(source_id.clone())
@@ -298,9 +294,8 @@ fn prepare_with_driver(
         .and_then(|_| workspace.register_root(root_id.clone()))
         .map_err(|error| LocalIncludeError::Analysis(error.to_string()))?;
     preprocess_options.enable_includes = true;
-    let options =
-        EffectiveProcessingOptions::new(adocweave::AnalysisOptions::default(), preprocess_options)
-            .map_err(|error| LocalIncludeError::Analysis(error.to_string()))?;
+    let options = EffectiveProcessingOptions::new(analysis_options.clone(), preprocess_options)
+        .map_err(|error| LocalIncludeError::Analysis(error.to_string()))?;
     let mut source_keys = BTreeMap::from([(source_id.clone(), root_id.clone())]);
     let mut request_sources = BTreeMap::from([(source_id.clone(), Arc::<str>::from(source))]);
     let mut source_bases = BTreeMap::from([(source_id.clone(), source_base)]);
@@ -331,7 +326,7 @@ fn prepare_with_driver(
                     .and_then(|directive| discover_includes(directive).ok())
                     .and_then(|mut requests| requests.pop())
                     .map_or_else(|| target.clone(), |request| request.target);
-                let inspect = validation.as_ref().is_none_or(|_| {
+                let inspect = !validate_local_targets || {
                     adocweave::LocalTargetReference::from_include(
                         request_range,
                         request_range,
@@ -340,7 +335,7 @@ fn prepare_with_driver(
                     .is_some_and(|reference| {
                         reference.syntax == adocweave::LocalTargetSyntax::Candidate
                     })
-                });
+                };
                 let outcome = if inspect {
                     if let Some(candidate) = read_mode.watch_candidate(&target) {
                         dependencies.observe_candidate(&candidate);
@@ -374,7 +369,7 @@ fn prepare_with_driver(
                             .unwrap_or_else(|| Path::new(""))
                             .to_owned();
                         source_bases.insert(projected_source_id.clone(), base.clone());
-                        if validation.is_some() {
+                        if validate_local_targets {
                             include_bases.insert(projected_source_id.clone(), base);
                         }
                         request.found_as(projected_source_id, source)
@@ -383,7 +378,7 @@ fn prepare_with_driver(
                         dependencies.observe_candidate(missing.watch_candidate().path());
                         let error =
                             LocalTargetError::Missing(missing.watch_candidate().path().to_owned());
-                        if validation.is_none() {
+                        if !validate_local_targets {
                             return Err(LocalIncludeError::Host(ResourceError::Missing(
                                 missing.watch_candidate().path().to_owned(),
                             )));
@@ -393,7 +388,7 @@ fn prepare_with_driver(
                     }
                     IncludeFilesystemOutcome::Failed(failed) => {
                         let host_error = ResourceError::from(failed.error().clone());
-                        if validation.is_none() {
+                        if !validate_local_targets {
                             return Err(LocalIncludeError::Host(host_error));
                         }
                         failure_errors.insert(target, include_target_error(host_error));
@@ -428,10 +423,7 @@ fn prepare_with_driver(
                 })
         })
         .collect();
-    let validation = validation.map(|(policy, limits)| LocalValidationContext {
-        session: LocalTargetSession::new(policy, limits.max_files, limits),
-        include_errors,
-    });
+    let validation = validate_local_targets.then_some(LocalValidationContext { include_errors });
     Ok(PreparedInput {
         projection: ProjectionInput {
             draft,
@@ -450,6 +442,7 @@ pub fn prepare(
     allowed_roots: &[PathBuf],
     limits: FilesystemReadLimits,
     preprocess_options: &PreprocessOptions,
+    analysis_options: &adocweave::AnalysisOptions,
 ) -> Result<PreparedInput, LocalIncludeError> {
     let base_dir = base_dir
         .canonicalize()
@@ -484,6 +477,7 @@ pub fn prepare(
         &base_dir,
         &allowed_roots,
         preprocess_options,
+        analysis_options,
         &mut filesystem,
     )
 }
@@ -494,6 +488,7 @@ pub(crate) fn prepare_with_session(
     base_dir: &Path,
     allowed_roots: &[PathBuf],
     preprocess_options: &PreprocessOptions,
+    analysis_options: &adocweave::AnalysisOptions,
     filesystem: &mut LocalFilesystemSession,
 ) -> Result<PreparedInput, LocalIncludeError> {
     let base_policy = filesystem
@@ -520,17 +515,19 @@ pub(crate) fn prepare_with_session(
         base_dir.clone(),
         None,
         preprocess_options.clone(),
+        analysis_options,
         IncludeReadMode::General {
             base: base_dir,
             base_policy,
             allowed: allowed_policies,
         },
         filesystem,
-        None,
+        false,
         &mut DependencyJournal::default(),
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn prepare_local(
     source: &str,
     source_id: String,
@@ -539,6 +536,7 @@ pub fn prepare_local(
     project_root: &Path,
     limits: FilesystemReadLimits,
     preprocess_options: &PreprocessOptions,
+    analysis_options: &adocweave::AnalysisOptions,
 ) -> Result<PreparedInput, LocalIncludeError> {
     let filesystem_policy = LocalFilesystemPolicy::new([project_root.to_owned()], limits)
         .map_err(LocalIncludeError::Host)?;
@@ -552,6 +550,7 @@ pub fn prepare_local(
         source_base,
         project_root,
         preprocess_options,
+        analysis_options,
         &mut filesystem,
     )
 }
@@ -564,6 +563,7 @@ pub(crate) fn prepare_local_with_session(
     source_base: &Path,
     project_root: &Path,
     preprocess_options: &PreprocessOptions,
+    analysis_options: &adocweave::AnalysisOptions,
     filesystem_session: &mut LocalFilesystemSession,
 ) -> Result<PreparedInput, LocalIncludeError> {
     prepare_local_tracking_with_existing_session(
@@ -573,6 +573,7 @@ pub(crate) fn prepare_local_with_session(
         source_base,
         project_root,
         preprocess_options,
+        analysis_options,
         &mut DependencyJournal::default(),
         filesystem_session,
     )
@@ -586,6 +587,7 @@ pub(crate) fn prepare_local_tracking_with_existing_session(
     source_base: &Path,
     project_root: &Path,
     preprocess_options: &PreprocessOptions,
+    analysis_options: &adocweave::AnalysisOptions,
     dependencies: &mut DependencyJournal,
     filesystem_session: &mut LocalFilesystemSession,
 ) -> Result<PreparedInput, LocalIncludeError> {
@@ -598,7 +600,6 @@ pub(crate) fn prepare_local_tracking_with_existing_session(
         .inspect_directory_no_symlinks(base_dir)
         .map_err(|error| LocalIncludeError::Analysis(format!("invalid include base: {error}")))?;
     let root = policy.root().to_owned();
-    let limits = filesystem_session.limits();
     let base_key = logical_key(
         base_dir
             .strip_prefix(&root)
@@ -616,9 +617,10 @@ pub(crate) fn prepare_local_tracking_with_existing_session(
         source_base,
         Some(base_dir),
         preprocess_options,
+        analysis_options,
         IncludeReadMode::Local { root },
         filesystem_session,
-        Some((policy, limits)),
+        true,
         dependencies,
     )
 }
@@ -728,6 +730,7 @@ mod tests {
             &root.0,
             &root.0,
             &PreprocessOptions::default(),
+            &adocweave::AnalysisOptions::default(),
             &mut dependencies,
             &mut filesystem,
         )
@@ -753,23 +756,25 @@ mod tests {
         fs::create_dir(&root).expect("replacement workspace");
         fs::write(root.join("asset.png"), "outside").expect("replacement target");
 
-        let mut prepared = prepare_local_with_session(
+        let prepared = prepare_local_with_session(
             "image::asset.png[]\n",
             root.join("root.adoc").to_string_lossy().into_owned(),
             &root,
             &root,
             &root,
             &PreprocessOptions::default(),
+            &adocweave::AnalysisOptions::default(),
             &mut filesystem,
         )
         .expect("prepared input");
-        let error = prepared
-            .validation
-            .as_mut()
-            .expect("validation context")
-            .session_mut()
-            .inspect(&root, "asset.png")
-            .expect_err("replacement target must remain outside the retained namespace");
+        assert!(prepared.validation().is_some());
+        let error = crate::local_target::inspect_with_session(
+            &root.join("root.adoc").to_string_lossy(),
+            &root,
+            "asset.png",
+            &mut filesystem,
+        )
+        .expect_err("replacement target must remain outside the retained namespace");
         assert!(matches!(error, LocalTargetError::Missing(_)));
         fs::remove_dir_all(&root).expect("remove replacement workspace");
         fs::rename(displaced, &root).expect("restore workspace");
@@ -801,6 +806,7 @@ mod tests {
             &workspace,
             std::slice::from_ref(&allowed),
             &PreprocessOptions::default(),
+            &adocweave::AnalysisOptions::default(),
             &mut filesystem,
         );
         let Err(error) = result else {
@@ -831,6 +837,7 @@ mod tests {
             &[],
             FilesystemReadLimits::default(),
             &PreprocessOptions::default(),
+            &adocweave::AnalysisOptions::default(),
         )
         .expect("regular preparation");
         let mut filesystem = session(&root.0);
@@ -842,6 +849,7 @@ mod tests {
             &root.0,
             &root.0,
             &PreprocessOptions::default(),
+            &adocweave::AnalysisOptions::default(),
             &mut dependencies,
             &mut filesystem,
         )
@@ -857,6 +865,68 @@ mod tests {
         assert!(observed.iter().any(|(path, source)| {
             *path == root.0.join("part.adoc") && *source == Some("part\n")
         }));
+    }
+
+    #[test]
+    fn common_driver_uses_the_project_analysis_attributes() {
+        let root = TestDirectory::new();
+        fs::write(root.0.join("part.adoc"), "part\n").expect("fixture");
+        let attributes = BTreeMap::from([("selected".to_owned(), Some("part".to_owned()))]);
+        let mut analysis = adocweave::AnalysisOptions::default();
+        analysis.attributes.clone_from(&attributes);
+        let preprocess = PreprocessOptions {
+            attributes,
+            ..PreprocessOptions::default()
+        };
+
+        let prepared = prepare(
+            "include::{selected}.adoc[]\n",
+            Some("root.adoc".to_owned()),
+            &root.0,
+            &[],
+            FilesystemReadLimits::default(),
+            &preprocess,
+            &analysis,
+        )
+        .expect("matching project settings");
+
+        assert_eq!(prepared.projection().document().source, "part\n");
+    }
+
+    #[test]
+    fn include_reads_and_local_inspection_share_one_path_limit() {
+        let root = TestDirectory::new();
+        fs::write(root.0.join("part.adoc"), "part\n").expect("include fixture");
+        fs::write(root.0.join("asset.png"), "asset").expect("target fixture");
+        let limits = FilesystemReadLimits {
+            max_files: 1,
+            ..FilesystemReadLimits::default()
+        };
+        let mut filesystem = LocalFilesystemPolicy::new([root.0.clone()], limits)
+            .and_then(|policy| policy.session())
+            .expect("session");
+        let prepared = prepare_local_with_session(
+            "include::part.adoc[]\nimage::asset.png[]\n",
+            "root.adoc".to_owned(),
+            &root.0,
+            &root.0,
+            &root.0,
+            &PreprocessOptions::default(),
+            &adocweave::AnalysisOptions::default(),
+            &mut filesystem,
+        )
+        .expect("include preparation");
+        assert!(prepared.validation().is_some());
+
+        assert_eq!(
+            crate::local_target::inspect_with_session(
+                "root.adoc",
+                &root.0,
+                "asset.png",
+                &mut filesystem,
+            ),
+            Err(LocalTargetError::LimitExceeded { limit: 1 })
+        );
     }
 
     #[cfg(unix)]
