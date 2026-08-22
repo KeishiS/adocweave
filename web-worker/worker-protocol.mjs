@@ -6,7 +6,7 @@
 
 export const PROTOCOL_SCHEMA_VERSION = 14;
 export const WORKER_PROTOCOL_VERSION = 2;
-export const PACKAGE_VERSION = "0.46.0";
+export const PACKAGE_VERSION = "0.46.1";
 
 const string = (value) => typeof value === "string";
 const u32 = (value) => Number.isInteger(value) && value >= 0 && value <= 4294967295;

@@ -61,7 +61,7 @@
     "outputLimits": {
       "maxOutputBytes": 52428800
     },
-    "packageVersion": "0.46.0",
+    "packageVersion": "0.46.1",
     "preprocess": null,
     "products": {
       "attributeOccurrences": false,
