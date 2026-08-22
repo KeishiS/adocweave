@@ -98,7 +98,6 @@ const NON_RELEASE_FILES = new Set([
   "tools/verify-cargo-release-metadata.mjs",
   "tools/verify-dependency-boundaries.mjs",
   "tools/verify-dependency-boundaries.test.mjs",
-  "tools/verify-duplicate-dependencies.mjs",
   "tools/verify-vscode-dependencies.test.mjs",
   "tools/npm-lock-policy.mjs",
   "tools/verify-textlint-dependencies.mjs",
@@ -232,7 +231,7 @@ const RUST_SOURCE_FILES = new Set([
 ///
 /// The audit was previously requested by the Rust source file set, which does
 /// not contain the advisory revision, the boundary and exception inventories,
-/// the duplicate baseline, or the audit scripts themselves. A pull request that
+/// or the audit scripts themselves. A pull request that
 /// edited one of those changed what the audit accepts and still reported
 /// success without running it. `tools/native-change-plan.test.mjs` reads the
 /// audit script and requires every repository path it names to appear here.
@@ -255,7 +254,6 @@ export const DEPENDENCY_AUDIT_FILES = new Set([
   // `dependency-governance` runs these tests before the audit, so they decide
   // what the audit accepts just as the scripts they test do.
   "tools/verify-dependency-boundaries.test.mjs",
-  "tools/verify-duplicate-dependencies.mjs",
   "tools/verify-vscode-dependencies.mjs",
   "tools/verify-vscode-dependencies.test.mjs",
   "tools/npm-lock-policy.mjs",

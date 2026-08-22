@@ -353,7 +353,7 @@ test("分類できないpathと空の変更集合ではすべてを実行する"
 
 test("依存監査が読むすべての入力が監査を要求する", () => {
   // 監査の実行条件はRust source fileの集合が決めていました。その集合は
-  // advisory revision、境界と例外の目録、重複のbaseline、監査script本体を
+  // advisory revision、境界と例外の目録、監査script本体を
   // 含みません。それらを変えたPull Requestは、監査が受理する内容を変えた
   // うえで、監査を実行せずに成功していました。
   for (
@@ -361,11 +361,9 @@ test("依存監査が読むすべての入力が監査を要求する", () => {
       "security/rustsec-advisory-db-revision.txt",
       "security/dependency-boundaries.json",
       "security/dependency-exceptions.json",
-      "security/duplicate-dependencies.json",
       "tools/dependency-governance.sh",
       "tools/verify-dependency-boundaries.mjs",
       "tools/verify-dependency-boundaries.test.mjs",
-      "tools/verify-duplicate-dependencies.mjs",
       "tools/verify-vscode-dependencies.mjs",
       "tools/verify-vscode-dependencies.test.mjs",
       "tools/npm-lock-policy.mjs",
