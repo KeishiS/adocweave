@@ -200,6 +200,77 @@ function isMainOnly(jobs, jobName, visiting = new Set()) {
 
 const occurrences = (source, value) => source.split(value).length - 1;
 
+const SOURCE_GATE_DEPENDENCIES = [
+  "adoc-check",
+  "check-vscode",
+  "clippy",
+  "clippy-zed",
+  "dependency-governance",
+  "doc-check",
+  "docs-check",
+  "docs-lint",
+  "docs-prose-lint",
+  "fmt-check",
+  "html5-check",
+  "platform-contract",
+  "protocol-generated-check",
+  "release-ci-contract",
+  "test",
+  "test-browser-types",
+  "test-vscode",
+  "test-web-worker",
+  "test-zed",
+  "textlint-plugin-public-js-unit",
+  "zed-query-contract",
+].sort();
+
+const MAIN_GATE_DEPENDENCIES = [
+  "check-wasm",
+  "check-zed-wasm",
+  "cross-native-check",
+  "fuzz",
+  "nix-package-check",
+  "protocol-wasm-corpus-check",
+  "test-profile-release",
+  "test-vscode-extension-host",
+  "textlint-plugin-browser-isolation",
+  "textlint-plugin-wasm-contract",
+].sort();
+
+function makeTaskBody(source, name) {
+  const heading = `[tasks.${name}]`;
+  const start = source.indexOf(heading);
+  if (start < 0) fail(`Makefile.tomlにtask ${name}がありません`);
+  const next = source.indexOf("\n[tasks.", start + heading.length);
+  return source.slice(start + heading.length, next < 0 ? source.length : next);
+}
+
+function makeTaskDependencies(source, name) {
+  const body = makeTaskBody(source, name);
+  const match = /\bdependencies\s*=\s*\[([\s\S]*?)\]/.exec(body);
+  return match ? [...match[1].matchAll(/"([^"]+)"/g)].map((entry) => entry[1]).sort() : [];
+}
+
+export function validateGateTaskContract(makefile) {
+  for (const [name, expected] of [
+    ["source-gate", SOURCE_GATE_DEPENDENCIES],
+    ["main-gate", MAIN_GATE_DEPENDENCIES],
+  ]) {
+    if (JSON.stringify(makeTaskDependencies(makefile, name)) !== JSON.stringify(expected)) {
+      fail(`${name}の検査依存が標準契約と一致しません`);
+    }
+  }
+  if (!/^\s*alias\s*=\s*"source-gate"\s*$/m.test(makeTaskBody(makefile, "verify"))) {
+    fail("verifyはsource-gateの別名にしてください");
+  }
+  for (const name of ["acceptance", "release-check"]) {
+    const dependencies = new Set(makeTaskDependencies(makefile, name));
+    if (!dependencies.has("source-gate") || !dependencies.has("main-gate")) {
+      fail(`${name}はsource-gateとmain-gateの両方を含めてください`);
+    }
+  }
+}
+
 const REMOVED_RELEASE_ROUTING = [
   ["native-change-plan", /native-change-plan/],
   ["git diffによるpath判定", /\bgit\s+diff\b/],
@@ -214,14 +285,16 @@ export function validateStandardSourceAndCandidateGates(workflows, sources = {})
   const release = workflows["release.yml"];
   const triggers = release?.on;
   if (triggers?.pull_request === undefined ||
+      (triggers.pull_request !== null && Object.keys(triggers.pull_request).length !== 0) ||
       !Array.isArray(triggers?.push?.branches) ||
       !triggers.push.branches.includes("main")) {
-    fail("release workflowはPull Requestとmain pushの両方でsource gateを実行してください");
+    fail("release workflowはpath filterなしのPull Requestとmain pushでsource gateを実行してください");
   }
 
   const jobs = release.jobs ?? {};
   const source = jobs.source;
-  if (!source || source.name !== "verify" || source.uses !== undefined || source.if !== undefined) {
+  if (!source || source.name !== "verify" || source.uses !== undefined || source.if !== undefined ||
+      needs(source).length !== 0 || source.strategy !== undefined) {
     fail("Pull Requestの必須checkはpath条件のない直接job source（表示名verify）にしてください");
   }
   const workflowRuns = Object.values(jobs).map(jobRuns).join("\n");
@@ -243,22 +316,45 @@ export function validateStandardSourceAndCandidateGates(workflows, sources = {})
   }
 
   const mainGate = jobs["main-gate"];
-  if (!mainGate || !hasMainCondition(mainGate)) {
+  if (!mainGate || !hasMainCondition(mainGate) ||
+      occurrences(workflowRuns, "cargo make main-gate") !== 1 ||
+      !jobRuns(mainGate).includes("cargo make main-gate")) {
     fail("main-gateはmainへのpushだけで実行してください");
   }
   const candidatePlan = jobs["candidate-plan"];
+  const candidatePlanNeeds = new Set(needs(candidatePlan));
   if (!candidatePlan ||
-      JSON.stringify(needs(candidatePlan)) !== JSON.stringify(["source", "main-gate"]) ||
+      candidatePlanNeeds.size !== 2 ||
+      !candidatePlanNeeds.has("source") ||
+      !candidatePlanNeeds.has("main-gate") ||
       occurrences(jobRuns(candidatePlan), "product-candidate-plan.mjs") !== 1 ||
       !isMainOnly(jobs, "candidate-plan")) {
     fail("candidate-planはsourceとmain-gateに依存し、製品別candidate planを1回生成してください");
   }
 
-  const candidateJob = /(?:^|-)(?:build|smoke|installation|candidate)(?:-|$)/;
-  for (const jobName of Object.keys(jobs)) {
-    if (jobName === "candidate-plan" || !candidateJob.test(jobName)) continue;
-    if (!isMainOnly(jobs, jobName)) {
+  const candidateJobs = [
+    "build-native",
+    "native-smoke",
+    "build-global",
+    "verify-native-candidate",
+    "verify-global-candidate",
+    "installation-e2e",
+  ];
+  for (const jobName of candidateJobs) {
+    const job = jobs[jobName];
+    if (!job || !isMainOnly(jobs, jobName) || /\b(?:always|failure|cancelled|success)\s*\(/.test(job.if ?? "")) {
       fail(`成果物job ${jobName}はmain candidate経路だけで実行してください`);
+    }
+  }
+  const globalCandidateRun = jobRuns(jobs["build-global"]);
+  for (const [product, task] of [
+    ["browser", "test-browser-release-candidate"],
+    ["textlint", "textlint-plugin-release-consumer-e2e"],
+    ["vscode", "test-vscode-release-determinism"],
+    ["zed", "test-zed-release-candidate"],
+  ]) {
+    if (!globalCandidateRun.includes(`${product}) task=${task}`)) {
+      fail(`build-globalは${product}の完成candidate task ${task}を実行してください`);
     }
   }
 }
@@ -269,6 +365,7 @@ export function loadWorkflowPolicyInputs() {
     if (file.endsWith(".yml")) sources[file] = read(`.github/workflows/${file}`);
   }
   return {
+    makefile: read("Makefile.toml"),
     sources,
     workflows: Object.fromEntries(
       Object.entries(sources).map(([name, source]) => [name, parseWorkflow(name, source)]),
@@ -276,12 +373,13 @@ export function loadWorkflowPolicyInputs() {
   };
 }
 
-export function validateReleaseWorkflowPolicy({ sources, workflows }) {
+export function validateReleaseWorkflowPolicy({ makefile = read("Makefile.toml"), sources, workflows }) {
   validatePinnedActions(workflows);
   validateWritePermissionGrants(workflows);
   validateNoDirectSecretAccess(sources, workflows);
   validateProductReleaseRouting(workflows);
   validateStandardSourceAndCandidateGates(workflows, sources);
+  validateGateTaskContract(makefile);
 }
 
 export function main() {

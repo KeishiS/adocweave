@@ -174,6 +174,7 @@ script = '''
 node tools/release-workflow-policy.mjs
 node --test \
   tools/browser-release-budget.test.mjs \
+  tools/product-candidate-plan.test.mjs \
   tools/product-release.test.mjs \
   tools/release-readiness.test.mjs \
   tools/release-workflow-policy.test.mjs
@@ -552,13 +553,40 @@ dependencies = [
 description = "Build and runtime-test the exact global archives uploaded by candidate CI"
 dependencies = [
   "release-global-artifacts",
-  "browser-runtime-check",
+  "test-browser-release-candidate",
   "textlint-plugin-release-consumer-e2e",
+  "test-zed-release-candidate",
 ]
 
 [tasks.browser-runtime-check]
 description = "Run the release browser archive through static hosting and a package-name bundler import"
-dependencies = ["test-browser-smoke", "test-browser-bundler"]
+dependencies = [
+  "test-browser-release-package",
+  "test-browser-smoke",
+  "test-browser-bundler",
+]
+
+[tasks.test-browser-release-candidate]
+description = "Build, verify, run, install, and remove the Browser release candidate"
+dependencies = ["browser-runtime-check"]
+command = "node"
+args = [
+  "tools/release-installation-e2e.mjs",
+  "browser",
+  "target/distrib",
+  "x86_64-unknown-linux-musl",
+]
+
+[tasks.test-zed-release-candidate]
+description = "Build, verify, install, and remove the Zed release candidate"
+dependencies = ["test-zed-release-package"]
+command = "node"
+args = [
+  "tools/release-installation-e2e.mjs",
+  "zed",
+  "target/distrib",
+  "x86_64-unknown-linux-musl",
+]
 
 [tasks.build-wasm-node]
 description = "Build wasm-bindgen Node.js artifacts for cross-runtime conformance"

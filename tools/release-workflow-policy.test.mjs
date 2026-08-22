@@ -1,13 +1,25 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import {
   validateNoDirectSecretAccess,
+  validateGateTaskContract,
   validatePinnedActions,
   validateProductReleaseRouting,
   validateStandardSourceAndCandidateGates,
   validateWritePermissionGrants,
 } from "./release-workflow-policy.mjs";
+
+const makefile = readFileSync(new URL("../Makefile.toml", import.meta.url), "utf8");
+
+function mutateTask(source, name, mutate) {
+  const heading = `[tasks.${name}]`;
+  const start = source.indexOf(heading);
+  const next = source.indexOf("\n[tasks.", start + heading.length);
+  const end = next < 0 ? source.length : next;
+  return `${source.slice(0, start)}${mutate(source.slice(start, end))}${source.slice(end)}`;
+}
 
 const CACHE_STEP = { uses: "cachix/cachix-action@sha", with: { authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}" } };
 const CACHE_SOURCE = "authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}\n";
@@ -229,7 +241,12 @@ function sourceAndCandidateWorkflow() {
       },
       "build-global": {
         needs: ["candidate-plan"],
-        steps: [{ run: "cargo make global-candidate" }],
+        steps: [{ run: `case "$PRODUCT" in
+          browser) task=test-browser-release-candidate ;;
+          textlint) task=textlint-plugin-release-consumer-e2e ;;
+          vscode) task=test-vscode-release-determinism ;;
+          zed) task=test-zed-release-candidate ;;
+        esac` }],
       },
       "verify-native-candidate": {
         needs: ["native-smoke"],
@@ -241,10 +258,6 @@ function sourceAndCandidateWorkflow() {
       },
       "installation-e2e": {
         needs: ["verify-native-candidate"],
-        steps: [{ run: "node tools/release-installation-e2e.mjs" }],
-      },
-      "global-installation-e2e": {
-        needs: ["verify-global-candidate"],
         steps: [{ run: "node tools/release-installation-e2e.mjs" }],
       },
     },
@@ -262,8 +275,11 @@ test("Pull Requestはpath条件なしで標準source gateを1回だけ直接実�
   validateSourceAndCandidateWorkflow();
 
   for (const mutate of [
+    (workflow) => { workflow.on.pull_request.paths = ["docs/**"]; },
     (workflow) => { workflow.jobs.source.name = "source"; },
     (workflow) => { workflow.jobs.source.if = "github.event_name == 'pull_request'"; },
+    (workflow) => { workflow.jobs.source.needs = ["main-gate"]; },
+    (workflow) => { workflow.jobs.source.strategy = { matrix: { shard: [1, 2] } }; },
     (workflow) => { workflow.jobs.source.uses = "./.github/workflows/quality.yml"; },
     (workflow) => { workflow.jobs["main-gate"].steps.push({ run: "cargo make source-gate" }); },
   ]) {
@@ -304,18 +320,59 @@ test("main candidate planはsourceとmain gateの成功後に製品計画を1回
     (workflow) => { workflow.jobs["candidate-plan"].steps = [{ run: "node custom-plan.mjs" }]; },
     (workflow) => { workflow.jobs["candidate-plan"].steps.push({ run: "node tools/product-candidate-plan.mjs" }); },
     (workflow) => { delete workflow.jobs["main-gate"].if; },
+    (workflow) => { workflow.jobs["main-gate"].steps = []; },
+    (workflow) => { workflow.jobs.source.steps.push({ run: "cargo make main-gate" }); },
   ]) {
     const workflow = sourceAndCandidateWorkflow();
     mutate(workflow);
     assert.throws(() => validateSourceAndCandidateWorkflow(workflow), /candidate-plan|main-gate/);
   }
+
+  const reordered = sourceAndCandidateWorkflow();
+  reordered.jobs["candidate-plan"].needs.reverse();
+  validateSourceAndCandidateWorkflow(reordered);
 });
 
 test("成果物のbuild、smoke、installationおよびcandidate処理をmainへ限定する", () => {
+  for (const mutate of [
+    (workflow) => { workflow.jobs["build-native"].needs = ["source"]; },
+    (workflow) => { delete workflow.jobs["build-global"]; },
+    (workflow) => { workflow.jobs["installation-e2e"].if = "failure()"; },
+  ]) {
+    const workflow = sourceAndCandidateWorkflow();
+    mutate(workflow);
+    assert.throws(
+      () => validateSourceAndCandidateWorkflow(workflow),
+      /成果物job/,
+    );
+  }
+});
+
+test("global成果物は製品別の完成candidate taskで検査する", () => {
   const workflow = sourceAndCandidateWorkflow();
-  workflow.jobs["build-native"].needs = ["source"];
+  workflow.jobs["build-global"].steps[0].run = workflow.jobs["build-global"].steps[0].run
+    .replace("test-browser-release-candidate", "browser-runtime-check");
   assert.throws(
     () => validateSourceAndCandidateWorkflow(workflow),
-    /成果物job build-nativeはmain candidate経路/,
+    /browserの完成candidate task/,
   );
+});
+
+test("sourceとmainの標準task境界をMakefileで固定する", () => {
+  validateGateTaskContract(makefile);
+
+  for (const [name, mutate] of [
+    ["source dependency", (source) => mutateTask(source, "source-gate", (body) => body.replace('  "fmt-check",\n', ""))],
+    ["main dependency", (source) => mutateTask(source, "main-gate", (body) => body.replace('  "fuzz",\n', ""))],
+    ["main candidate", (source) => mutateTask(source, "main-gate", (body) => body.replace("]", '  "release-global-candidate",\n]'))],
+    ["verify alias", (source) => mutateTask(source, "verify", (body) => body.replace('alias = "source-gate"', 'alias = "main-gate"'))],
+    ["acceptance", (source) => mutateTask(source, "acceptance", (body) => body.replace('  "source-gate",\n', ""))],
+    ["release-check", (source) => mutateTask(source, "release-check", (body) => body.replace('  "main-gate",\n', ""))],
+  ]) {
+    assert.throws(
+      () => validateGateTaskContract(mutate(makefile)),
+      undefined,
+      `${name}の退行を拒否しませんでした`,
+    );
+  }
 });

@@ -283,12 +283,12 @@ Pull Requestでは、変更pathにかかわらず一つの標準source gateを�
 ``verify``のまま維持します。
 
 Pull Requestでは配布candidateを構築しません。``main``へ統合したcommitに対し、WindowsとmacOSを含むcross target、
-実際のOSとBrowserを使う統合検査、fuzz、Nixパッケージ、配布計画にある全成果物の構築、および完成した成果物を使う
+実際のOSとBrowserを使う統合検査、fuzz、Nixパッケージ、未公開製品に対応する全成果物の構築、および完成した成果物を使う
 runtime受入検査を実行します。native成果物は対象OSのrunnerで、Browser成果物は実Chromiumで、textlint用パッケージは
 完成archiveと固定consumerで検査します。成果物のmetadata、checksumおよび収録fileも、公開するbyte列に対して確認します。
 
-いずれかの検査に失敗した``main`` commitは公開candidateとして使用しません。修正を``main``へ統合すると、全target、
-実統合および成果物検査を同じ境界で再実行します。公開workflowは、成功した``main`` commitのcandidateだけを再利用します。
+いずれかの検査に失敗した``main`` commitは公開candidateとして使用しません。修正を``main``へ統合すると、未公開製品の
+全target、実統合および成果物検査を同じ境界で再実行します。公開workflowは、成功した``main`` commitのcandidateだけを再利用します。
 この分離の理由はxref:adr/0031-path-independent-pull-request-gate.adoc[ADR 0031]を参照してください。
 
 公開workflowは、dispatchで指定した候補SHAが開始時点のmain先端と一致すること、同じSHAの成功済みcandidate、

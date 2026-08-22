@@ -19,7 +19,7 @@ Pull Requestの検査範囲を狭めるため、Gitが追跡するすべてのpa
 人が書いた文書および静的な依存関係境界の検査を省略しません。
 
 Pull Requestでは配布candidateを構築しません。cross targetの構築、実際のOSやBrowserを使う統合検査、fuzz、
-Nixパッケージ検査、全配布成果物の構築および成果物を使うruntime受入検査は、``main``へ統合したcommitで実行します。
+Nixパッケージ検査、未公開製品の配布成果物の構築および成果物を使うruntime受入検査は、``main``へ統合したcommitで実行します。
 公開workflowは、これらに成功した同じ``main`` commitのcandidateを再利用します。
 
 追跡pathの分類表と分類漏れの監査を設けません。Pull Requestのsource検査条件を真偽値として各jobへ渡す構成、
@@ -49,4 +49,4 @@ Nixパッケージ検査、全配布成果物の構築および成果物を使�
 通るため、検査を実行しなかった理由と``skipped``の組合せを調べる必要もなくなります。
 
 一方、cross target、実統合、fuzz、Nixおよび配布candidateの失敗は``main``への統合後に判明します。
-``main``では全targetと全成果物を検査し、失敗したcommitを公開candidateとして使用しません。
+``main``では未公開製品の全targetと全成果物を検査し、失敗したcommitを公開candidateとして使用しません。

@@ -233,7 +233,7 @@ CIの必須checkは``verify``の一つだけです。すべてのPull Requestで
 pathから判定せず、実行しないjobの``skipped``を別のjobで照合しません。失敗した場合は、Nix開発環境で
 ``cargo make verify``を再実行し、設定の基準である``.github/workflows``と``Makefile.toml``を確認してください。
 
-cross targetの構築、実際のOSやBrowserを使う統合検査、fuzz、Nixパッケージ検査、全配布成果物の構築および
+cross targetの構築、実際のOSやBrowserを使う統合検査、fuzz、Nixパッケージ検査、未公開製品の配布成果物の構築および
 成果物を使うruntime受入検査は、Pull Requestを``main``へ統合した後に実行します。``main``の検査に失敗したcommitは
 公開candidateとして使用しません。手元で成果物を含む追加の受入検査を行う場合は、次を実行します。
 
