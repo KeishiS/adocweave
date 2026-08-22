@@ -165,12 +165,67 @@ export function validateProductReleaseRouting(workflows) {
   }
 }
 
+function taskSection(makefile, task) {
+  const marker = `[tasks.${task}]`;
+  const start = makefile.indexOf(marker);
+  if (start < 0) fail(`Makefile.toml is missing task ${task}`);
+  const end = makefile.indexOf("\n[tasks.", start + marker.length);
+  return makefile.slice(start, end < 0 ? undefined : end);
+}
+
+const occurrences = (source, value) => source.split(value).length - 1;
+
+export function validateTextlintReleaseGates(workflows, makefile) {
+  const release = workflows["release.yml"];
+  const productBuild = release?.jobs?.["build-global"]?.steps
+    ?.find((step) => step.name === "Product candidate build and runtime verification")?.run;
+  if (typeof productBuild !== "string" ||
+      !productBuild.includes("textlint) task=verify-textlint-plugin-release-package ;;")) {
+    fail("textlint product build must call the completed archive verifier task");
+  }
+  if (release?.jobs?.["textlint-plugin-installation-e2e"] !== undefined) {
+    fail("release workflow must not duplicate the fixed textlint consumer E2E");
+  }
+  const globalInstallation = release?.jobs?.["global-installation-e2e"]?.steps
+    ?.find((step) => step.name === "Global installation and complete removal")?.run;
+  if (typeof globalInstallation !== "string" || /\btextlint\b/.test(globalInstallation)) {
+    fail("generic global installation E2E must not include textlint");
+  }
+  const artifacts = taskSection(makefile, "release-global-artifacts");
+  const candidate = taskSection(makefile, "release-global-candidate");
+  const hostInstallation = taskSection(makefile, "release-installation-e2e-host");
+  const packageBuild = taskSection(makefile, "package-textlint-plugin-release");
+  const packageVerification = taskSection(makefile, "verify-textlint-plugin-release-package");
+  const consumer = taskSection(makefile, "textlint-plugin-release-consumer-e2e");
+  if (occurrences(artifacts, '"verify-textlint-plugin-release-package"') !== 1 ||
+      artifacts.includes("textlint-plugin-reproducibility")) {
+    fail("global artifact gate must run only the completed textlint archive verifier");
+  }
+  if (occurrences(candidate, '"textlint-plugin-release-consumer-e2e"') !== 1 ||
+      candidate.includes("textlint-plugin-candidate-npx-smoke")) {
+    fail("global candidate gate must run only the fixed textlint consumer E2E");
+  }
+  if (packageBuild.includes("verify-textlint-plugin-package.mjs") ||
+      occurrences(packageVerification, "verify-textlint-plugin-package.mjs") !== 1 ||
+      occurrences(consumer, '"verify-textlint-plugin-release-package"') !== 1) {
+    fail("textlint archive verifier must have one owner in the candidate task graph");
+  }
+  if (makefile.includes("[tasks.textlint-plugin-compatibility-probe]") ||
+      makefile.includes("[tasks.textlint-plugin-candidate-npx-smoke]")) {
+    fail("removed textlint release probes must not return to the task graph");
+  }
+  if (/\btextlint\b/.test(hostInstallation)) {
+    fail("generic host installation E2E must not include textlint");
+  }
+}
+
 export function loadWorkflowPolicyInputs() {
   const sources = {};
   for (const file of readdirSync(new URL(".github/workflows/", ROOT))) {
     if (file.endsWith(".yml")) sources[file] = read(`.github/workflows/${file}`);
   }
   return {
+    makefile: read("Makefile.toml"),
     sources,
     workflows: Object.fromEntries(
       Object.entries(sources).map(([name, source]) => [name, parseWorkflow(name, source)]),
@@ -178,11 +233,12 @@ export function loadWorkflowPolicyInputs() {
   };
 }
 
-export function validateReleaseWorkflowPolicy({ sources, workflows }) {
+export function validateReleaseWorkflowPolicy({ makefile, sources, workflows }) {
   validatePinnedActions(workflows);
   validateWritePermissionGrants(workflows);
   validateNoDirectSecretAccess(sources, workflows);
   validateProductReleaseRouting(workflows);
+  validateTextlintReleaseGates(workflows, makefile);
 }
 
 export function main() {

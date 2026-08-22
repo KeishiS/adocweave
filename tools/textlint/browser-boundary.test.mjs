@@ -32,15 +32,14 @@ test("文章校正用exportをBrowser成果物から分離する", () => {
         `${repositoryRoot}target/adocweave-textlint-wasm-node/adocweave_textlint_wasm.js`
       )
     ),
-    ["adapterApiVersion", "parseText"]
+    ["parseText"]
   );
 });
 
-test("実WebAssembly境界がadapter API世代を公開しrequest上限をcode付きで拒否する", () => {
-  const { adapterApiVersion, parseText } = require(
+test("実WebAssembly境界がrequest上限をcode付きで拒否する", () => {
+  const { parseText } = require(
     `${repositoryRoot}target/adocweave-textlint-wasm-node/adocweave_textlint_wasm.js`
   );
-  assert.equal(adapterApiVersion(), 1);
   assert.equal(
     errorPayload(() => parseText({
       source: "x".repeat(10 * 1024 * 1024 + 1),

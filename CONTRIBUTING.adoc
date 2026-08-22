@@ -251,6 +251,7 @@ cargo make verify-with-global-candidate
 
 このtaskは``cargo make verify``に加えて、配布するbrowser、ZedおよびVS Codeのarchiveを構築し、
 cross-origin isolationを使わない静的配信環境およびbundler経由の2経路で実Chromiumから実行します。
+textlint用パッケージは、完成archiveの検証と固定consumerへの導入E2Eをそれぞれ1回実行します。
 
 手元とCIでは、``flake.lock``で固定した開発環境のChromiumを使用します。別のbrowserを確認する場合は
 ``ADOCWEAVE_BROWSER``で実行ファイルを指定できます。

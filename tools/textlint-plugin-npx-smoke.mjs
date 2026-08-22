@@ -6,6 +6,11 @@ import process from "node:process";
 import { pathToFileURL } from "node:url";
 
 const SOURCE = `= 題名\n\n${"あ".repeat(101)}。\n`;
+export const TEXTLINT_PLUGIN_ONE_SHOT = Object.freeze({
+  preset: "ja-technical-writing",
+  rulePackage: "textlint-rule-preset-ja-technical-writing",
+  ruleVersion: "12.0.2",
+});
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   const [packageSpec] = process.argv.slice(2);
@@ -20,13 +25,14 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
 export async function runTextlintPluginNpxSmoke(
   packageSpec,
   {
-    contract,
+    manifest,
+    oneShot = TEXTLINT_PLUGIN_ONE_SHOT,
     invokeNpm = invokeNpmExec,
   } = {},
 ) {
-  contract ??= await loadStrictContract();
+  manifest ??= await loadPackageManifest();
   const normalizedPackageSpec = await normalizePackageSpec(packageSpec);
-  const settings = npxSettings(contract);
+  const settings = npxSettings(manifest, oneShot);
   const root = await mkdtemp(join(tmpdir(), "adocweave-textlint-npx-smoke-"));
   try {
     const document = join(root, "document.adoc");
@@ -56,26 +62,24 @@ export async function runTextlintPluginNpxSmoke(
   }
 }
 
-export async function loadStrictContract() {
-  const { loadTextlintPluginPackageContract } = await import(
-    "./textlint-plugin-package-contract.mjs"
+export async function loadPackageManifest() {
+  const { loadTextlintPluginManifest } = await import(
+    "./textlint-plugin-package.mjs"
   );
-  return loadTextlintPluginPackageContract();
+  return loadTextlintPluginManifest();
 }
 
-export function npxSettings(contract) {
-  const packageName = contract?.identity?.packageName;
-  const pluginName = contract?.identity?.pluginName;
-  const textlintVersion = contract?.compatibility?.textlintVersion;
-  const { preset, rulePackage, ruleVersion } = contract?.oneShot ?? {};
+export function npxSettings(manifest, oneShot = TEXTLINT_PLUGIN_ONE_SHOT) {
+  const packageName = manifest?.name;
+  const textlintVersion = manifest?.peerDependencies?.textlint;
+  const { preset, rulePackage, ruleVersion } = oneShot;
   if (typeof packageName !== "string" || !packageName.includes("textlint-plugin-") ||
-      typeof pluginName !== "string" ||
       typeof textlintVersion !== "string" || typeof preset !== "string" ||
       typeof rulePackage !== "string" || typeof ruleVersion !== "string") {
-    throw new Error("textlint plugin contract is missing the one-shot execution settings");
+    throw new Error("textlint pluginの単発実行設定が不足しています");
   }
   return {
-    plugin: pluginName,
+    plugin: packageName.replace("/textlint-plugin-", "/"),
     preset,
     rulePackage: `${rulePackage}@${ruleVersion}`,
     textlint: `textlint@${textlintVersion}`,

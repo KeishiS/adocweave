@@ -19,53 +19,62 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const DEFAULT_ROOT = fileURLToPath(new URL("../", import.meta.url));
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
-  await verifyTextlintPluginReproducibility();
+  const [candidateArchive] = process.argv.slice(2);
+  if (!candidateArchive) {
+    process.stderr.write(
+      "usage: node tools/verify-textlint-plugin-reproducibility.mjs CANDIDATE_TGZ\n",
+    );
+    process.exit(2);
+  }
+  await verifyTextlintPluginReproducibility(candidateArchive);
 }
 
-export async function verifyTextlintPluginReproducibility({
-  repositoryRoot = DEFAULT_ROOT,
-  prepareSource = copyTrackedSource,
-  buildPackage = buildTextlintPluginPackage,
-  verifyPackage = verifyTextlintPluginPackage,
-} = {}) {
+export async function verifyTextlintPluginReproducibility(
+  candidateArchive,
+  {
+    repositoryRoot = DEFAULT_ROOT,
+    prepareSource = copyTrackedSource,
+    buildPackage = buildTextlintPluginPackage,
+    verifyPackage = verifyTextlintPluginPackage,
+  } = {},
+) {
   const root = await realpath(repositoryRoot);
+  const candidate = await realpath(resolve(candidateArchive));
+  const candidateBytes = await readFile(candidate);
+  const candidateHash = sha256(candidateBytes);
   const scratch = await mkdtemp(join(tmpdir(), "adocweave-textlint-reproducibility-"));
   try {
-    const builds = [];
-    for (const name of ["first", "second"]) {
-      const buildRoot = join(scratch, name);
-      const sourceDirectory = join(buildRoot, "source");
-      const outputDirectory = join(buildRoot, "distrib");
-      const cargoTargetDirectory = join(buildRoot, "cargo-target");
-      const npmCacheDirectory = join(buildRoot, "npm-cache");
-      const wasmOutputDirectory = join(buildRoot, "wasm-output");
-      await prepareSource(root, sourceDirectory);
-      await buildPackage({
-        cargoTargetDirectory,
-        npmCacheDirectory,
-        outputDirectory,
-        sourceDirectory,
-        wasmOutputDirectory,
-      });
-      const manifest = JSON.parse(
-        await readFile(join(sourceDirectory, "packages/textlint-plugin-asciidoc/package.json"), "utf8"),
-      );
-      const archive = join(
-        outputDirectory,
-        `adocweave-textlint-plugin-asciidoc-${manifest.version}.tgz`,
-      );
-      const bytes = await readFile(archive);
-      await verifyPackage({ archive, sourceDirectory });
-      builds.push({ archive, bytes, hash: sha256(bytes) });
-    }
+    const sourceDirectory = join(scratch, "source");
+    const outputDirectory = join(scratch, "distrib");
+    const cargoTargetDirectory = join(scratch, "cargo-target");
+    const npmCacheDirectory = join(scratch, "npm-cache");
+    const wasmOutputDirectory = join(scratch, "wasm-output");
+    await prepareSource(root, sourceDirectory);
+    await buildPackage({
+      cargoTargetDirectory,
+      npmCacheDirectory,
+      outputDirectory,
+      sourceDirectory,
+      wasmOutputDirectory,
+    });
+    const manifest = JSON.parse(
+      await readFile(join(sourceDirectory, "packages/textlint-plugin-asciidoc/package.json"), "utf8"),
+    );
+    const rebuiltArchive = join(
+      outputDirectory,
+      `adocweave-textlint-plugin-asciidoc-${manifest.version}.tgz`,
+    );
+    const rebuiltBytes = await readFile(rebuiltArchive);
+    const rebuiltHash = sha256(rebuiltBytes);
+    await verifyPackage({ archive: rebuiltArchive, sourceDirectory });
 
-    if (!builds[0].bytes.equals(builds[1].bytes)) {
+    if (!candidateBytes.equals(rebuiltBytes)) {
       throw new Error(
-        `clean textlint plugin builds differ: ${builds[0].hash} != ${builds[1].hash}`,
+        `textlint candidate and clean rebuild differ: ${candidateHash} != ${rebuiltHash}`,
       );
     }
-    process.stdout.write(`textlint plugin clean build is reproducible: ${builds[0].hash}\n`);
-    return builds[0].hash;
+    process.stdout.write(`textlint plugin candidate is reproducible: ${candidateHash}\n`);
+    return candidateHash;
   } finally {
     await rm(scratch, { force: true, maxRetries: 5, recursive: true, retryDelay: 100 });
   }

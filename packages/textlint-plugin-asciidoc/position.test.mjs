@@ -4,10 +4,12 @@ import test from "node:test";
 
 import { createPositionMapper } from "./position.mjs";
 
-test("UTF-16 rangeから位置と原文を生成する", () => {
+test("UTF-16 rangeからmaterialize用のraw、rangeおよびlocを生成する", () => {
   const source = "a😀日\r\n次";
   const mapper = createPositionMapper(source);
-  assert.deepEqual(mapper.base([1, 3]), {
+  const range = [1, 3];
+  const base = mapper.base(range);
+  assert.deepEqual(base, {
     raw: "😀",
     range: [1, 3],
     loc: {
@@ -15,6 +17,8 @@ test("UTF-16 rangeから位置と原文を生成する", () => {
       end: { line: 1, column: 3 }
     }
   });
+  range[0] = 0;
+  assert.deepEqual(base.range, [1, 3]);
   assert.deepEqual(mapper.location([6, 7]), {
     start: { line: 2, column: 0 },
     end: { line: 2, column: 1 }

@@ -1,12 +1,17 @@
 import { createRequire } from "node:module";
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { gunzipSync } from "node:zlib";
 import { pathToFileURL } from "node:url";
 
-import { loadTextlintPluginPackageContract } from "./textlint-plugin-package-contract.mjs";
+import {
+  loadTextlintPluginManifest,
+  TEXTLINT_PLUGIN_PACKAGE_LIMITS,
+  TEXTLINT_PLUGIN_WASM_PATHS,
+  validateTextlintPluginManifest,
+} from "./textlint-plugin-package.mjs";
 import { verifyMemoryMaximum } from "./verify-textlint-wasm-memory.mjs";
 
 function fail(message) { throw new Error(`textlint plugin archive: ${message}`); }
@@ -72,57 +77,47 @@ function assertNoMachinePath(bytes) {
 }
 
 export async function verifyTextlintPluginPackage(archivePath, { maximumPackedBytes, maximumUnpackedBytes } = {}) {
-  const contract = loadTextlintPluginPackageContract();
+  const sourceManifest = loadTextlintPluginManifest();
   const archive = resolve(archivePath);
   const packed = await readFile(archive);
-  const packedLimit = maximumPackedBytes ?? contract.archive.maximumPackedBytes;
+  const packedLimit = maximumPackedBytes ?? TEXTLINT_PLUGIN_PACKAGE_LIMITS.maximumPackedBytes;
   if (packed.length > packedLimit) fail(`packed size exceeds ${packedLimit} bytes`);
-  const maximumTarBytes = maximumUnpackedBytes ?? contract.archive.maximumUnpackedBytes;
-  const tarOverhead = contract.archive.fileCount * (512 + 511) + 1024;
+  const maximumTarBytes = maximumUnpackedBytes ?? TEXTLINT_PLUGIN_PACKAGE_LIMITS.maximumUnpackedBytes;
+  const tarOverhead = (sourceManifest.files.length + 1) * (512 + 511) + 1024;
   const members = readTarMembers(packed, { maximumTarBytes: maximumTarBytes + tarOverhead });
-  const expected = contract.files.map(({ path }) => `package/${path}`).sort();
-  const actual = members.map(({ name }) => name).sort();
-  if (members.length !== contract.archive.fileCount || JSON.stringify(actual) !== JSON.stringify(expected)) fail("file set does not match the contract");
-  const unpacked = members.reduce((sum, member) => sum + member.size, 0);
-  const unpackedLimit = maximumUnpackedBytes ?? contract.archive.maximumUnpackedBytes;
-  if (unpacked > unpackedLimit) fail(`unpacked size exceeds ${unpackedLimit} bytes`);
-  const byName = new Map(members.map((member) => [member.name.slice("package/".length), member.data]));
-  const manifest = JSON.parse(byName.get("package.json").toString("utf8"));
-  const sourceManifest = JSON.parse(await readFile(
-    new URL("../packages/textlint-plugin-asciidoc/package.json", import.meta.url),
-    "utf8",
-  ));
-  const expectedFiles = contract.files.filter(({ path }) => path !== "package.json").map(({ path }) => path);
-  const manifestKeys = ["bugs", "description", "engines", "exports", "files", "homepage", "keywords", "license", "main", "name", "peerDependencies", "private", "repository", "type", "types", "version"].sort();
-  if (JSON.stringify(Object.keys(manifest).sort()) !== JSON.stringify(manifestKeys)) fail("package.json fields do not match the public allowlist");
-  if (manifest.name !== contract.identity.packageName || manifest.private !== true || manifest.version !== sourceManifest.version) fail("package identity does not match the contract and source package");
-  if (manifest.engines?.node !== contract.compatibility.nodeEngine || manifest.peerDependencies?.textlint !== contract.compatibility.textlintVersion || manifest.peerDependencies?.["@textlint/types"] !== contract.compatibility.textlintTypesVersion) fail("package compatibility does not match the contract");
-  if (JSON.stringify(manifest.files) !== JSON.stringify(expectedFiles)) fail("package.json files do not match the contract");
-  if (manifest.description !== "AsciiDoc Processor Plugin for textlint powered by AdocWeave" || manifest.type !== "module" ||
-      manifest.main !== "./index.mjs" || manifest.types !== "./index.d.mts" ||
-      JSON.stringify(manifest.exports) !== JSON.stringify({ ".": { types: "./index.d.mts", import: "./index.mjs", default: "./index.mjs" } }) ||
-      JSON.stringify(manifest.keywords) !== JSON.stringify(["asciidoc", "textlint", "textlintplugin"]) ||
-      manifest.license !== "MIT OR Apache-2.0" || manifest.homepage !== "https://github.com/KeishiS/adocweave" ||
-      manifest.bugs !== "https://github.com/KeishiS/adocweave/issues" ||
-      JSON.stringify(manifest.repository) !== JSON.stringify({ type: "git", url: "https://github.com/KeishiS/adocweave.git", directory: "packages/textlint-plugin-asciidoc" })) {
-    fail("package.json public metadata does not match the allowlist");
+  const byName = new Map(members.map((member) => [member.name, member.data]));
+  const manifestBytes = byName.get("package/package.json");
+  if (!manifestBytes) fail("package.json is missing");
+  const manifest = JSON.parse(manifestBytes.toString("utf8"));
+  validateTextlintPluginManifest(manifest);
+  if (JSON.stringify(manifest) !== JSON.stringify(sourceManifest)) {
+    fail("archive package.json does not match the source package contract");
   }
+  const expectedPaths = ["package.json", ...manifest.files];
+  const expected = expectedPaths.map((path) => `package/${path}`).sort();
+  const actual = members.map(({ name }) => name).sort();
+  if (members.length !== expectedPaths.length || JSON.stringify(actual) !== JSON.stringify(expected)) {
+    fail("file set does not match package.json");
+  }
+  const unpacked = members.reduce((sum, member) => sum + member.size, 0);
+  const unpackedLimit = maximumUnpackedBytes ?? TEXTLINT_PLUGIN_PACKAGE_LIMITS.maximumUnpackedBytes;
+  if (unpacked > unpackedLimit) fail(`unpacked size exceeds ${unpackedLimit} bytes`);
+  const packageFiles = new Map(members.map((member) => [member.name.slice("package/".length), member.data]));
   for (const field of ["dependencies", "devDependencies", "optionalDependencies", "bundledDependencies"]) {
     const value = manifest[field];
     if (value && (Array.isArray(value) ? value.length : Object.keys(value).length) !== 0) fail(`package must not contain ${field}`);
   }
-  for (const name of ["preinstall", "install", "postinstall", "prepare", "prepack", "postpack"]) if (manifest.scripts?.[name]) fail(`package must not define ${name}`);
-  const wasm = byName.get(contract.wasm.binaryPath);
+  if (manifest.scripts && Object.keys(manifest.scripts).length !== 0) fail("package must not define scripts");
+  const wasm = packageFiles.get(TEXTLINT_PLUGIN_WASM_PATHS.binary);
   assertNoMachinePath(wasm);
-  verifyMemoryMaximum(wasm, contract.wasm.maximumMemoryBytes);
+  verifyMemoryMaximum(wasm, TEXTLINT_PLUGIN_PACKAGE_LIMITS.maximumMemoryBytes);
   const root = await mkdtemp(join(tmpdir(), "adocweave-textlint-archive-"));
   try {
     for (const member of members) { const relative = member.name.slice("package/".length); const target = join(root, relative); await mkdir(dirname(target), { recursive: true }); await writeFile(target, member.data, { flag: "wx" }); }
-    const wrapper = createRequire(import.meta.url)(join(root, contract.wasm.wrapperPath));
-    if (JSON.stringify(Object.keys(wrapper).sort()) !== JSON.stringify([...contract.wasm.exportNames].sort())) fail("WebAssembly wrapper exports do not match the contract");
-    const plugin = await import(`${pathToFileURL(join(root, "index.mjs")).href}?verify=${Date.now()}`);
-    const extensions = new plugin.Processor({}).availableExtensions();
-    if (JSON.stringify(extensions) !== JSON.stringify(contract.extensions)) fail("Processor extensions do not match the contract");
+    const wrapper = createRequire(import.meta.url)(join(root, TEXTLINT_PLUGIN_WASM_PATHS.wrapper));
+    if (JSON.stringify(Object.keys(wrapper)) !== JSON.stringify(["parseText"])) {
+      fail("WebAssembly wrapper must export parseText only");
+    }
   } finally { await rm(root, { recursive: true, force: true }); }
   return { fileCount: members.length, packedBytes: packed.length, unpackedBytes: unpacked };
 }

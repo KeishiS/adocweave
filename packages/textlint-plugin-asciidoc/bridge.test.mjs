@@ -1,14 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createParseText, TEXTLINT_ADAPTER_API_VERSION } from "./bridge.mjs";
+import { createParseText } from "./bridge.mjs";
 
 const compatibleBridge = (parseText) => ({
-  adapterApiVersion: () => TEXTLINT_ADAPTER_API_VERSION,
   parseText,
 });
 
-test("adapter API、sourceIdおよびsourceをWASM境界で検査する", () => {
+test("sourceIdとsourceだけをWASMへ渡す", () => {
   let request;
   const parseText = createParseText({
     bridgeLoader: () => compatibleBridge(
@@ -84,18 +83,5 @@ test("初期化失敗と未知のthrow値を利用者向けErrorへ変換する"
   assert.throws(
     () => unknownFailure(""),
     (error) => error instanceof Error && error.code === "adocweave-error"
-  );
-});
-
-test("異なるtextlint adapter API世代を拒否する", () => {
-  const parseText = createParseText({
-    bridgeLoader: () => ({
-      adapterApiVersion: () => TEXTLINT_ADAPTER_API_VERSION + 1,
-      parseText: () => ({}),
-    }),
-  });
-  assert.throws(
-    () => parseText(""),
-    (error) => error.code === "wasm-initialization-failed" && /互換性/.test(error.message),
   );
 });

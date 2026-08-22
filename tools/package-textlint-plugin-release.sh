@@ -32,7 +32,6 @@ if [[ "$packed_name" != "$archive_name" ]]; then
   echo "unexpected textlint plugin archive name: $packed_name" >&2
   exit 1
 fi
-node tools/verify-textlint-plugin-package.mjs "$scratch/$packed_name"
 cp "$scratch/$packed_name" "$archive"
 
 echo "textlint plugin release package built: $archive"

@@ -12,7 +12,6 @@ pub const MAX_OUTPUT_BYTES: usize = 50 * 1024 * 1024;
 pub const MAX_PLAN_NODES: usize = 1_000_000;
 /// Maximum accepted logical source identifier size.
 pub const MAX_SOURCE_ID_BYTES: usize = 4 * 1024;
-pub const ADAPTER_API_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -157,11 +156,6 @@ mod bindings {
 
     use super::*;
 
-    #[wasm_bindgen(js_name = adapterApiVersion)]
-    pub fn adapter_api_version_js() -> u32 {
-        ADAPTER_API_VERSION
-    }
-
     #[wasm_bindgen(js_name = parseText)]
     pub fn parse_text_js(request: JsValue) -> Result<JsValue, JsValue> {
         let request = deserialize_request(request)?;
@@ -226,12 +220,6 @@ mod tests {
     }
 
     #[test]
-    fn adapter_api_generation_is_independent_from_the_package_version() {
-        assert_eq!(ADAPTER_API_VERSION, 1);
-        assert_ne!(ADAPTER_API_VERSION.to_string(), env!("CARGO_PKG_VERSION"));
-    }
-
-    #[test]
     fn applies_all_boundary_limits() {
         let input =
             parse_text_request_with_limits(request("x"), 0, MAX_OUTPUT_BYTES, MAX_PLAN_NODES)
@@ -274,13 +262,16 @@ mod tests {
 
     #[test]
     fn request_rejects_unknown_fields() {
-        let error = serde_json::from_value::<ParseTextRequest>(serde_json::json!({
-            "sourceId": null,
-            "source": "",
-            "unknown": true
-        }))
-        .expect_err("unknown field");
-        assert!(error.to_string().contains("unknown field"));
+        for field in ["unknown", "componentVersion", "adapterApiVersion"] {
+            let mut request = serde_json::json!({
+                "sourceId": null,
+                "source": ""
+            });
+            request[field] = serde_json::json!(true);
+            let error = serde_json::from_value::<ParseTextRequest>(request)
+                .expect_err("unknown field must be rejected");
+            assert!(error.to_string().contains("unknown field"));
+        }
     }
 
     #[test]

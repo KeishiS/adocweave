@@ -10,7 +10,6 @@ import {
   productVersion,
   selectProduct,
 } from "./product-release.mjs";
-import { loadTextlintPluginPackageContract } from "./textlint-plugin-package-contract.mjs";
 
 export const RELEASE_METADATA_TOOL_VERSION = 2;
 const ROOT = new URL("../", import.meta.url);
@@ -162,9 +161,8 @@ function frontendPackage() {
 }
 
 function textlintPluginPackage() {
-  const contract = loadTextlintPluginPackageContract();
   const manifest = readJson("packages/textlint-plugin-asciidoc/package.json");
-  return npmPackage(contract.identity.packageName, manifest.version, "MIT OR Apache-2.0");
+  return npmPackage(manifest.name, manifest.version, manifest.license);
 }
 
 function npmPackage(name, version, license = "NOASSERTION") {

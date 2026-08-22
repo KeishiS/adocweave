@@ -12,8 +12,8 @@ readonly target_directory="$2"
 
 cd "$root"
 readonly maximum_memory_bytes="$(node --input-type=module -e '
-  import { loadTextlintPluginPackageContract } from "./tools/textlint-plugin-package-contract.mjs";
-  process.stdout.write(String(loadTextlintPluginPackageContract().wasm.maximumMemoryBytes));
+  import { TEXTLINT_PLUGIN_PACKAGE_LIMITS } from "./tools/textlint-plugin-package.mjs";
+  process.stdout.write(String(TEXTLINT_PLUGIN_PACKAGE_LIMITS.maximumMemoryBytes));
 ')"
 export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$root=. --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=cargo-home -C link-arg=--max-memory=$maximum_memory_bytes"
 cargo build \
@@ -25,6 +25,3 @@ wasm-bindgen \
   --target nodejs \
   --out-dir "$output_directory" \
   "$target_directory/wasm32-unknown-unknown/release/adocweave_textlint_wasm.wasm"
-node tools/verify-textlint-wasm-memory.mjs \
-  "$output_directory/adocweave_textlint_wasm_bg.wasm" \
-  "$maximum_memory_bytes"

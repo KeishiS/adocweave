@@ -1,6 +1,6 @@
 = ADR 0023: 公開と配布の境界
 
-:status: accepted; release unit amended by ADR 0027; editor/LSP boundary amended by ADR 0028
+:status: accepted; amended by ADR 0027, ADR 0028, and ADR 0030
 
 == 文脈
 

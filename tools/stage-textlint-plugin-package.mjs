@@ -1,56 +1,41 @@
-import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { expectedManifestFiles, loadTextlintPluginPackageContract } from "./textlint-plugin-package-contract.mjs";
+import {
+  loadTextlintPluginManifest,
+  TEXTLINT_PLUGIN_WASM_PATHS,
+} from "./textlint-plugin-package.mjs";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 
 export async function stageTextlintPluginPackage(stageDirectory, wasmDirectory, noticeFile) {
-  const contract = loadTextlintPluginPackageContract();
-  const sourceManifest = JSON.parse(
-    await readFile(join(ROOT, "packages/textlint-plugin-asciidoc/package.json"), "utf8"),
-  );
+  const manifest = loadTextlintPluginManifest();
   const stage = resolve(stageDirectory);
   await rm(stage, { recursive: true, force: true });
   await mkdir(stage, { recursive: true });
-  for (const entry of contract.files) {
-    const destination = join(stage, entry.path);
+  await cp(
+    join(ROOT, "packages/textlint-plugin-asciidoc/package.json"),
+    join(stage, "package.json"),
+    { errorOnExist: true },
+  );
+  for (const path of manifest.files) {
+    const destination = join(stage, path);
     await mkdir(dirname(destination), { recursive: true });
-    if (entry.source) {
-      await cp(join(ROOT, entry.source), destination, { errorOnExist: true });
-      continue;
+    if (path === "THIRD_PARTY_NOTICES.adoc") {
+      await cp(resolve(noticeFile), destination, { errorOnExist: true });
+    } else if (path === TEXTLINT_PLUGIN_WASM_PATHS.wrapper) {
+      await cp(join(resolve(wasmDirectory), "adocweave_textlint_wasm.js"), destination, { errorOnExist: true });
+    } else if (path === TEXTLINT_PLUGIN_WASM_PATHS.binary) {
+      await cp(join(resolve(wasmDirectory), "adocweave_textlint_wasm_bg.wasm"), destination, { errorOnExist: true });
+    } else if (path === "LICENSE-APACHE" || path === "LICENSE-MIT") {
+      await cp(join(ROOT, path), destination, { errorOnExist: true });
+    } else {
+      await cp(join(ROOT, "packages/textlint-plugin-asciidoc", path), destination, { errorOnExist: true });
     }
-    if (entry.generator === "third-party-notices") await cp(resolve(noticeFile), destination, { errorOnExist: true });
-    else if (entry.generator === "wasm-wrapper") await cp(join(resolve(wasmDirectory), "adocweave_textlint_wasm.js"), destination, { errorOnExist: true });
-    else if (entry.generator === "wasm-binary") await cp(join(resolve(wasmDirectory), "adocweave_textlint_wasm_bg.wasm"), destination, { errorOnExist: true });
-    else if (entry.generator === "package-manifest") {
-      const manifest = {
-        name: contract.identity.packageName,
-        version: sourceManifest.version,
-        description: "AsciiDoc Processor Plugin for textlint powered by AdocWeave",
-        private: contract.identity.private,
-        type: "module",
-        main: "./index.mjs",
-        types: "./index.d.mts",
-        exports: { ".": { types: "./index.d.mts", import: "./index.mjs", default: "./index.mjs" } },
-        files: expectedManifestFiles(contract),
-        engines: { node: contract.compatibility.nodeEngine },
-        peerDependencies: {
-          "@textlint/types": contract.compatibility.textlintTypesVersion,
-          textlint: contract.compatibility.textlintVersion,
-        },
-        keywords: ["asciidoc", "textlint", "textlintplugin"],
-        license: "MIT OR Apache-2.0",
-        homepage: "https://github.com/KeishiS/adocweave",
-        bugs: "https://github.com/KeishiS/adocweave/issues",
-        repository: { type: "git", url: "https://github.com/KeishiS/adocweave.git", directory: "packages/textlint-plugin-asciidoc" },
-      };
-      await writeFile(destination, `${JSON.stringify(manifest, null, 2)}\n`);
-    } else throw new Error(`未対応の生成方法です：${entry.generator}`);
   }
-  return { contract, stage };
+  return { manifest, stage };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

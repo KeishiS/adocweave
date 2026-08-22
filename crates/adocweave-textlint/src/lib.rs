@@ -78,80 +78,82 @@ pub enum DocumentType {
 
 /// TxtAST nodes emitted by this backend.
 ///
-/// Each variant carries exactly the properties required by that node type.
+/// Each variant carries exactly the properties required by that node type. The
+/// range parameter lets the planner validate byte ranges before converting the
+/// same node tree to the public UTF-16 representation.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "type")]
-pub enum TxtAstNode {
+pub enum TxtAstNode<R = Utf16Range> {
     Header {
-        range: Utf16Range,
+        range: R,
         depth: u8,
-        children: Vec<TxtAstNode>,
+        children: Vec<Self>,
     },
     Paragraph {
-        range: Utf16Range,
-        children: Vec<TxtAstNode>,
+        range: R,
+        children: Vec<Self>,
     },
     List {
-        range: Utf16Range,
+        range: R,
         ordered: bool,
-        children: Vec<TxtAstNode>,
+        children: Vec<Self>,
     },
     ListItem {
-        range: Utf16Range,
-        children: Vec<TxtAstNode>,
+        range: R,
+        children: Vec<Self>,
     },
     BlockQuote {
-        range: Utf16Range,
-        children: Vec<TxtAstNode>,
+        range: R,
+        children: Vec<Self>,
     },
     Table {
-        range: Utf16Range,
-        children: Vec<TxtAstNode>,
+        range: R,
+        children: Vec<Self>,
     },
     TableRow {
-        range: Utf16Range,
-        children: Vec<TxtAstNode>,
+        range: R,
+        children: Vec<Self>,
     },
     TableCell {
-        range: Utf16Range,
-        children: Vec<TxtAstNode>,
+        range: R,
+        children: Vec<Self>,
     },
     CodeBlock {
-        range: Utf16Range,
+        range: R,
         #[serde(rename = "valueRange")]
-        value_range: Utf16Range,
+        value_range: R,
         lang: Option<String>,
     },
     Comment {
-        range: Utf16Range,
+        range: R,
         #[serde(rename = "valueRange")]
-        value_range: Utf16Range,
+        value_range: R,
     },
     Str {
-        range: Utf16Range,
+        range: R,
         #[serde(rename = "valueRange")]
-        value_range: Utf16Range,
+        value_range: R,
     },
     Code {
-        range: Utf16Range,
+        range: R,
         #[serde(rename = "valueRange")]
-        value_range: Utf16Range,
+        value_range: R,
     },
     Strong {
-        range: Utf16Range,
-        children: Vec<TxtAstNode>,
+        range: R,
+        children: Vec<Self>,
     },
     Emphasis {
-        range: Utf16Range,
-        children: Vec<TxtAstNode>,
+        range: R,
+        children: Vec<Self>,
     },
     Link {
-        range: Utf16Range,
+        range: R,
         url: String,
-        children: Vec<TxtAstNode>,
+        children: Vec<Self>,
     },
     Break {
-        range: Utf16Range,
+        range: R,
     },
 }
 
@@ -183,79 +185,10 @@ impl ByteRange {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum ByteNode {
-    Header {
-        range: ByteRange,
-        depth: u8,
-        children: Vec<Self>,
-    },
-    Paragraph {
-        range: ByteRange,
-        children: Vec<Self>,
-    },
-    List {
-        range: ByteRange,
-        ordered: bool,
-        children: Vec<Self>,
-    },
-    ListItem {
-        range: ByteRange,
-        children: Vec<Self>,
-    },
-    BlockQuote {
-        range: ByteRange,
-        children: Vec<Self>,
-    },
-    Table {
-        range: ByteRange,
-        children: Vec<Self>,
-    },
-    TableRow {
-        range: ByteRange,
-        children: Vec<Self>,
-    },
-    TableCell {
-        range: ByteRange,
-        children: Vec<Self>,
-    },
-    CodeBlock {
-        range: ByteRange,
-        value_range: ByteRange,
-        lang: Option<String>,
-    },
-    Comment {
-        range: ByteRange,
-        value_range: ByteRange,
-    },
-    Str {
-        range: ByteRange,
-        value_range: ByteRange,
-    },
-    Code {
-        range: ByteRange,
-        value_range: ByteRange,
-    },
-    Strong {
-        range: ByteRange,
-        children: Vec<Self>,
-    },
-    Emphasis {
-        range: ByteRange,
-        children: Vec<Self>,
-    },
-    Link {
-        range: ByteRange,
-        url: String,
-        children: Vec<Self>,
-    },
-    Break {
-        range: ByteRange,
-    },
-}
+type ByteNode = TxtAstNode<ByteRange>;
 
-impl ByteNode {
-    const fn range(&self) -> ByteRange {
+impl<R: Copy> TxtAstNode<R> {
+    const fn range(&self) -> R {
         match self {
             Self::Header { range, .. }
             | Self::Paragraph { range, .. }
@@ -273,6 +206,48 @@ impl ByteNode {
             | Self::Emphasis { range, .. }
             | Self::Link { range, .. }
             | Self::Break { range } => *range,
+        }
+    }
+
+    const fn value_range(&self) -> Option<R> {
+        match self {
+            Self::CodeBlock { value_range, .. }
+            | Self::Comment { value_range, .. }
+            | Self::Str { value_range, .. }
+            | Self::Code { value_range, .. } => Some(*value_range),
+            Self::Header { .. }
+            | Self::Paragraph { .. }
+            | Self::List { .. }
+            | Self::ListItem { .. }
+            | Self::BlockQuote { .. }
+            | Self::Table { .. }
+            | Self::TableRow { .. }
+            | Self::TableCell { .. }
+            | Self::Strong { .. }
+            | Self::Emphasis { .. }
+            | Self::Link { .. }
+            | Self::Break { .. } => None,
+        }
+    }
+
+    fn children(&self) -> Option<&[Self]> {
+        match self {
+            Self::Header { children, .. }
+            | Self::Paragraph { children, .. }
+            | Self::List { children, .. }
+            | Self::ListItem { children, .. }
+            | Self::BlockQuote { children, .. }
+            | Self::Table { children, .. }
+            | Self::TableRow { children, .. }
+            | Self::TableCell { children, .. }
+            | Self::Strong { children, .. }
+            | Self::Emphasis { children, .. }
+            | Self::Link { children, .. } => Some(children),
+            Self::CodeBlock { .. }
+            | Self::Comment { .. }
+            | Self::Str { .. }
+            | Self::Code { .. }
+            | Self::Break { .. } => None,
         }
     }
 
@@ -302,6 +277,131 @@ impl ByteNode {
             self,
             Self::BlockQuote { .. } | Self::ListItem { .. } | Self::TableCell { .. }
         )
+    }
+}
+
+impl<R> TxtAstNode<R> {
+    fn try_map_ranges<T, E>(
+        self,
+        map: &mut impl FnMut(R) -> Result<T, E>,
+    ) -> Result<TxtAstNode<T>, E> {
+        fn children<R, T, E>(
+            nodes: Vec<TxtAstNode<R>>,
+            map: &mut impl FnMut(R) -> Result<T, E>,
+        ) -> Result<Vec<TxtAstNode<T>>, E> {
+            nodes
+                .into_iter()
+                .map(|node| node.try_map_ranges(map))
+                .collect()
+        }
+
+        Ok(match self {
+            Self::Header {
+                range,
+                depth,
+                children: value,
+            } => TxtAstNode::Header {
+                range: map(range)?,
+                depth,
+                children: children(value, map)?,
+            },
+            Self::Paragraph {
+                range,
+                children: value,
+            } => TxtAstNode::Paragraph {
+                range: map(range)?,
+                children: children(value, map)?,
+            },
+            Self::List {
+                range,
+                ordered,
+                children: value,
+            } => TxtAstNode::List {
+                range: map(range)?,
+                ordered,
+                children: children(value, map)?,
+            },
+            Self::ListItem {
+                range,
+                children: value,
+            } => TxtAstNode::ListItem {
+                range: map(range)?,
+                children: children(value, map)?,
+            },
+            Self::BlockQuote {
+                range,
+                children: value,
+            } => TxtAstNode::BlockQuote {
+                range: map(range)?,
+                children: children(value, map)?,
+            },
+            Self::Table {
+                range,
+                children: value,
+            } => TxtAstNode::Table {
+                range: map(range)?,
+                children: children(value, map)?,
+            },
+            Self::TableRow {
+                range,
+                children: value,
+            } => TxtAstNode::TableRow {
+                range: map(range)?,
+                children: children(value, map)?,
+            },
+            Self::TableCell {
+                range,
+                children: value,
+            } => TxtAstNode::TableCell {
+                range: map(range)?,
+                children: children(value, map)?,
+            },
+            Self::CodeBlock {
+                range,
+                value_range,
+                lang,
+            } => TxtAstNode::CodeBlock {
+                range: map(range)?,
+                value_range: map(value_range)?,
+                lang,
+            },
+            Self::Comment { range, value_range } => TxtAstNode::Comment {
+                range: map(range)?,
+                value_range: map(value_range)?,
+            },
+            Self::Str { range, value_range } => TxtAstNode::Str {
+                range: map(range)?,
+                value_range: map(value_range)?,
+            },
+            Self::Code { range, value_range } => TxtAstNode::Code {
+                range: map(range)?,
+                value_range: map(value_range)?,
+            },
+            Self::Strong {
+                range,
+                children: value,
+            } => TxtAstNode::Strong {
+                range: map(range)?,
+                children: children(value, map)?,
+            },
+            Self::Emphasis {
+                range,
+                children: value,
+            } => TxtAstNode::Emphasis {
+                range: map(range)?,
+                children: children(value, map)?,
+            },
+            Self::Link {
+                range,
+                url,
+                children: value,
+            } => TxtAstNode::Link {
+                range: map(range)?,
+                url,
+                children: children(value, map)?,
+            },
+            Self::Break { range } => TxtAstNode::Break { range: map(range)? },
+        })
     }
 }
 
@@ -896,6 +996,11 @@ fn sort_and_check(nodes: &mut [ByteNode]) -> Result<(), PlanError> {
         if previous_end.is_some_and(|end| end > node_range.start()) {
             return Err(PlanError::OverlappingSiblings);
         }
+        if node.value_range().is_some_and(|value_range| {
+            value_range.start() < node_range.start() || value_range.end() > node_range.end()
+        }) {
+            return Err(PlanError::InvalidSourceRange);
+        }
         if let Some(children) = node.children_mut() {
             sort_and_check(children)?;
             for child in children {
@@ -1240,150 +1345,17 @@ impl Utf16Offsets {
     }
 
     fn node(&self, node: ByteNode) -> Result<TxtAstNode, PlanError> {
-        let children = |nodes: Vec<ByteNode>| {
-            nodes
-                .into_iter()
-                .map(|node| self.node(node))
-                .collect::<Result<Vec<_>, _>>()
-        };
-        Ok(match node {
-            ByteNode::Header {
-                range,
-                depth,
-                children: value,
-            } => TxtAstNode::Header {
-                range: self.range(range)?,
-                depth,
-                children: children(value)?,
-            },
-            ByteNode::Paragraph {
-                range,
-                children: value,
-            } => TxtAstNode::Paragraph {
-                range: self.range(range)?,
-                children: children(value)?,
-            },
-            ByteNode::List {
-                range,
-                ordered,
-                children: value,
-            } => TxtAstNode::List {
-                range: self.range(range)?,
-                ordered,
-                children: children(value)?,
-            },
-            ByteNode::ListItem {
-                range,
-                children: value,
-            } => TxtAstNode::ListItem {
-                range: self.range(range)?,
-                children: children(value)?,
-            },
-            ByteNode::BlockQuote {
-                range,
-                children: value,
-            } => TxtAstNode::BlockQuote {
-                range: self.range(range)?,
-                children: children(value)?,
-            },
-            ByteNode::Table {
-                range,
-                children: value,
-            } => TxtAstNode::Table {
-                range: self.range(range)?,
-                children: children(value)?,
-            },
-            ByteNode::TableRow {
-                range,
-                children: value,
-            } => TxtAstNode::TableRow {
-                range: self.range(range)?,
-                children: children(value)?,
-            },
-            ByteNode::TableCell {
-                range,
-                children: value,
-            } => TxtAstNode::TableCell {
-                range: self.range(range)?,
-                children: children(value)?,
-            },
-            ByteNode::CodeBlock {
-                range,
-                value_range,
-                lang,
-            } => TxtAstNode::CodeBlock {
-                range: self.range(range)?,
-                value_range: self.range(value_range)?,
-                lang,
-            },
-            ByteNode::Comment { range, value_range } => TxtAstNode::Comment {
-                range: self.range(range)?,
-                value_range: self.range(value_range)?,
-            },
-            ByteNode::Str { range, value_range } => TxtAstNode::Str {
-                range: self.range(range)?,
-                value_range: self.range(value_range)?,
-            },
-            ByteNode::Code { range, value_range } => TxtAstNode::Code {
-                range: self.range(range)?,
-                value_range: self.range(value_range)?,
-            },
-            ByteNode::Strong {
-                range,
-                children: value,
-            } => TxtAstNode::Strong {
-                range: self.range(range)?,
-                children: children(value)?,
-            },
-            ByteNode::Emphasis {
-                range,
-                children: value,
-            } => TxtAstNode::Emphasis {
-                range: self.range(range)?,
-                children: children(value)?,
-            },
-            ByteNode::Link {
-                range,
-                url,
-                children: value,
-            } => TxtAstNode::Link {
-                range: self.range(range)?,
-                url,
-                children: children(value)?,
-            },
-            ByteNode::Break { range } => TxtAstNode::Break {
-                range: self.range(range)?,
-            },
-        })
+        node.try_map_ranges(&mut |range| self.range(range))
     }
 }
 
 fn collect_offsets(node: &ByteNode, output: &mut BTreeSet<usize>) {
     let range = node.range();
     output.extend([range.start(), range.end()]);
-    match node {
-        ByteNode::CodeBlock { value_range, .. }
-        | ByteNode::Comment { value_range, .. }
-        | ByteNode::Str { value_range, .. }
-        | ByteNode::Code { value_range, .. } => {
-            output.extend([value_range.start(), value_range.end()]);
-        }
-        _ => {}
+    if let Some(value_range) = node.value_range() {
+        output.extend([value_range.start(), value_range.end()]);
     }
-    if let Some(children) = match node {
-        ByteNode::Header { children, .. }
-        | ByteNode::Paragraph { children, .. }
-        | ByteNode::List { children, .. }
-        | ByteNode::ListItem { children, .. }
-        | ByteNode::BlockQuote { children, .. }
-        | ByteNode::Table { children, .. }
-        | ByteNode::TableRow { children, .. }
-        | ByteNode::TableCell { children, .. }
-        | ByteNode::Strong { children, .. }
-        | ByteNode::Emphasis { children, .. }
-        | ByteNode::Link { children, .. } => Some(children),
-        _ => None,
-    } {
+    if let Some(children) = node.children() {
         for child in children {
             collect_offsets(child, output);
         }
@@ -1887,6 +1859,18 @@ mod tests {
         assert_eq!(
             plan(&analysis, PlanLimits { max_nodes: 1 }),
             Err(PlanError::NodeLimitExceeded { max_nodes: 1 })
+        );
+    }
+
+    #[test]
+    fn range_validator_rejects_value_outside_its_node() {
+        let mut nodes = [ByteNode::Str {
+            range: ByteRange::new(1, 2).expect("node range"),
+            value_range: ByteRange::new(0, 2).expect("value range"),
+        }];
+        assert_eq!(
+            sort_and_check(&mut nodes),
+            Err(PlanError::InvalidSourceRange)
         );
     }
 

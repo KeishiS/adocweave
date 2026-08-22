@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 
 import { fetchedSafely } from "./npm-lock-policy.mjs";
-import { loadTextlintPluginPackageContract } from "./textlint-plugin-package-contract.mjs";
 
 const manifest = JSON.parse(
   readFileSync("packages/textlint-plugin-asciidoc/package.json", "utf8"),
@@ -15,20 +14,16 @@ const lock = JSON.parse(
 const recorded = JSON.parse(
   readFileSync("security/textlint-plugin-e2e-build-licenses.json", "utf8"),
 );
-const contract = loadTextlintPluginPackageContract();
 const fixedDependencies = {
-  "@textlint/types": contract.compatibility.textlintTypesVersion,
-  textlint: contract.compatibility.textlintVersion,
+  "@textlint/types": manifest.peerDependencies["@textlint/types"],
+  textlint: manifest.peerDependencies.textlint,
 };
 
 const { version: productVersion, ...manifestIdentity } = manifest;
 if (
   !/^\d+\.\d+\.\d+$/.test(productVersion) ||
-  JSON.stringify(manifestIdentity) !== JSON.stringify({
-    name: "adocweave-textlint-plugin-development",
-    private: contract.identity.private,
-    type: "module",
-  }) ||
+  manifestIdentity.name !== "@adocweave/textlint-plugin-asciidoc" ||
+  manifestIdentity.private !== true || manifestIdentity.type !== "module" ||
   lock.lockfileVersion !== 3
 ) {
   throw new Error("textlint pluginのmanifestまたはconsumer lockfileを解釈できません");

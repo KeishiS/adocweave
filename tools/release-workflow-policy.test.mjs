@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   validateNoDirectSecretAccess,
   validateProductReleaseRouting,
+  validateTextlintReleaseGates,
 } from "./release-workflow-policy.mjs";
 
 const CACHE_STEP = { uses: "cachix/cachix-action@sha", with: { authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}" } };
@@ -166,5 +167,56 @@ test("product release routing rejects a generic candidate artifact", () => {
   assert.throws(
     () => validateProductReleaseRouting(workflows),
     /download only the selected product candidate/,
+  );
+});
+
+test("textlintのPR検査を完成archiveと固定consumerの各1回に限定する", () => {
+  const workflows = {
+    "release.yml": {
+      jobs: {
+        "build-global": {
+          steps: [{
+            name: "Product candidate build and runtime verification",
+            run: "case \"$PRODUCT\" in\n  textlint) task=verify-textlint-plugin-release-package ;;\nesac",
+          }],
+        },
+        "global-installation-e2e": {
+          steps: [{
+            name: "Global installation and complete removal",
+            run: "for product in browser vscode zed; do verify $product; done",
+          }],
+        },
+      },
+    },
+  };
+  const makefile = `
+[tasks.package-textlint-plugin-release]
+command = "bash"
+[tasks.verify-textlint-plugin-release-package]
+dependencies = ["package-textlint-plugin-release"]
+script = 'node tools/verify-textlint-plugin-package.mjs archive.tgz'
+[tasks.textlint-plugin-release-consumer-e2e]
+dependencies = ["verify-textlint-plugin-release-package"]
+[tasks.release-global-artifacts]
+dependencies = ["verify-textlint-plugin-release-package"]
+[tasks.release-global-candidate]
+dependencies = ["release-global-artifacts", "textlint-plugin-release-consumer-e2e"]
+[tasks.release-installation-e2e-host]
+dependencies = ["native-release-smoke-host", "package-browser-release"]
+`;
+  validateTextlintReleaseGates(workflows, makefile);
+
+  const brokenBuild = structuredClone(workflows);
+  brokenBuild["release.yml"].jobs["build-global"].steps[0].run =
+    "textlint) task=test-textlint-plugin-release-package ;;";
+  assert.throws(
+    () => validateTextlintReleaseGates(brokenBuild, makefile),
+    /must call the completed archive verifier task/,
+  );
+
+  workflows["release.yml"].jobs["textlint-plugin-installation-e2e"] = {};
+  assert.throws(
+    () => validateTextlintReleaseGates(workflows, makefile),
+    /must not duplicate the fixed textlint consumer E2E/,
   );
 });

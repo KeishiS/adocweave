@@ -10,9 +10,13 @@ import {
   npmInvocation,
   runTextlintPluginConsumerE2E,
 } from "./textlint-plugin-consumer-e2e.mjs";
-import { loadTextlintPluginPackageContract } from "./textlint-plugin-package-contract.mjs";
+import {
+  loadTextlintPluginManifest,
+  textlintPluginName,
+  TEXTLINT_PLUGIN_WASM_PATHS,
+} from "./textlint-plugin-package.mjs";
 
-const packageContract = loadTextlintPluginPackageContract();
+const packageManifest = loadTextlintPluginManifest();
 
 test("公開tgzを実CLI相当の経路で検査する", async () => {
   const { archive, root } = await createFixtureArchive();
@@ -32,7 +36,7 @@ test("公開tgzを実CLI相当の経路で検査する", async () => {
         ]);
         const config = JSON.parse(await readFile(join(cwd, ".textlintrc.json"), "utf8"));
         assert.deepEqual(config.plugins, {
-          [packageContract.identity.pluginName]: { extensions: [".guide"] },
+          [textlintPluginName(packageManifest.name)]: { extensions: [".guide"] },
         });
         assert.deepEqual(config.rules, {});
         const paths = input === undefined
@@ -49,14 +53,15 @@ test("公開tgzを実CLI相当の経路で検査する", async () => {
     await rm(root, { recursive: true, force: true });
   }
 
-  const extensionCount = packageContract.extensions.length;
+  const extensions = [".adoc", ".asciidoc", ".asc"];
+  const extensionCount = extensions.length;
   assert.equal(invocations.length, extensionCount + 2);
   assert.deepEqual(invocations[0].paths.map((path) => basename(path)), [
-    ...packageContract.extensions.map((extension) => `sample${extension}`),
+    ...extensions.map((extension) => `sample${extension}`),
     "sample.guide",
   ]);
   assert.deepEqual(invocations.slice(1, 1 + extensionCount).map(({ paths }) => basename(paths[0])), [
-    ...packageContract.extensions.map((extension) => `stdin${extension}`),
+    ...extensions.map((extension) => `stdin${extension}`),
   ]);
   assert.ok(invocations.slice(1, 1 + extensionCount).every(({ args }) => args.includes("--stdin")));
   assert.equal(invocations[1].input, fixtureSource("\n"));
@@ -135,24 +140,21 @@ async function createFixtureArchive() {
 }
 
 async function writeManifest(cwd) {
-  const plugin = join(cwd, "node_modules", ...packageContract.identity.packageName.split("/"));
+  const plugin = join(cwd, "node_modules", ...packageManifest.name.split("/"));
   const textlint = join(cwd, "node_modules", "textlint");
   await mkdir(join(textlint, "bin"), { recursive: true });
-  const wrapper = join(plugin, packageContract.wasm.wrapperPath);
+  const wrapper = join(plugin, TEXTLINT_PLUGIN_WASM_PATHS.wrapper);
   await mkdir(dirname(wrapper), { recursive: true });
   await writeFile(join(plugin, "package.json"), JSON.stringify({
-    name: packageContract.identity.packageName,
-    peerDependencies: {
-      "@textlint/types": packageContract.compatibility.textlintTypesVersion,
-      textlint: packageContract.compatibility.textlintVersion,
-    },
+    name: packageManifest.name,
+    peerDependencies: packageManifest.peerDependencies,
   }));
   await writeFile(
     wrapper,
-    "module.exports = { adapterApiVersion() { return 1; }, parseText() {} };\n",
+    "module.exports = { parseText() {} };\n",
   );
   await writeFile(join(textlint, "package.json"), JSON.stringify({
-    version: packageContract.compatibility.textlintVersion,
+    version: packageManifest.peerDependencies.textlint,
   }));
 }
 
