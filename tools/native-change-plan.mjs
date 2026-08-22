@@ -21,7 +21,6 @@ const COMMON_RELEASE_FILES = new Set([
   "flake.lock",
   "flake.nix",
   "release-manifest.json",
-  "rust-toolchain.toml",
 ]);
 const NATIVE_ROOTS = [
   "crates/adocweave-cli/",
@@ -56,7 +55,6 @@ const NON_RELEASE_FILES = new Set([
   ".adocweave.toml",
   ".gitattributes",
   ".gitignore",
-  ".github/dependabot-auto-merge-policy.json",
   ".github/SECURITY.md",
   ".github/dependabot.yml",
   ".github/pull_request_template.md",
@@ -68,16 +66,6 @@ const NON_RELEASE_FILES = new Set([
   "tools/breaking-rust-api.mjs",
   "tools/config-schema.test.mjs",
   "tools/dependency-governance.sh",
-  "tools/dependabot-alert-inventory.sh",
-  "tools/dependabot-alert-inventory.test.mjs",
-  "tools/dependabot-alert-snapshot.sh",
-  "tools/dependabot-alert-snapshot.test.mjs",
-  "tools/dependabot-auto-merge-disable-result.jq",
-  "tools/dependabot-auto-merge-pr-detail.jq",
-  "tools/dependabot-auto-merge-pr-numbers.jq",
-  "tools/dependabot-auto-merge-policy.mjs",
-  "tools/dependabot-auto-merge-policy.test.mjs",
-  "tools/dependabot-auto-merge-workflow.test.mjs",
   "tools/generate-third-party-notices.test.mjs",
   "tools/html5-check.mjs",
   "tools/native-change-plan.test.mjs",
@@ -214,12 +202,31 @@ export function auditCandidatePaths(paths) {
   return paths.filter((pathname) => !classifyCandidatePath(pathname).classified);
 }
 
+/// Every path this module names one file at a time, rather than by prefix.
+///
+/// The audit above only asks whether a tracked path is classified. Nothing
+/// asked the opposite question, so entries kept naming files that had been
+/// deleted: the Dependabot auto-merge tooling stayed listed for as long as ADR
+/// 0015 had been in effect. Comparing this list against the working tree turns
+/// a deletion into a failing check rather than a stale line nobody reads.
+export function namedClassifiedPaths() {
+  return [
+    ...COMMON_RELEASE_FILES,
+    ...NON_RELEASE_FILES,
+    ...RUST_SOURCE_FILES,
+    ...DOCUMENT_FILES,
+    ...CHECK_DEFINITION_FILES,
+    ...DEPENDENCY_AUDIT_FILES,
+    ...NATIVE_TOOLS.map((name) => `tools/${name}`),
+    ...GLOBAL_TOOLS.map((name) => `tools/${name}`),
+  ].sort();
+}
+
 /// Paths that decide whether the Rust source checks have anything to verify.
 const RUST_SOURCE_ROOTS = ["crates/", "fuzz/", "security/"];
 const RUST_SOURCE_FILES = new Set([
   "Cargo.lock",
   "Cargo.toml",
-  "rust-toolchain.toml",
   "deny.toml",
 ]);
 /// Every input the dependency boundary audit reads.
@@ -319,7 +326,6 @@ const CHECK_DEFINITION_FILES = new Set([
   "Makefile.toml",
   "flake.lock",
   "flake.nix",
-  "rust-toolchain.toml",
 ]);
 
 const affects = (pathname, roots, files) =>

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import distributionPlan from "../release/distribution-plan.json" with { type: "json" };
 import {
   affectsGlobalCandidate,
@@ -9,6 +9,7 @@ import {
   candidateImpact,
   qualityScope,
   classifyCandidatePath,
+  namedClassifiedPaths,
   nativeChangePlan,
 } from "./native-change-plan.mjs";
 
@@ -111,6 +112,11 @@ test("tracked path監査は未分類pathを具体的に報告する", () => {
   ]);
 });
 
+test("file単位で名指しした分類対象はすべて実在する", () => {
+  const missing = namedClassifiedPaths().filter((pathname) => !existsSync(pathname));
+  assert.deepEqual(missing, [], "削除したfileが分類表に残っています");
+});
+
 test("Browser実行補助はglobalだけ、repository metadataはcandidate対象外に分類する", () => {
   for (const pathname of [
     "tools/browser-startup.mjs",
@@ -123,7 +129,6 @@ test("Browser実行補助はglobalだけ、repository metadataはcandidate対象
   }
   for (const pathname of [
     ".github/dependabot.yml",
-    ".github/dependabot-auto-merge-policy.json",
     ".github/pull_request_template.md",
     ".gitattributes",
     "deny.toml",
@@ -140,16 +145,6 @@ test("成果物へ影響しない既知の文書とfixtureだけを明示的に�
     ".github/ISSUE_TEMPLATE/bug_report.yml",
     "tools/release-workflow-policy.mjs",
     "tools/release-readiness.mjs",
-    "tools/dependabot-alert-inventory.sh",
-    "tools/dependabot-alert-inventory.test.mjs",
-    "tools/dependabot-alert-snapshot.sh",
-    "tools/dependabot-alert-snapshot.test.mjs",
-    "tools/dependabot-auto-merge-disable-result.jq",
-    "tools/dependabot-auto-merge-pr-detail.jq",
-    "tools/dependabot-auto-merge-pr-numbers.jq",
-    "tools/dependabot-auto-merge-policy.mjs",
-    "tools/dependabot-auto-merge-policy.test.mjs",
-    "tools/dependabot-auto-merge-workflow.test.mjs",
     "tools/sync-release-version.test.mjs",
   ]) {
     assert.deepEqual(candidateImpact(pathname), { global: false, native: false }, pathname);
