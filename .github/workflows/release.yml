@@ -296,11 +296,17 @@ jobs:
           node tools/product-release.mjs --verify-candidate "$PRODUCT" artifacts
       - name: Pull request candidate verification
         if: github.event_name == 'pull_request'
-        run: >-
-          node tools/verify-native-pr-candidate.mjs
-          artifacts
-          "${{ needs.changes.outputs.native_required }}"
-          "${{ needs.changes.outputs.global_required }}"
+        env:
+          GLOBAL_REQUIRED: ${{ needs.changes.outputs.global_required }}
+          NATIVE_REQUIRED: ${{ needs.changes.outputs.native_required }}
+        run: |
+          products=()
+          if [ "$NATIVE_REQUIRED" = true ]; then products+=(cli lsp); fi
+          if [ "$GLOBAL_REQUIRED" = true ]; then products+=(browser textlint vscode zed); fi
+          for product in "${products[@]}"; do
+            node tools/verify-native-pr-candidate.mjs \
+              --select "$product" artifacts "$RUNNER_TEMP/candidate-$product"
+          done
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: release-candidate-${{ matrix.product }}

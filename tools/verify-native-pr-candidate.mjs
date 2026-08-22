@@ -1,4 +1,4 @@
-import { readdirSync } from "node:fs";
+import { copyFileSync, mkdirSync, readdirSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -30,8 +30,27 @@ export function verifyPullRequestAssets(actual, plan, product) {
   }
 }
 
+export function selectPullRequestAssets(source, destination, plan, product) {
+  mkdirSync(destination, { recursive: true });
+  for (const name of expectedPullRequestAssets(plan, product)) {
+    copyFileSync(resolve(source, name), resolve(destination, name));
+  }
+}
+
 function main() {
-  const [product, candidateArgument] = process.argv.slice(2);
+  const [first, second, third, fourth] = process.argv.slice(2);
+  if (first === "--select") {
+    if (!second || !third || !fourth) {
+      process.stderr.write("usage: node tools/verify-native-pr-candidate.mjs --select PRODUCT SOURCE_DIRECTORY DESTINATION_DIRECTORY\n");
+      process.exit(2);
+    }
+    const plan = loadDistributionPlan();
+    selectPullRequestAssets(resolve(third), resolve(fourth), plan, second);
+    verifyPullRequestAssets(readdirSync(resolve(fourth)), plan, second);
+    process.stdout.write(`pull request candidateを分離して確認しました：${second}\n`);
+    return;
+  }
+  const [product, candidateArgument] = [first, second];
   if (!product || !candidateArgument) {
     process.stderr.write("usage: node tools/verify-native-pr-candidate.mjs PRODUCT CANDIDATE_DIRECTORY\n");
     process.exit(2);
