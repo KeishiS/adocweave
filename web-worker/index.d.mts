@@ -56,7 +56,7 @@ export declare class AdocWeaveClient {
   dispose(): void;
 }
 
-export declare function defaultAssetUrls(baseUrl?: string | URL): {
+export declare function defaultAssetUrls(baseUrl: string | URL): {
   workerUrl: URL;
   moduleUrl: URL;
   wasmUrl: URL;

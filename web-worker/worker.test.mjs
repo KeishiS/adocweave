@@ -40,7 +40,6 @@ async function harness(processBody) {
     async analyze(requestId, payload = { source: "text" }) {
       await globalThis.self.onmessage({
         data: {
-          protocolVersion: WORKER_PROTOCOL_VERSION,
           type: "analyze",
           requestId,
           payload,
@@ -58,21 +57,17 @@ test("worker envelope has one requestId and exact fields", () => {
       moduleUrl: "module.js", wasmUrl: "module.wasm",
     },
     "requests.analyze": {
-      type: "analyze", protocolVersion: WORKER_PROTOCOL_VERSION,
-      requestId: 1, payload: {},
+      type: "analyze", requestId: 1, payload: {},
     },
     "responses.ready": { type: "ready", protocolVersion: WORKER_PROTOCOL_VERSION },
     "responses.result": {
-      type: "result", protocolVersion: WORKER_PROTOCOL_VERSION,
-      requestId: 1, result: {},
+      type: "result", requestId: 1, result: {},
     },
     "responses.error": {
-      type: "error", protocolVersion: WORKER_PROTOCOL_VERSION,
-      requestId: 1, error: { code: "invalid-request", message: "invalid" },
+      type: "error", requestId: 1, error: { code: "invalid-request", message: "invalid" },
     },
     "responses.fatal": {
-      type: "fatal", protocolVersion: WORKER_PROTOCOL_VERSION,
-      requestId: 1, error: { code: "worker-failed", message: "failed" },
+      type: "fatal", requestId: 1, error: { code: "worker-failed", message: "failed" },
     },
   };
   for (const [contract, sample] of Object.entries(samples)) {
@@ -97,7 +92,6 @@ test("worker initializes WASM and returns its result unchanged", async () => {
     }]);
     await state.analyze(7, { source: "result" });
     assert.deepEqual(state.messages[1], {
-      protocolVersion: WORKER_PROTOCOL_VERSION,
       type: "result",
       requestId: 7,
       result: { html: "result" },
@@ -116,7 +110,6 @@ test("ordinary structured WASM errors do not close the worker", async () => {
   try {
     await state.analyze(1, { source: "bad" });
     assert.deepEqual(state.messages[1], {
-      protocolVersion: WORKER_PROTOCOL_VERSION,
       type: "error",
       requestId: 1,
       error: { code: "invalid-request", message: "bad input" },
@@ -133,7 +126,6 @@ test("a WebAssembly trap publishes fatal and closes the worker", async () => {
   try {
     await state.analyze(3);
     assert.deepEqual(state.messages[1], {
-      protocolVersion: WORKER_PROTOCOL_VERSION,
       type: "fatal",
       requestId: 3,
       error: { code: "wasm-trapped", message: "unreachable" },

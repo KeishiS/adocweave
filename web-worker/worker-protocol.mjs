@@ -18,7 +18,6 @@ const ENVELOPES = {
       wasmUrl: string,
     },
     analyze: {
-      protocolVersion: u32,
       requestId: u32,
       payload: object,
     },
@@ -26,17 +25,14 @@ const ENVELOPES = {
   responses: {
     ready: { protocolVersion: u32 },
     result: {
-      protocolVersion: u32,
       requestId: u32,
       result: object,
     },
     error: {
-      protocolVersion: u32,
       requestId: u32,
       error,
     },
     fatal: {
-      protocolVersion: u32,
       requestId: u32,
       error,
     },

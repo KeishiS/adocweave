@@ -30,14 +30,10 @@ self.onmessage = async ({ data }) => {
   }
 
   const { requestId } = data;
-  if (data.protocolVersion !== WORKER_PROTOCOL_VERSION || process === null) {
+  if (process === null) {
     fatal(requestId, {
-      code: data.protocolVersion !== WORKER_PROTOCOL_VERSION
-        ? "unsupported-worker-protocol"
-        : "worker-failed",
-      message: data.protocolVersion !== WORKER_PROTOCOL_VERSION
-        ? `expected protocol ${WORKER_PROTOCOL_VERSION}`
-        : "AdocWeave worker was not initialized",
+      code: "worker-failed",
+      message: "AdocWeave worker was not initialized",
     });
     return;
   }
@@ -45,7 +41,6 @@ self.onmessage = async ({ data }) => {
   try {
     const result = process(data.payload);
     publish({
-      protocolVersion: WORKER_PROTOCOL_VERSION,
       type: "result",
       requestId,
       result,
@@ -54,7 +49,6 @@ self.onmessage = async ({ data }) => {
     const wasmError = parseWasmError(cause);
     if (wasmError !== null) {
       publish({
-        protocolVersion: WORKER_PROTOCOL_VERSION,
         type: "error",
         requestId,
         error: wasmError,
@@ -69,7 +63,6 @@ function fatal(requestId, error) {
   closed = true;
   try {
     publish({
-      protocolVersion: WORKER_PROTOCOL_VERSION,
       type: "fatal",
       requestId,
       error,

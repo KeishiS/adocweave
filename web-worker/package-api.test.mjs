@@ -54,12 +54,11 @@ function client(Worker = FakeWorker) {
 }
 
 function result(requestId, value = { html: "ok" }) {
-  return { protocolVersion: WORKER_PROTOCOL_VERSION, type: "result", requestId, result: value };
+  return { type: "result", requestId, result: value };
 }
 
 function error(requestId, code = "invalid-request") {
   return {
-    protocolVersion: WORKER_PROTOCOL_VERSION,
     type: "error",
     requestId,
     error: { code, message: code },
@@ -74,6 +73,7 @@ async function dispatched(worker) {
 test.beforeEach(() => { FakeWorker.created = []; });
 
 test("public entry resolves assets without eager work", () => {
+  assert.throws(() => defaultAssetUrls(), /baseUrl is required/);
   for (const base of [
     "https://example.test/pkg/worker/index.mjs",
     "https://example.test/assets/adocweave/worker/index.mjs?hash=vite",
@@ -112,7 +112,7 @@ test("analyze sends one requestId and responsibility-specific defaults", async (
     "moduleUrl", "protocolVersion", "type", "wasmUrl",
   ]);
   assert.deepEqual(Object.keys(message).sort(), [
-    "payload", "protocolVersion", "requestId", "type",
+    "payload", "requestId", "type",
   ]);
   assert.equal(message.requestId, 1);
   for (const removed of ["packageVersion", "version", "generation"]) {
@@ -224,7 +224,6 @@ test("fatal responses discard the worker and the next request starts fresh", asy
   const oldWorker = FakeWorker.created[0];
   const message = await dispatched(oldWorker);
   oldWorker.publish({
-    protocolVersion: WORKER_PROTOCOL_VERSION,
     type: "fatal",
     requestId: message.requestId,
     error: { code: "wasm-trapped", message: "unreachable" },

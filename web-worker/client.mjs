@@ -85,7 +85,6 @@ export class AdocWeaveClient {
         active.worker = worker;
         try {
           worker.postMessage({
-            protocolVersion: WORKER_PROTOCOL_VERSION,
             type: "analyze",
             requestId,
             payload,
@@ -171,24 +170,22 @@ export class AdocWeaveClient {
 
   #handleMessage(worker, data, resolveReady) {
     if (worker !== this.#worker || this.#disposed) return;
-    if (
-      !validateWorkerMessage(data, "responses") ||
-      data.protocolVersion !== WORKER_PROTOCOL_VERSION
-    ) {
-      const protocolMismatch = Number.isSafeInteger(data?.protocolVersion) &&
-        data.protocolVersion !== WORKER_PROTOCOL_VERSION;
+    if (!validateWorkerMessage(data, "responses")) {
       this.#failTerminal(new AdocWeaveClientError({
-        code: protocolMismatch
-          ? "unsupported-worker-protocol"
-          : "invalid-worker-response",
-        message: protocolMismatch
-          ? `expected worker protocol ${WORKER_PROTOCOL_VERSION}`
-          : "worker returned a response outside the public protocol",
+        code: "invalid-worker-response",
+        message: "worker returned a response outside the internal protocol",
       }), worker);
       return;
     }
 
     if (data.type === "ready") {
+      if (data.protocolVersion !== WORKER_PROTOCOL_VERSION) {
+        this.#failTerminal(new AdocWeaveClientError({
+          code: "unsupported-worker-protocol",
+          message: `expected worker protocol ${WORKER_PROTOCOL_VERSION}`,
+        }), worker);
+        return;
+      }
       this.#readyReject = null;
       resolveReady(worker);
       return;

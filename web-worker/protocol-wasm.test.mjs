@@ -7,7 +7,6 @@ import { readFileSync } from "node:fs";
 import {
   PROTOCOL_SCHEMA_VERSION,
   validateWorkerMessage,
-  WORKER_PROTOCOL_VERSION,
 } from "./worker-protocol.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -39,7 +38,6 @@ test("generated wasm-bindgen accepts the current default requests", () => {
   assert.equal(wasm.protocolSchemaVersion(), PROTOCOL_SCHEMA_VERSION);
   const response = wasm.process(currentRequest());
   assert.equal(validateWorkerMessage({
-    protocolVersion: WORKER_PROTOCOL_VERSION,
     type: "result",
     requestId: 1,
     result: response,
@@ -50,7 +48,6 @@ test("generated wasm-bindgen accepts the current default requests", () => {
   const disabledResponse = wasm.process(withoutProjection);
   assert.equal(disabledResponse.projection, null);
   assert.equal(validateWorkerMessage({
-    protocolVersion: WORKER_PROTOCOL_VERSION,
     type: "result",
     requestId: 2,
     result: disabledResponse,
