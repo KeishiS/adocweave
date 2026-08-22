@@ -85,7 +85,8 @@ let
   });
 in
 {
-  # Everything `cargo make verify` runs, so a local pull request gate matches CI.
+  # The interactive shell runs the pull request source gate and also keeps the
+  # opt-in main, acceptance, and release checks available to contributors.
   default = shell {
     rust = developmentRust pkgs;
     rustSource = true;
@@ -95,12 +96,14 @@ in
 
   ci = shell {
     rust = ciRust pkgs;
-    extra = lib.optionals stdenv.isLinux [ pkgs.xvfb ];
   };
 
+  # The main gate adds fuzzing and the VS Code extension host to the source gate.
+  # Electron needs a virtual display on Linux, while browser archive checks use
+  # the separate ci-browser shell below.
   ci-fuzz = shell {
     rust = ciRust pkgs;
-    extra = [ adocweave-fuzz ];
+    extra = [ adocweave-fuzz ] ++ lib.optionals stdenv.isLinux [ pkgs.xvfb ];
   };
 
   # The browser acceptance gate must run against a browser this repository pins,
