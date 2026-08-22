@@ -1114,6 +1114,16 @@ enum WorkspaceResourceEvidence {
     },
 }
 
+impl WorkspaceResourceEvidence {
+    fn source_binding(&self) -> Option<(&str, &ResourceId)> {
+        match self {
+            Self::Found { id, source_id, .. }
+            | Self::FailedWithPlaceholder { id, source_id, .. } => Some((source_id, id)),
+            Self::Missing(_) | Self::Failed(_) => None,
+        }
+    }
+}
+
 /// Result of starting or resuming preprocessing for one workspace root.
 ///
 /// This is the shared, I/O-independent include protocol used by native
@@ -1251,6 +1261,17 @@ impl SuspendedWorkspacePreprocess {
             request,
         } = self;
         let WorkspaceResourceResponse { inner, evidence } = response;
+        if let Some((source_id, target)) = evidence.source_binding()
+            && state
+                .deferred_source_targets
+                .get(source_id)
+                .is_some_and(|existing| existing != target)
+        {
+            return state.failed(WorkspaceError::new(
+                WorkspaceErrorCode::InvalidResourceId,
+                format!("source identity is already bound to another resource: {source_id}"),
+            ));
+        }
         let step = continuation.resume(inner, &state.lookup, cancellation);
         if !matches!(
             &step,
@@ -1844,7 +1865,11 @@ impl WorkspaceSnapshot {
             found: BTreeMap::new(),
             missing: BTreeSet::new(),
             failed: BTreeSet::new(),
-            deferred_source_targets: BTreeMap::new(),
+            deferred_source_targets: self
+                .resources
+                .keys()
+                .map(|id| (id.to_string(), id.clone()))
+                .collect(),
             include_journal: Vec::new(),
         };
         #[cfg(test)]
@@ -3221,6 +3246,39 @@ mod tests {
                 .code,
             WorkspaceErrorCode::StaleRevision
         );
+    }
+
+    #[test]
+    fn one_source_identity_cannot_name_two_dependency_targets() {
+        let mut workspace = Workspace::default();
+        let root = id("file:///book/root.adoc");
+        workspace
+            .upsert_disk(
+                root.clone(),
+                Revision::new(1),
+                "include::first.adoc[]\ninclude::second.adoc[]\n",
+            )
+            .expect("root");
+        workspace.register_root(root.clone()).expect("root");
+        let WorkspacePreprocessStep::NeedResource(first) = workspace
+            .snapshot()
+            .preprocess_resumable(&root, &effective_options(), &NeverCancelled)
+        else {
+            panic!("first resource request");
+        };
+        let response = first.request().found_as("include:shared", "first\n");
+        let WorkspacePreprocessStep::NeedResource(second) = first.resume(response, &NeverCancelled)
+        else {
+            panic!("second resource request");
+        };
+        let response = second.request().found_as("include:shared", "second\n");
+        let WorkspacePreprocessStep::Failed(failure) = second.resume(response, &NeverCancelled)
+        else {
+            panic!("duplicate source identity must fail");
+        };
+
+        assert_eq!(failure.error().code, WorkspaceErrorCode::InvalidResourceId);
+        assert_eq!(failure.include_journal().len(), 1);
     }
 
     #[test]
