@@ -1,5 +1,5 @@
 = ADR 0031: 変更pathに依存しないPull Request検査
-:status: accepted
+:status: accepted; candidate flow amended by ADR 0032
 
 == 文脈
 
@@ -20,7 +20,7 @@ Pull Requestの検査範囲を狭めるため、Gitが追跡するすべてのpa
 
 Pull Requestでは配布candidateを構築しません。cross targetの構築、実際のOSやBrowserを使う統合検査、fuzz、
 Nixパッケージ検査、未公開製品の配布成果物の構築および成果物を使うruntime受入検査は、``main``へ統合したcommitで実行します。
-公開workflowは、これらに成功した同じ``main`` commitのcandidateを再利用します。
+公開workflowは``main``で同じgateを再実行し、同じrunで選択製品のcandidateを構築します。
 
 追跡pathの分類表と分類漏れの監査を設けません。Pull Requestのsource検査条件を真偽値として各jobへ渡す構成、
 実行しない代わりのstep、
@@ -49,4 +49,5 @@ Nixパッケージ検査、未公開製品の配布成果物の構築および�
 通るため、検査を実行しなかった理由と``skipped``の組合せを調べる必要もなくなります。
 
 一方、cross target、実統合、fuzz、Nixおよび配布candidateの失敗は``main``への統合後に判明します。
-``main``では未公開製品の全targetと全成果物を検査し、失敗したcommitを公開candidateとして使用しません。
+``main``へのpushではmain gateを実行します。公開時は同じgateに続けて選択製品の全targetと成果物を検査し、
+失敗したrunを公開しません。このcandidate境界はxref:0032-same-run-release-publication.adoc[ADR 0032]で改訂します。

@@ -176,7 +176,6 @@ node --test \
   tools/browser-release-budget.test.mjs \
   tools/product-candidate-plan.test.mjs \
   tools/product-release.test.mjs \
-  tools/release-readiness.test.mjs \
   tools/release-workflow-policy.test.mjs
 '''
 

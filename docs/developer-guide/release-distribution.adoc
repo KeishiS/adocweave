@@ -194,8 +194,8 @@ archiveへ埋め込みません。
 公開jobもrepository secretを参照せず、書き込みにはworkflow tokenを使用します。
 Releaseへの書き込みとOIDCは、``github-release`` Environmentを使用するこの公開jobだけへ付与します。
 release用workflowで``contents: write``を持つjobはここだけであり、Environmentのdeployment branch制限に
-よって、許可したbranchから開始したrunだけがこのjobへ到達します。候補SHAの固定、main candidateの再利用
-および成果物の完全性をworkflowで検査し、成功後に自動公開します。
+よって、許可したbranchから開始したrunだけがこのjobへ到達します。同じrunのcommit、candidate、checksum
+および成果物集合を承認後に再検査し、成功後に公開します。
 Environmentのdeployment branch制限はGitHub上の外部設定であり、workflow自身では検査しません。公開担当者は
 dispatch前にこの設定をRelease checklistで確認します。外部actionは完全なcommit SHAへ固定します。
 
@@ -208,8 +208,9 @@ repository secretを参照しません。書き込み権限を持つ公開workfl
 制限で間接的に限定されるだけで、repositoryへ書き込める利用者は手元からもtagを作成できます。
 tag rulesetを使わない理由はxref:adr/0006-direct-stable-releases.adoc[ADR 0006]に記載しています。
 
-公開処理は、dispatchで指定した製品とmain先端commitに対する検証済みcandidateを再利用します。成果物を
-再構築せず、metadataを再検証してattestationを作成してから、同じSHAへtagを作成します。
+公開処理は、``main``と製品を指定して開始した一つのworkflow runで検査、candidate構築、承認および公開を行います。
+成果物は一度だけ構築し、公開jobでは同じrunのartifactを取得してmetadataを再検証し、attestationを作成してから、
+``GITHUB_SHA``へtagを作成します。
 その後private draftへ成果物を追加し、成果物集合が揃った後にstable releaseとして公開します。
 
 VS Code拡張を公開した場合だけ、同じrunが``open-vsx-publish.yml``を呼び出し、GitHub Releaseに添付されたVSIXをdownloadして
@@ -221,12 +222,12 @@ checksumとattestationを検証してからOpen VSX Registryへ公開します�
 Open VSXへの送信だけが失敗した場合は、同じtagでこのworkflowを実行して回復します。同じversionの再公開は
 Open VSXが拒否するため、公開済みの版を上書きしません。
 
-CLIを公開した場合だけ、同じrunの``binary-cache`` jobが候補SHAをcheckoutし、x86_64-linuxとaarch64-linuxの
+CLIを公開した場合だけ、同じrunが``binary-cache-publish.yml``を呼び出し、公開tagをcheckoutしてx86_64-linuxとaarch64-linuxの
 Nixパッケージをbuildしてruntime closureをbinary cache``keishis.cachix.org``へpushします。Cachixへの
 書き込みはOIDCで委任できないため、このjobだけがrepository secret``CACHIX_AUTH_TOKEN``(cacheのwrite token)を
 参照します。参照できるworkflow、jobおよびsecret名は``release-workflow-policy``の許可一覧で固定し、
 pull requestやmainへのpushでは参照しません。このjobはGitHubへの書き込み権限を持たず、pushに失敗しても
-tagとGitHub Releaseには影響しないため、同じrunの失敗したjobを再実行して回復します。
+tagとGitHub Releaseには影響しません。送信だけが失敗した場合は、同じtagを指定してこのworkflowを単独で実行できます。
 
 == 検証
 
@@ -282,35 +283,35 @@ Pull Requestでは、変更pathにかかわらず一つの標準source gateを�
 分類せず、実行しないjobを``skipped``にして最後に組合せを照合する処理も行いません。必須checkの表示名は
 ``verify``のまま維持します。
 
-Pull Requestでは配布candidateを構築しません。``main``へ統合したcommitに対し、WindowsとmacOSを含むcross target、
-実際のOSとBrowserを使う統合検査、fuzz、Nixパッケージ、未公開製品に対応する全成果物の構築、および完成した成果物を使う
-runtime受入検査を実行します。native成果物は対象OSのrunnerで、Browser成果物は実Chromiumで、textlint用パッケージは
+Pull Requestでは配布candidateを構築しません。``main``へのpushではcross target、fuzz、Nixパッケージなどのmain gateを
+実行します。公開workflowを``main``で開始すると同じmain gateを再実行し、選択した製品だけを構築して、実際のOSやBrowserを使う
+runtime受入検査を行います。native成果物は対象OSのrunnerで、Browser成果物は実Chromiumで、textlint用パッケージは
 完成archiveと固定consumerで検査します。成果物のmetadata、checksumおよび収録fileも、公開するbyte列に対して確認します。
 
-いずれかの検査に失敗した``main`` commitは公開candidateとして使用しません。修正を``main``へ統合すると、未公開製品の
-全target、実統合および成果物検査を同じ境界で再実行します。公開workflowは、成功した``main`` commitのcandidateだけを再利用します。
+いずれかの検査に失敗したrunは公開へ進みません。修正を``main``へ統合した後、新しいcommitから公開workflowを開始します。
 この分離の理由はxref:adr/0031-path-independent-pull-request-gate.adoc[ADR 0031]を参照してください。
 
-公開workflowは、dispatchで指定した候補SHAが開始時点のmain先端と一致すること、同じSHAの成功済みcandidate、
-tagとReleaseが存在しないことを検査します。検査後はこのSHAを公開identityとして固定し、
+公開workflowは、dispatchで固定された``main``の``GITHUB_SHA``からcandidateを一度だけ構築し、tagとReleaseが
+存在しないことを承認後に検査します。このSHAを公開identityとして固定し、
 後からmainへcommitが追加されても対象を差し替えません。通常CIのrunは新しいcommitで取り消せますが、
 開始した公開workflowは取り消しません。
 
 === candidateの保持期間
 
-``main`` candidateはworkflow artifactとして14日間保持します。tagはこの期間内に作成してください。
-期間を過ぎるとartifactが失われ、tagの公開処理は再利用するcandidateを見つけられずに失敗します。
+candidateは同じworkflow runのartifactとして30日間保持します。Environmentの承認はこの期間内に行ってください。
+期間を過ぎるとartifactが失われ、公開jobはcandidateを取得できずに失敗します。
 その場合は新しいpatch versionを準備し、release対象の変更を最初から作り直します。
 
-``main`` pushのrunは``cancel-in-progress``の対象です。バージョン同期のコミットが``main``へ入った直後に
-別のコミットが入ると、前者のcandidateは取り消されます。公開workflowをdispatchする前にrelease対象の
-変更をすべて統合し、対象commitのcandidateが成功していることを確認してください。公開workflowは同時に
-1件だけ実行し、開始時に固定したcandidateを後続runで置き換えません。
+Pull Requestのrunだけを``cancel-in-progress``の対象とします。開始した公開workflowは新しい``main`` pushで
+取り消さず、開始時に固定したcommitとcandidateを後続runで置き換えません。同じ製品の公開workflowは同時に
+一件だけ実行します。
 
 tag作成前の検査またはattestationに失敗した場合は、tagとReleaseを作成しません。tag作成後にGitHub APIによる
-draft作成、asset uploadまたは公開が失敗した場合は、このrunが作成してIDを記録できたprivate draftだけを削除し、
-stable tagは移動も削除もしません。IDを記録する前に失敗した場合は他者のdraftを誤って削除しないよう自動削除せず、
-GitHubの画面で作成者とrunを確認します。この場合は同じversionを再利用せず、新しいpatch versionを準備します。
+draft作成、asset uploadまたは公開が失敗または取り消された場合は、run IDの非公開markerが一致する
+private draftだけをRelease一覧から特定して削除します。その後、Release一覧を正常に取得でき、対象Releaseがなく、
+tag refがこのrunで作成したtag objectを指したままである場合だけtag refを削除します。
+Releaseが残る場合やtag refが変化した場合は、他者の状態を壊さないよう自動削除しません。cleanupが完了した場合は
+同じrunの失敗jobを再実行できます。完了しない場合はGitHubの画面で作成者とrunを確認し、新しいpatch versionを準備します。
 
 この文書と配布計画を配布仕様の基準とし、task定義とworkflow構成はこれらに適合させます。リリース作業と公開後の確認は
 xref:../../CONTRIBUTING.adoc[コントリビューションガイド]に従います。

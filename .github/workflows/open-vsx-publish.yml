@@ -34,18 +34,33 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
       - name: Published VSIX download and verification
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
         run: |
           test -n "$RELEASE_TAG"
+          release="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")"
+          test "$(jq -r .tag_name <<<"$release")" = "$RELEASE_TAG"
+          test "$(jq -r .draft <<<"$release")" = false
+          test "$(jq -r .prerelease <<<"$release")" = false
+          test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)"
           mkdir -p open-vsx
-          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-            --pattern 'adocweave-vscode-*.vsix' --pattern sha256.sum --dir open-vsx
+          node tools/release-contract.mjs --product=vscode "--tag=$RELEASE_TAG"
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir open-vsx
+          node tools/product-release.mjs --verify-candidate vscode open-vsx
+          node tools/release-metadata.mjs verify vscode open-vsx "$(git rev-parse HEAD)"
           vsix="$(ls open-vsx/adocweave-vscode-*.vsix)"
           (cd open-vsx && grep -F "$(basename "$vsix")" sha256.sum | sha256sum --check --strict -)
-          gh attestation verify "$vsix" --repo "$GITHUB_REPOSITORY"
+          for file in open-vsx/*; do
+            gh attestation verify "$file" --repo "$GITHUB_REPOSITORY"
+          done
           echo "vsix=$vsix" >> "$GITHUB_ENV"
       - name: Open VSX publication
         env:

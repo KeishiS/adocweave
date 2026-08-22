@@ -13,9 +13,15 @@ const read = (path) => readFileSync(new URL(path, ROOT), "utf8");
 // The only places allowed to hold a write permission. Publication needs
 // `contents: write` for the GitHub Release and `id-token: write` for artifact
 // attestation; every other workflow and job stays read-only.
+const PUBLISH_PERMISSIONS = {
+  attestations: "write",
+  contents: "write",
+  "id-token": "write",
+};
 const ALLOWED_WRITE_GRANTS = new Set([
-  "release-publish.yml top-level",
-  "release-dispatch.yml job publish",
+  "release.yml job publish-native",
+  "release.yml job publish-global",
+  "release-publish.yml job publish",
 ]);
 
 // Workflows use the ambient job token only. The exceptions are the two
@@ -24,7 +30,7 @@ const ALLOWED_WRITE_GRANTS = new Set([
 // reads its registry token. Both run after the GitHub Release exists and hold no
 // write permission. No other job, workflow, or secret is allowed.
 const ALLOWED_SECRET_REFERENCES = new Map([
-  ["release-dispatch.yml job binary-cache", new Set(["secrets.CACHIX_AUTH_TOKEN"])],
+  ["binary-cache-publish.yml job publish", new Set(["secrets.CACHIX_AUTH_TOKEN"])],
   ["open-vsx-publish.yml job publish", new Set(["secrets.OPEN_VSX_TOKEN"])],
 ]);
 const SECRET_REFERENCE = /secrets\.[A-Za-z_][A-Za-z0-9_]*/g;
@@ -67,6 +73,9 @@ export function validatePinnedActions(workflows) {
 }
 
 export function validateWritePermissionGrants(workflows) {
+  const canonicalPermissions = (permissions) => JSON.stringify(
+    Object.fromEntries(Object.entries(permissions ?? {}).sort(([left], [right]) => left.localeCompare(right))),
+  );
   const grants = (permissions, location) => {
     for (const [scope, level] of Object.entries(permissions ?? {})) {
       if (level !== "read" && level !== "none") {
@@ -82,7 +91,12 @@ export function validateWritePermissionGrants(workflows) {
     }
     grants(document.permissions, `${name} top-level`);
     for (const [jobName, job] of Object.entries(document.jobs ?? {})) {
-      grants(job.permissions, `${name} job ${jobName}`);
+      const location = `${name} job ${jobName}`;
+      grants(job.permissions, location);
+      if (ALLOWED_WRITE_GRANTS.has(location) &&
+          canonicalPermissions(job.permissions) !== canonicalPermissions(PUBLISH_PERMISSIONS)) {
+        fail(`${location} must grant exactly the publication permissions`);
+      }
     }
   }
 }
@@ -111,40 +125,46 @@ export function validateNoDirectSecretAccess(sources, workflows) {
 }
 
 export function validateProductReleaseRouting(workflows) {
-  const dispatch = workflows["release-dispatch.yml"];
+  const release = workflows["release.yml"];
   const publish = workflows["release-publish.yml"];
-  const productInput = dispatch?.on?.workflow_dispatch?.inputs?.product;
+  if (workflows["release-dispatch.yml"] !== undefined) {
+    fail("過去runを再利用するrelease-dispatch workflowを残さないでください");
+  }
+  const productInput = release?.on?.workflow_dispatch?.inputs?.product;
   if (
     productInput?.required !== true ||
     productInput.type !== "choice" ||
     JSON.stringify(productInput.options) !== JSON.stringify(RELEASE_PRODUCTS)
   ) {
-    fail("release dispatch must require one supported product");
+    fail("release workflow dispatch must require one supported product");
   }
-  const readinessOutputs = dispatch.jobs?.readiness?.outputs ?? {};
-  if (readinessOutputs.product !== "${{ steps.readiness.outputs.product }}") {
-    fail("release readiness must expose the resolved product");
+  const planOutputs = release.jobs?.["candidate-plan"]?.outputs ?? {};
+  if (planOutputs.product !== "${{ steps.plan.outputs.product }}") {
+    fail("candidate plan must expose the selected product");
   }
-  const publishProduct = dispatch.jobs?.publish?.with?.product;
-  if (publishProduct !== "${{ needs.readiness.outputs.product }}") {
-    fail("release publish must receive the resolved product");
-  }
-  const planRun = dispatch.jobs?.plan?.steps?.find((step) => step.id === "plan")?.run;
-  if (
-    typeof planRun !== "string" ||
-    !planRun.includes("--publication-plan \"$PRODUCT\"") ||
-    !planRun.includes('if [ "$build" = cargo-dist ]')
-  ) {
-    fail("release plan must normalize both cargo-dist and script products");
+  for (const [jobName, dependency] of [
+    ["publish-native", "installation-e2e"],
+    ["publish-global", "verify-global-candidate"],
+  ]) {
+    const job = release.jobs?.[jobName];
+    if (job?.uses !== "./.github/workflows/release-publish.yml" ||
+        job.with?.product !== "${{ needs.candidate-plan.outputs.product }}" ||
+        !needs(job).includes(dependency)) {
+      fail(`${jobName} must publish only the verified selected product`);
+    }
   }
   for (const [job, product] of [
     ["textlint-plugin-post-release-smoke", "textlint"],
     ["open-vsx", "vscode"],
     ["binary-cache", "cli"],
   ]) {
-    const condition = dispatch.jobs?.[job]?.if;
-    if (typeof condition !== "string" || !condition.includes(`needs.readiness.outputs.product == '${product}'`)) {
-      fail(`release dispatch job ${job} must run only for ${product}`);
+    const condition = release.jobs?.[job]?.if;
+    if (typeof condition !== "string" || !condition.includes(`needs.candidate-plan.outputs.product == '${product}'`)) {
+      fail(`release job ${job} must run only for ${product}`);
+    }
+    const expectedPublish = product === "cli" ? "publish-native" : "publish-global";
+    if (!needs(release.jobs[job]).includes(expectedPublish)) {
+      fail(`release job ${job} must wait for ${expectedPublish}`);
     }
   }
   const publishInput = publish?.on?.workflow_call?.inputs?.product;
@@ -160,8 +180,72 @@ export function validateProductReleaseRouting(workflows) {
   const verification = publish.jobs?.publish?.steps?.find(
     (step) => step.name === "Immutable release input verification",
   )?.run;
-  if (typeof verification !== "string" || !verification.includes("--verify-publication \"$PRODUCT\"")) {
+  if (publish.jobs?.publish?.environment !== "github-release" ||
+      typeof verification !== "string" ||
+      !verification.includes("--verify-publication \"$PRODUCT\"") ||
+      !verification.includes('verify "$PRODUCT" artifacts "$GITHUB_SHA"')) {
     fail("release publish must verify the normalized product publication plan");
+  }
+  const steps = publish.jobs.publish.steps ?? [];
+  const index = (name) => steps.findIndex((step) => step.name === name);
+  const attest = steps.findIndex((step) => step.uses === "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6");
+  const order = [
+    index("Immutable source tree verification"),
+    index("Immutable release input verification"),
+    attest,
+    index("Immutable stable tag creation"),
+    index("Private draft creation and verification"),
+    index("Complete release publication"),
+  ];
+  if (order.some((value) => value < 0) || order.some((value, position) => position > 0 && value <= order[position - 1])) {
+    fail("release publish must verify, attest, tag, verify the draft, and publish in order");
+  }
+  if (steps[attest]?.with?.["subject-path"] !== "artifacts/*" ||
+      !steps[order[0]].run?.includes("git status --porcelain --untracked-files=all")) {
+    fail("release publish must attest every candidate file from a clean source tree");
+  }
+  const tagRun = steps[order[3]].run ?? "";
+  const finalRun = steps[order[5]].run ?? "";
+  if (!tagRun.includes('actual_commit') || !tagRun.includes('= "$GITHUB_SHA"') ||
+      !finalRun.includes(".tag_name") || !finalRun.includes(".assets[].name")) {
+    fail("release publish must verify the tag commit and final release asset set");
+  }
+  const draftCleanup = index("Incomplete draft removal");
+  const tagCleanup = index("Incomplete stable tag removal");
+  const draftCleanupRun = steps[draftCleanup]?.run ?? "";
+  const tagCleanupRun = steps[tagCleanup]?.run ?? "";
+  if (draftCleanup <= order[5] || tagCleanup <= draftCleanup ||
+      !normalizedCondition(steps[draftCleanup]).includes("failure() || cancelled()") ||
+      !normalizedCondition(steps[tagCleanup]).includes("failure() || cancelled()") ||
+      !draftCleanupRun.includes("adocweave-release-run") || !draftCleanupRun.includes(".draft") ||
+      !draftCleanupRun.includes('test "$(jq -r .draft <<<"$draft")" = true') ||
+      !draftCleanupRun.includes("contains($marker)") ||
+      !tagCleanupRun.includes("matching-refs/tags") || !tagCleanupRun.includes('if [ -n "$existing" ]') ||
+      !tagCleanupRun.includes('expected="$RELEASE_TAG_SHA"') ||
+      !tagCleanupRun.includes('if [ "$actual" != "$expected" ]') ||
+      !tagCleanupRun.includes("GitHub Actions run $GITHUB_RUN_ID") ||
+      !tagCleanupRun.includes('test "$(jq -r .message <<<"$tag_object")" = "$expected_message"') ||
+      !tagCleanupRun.includes('test "$(jq -r .object.sha <<<"$tag_object")" = "$GITHUB_SHA"') ||
+      !tagCleanupRun.includes("git/refs/tags/$RELEASE_TAG")) {
+    fail("release cleanup must remove only this run's draft and unchanged unpublished tag");
+  }
+  for (const workflowName of ["open-vsx-publish.yml", "binary-cache-publish.yml"]) {
+    const downstreamSteps = workflows[workflowName]?.jobs?.publish?.steps ?? [];
+    const verificationName = workflowName === "open-vsx-publish.yml"
+      ? "Published VSIX download and verification"
+      : "Published CLI candidate verification";
+    const verificationIndex = downstreamSteps.findIndex((step) => step.name === verificationName);
+    const secretIndex = downstreamSteps.findIndex((step) => JSON.stringify(step).includes("secrets."));
+    const runs = downstreamSteps[verificationIndex]?.run ?? "";
+    if (verificationIndex < 0 || secretIndex <= verificationIndex ||
+        !runs.includes(".draft") || !runs.includes(".prerelease") || !runs.includes('^{commit}') ||
+        !runs.includes("--verify-candidate") || !runs.includes("attestation verify")) {
+      fail(`${workflowName} must accept only a published stable release at the checked-out commit`);
+    }
+  }
+  const source = JSON.stringify(workflows);
+  for (const forbidden of ["candidate_sha", "run-id", "github-token", "actions/workflows/"]) {
+    if (source.includes(forbidden)) fail(`release workflows must not use cross-run input: ${forbidden}`);
   }
 }
 
@@ -185,22 +269,29 @@ function needs(job) {
   return Array.isArray(job?.needs) ? job.needs : [];
 }
 
-function hasMainCondition(job) {
+function normalizedCondition(job) {
   const condition = job?.if;
-  if (typeof condition !== "string") return false;
-  const normalized = condition
+  if (typeof condition !== "string") return "";
+  return condition
     .replace(/^\s*\$\{\{\s*/, "")
     .replace(/\s*\}\}\s*$/, "")
     .trim()
     .replace(/\s+/g, " ");
-  return normalized === "github.event_name == 'push' && github.ref == 'refs/heads/main'";
+}
+
+function hasMainGateCondition(job) {
+  return normalizedCondition(job) === "(github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'";
+}
+
+function hasDispatchMainCondition(job) {
+  return normalizedCondition(job) === "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'";
 }
 
 function isMainOnly(jobs, jobName, visiting = new Set()) {
   if (visiting.has(jobName)) return false;
   const job = jobs[jobName];
   if (!job) return false;
-  if (hasMainCondition(job)) return true;
+  if (hasDispatchMainCondition(job)) return true;
   visiting.add(jobName);
   const dependencies = needs(job);
   const result = dependencies.some((dependency) =>
@@ -311,8 +402,9 @@ export function validateStandardSourceAndCandidateGates(workflows, sources = {})
       !Array.isArray(triggers?.push?.branches) ||
       !triggers.push.branches.includes("main") ||
       triggers.push.paths !== undefined ||
-      triggers.push["paths-ignore"] !== undefined) {
-    fail("release workflowはpath filterなしのPull Requestとmain pushでsource gateを実行してください");
+      triggers.push["paths-ignore"] !== undefined ||
+      triggers.workflow_dispatch === undefined) {
+    fail("release workflowはpath filterなしのPull Request、main push、手動公開でsource gateを実行してください");
   }
 
   const jobs = release.jobs ?? {};
@@ -322,8 +414,12 @@ export function validateStandardSourceAndCandidateGates(workflows, sources = {})
     fail("Pull Requestの必須checkはpath条件のない直接job source（表示名verify）にしてください");
   }
   const workflowRuns = Object.values(jobs).map(jobRuns).join("\n");
+  const dispatchGuard = source.steps?.find(
+    (step) => step.run?.trim() === 'test "$GITHUB_REF" = refs/heads/main',
+  );
   if (occurrences(workflowRuns, "cargo make source-gate") !== 1 ||
-      !hasOnlyRun(source, "nix develop .#ci -c cargo make source-gate")) {
+      !jobRuns(source).split("\n").some((run) => run.trim() === "nix develop .#ci -c cargo make source-gate") ||
+      normalizedCondition(dispatchGuard) !== "github.event_name == 'workflow_dispatch'") {
     fail("source jobは標準source-gateを1回だけ直接実行してください");
   }
 
@@ -340,21 +436,21 @@ export function validateStandardSourceAndCandidateGates(workflows, sources = {})
   }
 
   const mainGate = jobs["main-gate"];
-  if (!mainGate || !hasMainCondition(mainGate) ||
+  if (!mainGate || !hasMainGateCondition(mainGate) ||
       occurrences(workflowRuns, "cargo make main-gate") !== 1 ||
       !hasOnlyRun(mainGate, "nix develop .#ci-fuzz -c cargo make main-gate")) {
-    fail("main-gateはmainへのpushだけで実行してください");
+    fail("main-gateはmainへのpushと手動公開で実行してください");
   }
   const candidatePlan = jobs["candidate-plan"];
   const candidatePlanNeeds = new Set(needs(candidatePlan));
   if (!candidatePlan ||
-      !hasMainCondition(candidatePlan) ||
+      !hasDispatchMainCondition(candidatePlan) ||
       candidatePlanNeeds.size !== 2 ||
       !candidatePlanNeeds.has("source") ||
       !candidatePlanNeeds.has("main-gate") ||
-      !hasOnlyRun(candidatePlan, 'node tools/product-candidate-plan.mjs "$GITHUB_OUTPUT"') ||
+      !hasOnlyRun(candidatePlan, 'node tools/product-candidate-plan.mjs "$GITHUB_OUTPUT" "${{ inputs.product }}"') ||
       !isMainOnly(jobs, "candidate-plan")) {
-    fail("candidate-planはsourceとmain-gateに依存し、製品別candidate planを1回生成してください");
+    fail("candidate-planは手動公開時にsourceとmain-gateへ依存し、選択製品のcandidate planを1回生成してください");
   }
 
   const candidateJobs = [
@@ -364,6 +460,8 @@ export function validateStandardSourceAndCandidateGates(workflows, sources = {})
     "verify-native-candidate",
     "verify-global-candidate",
     "installation-e2e",
+    "publish-native",
+    "publish-global",
   ];
   for (const jobName of candidateJobs) {
     const job = jobs[jobName];

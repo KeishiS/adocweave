@@ -1,0 +1,56 @@
+= ADR 0032: 同一workflow runでのリリース公開
+:status: accepted
+
+== 文脈
+
+従来の公開処理は、``main``へのpushで全未公開製品のcandidateを構築し、後から製品と候補SHAを指定した別のworkflowで
+過去runを検索していました。公開workflowは過去runのartifactを取得し、同じ名前で再度アップロードしてから公開jobへ
+渡していました。この構成では、候補SHA、run ID、artifact名および再アップロードの対応を保つ必要があり、公開対象を
+一つの実行履歴から追いにくくなります。また、一製品の公開にほかの未公開製品の構築が必要でした。
+
+個人開発では、過去の成功runを探索して再利用する柔軟性より、公開対象のcommitと成果物を一つのrunへ閉じる方が、
+誤った成果物を公開する余地と保守する状態を減らせます。
+
+== 決定
+
+``release.yml``を``main``と一製品を指定して手動実行し、同じworkflow runで次の処理を順に行います。
+
+* source gateとmain gateによるcommitの検査
+* 選択製品だけのcandidate構築とruntime検証
+* source commit、checksum、配布metadataおよび成果物集合の検証
+* ``github-release`` Environmentでの承認
+* 同じrunのartifactを使ったtagとGitHub Releaseの公開
+
+成果物は一度だけ構築します。公開jobはrun IDを指定せずに同じrunのartifactを取得し、承認後に``GITHUB_SHA``、
+製品tag、Releaseの不在、checksumおよび成果物集合を再検査します。候補SHAの入力、過去runの検索、別runからのdownload、
+artifactの再アップロードは行いません。
+
+書き込み権限とOIDCは、``github-release`` Environmentを使う公開jobだけに付与します。Environmentにはrequired reviewerを
+設定し、deployment branchを``main``へ限定します。承認待ちのrunを新しいpushで取り消しません。
+
+Open VSXとCachixへの後続公開はGitHub Releaseを入力とする独立workflowにします。通常は同じrunから呼び出しますが、
+送信だけが失敗した場合は公開済みtagを指定して単独で再実行できます。後続workflowは、GitHub Releaseがdraftでも
+prereleaseでもないことと、tagがcheckoutしたcommitを指すことを送信前に検査します。
+
+tag作成後からRelease公開までに失敗または取り消された場合は、run固有markerが一致するdraftだけを削除します。
+Release一覧の取得に成功して対象Releaseがなく、かつtag refがこのrunの作成したtag objectから変わっていない場合だけ
+tag refも削除します。他者が変更したtagやReleaseは削除しません。
+
+== 検討した代替案
+
+**``main`` pushのたびに全未公開製品を構築する。** 公開時の待ち時間は短くなりますが、一製品のRelease Notesで複数製品を
+誤って公開する危険と、使われないcandidateの構築が残ります。
+
+**過去runのartifactを公開workflowで直接取得する。** 再アップロードは削除できますが、候補SHAとrun IDの解決、保持期間、
+過去runの成功条件を引き続き保守する必要があります。
+
+== 帰結
+
+一つのReleaseについてcommit、検査、成果物、承認および公開を一つのrunから確認できます。公開開始後に``main``が進んでも、
+対象commitは変わりません。承認はartifactの保持期間である30日以内に行う必要があります。
+
+公開ごとにmain gateと対象製品の構築を実行するため、過去candidateの再利用より時間がかかります。一方、選択していない製品は
+構築しないため、全未公開製品を毎回構築する負担はなくなります。
+
+ADR 0023、0027、0028および0031にある候補SHA、過去candidateの再利用、``main`` pushでの全candidate構築に関する決定を
+本ADRで置き換えます。製品別Release、成果物を作り直さない公開、GitHub Environmentによる権限境界は維持します。

@@ -61,4 +61,5 @@ managed downloadを提供していた旧拡張のcacheは更新だけでは削�
 
 ADR 0013とADR 0023にある拡張とLanguage Serverを同時に配布して完全一致を要求する決定、およびADR 0027にある
 ``lspApiVersion``、``managedLspVersion``と自動取得の決定を本ADRで置き換えます。ADR 0027の製品別release trainと、
-ADR 0023の公開先、候補SHA、検証済み成果物の再利用および権限境界は維持します。
+ADR 0023の公開先と権限境界は維持します。候補SHAと過去candidateの再利用は
+xref:0032-same-run-release-publication.adoc[ADR 0032]で置き換えます。

@@ -56,12 +56,29 @@ test("publication以外は明示したread権限だけを持つ", () => {
     () => validateWritePermissionGrants({ "release.yml": { jobs: { source: {} } } }),
     /must declare explicit top-level permissions/,
   );
+  validateWritePermissionGrants({
+    "release-publish.yml": {
+      permissions: { contents: "read" },
+      jobs: { publish: { permissions: { attestations: "write", contents: "write", "id-token": "write" } } },
+    },
+  });
+  assert.throws(
+    () => validateWritePermissionGrants({
+      "release-publish.yml": {
+        permissions: { contents: "read" },
+        jobs: { publish: { permissions: {
+          attestations: "write", contents: "write", "id-token": "write", issues: "write",
+        } } },
+      },
+    }),
+    /exactly the publication permissions/,
+  );
 });
 
 test("the binary cache job may read the Cachix write token", () => {
   const { sources, workflows } = policyInput(
-    "release-dispatch.yml",
-    { jobs: { "binary-cache": { steps: [CACHE_STEP] } } },
+    "binary-cache-publish.yml",
+    { jobs: { publish: { steps: [CACHE_STEP] } } },
     CACHE_SOURCE,
   );
   validateNoDirectSecretAccess(sources, workflows);
@@ -81,13 +98,13 @@ test("the Open VSX job may read the registry publish token", () => {
 
 test("the Open VSX token outside its workflow is rejected", () => {
   const { sources, workflows } = policyInput(
-    "release-dispatch.yml",
-    { jobs: { "binary-cache": { steps: [OPEN_VSX_STEP] } } },
+    "binary-cache-publish.yml",
+    { jobs: { publish: { steps: [OPEN_VSX_STEP] } } },
     OPEN_VSX_SOURCE,
   );
   assert.throws(
     () => validateNoDirectSecretAccess(sources, workflows),
-    /job binary-cache reads secrets\.OPEN_VSX_TOKEN/,
+    /job publish reads secrets\.OPEN_VSX_TOKEN/,
   );
 });
 
@@ -102,8 +119,8 @@ test("workflows without secret references pass", () => {
 
 test("another secret in the binary cache job is rejected", () => {
   const { sources, workflows } = policyInput(
-    "release-dispatch.yml",
-    { jobs: { "binary-cache": { steps: [{ run: "echo ${{ secrets.OTHER_TOKEN }}" }] } } },
+    "binary-cache-publish.yml",
+    { jobs: { publish: { steps: [{ run: "echo ${{ secrets.OTHER_TOKEN }}" }] } } },
     "run: echo ${{ secrets.OTHER_TOKEN }}\n",
   );
   assert.throws(() => validateNoDirectSecretAccess(sources, workflows), /reads secrets\.OTHER_TOKEN/);
@@ -111,13 +128,13 @@ test("another secret in the binary cache job is rejected", () => {
 
 test("the Cachix token outside the binary cache job is rejected", () => {
   const { sources, workflows } = policyInput(
-    "release-dispatch.yml",
-    { jobs: { publish: { steps: [CACHE_STEP] } } },
+    "binary-cache-publish.yml",
+    { jobs: { other: { steps: [CACHE_STEP] } } },
     CACHE_SOURCE,
   );
   assert.throws(
     () => validateNoDirectSecretAccess(sources, workflows),
-    /job publish reads secrets\.CACHIX_AUTH_TOKEN/,
+    /job other reads secrets\.CACHIX_AUTH_TOKEN/,
   );
 });
 
@@ -135,10 +152,10 @@ test("the Cachix token in another workflow is rejected", () => {
 
 test("a secret reference outside every job is rejected", () => {
   const { sources, workflows } = policyInput(
-    "release-dispatch.yml",
+    "binary-cache-publish.yml",
     {
       env: { CACHIX_AUTH_TOKEN: "${{ secrets.CACHIX_AUTH_TOKEN }}" },
-      jobs: { "binary-cache": { steps: [{ run: "cachix push keishis result" }] } },
+      jobs: { publish: { steps: [{ run: "cachix push keishis result" }] } },
     },
     "env:\n  CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}\n",
   );
@@ -147,7 +164,7 @@ test("a secret reference outside every job is rejected", () => {
 
 function productRoutingWorkflows() {
   return {
-    "release-dispatch.yml": {
+    "release.yml": {
       on: {
         workflow_dispatch: {
           inputs: {
@@ -160,37 +177,82 @@ function productRoutingWorkflows() {
         },
       },
       jobs: {
-        readiness: { outputs: { product: "${{ steps.readiness.outputs.product }}" } },
-        plan: {
-          steps: [{
-            id: "plan",
-            run: 'if [ "$build" = cargo-dist ]; then\n  node product-release --publication-plan "$PRODUCT"\nfi',
-          }],
+        "candidate-plan": {
+          outputs: { product: "${{ steps.plan.outputs.product }}" },
         },
-        publish: { with: { product: "${{ needs.readiness.outputs.product }}" } },
+        "installation-e2e": {},
+        "verify-global-candidate": {},
+        "publish-native": {
+          needs: ["candidate-plan", "installation-e2e"],
+          uses: "./.github/workflows/release-publish.yml",
+          with: { product: "${{ needs.candidate-plan.outputs.product }}" },
+        },
+        "publish-global": {
+          needs: ["candidate-plan", "verify-global-candidate"],
+          uses: "./.github/workflows/release-publish.yml",
+          with: { product: "${{ needs.candidate-plan.outputs.product }}" },
+        },
         "textlint-plugin-post-release-smoke": {
-          if: "needs.readiness.outputs.product == 'textlint'",
+          if: "needs.candidate-plan.outputs.product == 'textlint'",
+          needs: ["publish-global"],
         },
-        "open-vsx": { if: "needs.readiness.outputs.product == 'vscode'" },
-        "binary-cache": { if: "needs.readiness.outputs.product == 'cli'" },
+        "open-vsx": { if: "needs.candidate-plan.outputs.product == 'vscode'", needs: ["publish-global"] },
+        "binary-cache": { if: "needs.candidate-plan.outputs.product == 'cli'", needs: ["publish-native"] },
       },
     },
     "release-publish.yml": {
       on: { workflow_call: { inputs: { product: { required: true, type: "string" } } } },
       jobs: {
         publish: {
+          environment: "github-release",
           steps: [
             {
               uses: "actions/download-artifact@0000000000000000000000000000000000000000",
               with: { name: "release-candidate-${{ inputs.product }}" },
             },
+            { name: "Immutable source tree verification", run: "git status --porcelain --untracked-files=all" },
             {
               name: "Immutable release input verification",
-              run: 'node product-release --verify-publication "$PRODUCT"',
+              run: 'node product-release --verify-publication "$PRODUCT"\nnode release-metadata verify "$PRODUCT" artifacts "$GITHUB_SHA"',
+            },
+            {
+              uses: "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
+              with: { "subject-path": "artifacts/*" },
+            },
+            { name: "Immutable stable tag creation", run: 'actual_commit=x\ntest "$actual_commit" = "$GITHUB_SHA"' },
+            { name: "Private draft creation and verification", run: "verify draft" },
+            { name: "Complete release publication", run: "jq .tag_name\njq '.assets[].name'" },
+            {
+              name: "Incomplete draft removal",
+              if: "failure() || cancelled()",
+              run: 'adocweave-release-run\ntest "$(jq -r .draft <<<"$draft")" = true\ncontains($marker)\nDELETE releases',
+            },
+            {
+              name: "Incomplete stable tag removal",
+              if: "failure() || cancelled()",
+              run: 'matching-refs/tags\nif [ -n "$existing" ]\nexpected="$RELEASE_TAG_SHA"\nif [ "$actual" != "$expected" ]\nGitHub Actions run $GITHUB_RUN_ID\ntest "$(jq -r .message <<<"$tag_object")" = "$expected_message"\ntest "$(jq -r .object.sha <<<"$tag_object")" = "$GITHUB_SHA"\nDELETE git/refs/tags/$RELEASE_TAG',
             },
           ],
         },
       },
+    },
+    "open-vsx-publish.yml": {
+      jobs: { publish: { steps: [
+        {
+          name: "Published VSIX download and verification",
+          run: "jq .draft\njq .prerelease\ngit rev-parse '$TAG^{commit}'\n--verify-candidate\nattestation verify",
+        },
+        { env: { TOKEN: "${{ secrets.OPEN_VSX_TOKEN }}" }, run: "publish" },
+      ] } },
+    },
+    "binary-cache-publish.yml": {
+      jobs: { publish: { steps: [
+        {
+          name: "Published CLI candidate verification",
+          run: "jq .draft\njq .prerelease\ngit rev-parse '$TAG^{commit}'\n--verify-candidate\nattestation verify",
+        },
+        { env: { TOKEN: "${{ secrets.CACHIX_AUTH_TOKEN }}" }, run: "publish" },
+      ] } },
     },
   };
 }
@@ -201,7 +263,7 @@ test("product release routing accepts the separated product contracts", () => {
 
 test("product release routing rejects a post-release job shared by every product", () => {
   const workflows = productRoutingWorkflows();
-  workflows["release-dispatch.yml"].jobs["open-vsx"].if = "success()";
+  workflows["release.yml"].jobs["open-vsx"].if = "success()";
   assert.throws(() => validateProductReleaseRouting(workflows), /open-vsx must run only for vscode/);
 });
 
@@ -214,23 +276,104 @@ test("product release routing rejects a generic candidate artifact", () => {
   );
 });
 
+test("product release routing rejects publication before verification", () => {
+  const workflows = productRoutingWorkflows();
+  const steps = workflows["release-publish.yml"].jobs.publish.steps;
+  [steps[2], steps[4]] = [steps[4], steps[2]];
+  assert.throws(
+    () => validateProductReleaseRouting(workflows),
+    /verify, attest, tag, verify the draft, and publish in order/,
+  );
+});
+
+test("product release routing requires the final tag and asset verification", () => {
+  const workflows = productRoutingWorkflows();
+  workflows["release-publish.yml"].jobs.publish.steps
+    .find((step) => step.name === "Complete release publication").run = "publish";
+  assert.throws(
+    () => validateProductReleaseRouting(workflows),
+    /tag commit and final release asset set/,
+  );
+});
+
+test("release cleanup keeps another release or changed tag intact", () => {
+  for (const remove of [
+    "contains($marker)",
+    'test "$(jq -r .draft <<<"$draft")" = true',
+    'if [ -n "$existing" ]',
+    'expected="$RELEASE_TAG_SHA"',
+    'if [ "$actual" != "$expected" ]',
+    'test "$(jq -r .message <<<"$tag_object")" = "$expected_message"',
+    'test "$(jq -r .object.sha <<<"$tag_object")" = "$GITHUB_SHA"',
+  ]) {
+    const workflows = productRoutingWorkflows();
+    for (const name of ["Incomplete draft removal", "Incomplete stable tag removal"]) {
+      const step = workflows["release-publish.yml"].jobs.publish.steps.find((entry) => entry.name === name);
+      step.run = step.run.replace(remove, "");
+    }
+    assert.throws(
+      () => validateProductReleaseRouting(workflows),
+      /remove only this run's draft and unchanged unpublished tag/,
+    );
+  }
+});
+
+test("product release routing attests every candidate file", () => {
+  const workflows = productRoutingWorkflows();
+  workflows["release-publish.yml"].jobs.publish.steps[3].with["subject-path"] = "plan.json";
+  assert.throws(
+    () => validateProductReleaseRouting(workflows),
+    /attest every candidate file from a clean source tree/,
+  );
+});
+
+test("post-release publication waits for GitHub Release and verifies stable state", () => {
+  const missingDependency = productRoutingWorkflows();
+  missingDependency["release.yml"].jobs["binary-cache"].needs = ["candidate-plan"];
+  assert.throws(
+    () => validateProductReleaseRouting(missingDependency),
+    /binary-cache must wait for publish-native/,
+  );
+
+  const missingStableCheck = productRoutingWorkflows();
+  missingStableCheck["open-vsx-publish.yml"].jobs.publish.steps[0].run = "publish";
+  assert.throws(
+    () => validateProductReleaseRouting(missingStableCheck),
+    /accept only a published stable release/,
+  );
+
+  const wrongOrder = productRoutingWorkflows();
+  wrongOrder["binary-cache-publish.yml"].jobs.publish.steps.reverse();
+  assert.throws(
+    () => validateProductReleaseRouting(wrongOrder),
+    /accept only a published stable release/,
+  );
+});
+
 function sourceAndCandidateWorkflow() {
   return {
-    on: { pull_request: {}, push: { branches: ["main"] } },
+    on: {
+      pull_request: {},
+      push: { branches: ["main"] },
+      workflow_dispatch: { inputs: { product: { required: true, type: "choice" } } },
+    },
     jobs: {
       source: {
         name: "verify",
-        steps: [{ run: "nix develop .#ci -c cargo make source-gate" }],
+        steps: [
+          { if: "github.event_name == 'workflow_dispatch'", run: 'test "$GITHUB_REF" = refs/heads/main' },
+          { run: "nix develop .#ci -c cargo make source-gate" },
+        ],
       },
       "main-gate": {
-        if: "github.event_name == 'push' && github.ref == 'refs/heads/main'",
+        if: "(github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'",
         needs: ["source"],
         steps: [{ run: "nix develop .#ci-fuzz -c cargo make main-gate" }],
       },
       "candidate-plan": {
-        if: "github.event_name == 'push' && github.ref == 'refs/heads/main'",
+        if: "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'",
         needs: ["source", "main-gate"],
-        steps: [{ run: 'node tools/product-candidate-plan.mjs "$GITHUB_OUTPUT"' }],
+        steps: [{ run: 'node tools/product-candidate-plan.mjs "$GITHUB_OUTPUT" "${{ inputs.product }}"' }],
       },
       "build-native": {
         needs: ["candidate-plan"],
@@ -256,6 +399,14 @@ function sourceAndCandidateWorkflow() {
         needs: ["verify-native-candidate"],
         steps: [{ run: "node tools/release-installation-e2e.mjs" }],
       },
+      "publish-native": {
+        needs: ["candidate-plan", "installation-e2e"],
+        uses: "./.github/workflows/release-publish.yml",
+      },
+      "publish-global": {
+        needs: ["candidate-plan", "verify-global-candidate"],
+        uses: "./.github/workflows/release-publish.yml",
+      },
     },
   };
 }
@@ -278,7 +429,8 @@ test("Pull Requestはpath条件なしで標準source gateを1回だけ直接実�
     (workflow) => { workflow.jobs.source.needs = ["main-gate"]; },
     (workflow) => { workflow.jobs.source.strategy = { matrix: { shard: [1, 2] } }; },
     (workflow) => { workflow.jobs.source.uses = "./.github/workflows/quality.yml"; },
-    (workflow) => { workflow.jobs.source.steps[0].run += " || true"; },
+    (workflow) => { workflow.jobs.source.steps[1].run += " || true"; },
+    (workflow) => { delete workflow.jobs.source.steps[0].if; },
     (workflow) => { workflow.jobs["main-gate"].steps.push({ run: "cargo make source-gate" }); },
   ]) {
     const workflow = sourceAndCandidateWorkflow();
@@ -317,7 +469,7 @@ test("削除したpath分類と手動aggregateをworkflowへ戻さない", () =>
   assert.throws(() => validateSourceAndCandidateWorkflow(workflow), /削除済みjob merge-gate/);
 });
 
-test("main candidate planはsourceとmain gateの成功後に製品計画を1回だけ生成する", () => {
+test("手動公開のcandidate planはsourceとmain gateの成功後に選択製品の計画を1回だけ生成する", () => {
   for (const mutate of [
     (workflow) => { workflow.jobs["candidate-plan"].needs = ["main-gate"]; },
     (workflow) => { workflow.jobs["candidate-plan"].steps = [{ run: "node custom-plan.mjs" }]; },

@@ -257,9 +257,10 @@ required status checkを``verify``一件へ置き換えます。
 [#tag]
 == Tag
 
-安定版には``vX.Y.Z``形式のtagを使用します。人がtagを直接作成またはpushしてはいけません。
-指定したコミットに対するmain candidateの成功を公開workflowが確認した後、同じworkflowがtagを作成します。
-tagの更新と削除も行いません。
+安定版には``adocweave-<product>/vX.Y.Z``形式のtagを使用します。人がtagを直接作成またはpushしてはいけません。
+``main``を指定して開始した公開workflowが検査とcandidate構築を完了した後、同じrunがtagを作成します。
+公開済みtagの更新と削除は行いません。公開前にworkflowが失敗または取り消された場合に限り、同じrunが作成し、
+参照先が変わっていない未公開tagを自動cleanupします。
 
 == Release
 
@@ -283,21 +284,18 @@ node tools/sync-release-version.mjs --version X.Y.Z
 node tools/sync-release-version.mjs --check
 ----
 . ``cargo make release-check``を実行し、pull requestの必須checkが成功したことを確認して``main``へ統合します。
-. release対象のPull Requestをすべて統合し、公開対象が``main``の先端であることを確認します。
-. その先端に対するmain candidateが成功してから、次のように公開workflowを実行します。
+. release対象のPull Requestをすべて統合し、公開対象が``main``の先端であることを確認して、次のように公開workflowを実行します。
 +
 [source,console]
 ----
-git fetch upstream main
-candidate_sha="$(git rev-parse upstream/main)"
-gh workflow run release-dispatch.yml \
+gh workflow run release.yml \
   --ref main \
-  -f product=lsp \
-  -f candidate_sha="$candidate_sha"
+  -f product=lsp
 ----
-. workflowが候補SHAとdispatch時点のmain先端の一致、同じSHAのcandidate成功、既存tagとReleaseの不在を検査し、
-  同じrunでtagとGitHub Releaseを作成します。公開後、同じrunがLinux x86-64／ARM64のNixパッケージを
-  buildし、runtime closureをbinary cache(``keishis.cachix.org``)へpushします。
+. workflowが同じrunでsourceとmainの検査、選択製品の構築、成果物検査を行います。``github-release`` Environmentで
+  公開を承認すると、同じrunが既存tagとReleaseの不在を再確認し、tagとGitHub Releaseを作成します。
+  CLIでは公開後にLinux x86-64／ARM64のNixパッケージを構築し、runtime closureをbinary cache
+  (``keishis.cachix.org``)へpushします。
 . GitHub Releaseがstableとして公開され、予定されたassetだけを含むことを確認します。
 . checksumとattestationを検証し、xref:#release-checklist[Release checklist]に従って受け入れ結果を記録します。
 
@@ -318,18 +316,20 @@ CLI引数、Language Server protocol、設定schemaなど、外部から利用�
 ``node tools/sync-release-version.mjs``がすべて置き換えるため、文面を変えても
 ``release/version-sync.json``を直す必要はありません。
 
-公開処理の権限、candidateの再利用条件およびReleaseの状態遷移は
+公開処理の権限、同一runでのcandidate検証およびReleaseの状態遷移は
 xref:docs/developer-guide/release-distribution.adoc[GitHub Releases配布仕様]を基準とします。
-公開に失敗した場合は、再実行前にprivate draft、既存assetおよびattestationの対象digestを確認します。
+公開に失敗した場合、workflowは自分が作成した未公開draftと、参照先が変わっていない未公開tagだけを削除します。
+再実行前にcleanup結果、既存assetおよびattestationの対象digestを確認します。
 
 公開後に問題が見つかった場合は、既存のtagやassetを置換せず、修正をpull requestで``main``へ統合して
 新しいバージョンで最初から実行します。tag、assetまたはattestationの手動削除は監査可能な破壊的操作であるため、
 実行前に対象、影響および理由を確認し、記録してください。
 
 リポジトリの初期設定では``github-release`` Environmentを名前付きの権限・監査境界として作成し、
-deployment branchを``main``だけに制限します。tag rulesetは使用しません。個人所有リポジトリでは
+required reviewerを設定してdeployment branchを``main``だけに制限します。個人開発では自分で承認できるよう
+``Prevent self-review``を無効にします。tag rulesetは使用しません。個人所有リポジトリでは
 組み込みのGitHub Actions appをrulesetのbypass対象へ指定できず、bypassなしのrulesetは公開workflowの
-tag作成も拒否するためです。tagを作成しない・付け替えないという規律は、<<tag,Tagの節>>の運用と
+tag作成も拒否するためです。人がtagを直接作成または付け替えないという規律は、<<tag,Tagの節>>の運用と
 公開workflowの既存tag検査で守ります。この判断の背景は
 xref:docs/developer-guide/adr/0006-direct-stable-releases.adoc[ADR 0006]を参照してください。
 
@@ -355,10 +355,9 @@ clean環境で、公開assetだけを使って実行します。
       ``versionSource``の値と一致しています（``cargo make release-contract``で検査します）。
 * [ ] ``cargo make release-check``が成功しています。このtaskはClippy、文書、Zed、WASM、native／実WASM
       conformance、短時間fuzz、Web Worker、release fixture、WASM sizeおよび配布planを検査します。
-* [ ] ``github-release`` Environmentが``main``だけを許可しています。workflowはこの外部設定を
+* [ ] ``github-release`` Environmentにrequired reviewerがあり、``main``だけを許可しています。workflowはこの外部設定を
       検査しないため、dispatch前にGitHubの設定画面で確認します。
-* [ ] main向けのopen Pull Requestがなく、対象コミットが現在の``upstream/main``の先端であり、同じコミットの
-      main candidateが成功しています。
+* [ ] main向けのopen Pull Requestがなく、公開workflowを``main``と対象製品を指定して開始しています。
 * [ ] xref:docs/developer-guide/release-distribution.adoc[配布仕様]に定義したtarget、archive、metadataおよびasset集合が
       candidateと一致しています。
 
@@ -367,9 +366,8 @@ clean環境で、公開assetだけを使って実行します。
 次は人手でしか確認できない経路です。変更のあった成果物から選んで確認します。すべてを毎回行う必要は
 ありません。問題が見つかった場合はIssueへ記録し、修正は新しいバージョンで公開します。
 
-* [ ] VS Code拡張: Open VSXまたは公開VSIXから導入し、AsciiDoc認識、基本構文色付け、managed Language Serverの
-      取得、更新、rollbackおよび削除を確認する。
-* [ ] Zed拡張: 公開archiveとmanaged LSPをoverrideなしで使用し、AsciiDoc認識とLSP機能を確認する。
+* [ ] VS Code拡張: Open VSXまたは公開VSIXから導入し、AsciiDoc認識、基本構文色付けおよび設定したLanguage Serverとの接続を確認する。
+* [ ] Zed拡張: 公開archiveを導入し、AsciiDoc認識と設定したLanguage ServerによるLSP機能を確認する。
 * [ ] browser package: cross-origin isolationを使わない環境で実WASMを読み込み、HTML、診断、projection、解析の取消しおよび
       取消し後の再解析を確認する。
 * [ ] textlint用Processor: 新しいプロジェクトへ導入し、``.adoc``の検査と``textlint --fix``で入力が変化しないことを
