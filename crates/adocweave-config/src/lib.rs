@@ -68,6 +68,19 @@ const MAX_WORKSPACE_SCAN_EXCLUDES: usize = 256;
 const MAX_WORKSPACE_SCAN_PATTERN_CHARACTERS: usize = 1024;
 const MAX_WORKSPACE_SCAN_PATTERN_TOTAL_CHARACTERS: usize = 4 * 1024;
 
+/// Directories left out of an initial workspace scan when a project states no
+/// patterns of its own.
+///
+/// Version control data, virtual environments, installed packages and build
+/// output hold no authored document, yet they hold enough entries to reach the
+/// scan limit on their own. Every pattern matches at any depth because a
+/// repository with several packages or crates carries one of these directories
+/// per package. Leaving a directory out of the scan is not an access rule: a
+/// document inside one is still read when it is opened, included or named on
+/// the command line.
+pub const DEFAULT_WORKSPACE_SCAN_EXCLUDES: [&str; 4] =
+    ["**/.git", "**/.venv", "**/node_modules", "**/target"];
+
 /// Stable category for configuration failures.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ConfigErrorCode {
@@ -584,9 +597,28 @@ pub struct WorkspaceSettings {
 }
 
 /// Validated directory patterns pruned from an initial workspace scan.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkspaceScanSettings {
     exclude: Vec<WorkspaceScanPattern>,
+}
+
+/// The built-in patterns, used when a workspace states none.
+///
+/// A workspace folder without a project file reaches this through the derived
+/// default of the settings that contain it, which is the common case: the scan
+/// that fails on a large repository is usually the one nobody configured.
+impl Default for WorkspaceScanSettings {
+    fn default() -> Self {
+        Self {
+            exclude: DEFAULT_WORKSPACE_SCAN_EXCLUDES
+                .iter()
+                .map(|source| {
+                    WorkspaceScanPattern::parse((*source).to_owned(), String::new())
+                        .expect("built-in workspace scan patterns are valid")
+                })
+                .collect(),
+        }
+    }
 }
 
 impl WorkspaceScanSettings {
@@ -909,22 +941,26 @@ struct WorkspaceWire {
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 struct WorkspaceScanWire {
+    /// Absent and empty are different answers. Stating no pattern at all leaves
+    /// the choice to this package, while an empty list is a project saying that
+    /// it wants every directory scanned.
     #[serde(default)]
-    exclude: Vec<String>,
+    exclude: Option<Vec<String>>,
 }
 
 impl WorkspaceWire {
     fn resolve(self) -> Result<WorkspaceSettings, ConfigError> {
-        if self.scan.exclude.len() > MAX_WORKSPACE_SCAN_EXCLUDES {
+        let Some(authored) = self.scan.exclude else {
+            return Ok(WorkspaceSettings::default());
+        };
+        if authored.len() > MAX_WORKSPACE_SCAN_EXCLUDES {
             return Err(ConfigError::new(
                 ConfigErrorCode::InvalidLimit,
                 "workspace scan exclude pattern count exceeds the built-in limit",
             )
             .at("workspace.scan.exclude"));
         }
-        let total_characters = self
-            .scan
-            .exclude
+        let total_characters = authored
             .iter()
             .try_fold(0usize, |total, pattern| {
                 total.checked_add(pattern.chars().count())
@@ -938,9 +974,7 @@ impl WorkspaceWire {
             .at("workspace.scan.exclude"));
         }
         let mut sources = std::collections::BTreeSet::new();
-        let exclude = self
-            .scan
-            .exclude
+        let exclude = authored
             .into_iter()
             .enumerate()
             .map(|(index, source)| {
@@ -1548,6 +1582,62 @@ roles = ["definition", "theorem"]
         ] {
             assert!(ResolvedProjectConfig::parse(source, Path::new("/workspace")).is_err());
         }
+    }
+
+    #[test]
+    fn workspace_scan_excludes_distinguish_an_absent_list_from_an_empty_one() {
+        let unset = ResolvedProjectConfig::parse("schema-version = 1\n", Path::new("/workspace"))
+            .expect("valid config");
+        assert_eq!(
+            unset.workspace.scan.exclude_patterns().collect::<Vec<_>>(),
+            DEFAULT_WORKSPACE_SCAN_EXCLUDES,
+        );
+        for directory in [
+            ".git",
+            ".venv",
+            "node_modules",
+            "target",
+            "packages/web/node_modules",
+            "crates/parser/target",
+        ] {
+            assert!(
+                unset.workspace.scan.excludes(Path::new(directory)),
+                "{directory}"
+            );
+        }
+        for directory in ["docs", "src", "target-audience", "docs/git"] {
+            assert!(
+                !unset.workspace.scan.excludes(Path::new(directory)),
+                "{directory}"
+            );
+        }
+
+        // The same defaults reach a workspace folder with no project file at
+        // all, which is the case the initial scan fails on most often.
+        assert_eq!(WorkspaceScanSettings::default(), unset.workspace.scan);
+
+        let empty = ResolvedProjectConfig::parse(
+            "schema-version = 1\n[workspace.scan]\nexclude = []\n",
+            Path::new("/workspace"),
+        )
+        .expect("valid config");
+        assert_eq!(empty.workspace.scan.exclude_patterns().count(), 0);
+        assert!(!empty.workspace.scan.excludes(Path::new("node_modules")));
+
+        let authored = ResolvedProjectConfig::parse(
+            "schema-version = 1\n[workspace.scan]\nexclude = [\"build\"]\n",
+            Path::new("/workspace"),
+        )
+        .expect("valid config");
+        assert_eq!(
+            authored
+                .workspace
+                .scan
+                .exclude_patterns()
+                .collect::<Vec<_>>(),
+            ["build"],
+        );
+        assert!(!authored.workspace.scan.excludes(Path::new("node_modules")));
     }
 
     #[test]

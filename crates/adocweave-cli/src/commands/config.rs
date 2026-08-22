@@ -113,7 +113,10 @@ mod tests {
         assert!(value["source"].is_null());
         assert_eq!(value["schemaVersion"], 1);
         assert_eq!(value["resources"]["include"], false);
-        assert_eq!(value["workspace"]["scan"]["exclude"], serde_json::json!([]));
+        assert_eq!(
+            value["workspace"]["scan"]["exclude"],
+            serde_json::json!(adocweave_config::DEFAULT_WORKSPACE_SCAN_EXCLUDES),
+        );
         assert_eq!(value["analysis"]["attributes"], serde_json::json!({}));
     }
 
