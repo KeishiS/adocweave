@@ -112,8 +112,7 @@ TOC出力の有無を``RenderingFeatures``として返します。言語は重�
 保存した構造情報はAdocWeaveの更新時に再生成してください。
 公開protocolのfield、列挙値またはtag付きunionを変更する場合は``schemaVersion``を更新し、
 ``workerProtocolVersion``はworker envelope自体を変更する場合だけ更新します。Package versionは
-リリース用Pull Requestでrelease manifestと
-公開protocolへ同時に反映します。
+リリース用Pull Requestで、対象製品のversionの正本と公開protocolへ同時に反映します。
 
 === 識別子と文書構造
 
