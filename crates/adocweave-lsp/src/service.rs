@@ -213,6 +213,10 @@ pub(crate) struct LanguageService {
     workspace: WorkspaceResources,
     workspace_roots: std::collections::BTreeMap<String, lsp::Url>,
     workspace_error: Option<String>,
+    /// The scan notice already announced, so a rescan does not repeat it.
+    reported_scan_notice: Option<String>,
+    /// The scan notice waiting to be sent to the editor.
+    pending_scan_notice: Option<String>,
     workspace_watch_errors: std::collections::BTreeMap<String, String>,
     workspace_watch_error_bytes: usize,
     workspace_watch_errors_overflowed: bool,
@@ -258,6 +262,8 @@ impl Default for LanguageService {
             workspace: WorkspaceResources::default(),
             workspace_roots: std::collections::BTreeMap::new(),
             workspace_error: None,
+            reported_scan_notice: None,
+            pending_scan_notice: None,
             workspace_watch_errors: std::collections::BTreeMap::new(),
             workspace_watch_error_bytes: 0,
             workspace_watch_errors_overflowed: false,
@@ -783,10 +789,25 @@ impl LanguageService {
             .workspace
             .apply_loaded_roots(scan.loaded, &parsed_open_sources);
         let installed = outcome.is_ok();
-        WorkspaceScanApplication {
-            jobs: self.finish_reload(outcome, open_sources),
-            installed,
+        let jobs = self.finish_reload(outcome, open_sources);
+        if let Some(notice) = self.workspace.scan_notice()
+            && self.reported_scan_notice.as_deref() != Some(notice)
+        {
+            let notice = notice.to_owned();
+            self.reported_scan_notice = Some(notice.clone());
+            self.pending_scan_notice = Some(notice);
         }
+        WorkspaceScanApplication { jobs, installed }
+    }
+
+    /// Returns the scan notice the editor has not been told about yet.
+    ///
+    /// What a scan could not finish is a property of the workspace, not of any
+    /// document, so it leaves as a message rather than a diagnostic: attaching
+    /// it to files would mark every one of them for something none of them
+    /// caused. The same text is announced once, however many rescans repeat it.
+    pub fn take_scan_notice(&mut self) -> Option<String> {
+        self.pending_scan_notice.take()
     }
 
     /// Records an internal scan worker failure without replacing the last
@@ -1105,11 +1126,6 @@ impl LanguageService {
                     .or(self.workspace_input_error.as_deref())
                     .map(crate::diagnostics::workspace_error)
                     .into_iter()
-                    .chain(
-                        self.workspace
-                            .scan_notice()
-                            .map(crate::diagnostics::workspace_notice),
-                    )
                     .collect(),
                 None,
             ));
@@ -1145,9 +1161,6 @@ impl LanguageService {
             .collect::<Result<Vec<_>, String>>()?;
         if let Some(error) = &self.workspace_error {
             diagnostics.push(crate::diagnostics::workspace_error(error));
-        }
-        if let Some(notice) = self.workspace.scan_notice() {
-            diagnostics.push(crate::diagnostics::workspace_notice(notice));
         }
         if let Some(error) = &workspace_watch_error {
             diagnostics.push(crate::diagnostics::workspace_error(error));
