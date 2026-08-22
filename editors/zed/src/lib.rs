@@ -46,13 +46,26 @@ fn is_absolute_path(path: &str, os: zed::Os) -> bool {
     match os {
         zed::Os::Windows => {
             let bytes = path.as_bytes();
-            bytes.len() >= 3
+            (bytes.len() >= 3
                 && bytes[0].is_ascii_alphabetic()
                 && bytes[1] == b':'
-                && matches!(bytes[2], b'/' | b'\\')
+                && matches!(bytes[2], b'/' | b'\\'))
+                || windows_unc_path(bytes)
         }
         zed::Os::Linux | zed::Os::Mac => path.starts_with('/'),
     }
+}
+
+fn windows_unc_path(path: &[u8]) -> bool {
+    let Some(rest) = path
+        .strip_prefix(b"\\\\")
+        .or_else(|| path.strip_prefix(b"//"))
+    else {
+        return false;
+    };
+    let mut components = rest.split(|byte| matches!(byte, b'/' | b'\\'));
+    components.next().is_some_and(|server| !server.is_empty())
+        && components.next().is_some_and(|share| !share.is_empty())
 }
 
 #[cfg(test)]
@@ -77,12 +90,13 @@ mod tests {
             r"C:\Tools\adocweave-lsp.exe",
             zed::Os::Windows
         ));
-        assert!(!is_absolute_path("bin/adocweave-lsp", zed::Os::Linux));
-        assert!(!is_absolute_path(r".\adocweave-lsp.exe", zed::Os::Windows));
-        assert!(!is_absolute_path(
-            r"\\server\share\adocweave-lsp.exe",
+        assert!(is_absolute_path(
+            r"\\server\tools\adocweave-lsp.exe",
             zed::Os::Windows
         ));
+        assert!(!is_absolute_path("bin/adocweave-lsp", zed::Os::Linux));
+        assert!(!is_absolute_path(r".\adocweave-lsp.exe", zed::Os::Windows));
+        assert!(!is_absolute_path(r"\\server", zed::Os::Windows));
     }
 }
 

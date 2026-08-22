@@ -450,9 +450,9 @@ VS Code拡張とZed拡張はLanguage Serverを同梱せず、download、導入�
 起動しません。エディターをGUIから起動すると、shellの起動ファイルで設定した``PATH``が反映されない場合があります。
 その場合はエディターを起動する環境へ``PATH``を設定するか、導入した実行ファイルの絶対pathを利用者設定へ記載します。
 
-共有されたprojectや未信頼ワークスペースの設定から実行ファイルを選びません。ワークスペース設定で明示したpathを
-利用できるのは、エディター上でそのワークスペースを信頼した場合だけです。信頼していない内容を開くときは、
-利用者設定または``PATH``を使用してください。
+共有されたprojectや未信頼ワークスペースの設定から実行ファイルを選びません。VS Codeでは未信頼ワークスペースに対して
+拡張自体を起動しません。Zedでは本体のWorktree Trustに従い、未信頼worktreeの設定を読み込む処理やLanguage Serverを
+独自に導入する処理を拡張に設けません。
 
 拡張はLSPの初期化時にLanguage Serverが返す標準capabilityから、診断、補完および定義への移動などの
 利用可能な機能を判断します。拡張とLanguage Serverの製品バージョンや``lspApiVersion``の一致は要求しません。
@@ -468,8 +468,9 @@ Zed Extension Galleryへ公開しないため、展開済み``$HOME/.local/share
 [#zed-language-server-selection]
 === ZedのLanguage Server選択
 
-Zedでは``lsp.adocweave.binary.path``へ導入済み実行ファイルの絶対pathを指定できます。同じ``binary``設定にある
-``arguments``と``env``も使用します。指定しない場合は、Zed processから見える``PATH``を使用します。
+Zedでは``lsp.adocweave.binary.path``へ導入済み実行ファイルの絶対pathを指定できます。指定しない場合は、
+Zed processから見える``PATH``を使用します。``binary.arguments``と``binary.env``は使用せず、引数なしで起動し、
+環境変数はZedがworktreeへ提供するshell環境を使用します。
 
 更新時は新しいバージョンのZed ディレクトリを別に展開し、dev extensionをそのディレクトリへ再設定します。旧ディレクトリは、新しいバージョンの
 拡張と、別に更新したLanguage Serverでeditor機能を確認するまで保持します。
@@ -502,9 +503,8 @@ VSIXを同じcommandで導入し、Windowを再読込します。rollbackでは�
 [#vscode-language-server-selection]
 === VS CodeのLanguage Server選択
 
-VS Codeでは``adocweave.server.path``へ導入済み実行ファイルの絶対pathを指定できます。ワークスペースscopeの値は、
-VS Codeがそのワークスペースを信頼している場合だけ使用します。未信頼ワークスペースでは利用者scopeの値または
-VS Code extension hostの``PATH``を使用します。Language Serverの再起動には
+VS Codeではmachine scopeの``adocweave.server.path``へ導入済み実行ファイルの絶対pathを指定できます。
+未信頼ワークスペースでは拡張を起動しません。Language Serverの再起動には
 ``AdocWeave: Restart Language Server``を使用します（拡張のコマンド名は英語です）。
 
 [#legacy-editor-managed-cache-removal]
