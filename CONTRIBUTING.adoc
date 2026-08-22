@@ -269,7 +269,8 @@ node tools/sync-release-version.mjs --version X.Y.Z
 ----
 +
 このtoolはlink:release/version-sync.json[バージョン同期対象]に明示したmanifest、lockfile、公開仕様のfixtureおよび生成物だけを
-更新します。更新前に部分的なバージョン変更や管理対象外の同じバージョンを検出した場合は、ファイルを書き換えず停止します。
+更新します。更新前に部分的なバージョン変更を検出した場合は、ファイルを書き換えず停止します。
+主要なmanifestのバージョンが揃っていることは``cargo make release-contract``が別に照合します。
 . 差分を確認し、``release/notes.md``のRelease Notes、必要な仕様文書およびテスト用入力を更新してから、
   同期状態を検査します。
 +

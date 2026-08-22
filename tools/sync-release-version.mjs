@@ -88,7 +88,7 @@ function positiveCount(count, label, allowZero = false) {
 export function validateRegistry(registry) {
   exactKeys(
     registry,
-    ["schemaVersion", "authority", "targets", "generators", "preserved"],
+    ["schemaVersion", "authority", "targets", "generators"],
     "version同期registry",
   );
   if (registry.schemaVersion !== 1) {
@@ -166,9 +166,8 @@ export function validateRegistry(registry) {
     }
     for (const [outputIndex, output] of generator.outputs.entries()) {
       const outputLabel = `${label}.outputs[${outputIndex}]`;
-      exactKeys(output, ["path", "versionOccurrences"], outputLabel);
+      exactKeys(output, ["path"], outputLabel);
       safePath(output.path, outputLabel);
-      positiveCount(output.versionOccurrences, outputLabel, true);
       if (outputPaths.has(output.path)) {
         fail(`${outputLabel}のpathは重複しています`);
       }
@@ -181,23 +180,6 @@ export function validateRegistry(registry) {
     !generatorIds.has("public-conformance")
   ) {
     fail("protocolとpublic-conformanceのgeneratorを1件ずつ登録してください");
-  }
-
-  if (!Array.isArray(registry.preserved)) {
-    fail("preservedはarrayである必要があります");
-  }
-  const preservedLocators = new Set();
-  for (const [index, preserved] of registry.preserved.entries()) {
-    const label = `preserved[${index}]`;
-    exactKeys(preserved, ["path", "literal", "count"], label);
-    safePath(preserved.path, label);
-    if (typeof preserved.literal !== "string" || preserved.literal.length === 0) {
-      fail(`${label}.literalは空でない文字列である必要があります`);
-    }
-    positiveCount(preserved.count, label);
-    const identity = `${preserved.path}\0${preserved.literal}`;
-    if (preservedLocators.has(identity)) fail(`${label}は重複しています`);
-    preservedLocators.add(identity);
   }
   return registry;
 }
@@ -276,15 +258,6 @@ function cargoLockBlocks(source, locator, version, label) {
   return { blocks, selected };
 }
 
-function validatePreserved(root, preserved) {
-  const actual = occurrences(read(root, preserved.path), preserved.literal);
-  if (actual !== preserved.count) {
-    fail(
-      `保持対象 ${preserved.path} の記録数が不正です：期待${preserved.count}件、実際${actual}件`,
-    );
-  }
-}
-
 function walkedSourceFiles(root, directory = "", result = new Map()) {
   const url = absolute(root, directory || "./");
   for (const entry of readdirSync(url, { withFileTypes: true })) {
@@ -326,95 +299,18 @@ function sourceFiles(root) {
   return result;
 }
 
-function expectedVersionOccurrences(registry, version) {
-  const expected = new Map();
-  const add = (path, count) =>
-    expected.set(path, (expected.get(path) ?? 0) + count);
-  add(registry.authority.path, registry.authority.count);
-  for (const target of registry.targets) {
-    if (target.type === "literal" && target.count === ALL_OCCURRENCES) continue;
-    add(
-      target.path,
-      target.type === "literal"
-        ? target.count
-        : target.type === "cargo-lock"
-          ? target.packages.length
-          : 1,
-    );
-  }
-  for (const generator of registry.generators) {
-    for (const output of generator.outputs) {
-      add(output.path, output.versionOccurrences);
-    }
-  }
-  for (const preserved of registry.preserved) {
-    add(
-      preserved.path,
-      occurrences(preserved.literal, version) * preserved.count,
-    );
-  }
-  return expected;
-}
-
-// cargo-lock対象のlockfileで、外部（source付き）packageのversion行が候補versionと
-// 偶然一致した件数を数える。第三者packageの版はCargoが管理する値であり、リポジトリへ
-// 直書きしたversion記録ではないため、inventoryの照合から除く。
-function foreignCargoLockVersionOccurrences(source, version) {
-  let count = 0;
-  for (const block of source.split(/\n\n/)) {
-    if (!/^source = /m.test(block)) continue;
-    count += occurrences(block, `version = "${version}"`);
-  }
-  return count;
-}
-
-function validateInventory(root, registry, version) {
-  const expected = expectedVersionOccurrences(registry, version);
-  // 件数を宣言しないpath。version記録をすべて置き換える対象なので、件数の一致ではなく
-  // 1件以上あることだけを求めます。
-  const flexiblePaths = new Set(
-    registry.targets
-      .filter((target) => target.type === "literal" && target.count === ALL_OCCURRENCES)
-      .map((target) => target.path),
-  );
-  const cargoLockPaths = new Set(
-    registry.targets
-      .filter((target) => target.type === "cargo-lock")
-      .map((target) => target.path),
-  );
-  const actual = new Map();
-  for (const [path, source] of sourceFiles(root)) {
-    let count = occurrences(source, version);
-    if (count > 0 && cargoLockPaths.has(path)) {
-      count -= foreignCargoLockVersionOccurrences(source, version);
-    }
-    if (count > 0) actual.set(path, count);
-  }
-  const paths = new Set([...expected.keys(), ...actual.keys()]);
-  for (const path of [...paths].sort()) {
-    const expectedCount = expected.get(path) ?? 0;
-    const actualCount = actual.get(path) ?? 0;
-    if (flexiblePaths.has(path)) {
-      if (actualCount === 0) fail(`version inventoryが不一致です：${path} にversion記録がありません`);
-      continue;
-    }
-    if (expectedCount !== actualCount) {
-      fail(
-        `version inventoryが不一致です：${path} は期待${expectedCount}件、実際${actualCount}件`,
-      );
-    }
-  }
-}
+// 版表記の管理は、registryへ列挙したfileとパターンだけを対象とします。以前は
+// リポジトリ全体を走査し、登録外のfileに版文字列があれば失敗させていました。登録漏れは
+// 見つかる一方で、cargo-distの版やlockfileの第三者package、旧版を含むtest fixtureまで
+// 「保持対象」として登録し続ける必要があり、上流の値が動くたびに人が追従していました。
+// 主要なmanifestの版はrelease-contractがrelease manifestと突き合わせるため、
+// 二重の検査を維持する価値より保守の負担が上回ると判断しています。
 
 function validateState(root, registry, version) {
   validateLocator(root, registry.authority, version, "authority");
   for (const [index, target] of registry.targets.entries()) {
     validateLocator(root, target, version, `targets[${index}]`);
   }
-  for (const preserved of registry.preserved) {
-    validatePreserved(root, preserved);
-  }
-  validateInventory(root, registry, version);
 }
 
 function run(command, args, root) {
