@@ -19,7 +19,7 @@ import {
   removeNativeSmokeDirectory,
   smokeLsp,
 } from "./native-lsp-smoke.mjs";
-import { loadDistributionPlan, selectProduct } from "./product-release.mjs";
+import { loadDistributionPlan, productIdentity, selectProduct } from "./product-release.mjs";
 
 const runtime = createRuntimeAdapters({
   fileSystem: nodeFileSystem,
@@ -34,6 +34,7 @@ const runtime = createRuntimeAdapters({
 });
 const {
   copyFileSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -60,8 +61,17 @@ if (runtime.platform.os !== platform.os || runtime.platform.architecture !== pla
   throw new Error(`smoke host ${runtime.platform.architecture} does not match ${target}`);
 }
 
-const manifest = JSON.parse(readFileSync(join(resolve(artifactDirectory), "adocweave-dist-manifest.json"), "utf8"));
-if (manifest.schemaVersion !== 3 || manifest.product !== product) {
+const manifestPath = join(resolve(artifactDirectory), "adocweave-dist-manifest.json");
+const identity = productIdentity(product, { plan });
+const manifest = existsSync(manifestPath)
+  ? JSON.parse(readFileSync(manifestPath, "utf8"))
+  : {
+      lspApiVersion: product === "lsp" ? 1 : undefined,
+      product,
+      productVersion: identity.version,
+      schemaVersion: 3,
+    };
+if (manifest.schemaVersion !== 3 || manifest.product !== product || manifest.productVersion !== identity.version) {
   throw new Error(`distribution manifest does not describe ${product}`);
 }
 const workspaceRoot = realpathSync(fileURLToPath(new URL("../", import.meta.url)));

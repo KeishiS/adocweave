@@ -54,4 +54,8 @@ jobs:
           if (-not $dumpbin) { throw "dumpbin.exe was not found" }
           "ADOCWEAVE_DUMPBIN=$($dumpbin.FullName)" >> $env:GITHUB_ENV
       - name: Extracted release binary smoke tests
-        run: node tools/native-release-smoke.mjs target/distrib "${{ matrix.target }}"
+        shell: bash
+        run: |
+          for product in cli lsp; do
+            node tools/native-release-smoke.mjs "$product" target/distrib "${{ matrix.target }}"
+          done
