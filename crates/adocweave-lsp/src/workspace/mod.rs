@@ -456,38 +456,51 @@ impl IncludeAcquisition {
     /// Commits happen only when the analysis produced a result. A failed or
     /// cancelled run drops its drafts instead, which leaves the live sessions
     /// exactly as they were.
-    fn commit(mut self) -> Result<WorkspaceResources, String> {
-        for candidate in self.transactions.values() {
-            let session = candidate
-                .session
-                .lock()
-                .map_err(|_| "workspace resource session lock is poisoned".to_owned())?;
-            candidate
+    fn commit(self) -> Result<WorkspaceResources, String> {
+        let Self {
+            mut candidate,
+            transactions,
+            root_scope: _,
+            allowed_roots: _,
+            admitted: _,
+            job,
+        } = self;
+        let mut transactions = transactions.into_iter().collect::<Vec<_>>();
+        let sessions = transactions
+            .iter()
+            .map(|(_, transaction)| Arc::clone(&transaction.session))
+            .collect::<Vec<_>>();
+        let mut session_guards = sessions
+            .iter()
+            .map(|session| {
+                session
+                    .lock()
+                    .map_err(|_| "workspace resource session lock is poisoned".to_owned())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        for ((_, transaction), session) in transactions.iter().zip(&session_guards) {
+            transaction
                 .transaction
                 .as_ref()
                 .expect("include transaction is active")
-                .validate(&session)
+                .validate(session)
                 .map_err(|error| error.to_string())?;
         }
-        for candidate in self.transactions.values_mut() {
-            let transaction = candidate
+        for ((_, transaction), session) in transactions.iter_mut().zip(&mut session_guards) {
+            let transaction = transaction
                 .transaction
                 .take()
                 .expect("include transaction is active");
-            let mut session = candidate
-                .session
-                .lock()
-                .map_err(|_| "workspace resource session lock is poisoned".to_owned())?;
             transaction
-                .commit(&mut session)
+                .commit(session)
                 .map_err(|error| error.to_string())?;
         }
-        self.job.finish().map_err(|error| error.to_string())?;
-        for (scope, candidate) in &self.transactions {
-            Arc::make_mut(&mut self.candidate.filesystems)
-                .insert(scope.clone(), Arc::clone(&candidate.session));
+        drop(session_guards);
+        job.finish().map_err(|error| error.to_string())?;
+        for (scope, transaction) in transactions {
+            Arc::make_mut(&mut candidate.filesystems).insert(scope, transaction.session);
         }
-        Ok(self.candidate)
+        Ok(candidate)
     }
 }
 
