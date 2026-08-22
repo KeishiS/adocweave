@@ -1754,10 +1754,11 @@ impl WorkspaceResources {
             adocweave_config::ResolvedProjectConfig::default,
             |snapshot| snapshot.config.clone(),
         );
+        // Include preprocessing no longer depends on whether a project file
+        // exists. It used to be forced on here and default off in the parsed
+        // configuration, so adding a project file for an unrelated setting
+        // silently stopped includes from resolving.
         let mut options = project_config.preprocess.clone();
-        if config_snapshot.is_none() {
-            options.enable_includes = true;
-        }
         options.base_uri = parent_uri(root);
         options.safe_mode = SafeMode::Server;
         options.allowed_schemes = allowed_schemes;

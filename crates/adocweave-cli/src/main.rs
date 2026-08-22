@@ -479,6 +479,19 @@ fn validate_project_config_authority(
     Ok(())
 }
 
+/// Decides whether this run resolves `include::` directives.
+///
+/// Configuration answers first and the command line overrides it in either
+/// direction, so a project that turned includes off can still convert one
+/// document with them, and a project that leaves the default can convert one
+/// document without them.
+fn include_selected(arguments: &Arguments, configured: bool) -> bool {
+    if arguments.no_include {
+        return false;
+    }
+    arguments.include || configured
+}
+
 /// The same ceiling the host applies to one recursive scan.
 ///
 /// The command line counts what it collected across every input directory,
@@ -912,7 +925,7 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                     .get(path)
                     .expect("every collected input has a resolved project");
                 let config = &resolved.config;
-                let include = arguments.include || config.resources.include;
+                let include = include_selected(arguments, config.resources.include);
                 if !include && (arguments.base_dir.is_some() || !arguments.allowed_roots.is_empty())
                 {
                     return Err(CliError::Usage(
@@ -1057,7 +1070,7 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                         .then(|| config.local_targets.project_root.clone())
                         .flatten()
                 });
-                let include = arguments.include || config.resources.include;
+                let include = include_selected(arguments, config.resources.include);
                 if !include && (arguments.base_dir.is_some() || !arguments.allowed_roots.is_empty())
                 {
                     return Err(CliError::Usage(
@@ -1297,7 +1310,7 @@ fn run() -> Result<ExitCode, CliError> {
                 |snapshot| snapshot.config.clone(),
             );
             let command_id = arguments.command.command_id();
-            let include = arguments.include || project_config.resources.include;
+            let include = include_selected(&arguments, project_config.resources.include);
             if !include && (arguments.base_dir.is_some() || !arguments.allowed_roots.is_empty()) {
                 return Err(CliError::Usage(
                     "--base-dir and --allow-root require include processing".to_owned(),
@@ -1464,16 +1477,21 @@ fn run() -> Result<ExitCode, CliError> {
             validate_resource_plan([input.len() as u64], project_config.resources.limit_plan)?;
             let mut retained_resources = adocweave_workspace::RetainedResourceBudget::default();
             let mut prepared = None;
+            // A document read from standard input has no location, so a relative
+            // include has nothing to be relative to and this command does not
+            // guess one. Asking for includes explicitly is still an error, since
+            // the caller wanted something the input cannot supply. Includes that
+            // are merely the default stay quiet and leave the directives alone.
+            let include_base = cli_base_dir.clone().or_else(|| primary_base.clone());
+            if include && include_base.is_none() && arguments.include {
+                return Err(CliError::Usage(
+                    "--include with standard input requires --base-dir".to_owned(),
+                ));
+            }
+            let include = include && include_base.is_some();
             let processed = if include {
                 let source = decode_input(&input)?;
-                let base_dir = match cli_base_dir.clone() {
-                    Some(base_dir) => base_dir,
-                    None => primary_base.clone().ok_or_else(|| {
-                        CliError::Usage(
-                            "--include with standard input requires --base-dir".to_owned(),
-                        )
-                    })?,
-                };
+                let base_dir = include_base.expect("include processing has a base directory");
                 let source_id = input_path.as_ref().map_or_else(
                     || "<stdin>".to_owned(),
                     |path| path.to_string_lossy().into_owned(),

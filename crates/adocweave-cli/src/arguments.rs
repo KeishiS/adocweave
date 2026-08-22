@@ -63,6 +63,7 @@ pub(crate) struct Arguments {
     pub(crate) additional_inputs: Vec<PathBuf>,
     pub(crate) glob_patterns: Vec<String>,
     pub(crate) include: bool,
+    pub(crate) no_include: bool,
     pub(crate) base_dir: Option<PathBuf>,
     pub(crate) allowed_roots: Vec<PathBuf>,
     pub(crate) project_root: Option<PathBuf>,
@@ -178,6 +179,7 @@ pub(crate) fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result
     let mut format_diff = false;
     let mut dry_run = false;
     let mut include = false;
+    let mut no_include = false;
     let mut base_dir = None;
     let mut allowed_roots = Vec::new();
     let mut local_targets = false;
@@ -296,7 +298,22 @@ pub(crate) fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result
             Some(OptionId::FormatCheck) => format_check = true,
             Some(OptionId::FormatWrite) => format_write = true,
             Some(OptionId::FormatDiff) => format_diff = true,
-            Some(OptionId::Include) => include = true,
+            Some(OptionId::Include) => {
+                if no_include {
+                    return Err(CliError::Usage(
+                        "--include cannot be combined with --no-include".to_owned(),
+                    ));
+                }
+                include = true;
+            }
+            Some(OptionId::NoInclude) => {
+                if include {
+                    return Err(CliError::Usage(
+                        "--no-include cannot be combined with --include".to_owned(),
+                    ));
+                }
+                no_include = true;
+            }
             Some(OptionId::LocalTargets) => local_targets = true,
             Some(OptionId::ProjectRoot) => {
                 let value = take_option_value(
@@ -446,6 +463,7 @@ pub(crate) fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result
             || !glob_patterns.is_empty()
             || stdin_selected
             || include
+            || no_include
             || base_dir.is_some()
             || !allowed_roots.is_empty()
             || project_root.is_some()
@@ -468,6 +486,7 @@ pub(crate) fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result
             || !glob_patterns.is_empty()
             || stdin_selected
             || include
+            || no_include
             || base_dir.is_some()
             || !allowed_roots.is_empty()
             || local_targets
@@ -518,6 +537,7 @@ pub(crate) fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result
         additional_inputs,
         glob_patterns,
         include,
+        no_include,
         base_dir,
         allowed_roots,
         project_root,
