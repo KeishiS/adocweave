@@ -95,6 +95,19 @@ pub enum FilesystemReadOutcome {
     },
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum FilesystemInspectOutcome {
+    Found {
+        source_id: LogicalSourceId,
+        candidate_path: PathBuf,
+        canonical_path: PathBuf,
+    },
+    NotFound {
+        source_id: LogicalSourceId,
+        candidate_path: PathBuf,
+    },
+}
+
 impl FilesystemReadOutcome {
     /// Requires a loaded resource and maps absence to the legacy error type.
     ///
@@ -1075,6 +1088,31 @@ impl LocalFilesystemMutationCursor<'_> {
         )
     }
 
+    fn inspect_target(
+        &mut self,
+        source_id: LogicalSourceId,
+        base: &Path,
+        target: &str,
+    ) -> Result<FilesystemInspectOutcome, FilesystemDraftError> {
+        let _permit = self.begin_read()?;
+        let index = self.root_index(base)?;
+        let candidate_path = self.state.sessions[index]
+            .candidate(base, target)
+            .map_err(ResourceError::from)?;
+        match self.state.sessions[index].inspect(base, target) {
+            Ok(canonical_path) => Ok(FilesystemInspectOutcome::Found {
+                source_id,
+                candidate_path,
+                canonical_path,
+            }),
+            Err(LocalTargetError::Missing(_)) => Ok(FilesystemInspectOutcome::NotFound {
+                source_id,
+                candidate_path,
+            }),
+            Err(error) => Err(ResourceError::from(error).into()),
+        }
+    }
+
     fn read_target_utf8_preserving_missing(
         &mut self,
         source_id: LogicalSourceId,
@@ -1706,6 +1744,21 @@ impl LocalFilesystemDraft {
         let result = self
             .mutation_cursor()
             .read_target_utf8(source_id, base, target);
+        self.record(result)
+    }
+
+    /// Resolves one authored target without reading its contents or retaining
+    /// an include binding.
+    pub(crate) fn inspect_target_outcome(
+        &mut self,
+        source_id: LogicalSourceId,
+        base: &Path,
+        target: &str,
+    ) -> Result<FilesystemInspectOutcome, FilesystemDraftError> {
+        self.ensure_operation_can_start()?;
+        let result = self
+            .mutation_cursor()
+            .inspect_target(source_id, base, target);
         self.record(result)
     }
 

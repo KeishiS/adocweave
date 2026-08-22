@@ -6,6 +6,7 @@
 mod exit_status;
 mod filesystem_job;
 mod filesystem_limits;
+mod include_filesystem;
 mod local_resource;
 mod local_target;
 
@@ -15,6 +16,13 @@ pub use filesystem_job::{
     FilesystemJobLimits, FilesystemJobUsage,
 };
 pub use filesystem_limits::FilesystemReadLimits;
+pub use include_filesystem::{
+    FailedIncludeFilesystemSource, IncludeFilesystem, IncludeFilesystemCommit,
+    IncludeFilesystemInspection, IncludeFilesystemInspectionOutcome, IncludeFilesystemOutcome,
+    IncludeFilesystemOwner, IncludeFilesystemProvenance, IncludeFilesystemRequest,
+    IncludeFilesystemSource, IncludeFilesystemTransaction, IncludeWatchCandidate,
+    MissingIncludeFilesystemSource,
+};
 pub use local_resource::{
     DerivedFilesystemRoots, FilesystemDraftError, FilesystemReadOutcome, FilesystemReleaseOutcome,
     FilesystemResourceBinding, LoadedFilesystemSource, LocalFilesystemDraft, LocalFilesystemPolicy,
