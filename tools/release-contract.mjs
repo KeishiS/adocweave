@@ -127,16 +127,11 @@ export function validateDistPlan(distPlan, plan, product, productVersion, tag) {
 
 export function validateDistributionManifest(manifest, plan) {
   const keys = Object.keys(manifest).sort();
-  const expectedKeys = manifest.product === "lsp"
-    ? ["assets", "lspApiVersion", "product", "productVersion", "schemaVersion", "sourceCommit"]
-    : ["assets", "product", "productVersion", "schemaVersion", "sourceCommit"];
+  const expectedKeys = ["assets", "product", "productVersion", "schemaVersion", "sourceCommit"];
   if (JSON.stringify(keys) !== JSON.stringify(expectedKeys)) fail("distribution manifest has unknown or missing fields");
-  if (manifest.schemaVersion !== 3) fail("distribution manifest schemaVersion must be 3");
+  if (manifest.schemaVersion !== 4) fail("distribution manifest schemaVersion must be 4");
   productRoute(plan, manifest.product);
   if (!/^\d+\.\d+\.\d+$/.test(manifest.productVersion)) fail("distribution manifest product version is invalid");
-  if (manifest.product === "lsp" && (!Number.isInteger(manifest.lspApiVersion) || manifest.lspApiVersion < 1)) {
-    fail("LSP distribution manifest has invalid lspApiVersion");
-  }
   if (!/^[0-9a-f]{40}$/.test(manifest.sourceCommit)) fail("sourceCommit must be a lowercase 40-character Git commit");
   const expected = new Map(assetsForProduct(manifest.product, manifest.productVersion, plan.targets, plan)
     .map((asset) => [asset.name, asset]));
@@ -260,11 +255,6 @@ function verifyRepository() {
   const fixture = JSON.parse(fixtureText);
   validateDistributionManifest(fixture, plan);
   if (fixture.productVersion !== versions[fixture.product]) fail("distribution manifest fixture version source mismatch");
-  const lspApiVersion = Number(read("crates/adocweave-lsp/src/lib.rs")
-    .match(/pub const LSP_API_VERSION: u32 = (\d+);/)?.[1]);
-  if (fixture.product === "lsp" && fixture.lspApiVersion !== lspApiVersion) {
-    fail("distribution manifest fixture LSP API version mismatch");
-  }
   if (fixtureText !== canonicalJson(fixture)) fail("distribution manifest fixture is not canonical JSON");
   return { plan, versions };
 }

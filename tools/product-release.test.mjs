@@ -148,7 +148,7 @@ test("candidateとpublication planへ他製品assetを混在させません", ()
   writeFileSync(
     join(candidate, "adocweave-dist-manifest.json"),
     `${JSON.stringify({
-      schemaVersion: 3,
+      schemaVersion: 4,
       product: "cli",
       productVersion: "1.2.3",
       sourceCommit: "a".repeat(40),

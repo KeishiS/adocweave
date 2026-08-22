@@ -69,7 +69,7 @@ function fixture(product) {
 
 const commit = () => execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 
-test("LSP metadataはLSP assetとAPI versionだけを記録する", () => {
+test("LSP metadataはLSP assetと製品versionだけを記録する", () => {
   const { assets, artifacts, root } = fixture("lsp");
   try {
     writeMetadata(artifacts, commit(), "lsp", plan);
@@ -77,10 +77,10 @@ test("LSP metadataはLSP assetとAPI versionだけを記録する", () => {
     const manifest = JSON.parse(readFileSync(join(artifacts, "adocweave-dist-manifest.json"), "utf8"));
     const sbom = JSON.parse(readFileSync(join(artifacts, "adocweave.spdx.json"), "utf8"));
     const checksums = readFileSync(join(artifacts, "sha256.sum"), "utf8").trimEnd().split("\n");
-    assert.equal(manifest.schemaVersion, 3);
+    assert.equal(manifest.schemaVersion, 4);
     assert.equal(manifest.product, "lsp");
     assert.equal(manifest.productVersion, "0.46.2");
-    assert.equal(manifest.lspApiVersion, 1);
+    assert.equal("lspApiVersion" in manifest, false);
     assert.deepEqual(manifest.assets.map(({ name }) => name), assets.map(({ name }) => name));
     assert.ok(manifest.assets.every(({ kind }) => kind === "lsp"));
     assert.ok(sbom.packages.some(({ name }) => name === "adocweave-lsp"));
@@ -102,7 +102,7 @@ test("Browser metadataは1 archiveとその依存関係だけを記録する", (
     const sbom = JSON.parse(readFileSync(join(artifacts, "adocweave.spdx.json"), "utf8"));
     assert.equal(manifest.product, "browser");
     assert.equal(manifest.assets.length, 1);
-    assert.equal(manifest.lspApiVersion, undefined);
+    assert.equal("lspApiVersion" in manifest, false);
     const purls = sbom.packages.flatMap((entry) => entry.externalRefs ?? [])
       .map((entry) => entry.referenceLocator);
     assert.ok(purls.some((entry) => entry.startsWith("pkg:npm/%40adocweave/browser@")));

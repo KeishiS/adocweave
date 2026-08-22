@@ -66,12 +66,11 @@ const identity = productIdentity(product, { plan });
 const manifest = existsSync(manifestPath)
   ? JSON.parse(readFileSync(manifestPath, "utf8"))
   : {
-      lspApiVersion: product === "lsp" ? 1 : undefined,
       product,
       productVersion: identity.version,
-      schemaVersion: 3,
+      schemaVersion: 4,
     };
-if (manifest.schemaVersion !== 3 || manifest.product !== product || manifest.productVersion !== identity.version) {
+if (manifest.schemaVersion !== 4 || manifest.product !== product || manifest.productVersion !== identity.version) {
   throw new Error(`distribution manifest does not describe ${product}`);
 }
 const workspaceRoot = realpathSync(fileURLToPath(new URL("../", import.meta.url)));
@@ -187,9 +186,6 @@ function run(binary, args, options = {}) {
 function version(binary) {
   const value = JSON.parse(run(binary, ["--version", "--json"]));
   if (value.packageVersion !== manifest.productVersion) throw new Error(`${value.name} package version mismatch`);
-  if (product === "lsp" && value.lspApiVersion !== manifest.lspApiVersion) {
-    throw new Error("LSP API version mismatch");
-  }
 }
 
 async function smokeForcedProcessLifecycle(binary, deadline) {

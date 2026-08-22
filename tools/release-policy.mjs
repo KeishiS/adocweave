@@ -34,19 +34,6 @@ function readVersionSource(versionSource) {
   fail(`未対応のversionSourceです：${versionSource}`);
 }
 
-function rustConstant(path, name) {
-  const source = readFileSync(new URL(path, ROOT), "utf8");
-  const match = new RegExp(`pub const ${name}: [^=]+ = (\\d+);`).exec(source);
-  return Number(match?.[1] ?? fail(`${path}に${name}がありません`));
-}
-
-function supportedLspApiVersions(path) {
-  const source = readFileSync(new URL(path, ROOT), "utf8");
-  const match = /SUPPORTED_LSP_API_VERSIONS[^=]*=\s*(?:&)?\[(\d+(?:\s*,\s*\d+)*)\]/.exec(source);
-  if (!match) fail(`${path}にSUPPORTED_LSP_API_VERSIONSがありません`);
-  return match[1].split(",").map((value) => Number(value.trim()));
-}
-
 export const PRODUCT_IDS = plan.products.map(({ product }) => product);
 
 export function productRelease(product) {
@@ -58,9 +45,7 @@ export function productRelease(product) {
 }
 
 export function relatedApiVersions(product) {
-  if (product === "lsp") {
-    return [{ name: "LSP API", version: rustConstant("crates/adocweave-lsp/src/lib.rs", "LSP_API_VERSION") }];
-  }
+  if (product === "lsp") return [];
   if (product === "browser") {
     return [
       { name: "WASM protocol schema", version: PROTOCOL_SCHEMA_VERSION },
@@ -69,12 +54,6 @@ export function relatedApiVersions(product) {
   }
   if (product === "textlint") {
     return [{ name: "textlint adapter API", version: TEXTLINT_ADAPTER_API_VERSION }];
-  }
-  if (product === "vscode") {
-    return [{ name: "対応LSP API", version: supportedLspApiVersions("editors/vscode/src/lsp-contract.ts").join(", ") }];
-  }
-  if (product === "zed") {
-    return [{ name: "対応LSP API", version: supportedLspApiVersions("editors/zed/src/lib.rs").join(", ") }];
   }
   return [];
 }

@@ -235,7 +235,7 @@ export function validateProductCandidate(product, directory, options = {}) {
   const resolved = productIdentity(product, options);
   const manifest = JSON.parse(readFileSync(resolve(directory, MANIFEST_NAME), "utf8"));
   if (
-    manifest.schemaVersion !== 3 ||
+    manifest.schemaVersion !== 4 ||
     manifest.product !== product ||
     manifest.productVersion !== resolved.version ||
     !Array.isArray(manifest.assets) ||

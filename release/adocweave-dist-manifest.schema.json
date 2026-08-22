@@ -12,10 +12,9 @@
     "assets"
   ],
   "properties": {
-    "schemaVersion": { "const": 3 },
+    "schemaVersion": { "const": 4 },
     "product": { "enum": ["cli", "lsp", "browser", "textlint", "vscode", "zed"] },
     "productVersion": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
-    "lspApiVersion": { "type": "integer", "minimum": 1 },
     "sourceCommit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
     "assets": {
       "type": "array",
@@ -36,12 +35,5 @@
         }
       }
     }
-  },
-  "allOf": [
-    {
-      "if": { "properties": { "product": { "const": "lsp" } }, "required": ["product"] },
-      "then": { "required": ["lspApiVersion"] },
-      "else": { "not": { "required": ["lspApiVersion"] } }
-    }
-  ]
+  }
 }

@@ -71,12 +71,11 @@ const identity = productIdentity(product, { plan: distributionPlan });
 const manifest = existsSync(manifestPath)
   ? JSON.parse(readFileSync(manifestPath, "utf8"))
   : {
-      lspApiVersion: product === "lsp" ? 1 : undefined,
       product,
       productVersion: identity.version,
-      schemaVersion: 3,
+      schemaVersion: 4,
     };
-if (manifest.schemaVersion !== 3 || manifest.product !== product || manifest.productVersion !== identity.version) {
+if (manifest.schemaVersion !== 4 || manifest.product !== product || manifest.productVersion !== identity.version) {
   throw new Error(`distribution manifest does not describe ${product}`);
 }
 const version = manifest.productVersion;
@@ -361,9 +360,6 @@ try {
     for (const executable of executables) {
       const actual = JSON.parse(command(executable, ["--version", "--json"]));
       if (actual.packageVersion !== version) throw new Error(`${executable} version mismatch`);
-      if (product === "lsp" && actual.lspApiVersion !== manifest.lspApiVersion) {
-        throw new Error("LSP API version mismatch");
-      }
     }
     activateNative(previousRoot, `${version}-previous-fixture`, executables);
     if (readFileSync(activeMarker, "utf8") !== `${version}-previous-fixture\n`) {
