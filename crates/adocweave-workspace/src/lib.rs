@@ -992,6 +992,11 @@ impl WorkspaceResourceRequest {
         self.inner.target()
     }
 
+    /// Returns the expanded target before base URI resolution.
+    pub fn authored_target(&self) -> &str {
+        self.inner.authored_target()
+    }
+
     /// Returns whether the include declared the resource optional.
     pub const fn is_optional(&self) -> bool {
         self.inner.is_optional()

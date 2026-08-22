@@ -8,7 +8,6 @@ use std::sync::Arc;
 
 use adocweave::preprocess::{
     EffectiveProcessingOptions, PreprocessError, PreprocessOptions, PreprocessedDocument,
-    discover_includes,
 };
 use adocweave_host::{
     FilesystemReadLimits, IncludeFilesystem, IncludeFilesystemOutcome, IncludeFilesystemRequest,
@@ -297,7 +296,6 @@ fn prepare_with_driver(
     let options = EffectiveProcessingOptions::new(analysis_options.clone(), preprocess_options)
         .map_err(|error| LocalIncludeError::Analysis(error.to_string()))?;
     let mut source_keys = BTreeMap::from([(source_id.clone(), root_id.clone())]);
-    let mut request_sources = BTreeMap::from([(source_id.clone(), Arc::<str>::from(source))]);
     let mut source_bases = BTreeMap::from([(source_id.clone(), source_base)]);
     let mut include_bases = include_base
         .map(|base| BTreeMap::from([(source_id.clone(), base)]))
@@ -315,22 +313,12 @@ fn prepare_with_driver(
                 let projected_source_id = include_source_id(&target);
                 let logical_id = LogicalSourceId::new(projected_source_id.clone())
                     .map_err(LocalIncludeError::Host)?;
-                let request_source_id = request.source_id().map(str::to_owned);
                 let request_range = request.range();
-                let authored_target = request_source_id
-                    .as_ref()
-                    .and_then(|source_id| request_sources.get(source_id))
-                    .and_then(|source| {
-                        source.get(request_range.start().to_usize()..request_range.end().to_usize())
-                    })
-                    .and_then(|directive| discover_includes(directive).ok())
-                    .and_then(|mut requests| requests.pop())
-                    .map_or_else(|| target.clone(), |request| request.target);
                 let inspect = !validate_local_targets || {
                     adocweave::LocalTargetReference::from_include(
                         request_range,
                         request_range,
-                        &authored_target,
+                        request.authored_target(),
                     )
                     .is_some_and(|reference| {
                         reference.syntax == adocweave::LocalTargetSyntax::Candidate
@@ -361,7 +349,6 @@ fn prepare_with_driver(
                         let key = ResourceId::new(target.clone())
                             .map_err(|error| LocalIncludeError::Analysis(error.to_string()))?;
                         source_keys.insert(projected_source_id.clone(), key);
-                        request_sources.insert(projected_source_id.clone(), Arc::clone(&source));
                         let base = found
                             .provenance()
                             .canonical_path()

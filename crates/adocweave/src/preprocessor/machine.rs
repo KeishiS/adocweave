@@ -422,6 +422,7 @@ impl PreprocessMachine {
             }
             ResourceLookupResult::Deferred => MachineLookup::Deferred(ResourceRequest {
                 target: pending.target.clone(),
+                authored_target: pending.expanded_target.clone(),
                 optional: pending.optional,
                 source_id: pending.source_id.clone(),
                 range: pending.range,
