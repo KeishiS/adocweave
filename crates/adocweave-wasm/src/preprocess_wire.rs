@@ -3,7 +3,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use adocweave::SourceId;
 use adocweave::preprocess::{PreprocessOptions, ResourceDocument, ResourceSnapshot, SafeMode};
 
-#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+#[cfg_attr(
+    feature = "ts-rs",
+    derive(ts_rs::TS),
+    ts(export, export_to = "protocol.d.mts")
+)]
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum WasmSafeMode {
@@ -14,7 +18,11 @@ pub enum WasmSafeMode {
     Secure,
 }
 
-#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+#[cfg_attr(
+    feature = "ts-rs",
+    derive(ts_rs::TS),
+    ts(export, export_to = "protocol.d.mts")
+)]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmResource {
@@ -22,7 +30,11 @@ pub struct WasmResource {
     pub source: String,
 }
 
-#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+#[cfg_attr(
+    feature = "ts-rs",
+    derive(ts_rs::TS),
+    ts(export, export_to = "protocol.d.mts")
+)]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmPreprocessOptions {
@@ -59,7 +71,11 @@ impl Default for WasmPreprocessOptions {
     }
 }
 
-#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+#[cfg_attr(
+    feature = "ts-rs",
+    derive(ts_rs::TS),
+    ts(export, export_to = "protocol.d.mts")
+)]
 #[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmAnalysisPreprocessInput {
@@ -79,7 +95,11 @@ fn default_wasm_preprocess_request_options() -> WasmPreprocessOptions {
     Default::default()
 }
 
-#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+#[cfg_attr(
+    feature = "ts-rs",
+    derive(ts_rs::TS),
+    ts(export, export_to = "protocol.d.mts")
+)]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmPreprocessRequest {
@@ -93,7 +113,11 @@ pub struct WasmPreprocessRequest {
     pub options: WasmPreprocessOptions,
 }
 
-#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+#[cfg_attr(
+    feature = "ts-rs",
+    derive(ts_rs::TS),
+    ts(export, export_to = "protocol.d.mts")
+)]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmPreprocessResponse {
@@ -102,7 +126,11 @@ pub struct WasmPreprocessResponse {
     pub source_map: Vec<WasmSourceMapSegment>,
 }
 
-#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+#[cfg_attr(
+    feature = "ts-rs",
+    derive(ts_rs::TS),
+    ts(export, export_to = "protocol.d.mts")
+)]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmSourceMapSegment {
@@ -114,7 +142,11 @@ pub struct WasmSourceMapSegment {
     pub mapping: WasmSourceMapping,
 }
 
-#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+#[cfg_attr(
+    feature = "ts-rs",
+    derive(ts_rs::TS),
+    ts(export, export_to = "protocol.d.mts")
+)]
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum WasmSourceMapping {
@@ -122,7 +154,11 @@ pub enum WasmSourceMapping {
     WholeOrigin,
 }
 
-#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+#[cfg_attr(
+    feature = "ts-rs",
+    derive(ts_rs::TS),
+    ts(export, export_to = "protocol.d.mts")
+)]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmError {

@@ -1,4 +1,8 @@
-#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+#[cfg_attr(
+    feature = "ts-rs",
+    derive(ts_rs::TS),
+    ts(export, export_to = "protocol.d.mts")
+)]
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum WasmDocumentMode {
@@ -7,7 +11,11 @@ pub enum WasmDocumentMode {
     Complete,
 }
 
-#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+#[cfg_attr(
+    feature = "ts-rs",
+    derive(ts_rs::TS),
+    ts(export, export_to = "protocol.d.mts")
+)]
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum WasmSyntaxMode {
@@ -16,7 +24,11 @@ pub enum WasmSyntaxMode {
     Strict,
 }
 
-#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+#[cfg_attr(
+    feature = "ts-rs",
+    derive(ts_rs::TS),
+    ts(export, export_to = "protocol.d.mts")
+)]
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum WasmUnknownRole {
@@ -25,7 +37,11 @@ pub enum WasmUnknownRole {
     Diagnostic,
 }
 
-#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+#[cfg_attr(
+    feature = "ts-rs",
+    derive(ts_rs::TS),
+    ts(export, export_to = "protocol.d.mts")
+)]
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum WasmUnknownSourceLanguage {
@@ -35,7 +51,11 @@ pub enum WasmUnknownSourceLanguage {
     Diagnostic,
 }
 
-#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+#[cfg_attr(
+    feature = "ts-rs",
+    derive(ts_rs::TS),
+    ts(export, export_to = "protocol.d.mts")
+)]
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum WasmUnresolvedReferencePresentation {

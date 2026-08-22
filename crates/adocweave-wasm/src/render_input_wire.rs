@@ -13,14 +13,22 @@ where
     Ok(value)
 }
 
-#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+#[cfg_attr(
+    feature = "ts-rs",
+    derive(ts_rs::TS),
+    ts(export, export_to = "protocol.d.mts")
+)]
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum WasmReferenceNotice {
     Fallback,
 }
 
-#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+#[cfg_attr(
+    feature = "ts-rs",
+    derive(ts_rs::TS),
+    ts(export, export_to = "protocol.d.mts")
+)]
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum WasmReferenceFailureKind {
@@ -31,7 +39,11 @@ pub enum WasmReferenceFailureKind {
     ResolverFailure,
 }
 
-#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+#[cfg_attr(
+    feature = "ts-rs",
+    derive(ts_rs::TS),
+    ts(export, export_to = "protocol.d.mts")
+)]
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum WasmResourceFailureKind {
@@ -50,7 +62,11 @@ pub enum WasmResourceFailureKind {
     rename_all_fields = "camelCase",
     deny_unknown_fields
 )]
-#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+#[cfg_attr(
+    feature = "ts-rs",
+    derive(ts_rs::TS),
+    ts(export, export_to = "protocol.d.mts")
+)]
 pub enum WasmReferenceOutcome {
     Resolved {
         href: String,
@@ -71,7 +87,11 @@ pub enum WasmReferenceOutcome {
     rename_all_fields = "camelCase",
     deny_unknown_fields
 )]
-#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+#[cfg_attr(
+    feature = "ts-rs",
+    derive(ts_rs::TS),
+    ts(export, export_to = "protocol.d.mts")
+)]
 pub enum WasmResourceOutcome {
     Resolved {
         href: String,
@@ -91,7 +111,11 @@ pub enum WasmResourceOutcome {
     rename_all_fields = "camelCase",
     deny_unknown_fields
 )]
-#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+#[cfg_attr(
+    feature = "ts-rs",
+    derive(ts_rs::TS),
+    ts(export, export_to = "protocol.d.mts")
+)]
 pub enum WasmCitationOutcome {
     Resolved {
         #[serde(default)]
@@ -102,7 +126,11 @@ pub enum WasmCitationOutcome {
     },
 }
 
-#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+#[cfg_attr(
+    feature = "ts-rs",
+    derive(ts_rs::TS),
+    ts(export, export_to = "protocol.d.mts")
+)]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmCitationSegment {
@@ -111,7 +139,11 @@ pub struct WasmCitationSegment {
     pub anchor: Option<String>,
 }
 
-#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+#[cfg_attr(
+    feature = "ts-rs",
+    derive(ts_rs::TS),
+    ts(export, export_to = "protocol.d.mts")
+)]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmGeneratedBibliographyEntry {
@@ -123,7 +155,11 @@ pub struct WasmGeneratedBibliographyEntry {
     pub number: Option<u32>,
 }
 
-#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+#[cfg_attr(
+    feature = "ts-rs",
+    derive(ts_rs::TS),
+    ts(export, export_to = "protocol.d.mts")
+)]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmGeneratedBibliography {
@@ -132,7 +168,11 @@ pub struct WasmGeneratedBibliography {
     pub entries: Vec<WasmGeneratedBibliographyEntry>,
 }
 
-#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+#[cfg_attr(
+    feature = "ts-rs",
+    derive(ts_rs::TS),
+    ts(export, export_to = "protocol.d.mts")
+)]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmResolvedCitation {
@@ -141,7 +181,11 @@ pub struct WasmResolvedCitation {
     pub outcome: WasmCitationOutcome,
 }
 
-#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+#[cfg_attr(
+    feature = "ts-rs",
+    derive(ts_rs::TS),
+    ts(export, export_to = "protocol.d.mts")
+)]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmResolvedReference {
@@ -150,7 +194,11 @@ pub struct WasmResolvedReference {
     pub outcome: WasmReferenceOutcome,
 }
 
-#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+#[cfg_attr(
+    feature = "ts-rs",
+    derive(ts_rs::TS),
+    ts(export, export_to = "protocol.d.mts")
+)]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmResolvedResource {
@@ -159,7 +207,11 @@ pub struct WasmResolvedResource {
     pub outcome: WasmResourceOutcome,
 }
 
-#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+#[cfg_attr(
+    feature = "ts-rs",
+    derive(ts_rs::TS),
+    ts(export, export_to = "protocol.d.mts")
+)]
 #[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmRenderInputs {

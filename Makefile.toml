@@ -97,8 +97,14 @@ dependencies = [
 ]
 
 [tasks.protocol-generated-check]
-command = "node"
-args = ["tools/generate-protocol.mjs", "--check"]
+description = "Regenerate the TypeScript declarations from the Rust wire types and require no diff"
+script_runner = "@shell"
+script = '''
+# ts-rsは既存fileへ追記するため、消えた型が残らないよう作り直します。
+rm -f web-worker/protocol.d.mts
+cargo test --locked -p adocweave-wasm --features ts-rs export_bindings
+git diff --exit-code -- web-worker/protocol.d.mts
+'''
 
 [tasks.protocol-corpus-check]
 command = "cargo"

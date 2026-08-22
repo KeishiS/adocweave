@@ -61,7 +61,7 @@ test("global archiveへ影響する入力だけを選択する", () => {
     "tools/textlint-plugin-compatibility-probe.test.mjs",
     "tools/verify-textlint-wasm-memory.mjs",
     "packages/textlint-plugin-asciidoc/processor.mjs",
-    "tools/protocol-rust-codegen.mjs",
+    "crates/adocweave-wasm/src/protocol.rs",
     "tools/sync-release-version.mjs",
     "release-manifest.json",
     "crates/adocweave-textlint/src/lib.rs",

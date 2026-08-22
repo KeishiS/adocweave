@@ -268,13 +268,12 @@ fn request_modules_keep_wire_normalization_conversion_and_execution_one_way() {
 }
 
 #[test]
-fn handwritten_wasm_wire_dtos_require_a_type_specific_exception() {
+fn wire_types_live_only_in_the_wire_modules() {
+    // wire型はprotocol.rs、shared_wire.rs、request_enums.rs、request_wire.rs、
+    // render_input_wire.rs、preprocess_wire.rs、response_wire.rsだけが宣言します。
+    // 変換や正規化のmoduleが公開型を持つと、境界の位置が曖昧になります。
     const HANDWRITTEN_SOURCES: &[(&str, &str)] = &[
         ("lib.rs", include_str!("../src/lib.rs")),
-        (
-            "preprocess_wire.rs",
-            include_str!("../src/preprocess_wire.rs"),
-        ),
         (
             "render_input_conversion.rs",
             include_str!("../src/render_input_conversion.rs"),
@@ -288,10 +287,6 @@ fn handwritten_wasm_wire_dtos_require_a_type_specific_exception() {
             include_str!("../src/render_input_normalization.rs"),
         ),
         (
-            "render_input_wire.rs",
-            include_str!("../src/render_input_wire.rs"),
-        ),
-        (
             "request_conversion.rs",
             include_str!("../src/request_conversion.rs"),
         ),
@@ -299,14 +294,12 @@ fn handwritten_wasm_wire_dtos_require_a_type_specific_exception() {
             "request_normalization.rs",
             include_str!("../src/request_normalization.rs"),
         ),
-        ("request_wire.rs", include_str!("../src/request_wire.rs")),
         (
             "response_projection.rs",
             include_str!("../src/response_projection.rs"),
         ),
-        ("response_wire.rs", include_str!("../src/response_wire.rs")),
     ];
-    const HANDWRITTEN_WIRE_DTO_EXCEPTIONS: &[(&str, &str, &str)] = &[];
+    const NON_WIRE_PUBLIC_TYPE_EXCEPTIONS: &[(&str, &str, &str)] = &[];
 
     let declared = HANDWRITTEN_SOURCES
         .iter()
@@ -324,7 +317,7 @@ fn handwritten_wasm_wire_dtos_require_a_type_specific_exception() {
             })
         })
         .collect::<BTreeSet<_>>();
-    let excepted = HANDWRITTEN_WIRE_DTO_EXCEPTIONS
+    let excepted = NON_WIRE_PUBLIC_TYPE_EXCEPTIONS
         .iter()
         .map(|(path, name, reason)| {
             assert!(
@@ -337,7 +330,7 @@ fn handwritten_wasm_wire_dtos_require_a_type_specific_exception() {
 
     assert_eq!(
         declared, excepted,
-        "every handwritten WASM wire DTO must have a type-specific exception"
+        "wire types must be declared in the wire modules only"
     );
 }
 
@@ -770,31 +763,6 @@ fn every_request_union_enforces_tags_fields_and_unknown_rejection() {
             assert!(
                 serde_json::from_value::<WasmRequest>(missing_tag).is_err(),
                 "{name}.{variant} accepted a missing tag"
-            );
-        }
-    }
-}
-
-#[test]
-fn schema_names_match_the_serde_and_typescript_contracts() {
-    let (schema, _) = documents();
-    let typescript = include_str!("../../../web-worker/protocol.generated.d.mts");
-    for field in schema["request"]["fields"]
-        .as_array()
-        .expect("request fields")
-    {
-        let name = field["json"].as_str().expect("request field");
-        if name == "packageVersion" || name == "generation" {
-            continue;
-        }
-        assert!(typescript.contains(name), "TypeScript request field {name}");
-    }
-    for values in schema["enums"].as_object().expect("enums").values() {
-        for value in values.as_array().expect("enum values") {
-            let value = value.as_str().expect("enum string");
-            assert!(
-                typescript.contains(&format!("\"{value}\"")),
-                "TypeScript enum value {value}"
             );
         }
     }

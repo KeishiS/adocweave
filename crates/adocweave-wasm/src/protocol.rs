@@ -1,7 +1,11 @@
 pub const PROTOCOL_SCHEMA_VERSION: u16 = 14;
 pub const WORKER_PROTOCOL_VERSION: u16 = 2;
 
-#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+#[cfg_attr(
+    feature = "ts-rs",
+    derive(ts_rs::TS),
+    ts(export, export_to = "protocol.d.mts")
+)]
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmProductSet {

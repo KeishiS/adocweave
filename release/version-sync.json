@@ -74,6 +74,12 @@
     },
     {
       "type": "literal",
+      "path": "web-worker/worker-protocol.mjs",
+      "template": "\"{version}\"",
+      "count": 1
+    },
+    {
+      "type": "literal",
       "path": "release/distribution-plan.json",
       "template": "\"packageVersion\": \"{version}\"",
       "count": 1
@@ -180,39 +186,7 @@
       "id": "protocol",
       "outputs": [
         {
-          "path": "web-worker/protocol.generated.mjs",
-          "versionOccurrences": 1
-        },
-        {
-          "path": "web-worker/protocol.generated.d.mts",
-          "versionOccurrences": 1
-        },
-        {
-          "path": "crates/adocweave-wasm/src/protocol_generated.rs",
-          "versionOccurrences": 0
-        },
-        {
-          "path": "crates/adocweave-wasm/src/preprocess_wire_generated.rs",
-          "versionOccurrences": 0
-        },
-        {
-          "path": "crates/adocweave-wasm/src/render_input_wire_generated.rs",
-          "versionOccurrences": 0
-        },
-        {
-          "path": "crates/adocweave-wasm/src/request_enum_generated.rs",
-          "versionOccurrences": 0
-        },
-        {
-          "path": "crates/adocweave-wasm/src/request_wire_generated.rs",
-          "versionOccurrences": 0
-        },
-        {
-          "path": "crates/adocweave-wasm/src/shared_wire_generated.rs",
-          "versionOccurrences": 0
-        },
-        {
-          "path": "crates/adocweave-wasm/src/response_wire_generated.rs",
+          "path": "web-worker/protocol.d.mts",
           "versionOccurrences": 0
         }
       ]
