@@ -205,6 +205,10 @@ pub enum IncludeFilesystemInspectionOutcome {
 }
 
 /// Stateless entry point for lenient operations on live session state.
+///
+/// A live operation does not poison later live operations. It does invalidate
+/// an outstanding atomic transaction for the same session, so callers must not
+/// mix the two modes within one run.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct IncludeFilesystem;
 
@@ -288,10 +292,12 @@ impl IncludeFilesystemJob {
         self.coordinator.cancel()
     }
 
+    /// Finishes the job after all transactions have been committed or dropped.
+    ///
+    /// Transaction commits never finish the shared job. Conversely, this
+    /// method changes no session state and cannot roll back earlier commits.
     pub fn finish(self) -> Result<FilesystemJobUsage, FilesystemJobError> {
-        let usage = self.coordinator.usage()?;
-        self.coordinator.finish()?;
-        Ok(usage)
+        self.coordinator.finish_with_usage()
     }
 }
 

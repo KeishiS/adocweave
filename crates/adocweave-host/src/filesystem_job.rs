@@ -262,9 +262,15 @@ impl FilesystemJobCoordinator {
     }
 
     pub fn finish(&self) -> Result<(), FilesystemJobError> {
+        self.finish_with_usage().map(|_| ())
+    }
+
+    /// Finishes the job and returns the usage protected by the same lifecycle
+    /// lock, so no successful operation can be omitted from the snapshot.
+    pub(crate) fn finish_with_usage(&self) -> Result<FilesystemJobUsage, FilesystemJobError> {
         let mut state = self.lock()?;
         match state.terminal {
-            Some(JobTerminal::Finished) => return Ok(()),
+            Some(JobTerminal::Finished) => return Ok(state.usage),
             Some(terminal) => return Err(error_from_terminal(terminal)),
             None => {}
         }
@@ -277,7 +283,7 @@ impl FilesystemJobCoordinator {
         }
         state.terminal = Some(JobTerminal::Finished);
         self.inner.changed.notify_all();
-        Ok(())
+        Ok(state.usage)
     }
 
     pub fn cancel(&self) -> Result<(), FilesystemJobError> {
@@ -918,6 +924,31 @@ mod tests {
         );
         drop(held);
         drop(first_permit);
+        drop(sessions);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn finishing_returns_the_usage_from_the_terminal_transition() {
+        let (root, sessions) = sessions(1);
+        let job = FilesystemJobCoordinator::new(limits()).expect("job");
+        let mut permit = job.begin_read(sessions[0].session_id()).expect("permit");
+        permit
+            .reserve(2)
+            .expect("reservation")
+            .commit(2)
+            .expect("commit");
+        drop(permit);
+
+        let usage = job.finish_with_usage().expect("finish");
+        assert_eq!(usage.read_operations, 1);
+        assert_eq!(usage.read_bytes, 2);
+        assert_eq!(job.finish_with_usage(), Ok(usage));
+        assert_eq!(
+            job.begin_read(sessions[0].session_id())
+                .expect_err("finished"),
+            FilesystemJobError::Finished
+        );
         drop(sessions);
         fs::remove_dir_all(root).expect("cleanup");
     }
