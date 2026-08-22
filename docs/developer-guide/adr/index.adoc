@@ -32,4 +32,4 @@ ADRは、複数の機能に影響する長期的な設計判断と、その理�
 * xref:0027-product-release-trains.adoc[ADR 0027: 配布製品ごとのバージョンと公開単位（editor/LSP互換性はADR 0028で改訂）]
 * xref:0028-editor-language-server-boundary.adoc[ADR 0028: エディターとLanguage Serverの導入境界]
 * xref:0029-browser-worker-boundary.adoc[ADR 0029: Browser clientとWeb Workerの処理境界]
-* xref:0030-minimal-textlint-release-gates.adoc[ADR 0030: textlint配布検査の最小境界]
+* xref:0030-minimal-textlint-release-gates.adoc[ADR 0030: textlint境界と配布検査の最小化]

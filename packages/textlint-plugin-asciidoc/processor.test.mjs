@@ -146,19 +146,6 @@ test("materializeに使うUTF-16 rangeを入力範囲へ限定する", () => {
   );
 });
 
-test("valueRangeをnodeのrange内に限定する", () => {
-  const source = "本文";
-  const plan = {
-    type: "Document",
-    range: [0, source.length],
-    children: [{ type: "Str", range: [1, 2], valueRange: [0, 2] }]
-  };
-  assert.throws(
-    () => processorFor(plan).processor(".adoc").preProcess(source),
-    /valueRangeがrangeに含まれていません/
-  );
-});
-
 test("表の親子関係をplanどおり保持する", () => {
   const source = "|===\n|セル\n|===\n";
   const cellStart = source.indexOf("セル");

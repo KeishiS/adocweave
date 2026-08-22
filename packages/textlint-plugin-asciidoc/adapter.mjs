@@ -22,9 +22,6 @@ export function materializeTxtAST(source, plan) {
 
     if (valueRange !== undefined) {
       const value = positions.assertRange(valueRange, `${type}のvalueRange`);
-      if (value[0] < range[0] || value[1] > range[1]) {
-        throw new Error(`${type}のvalueRangeがrangeに含まれていません。`);
-      }
       result.value = source.slice(value[0], value[1]);
     }
     if (children !== undefined) {

@@ -25,6 +25,3 @@ wasm-bindgen \
   --target nodejs \
   --out-dir "$output_directory" \
   "$target_directory/wasm32-unknown-unknown/release/adocweave_textlint_wasm.wasm"
-node tools/verify-textlint-wasm-memory.mjs \
-  "$output_directory/adocweave_textlint_wasm_bg.wasm" \
-  "$maximum_memory_bytes"

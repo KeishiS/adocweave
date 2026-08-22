@@ -11,8 +11,7 @@ const DEFAULT_MANIFEST = new URL("../packages/textlint-plugin-asciidoc/package.j
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   const manifest = JSON.parse(await readFile(DEFAULT_MANIFEST, "utf8"));
-  const releaseBaseUrl =
-    `https://github.com/KeishiS/adocweave/releases/download/adocweave-textlint/v${manifest.version}`;
+  const releaseBaseUrl = textlintReleaseBaseUrl(manifest.version);
   await runTextlintPluginPostReleaseSmoke(releaseBaseUrl);
   process.stdout.write(`textlint plugin post-release smoke passed: v${manifest.version}\n`);
 }
@@ -49,6 +48,10 @@ export async function runTextlintPluginPostReleaseSmoke(
   }
 
   await runNpxSmoke(archiveUrl, { manifest });
+}
+
+export function textlintReleaseBaseUrl(version) {
+  return `https://github.com/KeishiS/adocweave/releases/download/adocweave-textlint%2Fv${version}`;
 }
 
 export function checksumFor(source, archiveName) {

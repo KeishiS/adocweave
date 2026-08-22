@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   checksumFor,
   runTextlintPluginPostReleaseSmoke,
+  textlintReleaseBaseUrl,
 } from "./textlint-plugin-post-release-smoke.mjs";
 
 const manifest = {
@@ -12,13 +13,20 @@ const manifest = {
   peerDependencies: { textlint: "15.8.0" },
 };
 
+test("製品別tagを一つのURL segmentとして扱う", () => {
+  assert.equal(
+    textlintReleaseBaseUrl("1.2.3"),
+    "https://github.com/KeishiS/adocweave/releases/download/adocweave-textlint%2Fv1.2.3",
+  );
+});
+
 test("公開asset、checksumおよび実URLのnpx経路を順に検査する", async () => {
   const archive = Buffer.from("published archive");
   const hash = createHash("sha256").update(archive).digest("hex");
   const fetched = [];
   const npx = [];
   await runTextlintPluginPostReleaseSmoke(
-    "https://github.com/KeishiS/adocweave/releases/download/v1.2.3",
+    textlintReleaseBaseUrl("1.2.3"),
     {
       manifest,
       fetchAsset: async (url) => {
@@ -32,8 +40,8 @@ test("公開asset、checksumおよび実URLのnpx経路を順に検査する", a
     },
   );
   assert.deepEqual(fetched, [
-    "https://github.com/KeishiS/adocweave/releases/download/v1.2.3/adocweave-textlint-plugin-asciidoc-1.2.3.tgz",
-    "https://github.com/KeishiS/adocweave/releases/download/v1.2.3/sha256.sum",
+    "https://github.com/KeishiS/adocweave/releases/download/adocweave-textlint%2Fv1.2.3/adocweave-textlint-plugin-asciidoc-1.2.3.tgz",
+    "https://github.com/KeishiS/adocweave/releases/download/adocweave-textlint%2Fv1.2.3/sha256.sum",
   ]);
   assert.equal(npx[0].url, fetched[0]);
   assert.equal(npx[0].options.manifest, manifest);
@@ -47,7 +55,7 @@ test("checksumの欠落、重複および不一致を拒否する", async () => 
   assert.throws(() => checksumFor(`${hash}  ${name}\n${hash}  ${name}\n`, name), /exactly one entry/);
   await assert.rejects(
     runTextlintPluginPostReleaseSmoke(
-      "https://github.com/KeishiS/adocweave/releases/download/v1.2.3",
+      textlintReleaseBaseUrl("1.2.3"),
       {
         manifest,
         fetchAsset: async (url) => url.endsWith("sha256.sum")

@@ -177,6 +177,12 @@ const occurrences = (source, value) => source.split(value).length - 1;
 
 export function validateTextlintReleaseGates(workflows, makefile) {
   const release = workflows["release.yml"];
+  const productBuild = release?.jobs?.["build-global"]?.steps
+    ?.find((step) => step.name === "Product candidate build and runtime verification")?.run;
+  if (typeof productBuild !== "string" ||
+      !productBuild.includes("textlint) task=verify-textlint-plugin-release-package ;;")) {
+    fail("textlint product build must call the completed archive verifier task");
+  }
   if (release?.jobs?.["textlint-plugin-installation-e2e"] !== undefined) {
     fail("release workflow must not duplicate the fixed textlint consumer E2E");
   }
@@ -188,6 +194,9 @@ export function validateTextlintReleaseGates(workflows, makefile) {
   const artifacts = taskSection(makefile, "release-global-artifacts");
   const candidate = taskSection(makefile, "release-global-candidate");
   const hostInstallation = taskSection(makefile, "release-installation-e2e-host");
+  const packageBuild = taskSection(makefile, "package-textlint-plugin-release");
+  const packageVerification = taskSection(makefile, "verify-textlint-plugin-release-package");
+  const consumer = taskSection(makefile, "textlint-plugin-release-consumer-e2e");
   if (occurrences(artifacts, '"verify-textlint-plugin-release-package"') !== 1 ||
       artifacts.includes("textlint-plugin-reproducibility")) {
     fail("global artifact gate must run only the completed textlint archive verifier");
@@ -195,6 +204,11 @@ export function validateTextlintReleaseGates(workflows, makefile) {
   if (occurrences(candidate, '"textlint-plugin-release-consumer-e2e"') !== 1 ||
       candidate.includes("textlint-plugin-candidate-npx-smoke")) {
     fail("global candidate gate must run only the fixed textlint consumer E2E");
+  }
+  if (packageBuild.includes("verify-textlint-plugin-package.mjs") ||
+      occurrences(packageVerification, "verify-textlint-plugin-package.mjs") !== 1 ||
+      occurrences(consumer, '"verify-textlint-plugin-release-package"') !== 1) {
+    fail("textlint archive verifier must have one owner in the candidate task graph");
   }
   if (makefile.includes("[tasks.textlint-plugin-compatibility-probe]") ||
       makefile.includes("[tasks.textlint-plugin-candidate-npx-smoke]")) {

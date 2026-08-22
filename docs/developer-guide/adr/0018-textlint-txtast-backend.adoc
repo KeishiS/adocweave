@@ -1,5 +1,5 @@
 = ADR 0018: textlint専用TxtAST backendへの責務集約
-:status: accepted
+:status: accepted; component identity amended by ADR 0030
 
 == 文脈
 
@@ -24,7 +24,7 @@ textlint固有の変換をpure Rustの``adocweave-textlint`` adapterへ集約し
 
 * AdocWeave core：AsciiDocの解析結果、意味情報および原文範囲
 * textlint adapter：校正対象の選択、TxtAST nodeへの意味対応、文章境界およびUTF-16範囲
-* Node.js専用WebAssembly：request、使用量の上限、component versionの照合およびJavaScript binding
+* Node.js専用WebAssembly：request、使用量の上限およびJavaScript binding
 * JavaScript package：原文からの``raw``と``value``の取得、``loc``の付与およびProcessor lifecycle
 * textlint規則：TxtASTで表された文章の検査と診断
 

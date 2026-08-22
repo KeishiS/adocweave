@@ -251,7 +251,7 @@ jobs:
           else
             case "$PRODUCT" in
               browser) task=test-browser-release-package ;;
-              textlint) task=test-textlint-plugin-release-package ;;
+              textlint) task=verify-textlint-plugin-release-package ;;
               vscode) task=test-vscode-release-package ;;
               zed) task=test-zed-release-package ;;
               *) exit 2 ;;

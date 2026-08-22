@@ -1,4 +1,4 @@
-= ADR 0030: textlint配布検査の最小境界
+= ADR 0030: textlint境界と配布検査の最小化
 :status: accepted
 
 == 文脈
@@ -13,8 +13,12 @@ genericなglobal導入検査にもtextlint用のarchive一覧検査があり、�
 == 決定
 
 Pull Requestでは、完成した``.tgz``を配布仕様に照らす独立した検証器を1回実行し、その同じarchiveを固定consumerへ
-1回導入します。固定consumerは公開Processor、対応拡張子、標準入力、改行、UTF-16位置、memory上限および
+1回導入します。固定consumerは公開Processor、対応拡張子、標準入力、改行、UTF-16位置および
 ``--fix``による入力の非変更を検査します。
+
+JavaScriptと固定同梱するWebAssemblyの間では、component versionを交換しません。WebAssemblyはnode階層と
+``valueRange``の包含関係を検査し、JavaScriptはTxtASTの具体化に必要なUTF-16範囲だけを入力範囲と照合します。
+完成archiveの検証器は、同梱WebAssemblyのmemory上限と``parseText``だけを公開するwrapperを検査します。
 
 公開前の``npx``検査、Node.jsとOSの導入matrix、genericなglobal導入検査のtextlint分岐、および最新の推移的依存を
 調べる定期workflowは設けません。再現性を調べる手動taskは、検証済みcandidateと1回のclean rebuildを比較します。

@@ -3,12 +3,13 @@ import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 
 const manifest = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
+const toolchains = JSON.parse(readFileSync(new URL("../../toolchains.json", import.meta.url), "utf8"));
 const bridge = readFileSync(new URL("./bridge.mjs", import.meta.url), "utf8");
 
 test("registryへ公開せずruntime npm依存を持たない", () => {
   assert.equal(manifest.name, "@adocweave/textlint-plugin-asciidoc");
   assert.equal(manifest.private, true);
-  assert.equal(manifest.engines.node, "24.19.0");
+  assert.equal(manifest.engines.node, toolchains.nodeVersion);
   assert.deepEqual(manifest.peerDependencies, {
     "@textlint/types": "15.8.0",
     textlint: "15.8.0",

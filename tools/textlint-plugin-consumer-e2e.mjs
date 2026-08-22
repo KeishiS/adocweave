@@ -13,14 +13,12 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve, win32 } from "node:path";
-import { createRequire } from "node:module";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   loadTextlintPluginManifest,
   textlintPluginName,
-  TEXTLINT_PLUGIN_WASM_PATHS,
 } from "./textlint-plugin-package.mjs";
 
 const EXPECTED_LINE = 3;
@@ -197,12 +195,6 @@ async function assertInstalledPackage(root, manifestContract) {
     "@textlint/types": manifestContract.peerDependencies["@textlint/types"],
     textlint: textlintVersion,
   }, `installed plugin peer dependencies must be pinned to ${textlintVersion}`);
-  const require = createRequire(import.meta.url);
-  assert.deepEqual(
-    Object.keys(require(join(packageRoot, TEXTLINT_PLUGIN_WASM_PATHS.wrapper))),
-    ["parseText"],
-    "packed WebAssembly wrapper must export parseText only",
-  );
   const textlintManifest = JSON.parse(
     await readFile(join(root, "node_modules", "textlint", "package.json"), "utf8"),
   );
