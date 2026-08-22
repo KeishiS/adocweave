@@ -139,7 +139,10 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の人の文章と機械生成部
   assert.match(notes, /sha256sum --check/);
   assert.match(notes, /gh attestation verify/);
   assert.match(notes, /以前のVSIXとnative directoryを保持/);
-  assert.match(notes, /registryへpackageまたは拡張を公開しません/);
+  // 公開経路の主張。v0.44.0でVS Code拡張だけがOpen VSXへ加わったため、
+  // 「registryへ公開しない」とだけ述べる本文は正しくありません。
+  assert.match(notes, /registryへpackageを公開せず/);
+  assert.match(notes, /Open VSX/);
   // 配布計画から生成するtarget
   assert.match(notes, /x86_64-unknown-linux-musl/);
   assert.match(notes, /aarch64-apple-darwin/);

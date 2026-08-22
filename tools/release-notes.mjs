@@ -71,7 +71,6 @@ export const UNCHANGED_CONTRACTS = [
   "CLI引数",
   "Language Server protocol",
   "設定schema",
-  "textlint Processorパッケージ契約",
 ];
 
 /// The file that decides whether a named contract changed.

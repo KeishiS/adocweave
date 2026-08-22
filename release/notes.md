@@ -1,9 +1,9 @@
-# AdocWeave v0.44.1
+# AdocWeave v0.45.0
 
 ## 主な変更
 
-- VS Code拡張にアイコンを追加しました。拡張画面とOpen VSXの拡張ページに表示されます。
-- VS Code拡張の表示文字列を英語にしました。コマンド名は``AdocWeave: Restart Language Server``と``AdocWeave: Remove Managed Language Server``になり、設定の説明とOutputへの出力も英語になります。コマンドID(``adocweave.restartServer``、``adocweave.clearManagedServer``)と設定名(``adocweave.server.path``、``adocweave.server.download``)は変更していません。
+- **textlint用Processorの対応Node.jsを引き上げました。** Node.js 20と21では動作を保証しません。詳細は「公開契約と破壊的変更」を参照してください。
+- textlint用Processorの導入検査を、対応範囲の下限、開発環境と同じ版、およびこのreleaseが固定した版で行うようにしました。すでに保守が終了したNode.jsの取得に依存しなくなり、CIが安定します。
 
 ## 対応環境
 
@@ -11,23 +11,23 @@ CLIとLanguage Serverのnative archiveは、次に挙げるLinux、macOSおよ�
 
 ## 公開契約と破壊的変更
 
-WASM protocol schema version（14）とWorker protocol version（2）は、どちらもv0.44.0から変更していません。AsciiDocの解析結果、HTML出力、CLI引数およびLanguage Server protocolも変更していません。
+**textlint用Processorパッケージの対応Node.jsが``>=20.18.0 <25``から、22.18.0以上27未満へ変わります。** パッケージの``engines``にもこの範囲を記録するため、Node.js 20または21では``npm install``が警告または失敗します。Node.js 20と21はすでに上流の保守が終了しており、検証を続けられないためです。Node.js 22.18.0以上であればそのまま利用できます。
 
-VS Code拡張のコマンドIDと設定名も変更していません。変わるのは画面へ表示する文字列とアイコンだけです。配布経路はGitHub ReleaseとOpen VSXで、v0.44.0から変わりません。
+Processorの公開API、TxtASTへの変換結果、自動修正を行わない保証、パッケージの構成および対応するtextlintの版は変更していません。
 
-textlint Processorの公開API、TxtASTへの変換結果および自動修正を行わない保証は変更していません。GitHub Release以外のregistryへpackageまたは拡張を公開しません。
+WASM protocol schema version（14）とWorker protocol version（2）は、どちらもv0.44.1から変更していません。AsciiDocの解析結果、HTML出力、CLI引数およびLanguage Server protocolも変更していません。GitHub Release以外のregistryへpackageを公開せず、VS Code拡張だけをOpen VSXへ公開する方針も変わりません。
 
 consumerは記載されたpackage versionを厳密に一致させてください。異なるversionのCLI、LSP、browser、Zed、VS Codeまたはtextlint向け配布物を混在させないでください。
 
-## v0.44.1への移行
+## v0.45.0への移行
 
-- Browser向けWASMのJSON requestを直接構築している場合は、0.44.1のpackageとAPIへ更新し、requestの``packageVersion``も``0.44.1``にそろえてください。``schemaVersion``はrequestの項目ではありません。requestには追加しないでください。保存済みの結果やcacheは、packageが公開する``PROTOCOL_SCHEMA_VERSION = 14``を使って区別してください。
-- CLI、LSP、browser、Zed、VS Codeおよびtextlint向け配布物のversionを0.44.1へそろえてください。バージョンの異なる配布物を混ぜて使えないため、更新する場合はすべてを入れ替えます。
-- VS Code拡張のコマンドを名前で呼び出している場合は、コマンドパレットの表示名が英語になります。キーバインドや自動化でコマンドIDを指定している場合は変更不要です。
+- Browser向けWASMのJSON requestを直接構築している場合は、0.45.0のpackageとAPIへ更新し、requestの``packageVersion``も``0.45.0``にそろえてください。``schemaVersion``はrequestの項目ではありません。requestには追加しないでください。保存済みの結果やcacheは、packageが公開する``PROTOCOL_SCHEMA_VERSION = 14``を使って区別してください。
+- CLI、LSP、browser、Zed、VS Codeおよびtextlint向け配布物のversionを0.45.0へそろえてください。バージョンの異なる配布物を混ぜて使えないため、更新する場合はすべてを入れ替えます。
+- textlint用Processorを使っている場合は、実行環境のNode.jsを22.18.0以上27未満へ更新してから、このversionのtarballを導入してください。Node.js 20または21を使い続ける場合は、v0.44.1のtarballのまま据え置いてください。
 
 ## 更新とロールバック
 
-native archiveはversion別directoryへ展開し、`--version --json`が`0.44.1`を返すことを確認してから選択先を切り替えてください。
+native archiveはversion別directoryへ展開し、`--version --json`が`0.45.0`を返すことを確認してから選択先を切り替えてください。
 
 VS Codeでは検証済みVSIXを手動導入し、拡張とLanguage Serverのversion一致を確認してください。受入確認が成功するまで以前のVSIXとnative directoryを保持します。
 

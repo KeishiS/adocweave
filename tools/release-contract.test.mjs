@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { EXPECTED_RELEASE_METADATA, SUPPORTED_PUBLIC_PROTOCOL_SCHEMA_VERSION, canonicalJson, expectedAssets, validateDistributionManifest, validateDistPlan, validatePublicClientReleaseContract, validateReleaseTrainVersions, versionFromTag } from "./release-contract.mjs";
+import { EXPECTED_RELEASE_METADATA, SUPPORTED_PUBLIC_PROTOCOL_SCHEMA_VERSION, canonicalJson, expectedAssets, validateDistributionManifest, validateDistPlan, validatePublicClientReleaseContract, validateReleaseTrainVersions, versionFromTag, workflowMatrix } from "./release-contract.mjs";
 import plan from "../release/distribution-plan.json" with { type: "json" };
 import fixture from "../release/adocweave-dist-manifest.fixture.json" with { type: "json" };
 import protocol from "../protocol/public-api.json" with { type: "json" };
@@ -9,6 +9,29 @@ import vscodeLock from "../editors/vscode/package-lock.json" with { type: "json"
 import vscodePackage from "../editors/vscode/package.json" with { type: "json" };
 import conformance from "../crates/adocweave/conformance/cases.json" with { type: "json" };
 import publicConformance from "../fixtures/public-conformance.json" with { type: "json" };
+
+test("workflow matrix entries are read back as runner and Node.js pairs", () => {
+  const workflow = [
+    "jobs:",
+    "  first:",
+    "    strategy:",
+    "      matrix:",
+    "        include:",
+    "          - runner: ubuntu-24.04",
+    "            node: '22.18.0'",
+    "          - runner: macos-15",
+    "            node: release",
+    "  second:",
+    "    steps: []",
+    "",
+  ].join("\n");
+  assert.deepEqual(workflowMatrix(workflow, "first"), [
+    { runner: "ubuntu-24.04", node: "22.18.0" },
+    { runner: "macos-15", node: "release" },
+  ]);
+  assert.deepEqual(workflowMatrix(workflow, "second"), []);
+  assert.throws(() => workflowMatrix(workflow, "missing"), /workflow job not found/);
+});
 
 test("stable tags are exact and versioned", () => {
   assert.equal(versionFromTag("v1.2.3"), "1.2.3");
