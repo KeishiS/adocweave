@@ -101,7 +101,7 @@ Managed binaryは配布manifestの対象コミット、バージョン、target�
 == 清掃
 
 Extension Development Hostを終了するとLanguage Clientへ``shutdown``と``exit``を送り、期限内に終了しない
-processを停止します。コマンド``AdocWeave: 管理対象Language Serverを削除``はLanguage Serverを停止してから、
+processを停止します。コマンド``AdocWeave: Remove Managed Language Server``はLanguage Serverを停止してから、
 この拡張のglobal storage内にあるmanaged server専用ディレクトリだけを削除します。
 
 自動testの隔離profileはtest runnerが削除します。通常profile全体、共有extensionディレクトリまたは親キャッシュを
