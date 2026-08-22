@@ -975,7 +975,13 @@ impl LanguageService {
         {
             return Vec::new();
         }
-        let Ok(Some(analysis)) = self.workspace.apply_analyzed_root(analyzed) else {
+        let Some(input) = job.workspace.as_ref() else {
+            return Vec::new();
+        };
+        let Ok(Some(analysis)) =
+            self.workspace
+                .apply_analyzed_root(analyzed, input, &job.request.options)
+        else {
             return Vec::new();
         };
         let published = analysis

@@ -133,9 +133,14 @@ pub struct WorkspaceInput {
     pub options: PreprocessOptions,
     pub project_config: adocweave_config::ResolvedProjectConfig,
     pub config_sha256: Option<[u8; 32]>,
+    scope: ProjectScopeId,
 }
 
 impl WorkspaceInput {
+    pub(crate) fn project_scope(&self) -> &ProjectScopeId {
+        &self.scope
+    }
+
     #[cfg(test)]
     pub fn root_text(&self) -> Option<&Arc<str>> {
         self.snapshot
@@ -1896,6 +1901,7 @@ impl WorkspaceResources {
             options,
             config_sha256: config_snapshot.map(|snapshot| snapshot.content_sha256),
             project_config,
+            scope: root_scope.clone(),
         })
     }
 
@@ -2022,6 +2028,8 @@ impl WorkspaceResources {
     pub(crate) fn apply_analyzed_root(
         &mut self,
         analyzed: AnalyzedRoot,
+        input: &WorkspaceInput,
+        analysis_options: &adocweave::AnalysisOptions,
     ) -> Result<Option<WorkspaceAnalysis>, String> {
         let AnalyzedRoot {
             acquisition,
@@ -2030,6 +2038,14 @@ impl WorkspaceResources {
             outcome,
             include_interests,
         } = analyzed;
+        if input.root != root || !self.input_is_current(input) {
+            return Ok(None);
+        }
+        if canonical_options.analysis() != analysis_options
+            || canonical_options.preprocess() != &input.options
+        {
+            return Ok(None);
+        }
         let AnalyzedRootOutcome::Complete(draft) = outcome else {
             self.watch_include_interests(&root, include_interests);
             return Ok(None);
