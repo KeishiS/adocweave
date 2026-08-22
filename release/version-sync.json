@@ -322,22 +322,22 @@
   "preserved": [
     {
       "path": "dist-workspace.toml",
-      "literal": "cargo-dist-version = \"0.32.0\"",
+      "literal": "cargo-dist-version = \"0.31.0\"",
       "count": 1
     },
     {
       "path": "release/distribution-plan.json",
-      "literal": "\"distVersion\": \"0.32.0\"",
+      "literal": "\"distVersion\": \"0.31.0\"",
       "count": 1
     },
     {
       "path": "release/windows-dist-bootstrap.json",
-      "literal": "0.32.0",
+      "literal": "0.31.0",
       "count": 2
     },
     {
       "path": "tools/release-contract.mjs",
-      "literal": "0.32.0",
+      "literal": "0.31.0",
       "count": 3
     },
     {

@@ -36,8 +36,8 @@ done < <(node tools/verify-dependency-boundaries.mjs --audit-ignores)
 cargo audit "${audit_args[@]}" --file Cargo.lock
 cargo audit "${audit_args[@]}" --file editors/zed/Cargo.lock
 
-cargo deny --config deny.toml --manifest-path Cargo.toml --all-features check licenses bans sources
-cargo deny --config deny.toml --manifest-path editors/zed/Cargo.toml --all-features check licenses bans sources
+cargo deny --manifest-path Cargo.toml --all-features check --config deny.toml licenses bans sources
+cargo deny --manifest-path editors/zed/Cargo.toml --all-features check --config deny.toml licenses bans sources
 # The shipped boundary is audited on its own so a failure names it directly, and
 # then the whole tree is audited: Biome, TypeScript, esbuild and vsce run in CI
 # and build the VSIX, so a vulnerability in one of them reaches the artifact even

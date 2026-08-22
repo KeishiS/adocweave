@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "packageVersion": "0.45.0",
-  "distVersion": "0.32.0",
+  "distVersion": "0.31.0",
   "repository": "https://github.com/KeishiS/adocweave",
   "targets": [
     {

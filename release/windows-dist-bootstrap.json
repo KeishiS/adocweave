@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "version": "0.32.0",
+  "version": "0.31.0",
   "asset": "cargo-dist-x86_64-pc-windows-msvc.zip",
-  "url": "https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-x86_64-pc-windows-msvc.zip",
-  "sha256": "26e845cabff12a92911ce960af73a86c8f9b2b2d9072b01dfe5b662acf044fa3",
+  "url": "https://github.com/axodotdev/cargo-dist/releases/download/v0.31.0/cargo-dist-x86_64-pc-windows-msvc.zip",
+  "sha256": "a14e17557b269b101405e0cc6b647581d56313c954a51c7fddd423bba21e17b2",
   "archiveEntries": [
     "CHANGELOG.md",
     "dist.exe",
