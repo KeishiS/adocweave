@@ -105,6 +105,13 @@ pub(crate) enum WatchedFileKind {
     Delete,
 }
 
+/// A reason why a usable workspace snapshot does not contain every document.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) enum WorkspaceScanNotice {
+    DirectoryEntryLimit { limit: u64 },
+    ProjectResourceLimit { project: PathBuf },
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct WatchedFileUpdate {
     pub(crate) affected: BTreeSet<String>,
@@ -212,11 +219,11 @@ pub struct WorkspaceResources {
     /// been read again.
     resource_bindings: Arc<BTreeMap<ResourceId, FilesystemResourceBinding>>,
     next_disk_version: i64,
-    /// Set when the initial scan stopped at a budget instead of finishing.
+    /// Reasons why the initial scan stopped at a budget instead of finishing.
     ///
     /// The workspace it describes is usable, so this travels with the state
     /// rather than replacing it, and the service publishes it as a warning.
-    scan_notice: Option<String>,
+    scan_notices: BTreeSet<WorkspaceScanNotice>,
     last_load_failed_closed: bool,
 }
 
@@ -759,7 +766,7 @@ impl WorkspaceResources {
         paths.dedup();
         after_root_classification();
         let preserve_previous = std::cell::Cell::new(false);
-        let scan_notice = std::cell::Cell::new(None::<String>);
+        let mut scan_notices = BTreeSet::new();
         let load_result = (|| {
             let authority = (!paths.is_empty())
                 .then(|| {
@@ -852,7 +859,9 @@ impl WorkspaceResources {
                         )
                         .map_err(|error| error.to_string())?;
                     if !complete {
-                        note_scan(&scan_notice, incomplete_scan_notice());
+                        scan_notices.insert(WorkspaceScanNotice::DirectoryEntryLimit {
+                            limit: job.limits().max_directory_entries,
+                        });
                     }
                     candidates
                 }
@@ -938,15 +947,12 @@ impl WorkspaceResources {
                     // The ones already read are registered, and the rest are
                     // reported rather than voiding every other project too.
                     Err(ScanReadError::Budget(_)) => {
-                        note_scan(
-                            &scan_notice,
-                            incomplete_scan_read_notice(
-                                scope
-                                    .config_path
-                                    .as_deref()
-                                    .unwrap_or(&scope.workspace_root),
-                            ),
-                        );
+                        scan_notices.insert(WorkspaceScanNotice::ProjectResourceLimit {
+                            project: scope
+                                .config_path
+                                .clone()
+                                .unwrap_or_else(|| scope.workspace_root.clone()),
+                        });
                         continue;
                     }
                     Err(ScanReadError::Other(message)) => return Err(message),
@@ -1017,7 +1023,7 @@ impl WorkspaceResources {
             self.directory_roots = directory_roots;
             self.single_file_roots = Arc::new(single_file_roots);
             self.scan_settings = Arc::new(scan_settings);
-            self.scan_notice = scan_notice.take();
+            self.scan_notices = scan_notices;
             self.filesystem_policy = authority;
             self.filesystems = Arc::new(filesystems);
             self.project_plans = Arc::new(project_plans);
@@ -1062,9 +1068,9 @@ impl WorkspaceResources {
         self.last_load_failed_closed
     }
 
-    /// Returns the warning left by a scan that stopped at a budget.
-    pub(crate) fn scan_notice(&self) -> Option<&str> {
-        self.scan_notice.as_deref()
+    /// Returns the reasons why the installed scan stopped at a budget.
+    pub(crate) fn scan_notices(&self) -> &BTreeSet<WorkspaceScanNotice> {
+        &self.scan_notices
     }
 
     /// Returns the effective text held for one resource, if it is known.
@@ -2463,41 +2469,6 @@ fn config_for_path_typed(
             )
         })?;
     adocweave_config::discover_and_load_with_policy(path, policy).map_err(ScopeConfigError::Config)
-}
-
-/// Says that the scan stopped early, and what to do about it.
-///
-/// Running out of directory budget is not a reason to distrust what the scan
-/// already found, so this is reported beside a working workspace rather than
-/// in place of one. It is also the one scan failure a project can resolve by
-/// itself, so the text names the setting that resolves it.
-fn incomplete_scan_notice() -> String {
-    format!(
-        "the initial workspace scan stopped at its limit of {} directory entries, so some \
-         documents are not registered as analysis roots. List the directories to leave out \
-         under workspace.scan.exclude in the .adocweave.toml at the workspace folder root. \
-         Documents that were not registered can still be opened and included.",
-        LocalFilesystemSession::MAX_SCAN_ENTRIES,
-    )
-}
-
-/// Says that a project allows fewer reads than its own documents need.
-fn incomplete_scan_read_notice(project: &Path) -> String {
-    format!(
-        "the initial workspace scan reached the resource limits of {}, so some documents under \
-         it are not registered as analysis roots. Raise resources.max-files or the byte limits \
-         there. Documents that were not registered can still be opened and included.",
-        project.display(),
-    )
-}
-
-/// Keeps the first notice a scan produced.
-///
-/// A budget that runs out explains every skip after it, so repeating the later
-/// ones would only bury the reason.
-fn note_scan(notice: &std::cell::Cell<Option<String>>, message: String) {
-    let existing = notice.take();
-    notice.set(Some(existing.unwrap_or(message)));
 }
 
 fn scan_config_for_path(

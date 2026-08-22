@@ -24,10 +24,10 @@ use crate::cancellation::{QueryCancellation, QueryError, QueryResult};
 use crate::lifecycle::ProtocolLifecycleLayer;
 use crate::service::LanguageService;
 use crate::state::{Adoption, AnalysisJob, WorkspaceProblem};
-use crate::workspace::{AnalyzedRoot, document_analysis_job_limits};
+use crate::workspace::{AnalyzedRoot, WorkspaceScanNotice, document_analysis_job_limits};
 use crate::workspace_scan::{
     WorkspaceRecoveryTimerUpdate, WorkspaceScanCoordinator, WorkspaceScanRecovery,
-    WorkspaceScanRecoveryTimer, WorkspaceScanStart, WorkspaceScanned,
+    WorkspaceScanRecoveryTimer, WorkspaceScanStart, WorkspaceScanTransition, WorkspaceScanned,
 };
 use crate::{HostReferenceIndex, NoHostReferenceIndex};
 
@@ -314,16 +314,21 @@ impl Backend {
                 else {
                     return ControlFlow::Continue(());
                 };
-                let (jobs, next, recovery_timer) = transition.into_parts();
+                let WorkspaceScanTransition {
+                    jobs,
+                    notices,
+                    next,
+                    recovery_timer,
+                } = transition;
                 // What the scan could not finish concerns the workspace, not
                 // any one document, so it is announced instead of marking every
                 // open file with a diagnostic nobody can act on from there.
-                if let Some(notice) = state.service.take_scan_notice() {
+                if let Some(message) = scan_notice_message(&notices) {
                     let _ = state
                         .client
                         .notify::<notification::ShowMessage>(ShowMessageParams {
                             typ: MessageType::WARNING,
-                            message: notice,
+                            message,
                         });
                 }
                 for job in jobs {
@@ -611,6 +616,87 @@ fn zero_range() -> adocweave::text::TextRange {
     .expect("zero range is ordered")
 }
 
+const MAX_REPORTED_SCAN_NOTICE_PROJECTS: usize = 5;
+const MAX_REPORTED_SCAN_NOTICE_PATH_CHARS: usize = 240;
+
+fn scan_notice_message(notices: &[WorkspaceScanNotice]) -> Option<String> {
+    let [notice] = notices else {
+        if notices.is_empty() {
+            return None;
+        }
+        let directory_limit = notices.iter().find_map(|notice| match notice {
+            WorkspaceScanNotice::DirectoryEntryLimit { limit } => Some(*limit),
+            WorkspaceScanNotice::ProjectResourceLimit { .. } => None,
+        });
+        let projects = notices
+            .iter()
+            .filter_map(|notice| match notice {
+                WorkspaceScanNotice::ProjectResourceLimit { project } => Some(project),
+                WorkspaceScanNotice::DirectoryEntryLimit { .. } => None,
+            })
+            .collect::<Vec<_>>();
+        let mut message = String::from(
+            "the initial workspace scan stopped before all documents were registered.",
+        );
+        if let Some(limit) = directory_limit {
+            message.push_str(&format!(
+                " It reached the limit of {limit} directory entries; list directories to leave \
+                 out under workspace.scan.exclude."
+            ));
+        }
+        if !projects.is_empty() {
+            let displayed = projects
+                .iter()
+                .take(MAX_REPORTED_SCAN_NOTICE_PROJECTS)
+                .map(|path| abbreviated_scan_notice_path(path))
+                .collect::<Vec<_>>()
+                .join(", ");
+            message.push_str(&format!(
+                " It reached the resource limits of {} projects; raise resources.max-files or \
+                 the byte limits there. Affected projects: {displayed}",
+                projects.len()
+            ));
+            if projects.len() > MAX_REPORTED_SCAN_NOTICE_PROJECTS {
+                message.push_str(&format!(
+                    ", and {} more",
+                    projects.len() - MAX_REPORTED_SCAN_NOTICE_PROJECTS
+                ));
+            }
+            message.push('.');
+        }
+        message.push_str(" Documents that were not registered can still be opened and included.");
+        return Some(message);
+    };
+    Some(match notice {
+        WorkspaceScanNotice::DirectoryEntryLimit { limit } => format!(
+            "the initial workspace scan stopped at its limit of {limit} directory entries, so \
+             some documents are not registered as analysis roots. List the directories to leave \
+             out under workspace.scan.exclude in the .adocweave.toml at the workspace folder \
+             root. Documents that were not registered can still be opened and included."
+        ),
+        WorkspaceScanNotice::ProjectResourceLimit { project } => format!(
+            "the initial workspace scan reached the resource limits of {}, so some documents \
+             under it are not registered as analysis roots. Raise resources.max-files or the \
+             byte limits there. Documents that were not registered can still be opened and \
+             included.",
+            abbreviated_scan_notice_path(project),
+        ),
+    })
+}
+
+fn abbreviated_scan_notice_path(path: &std::path::Path) -> String {
+    let rendered = path.display().to_string();
+    if rendered.chars().count() <= MAX_REPORTED_SCAN_NOTICE_PATH_CHARS {
+        return rendered;
+    }
+    let mut abbreviated = rendered
+        .chars()
+        .take(MAX_REPORTED_SCAN_NOTICE_PATH_CHARS - 3)
+        .collect::<String>();
+    abbreviated.push_str("...");
+    abbreviated
+}
+
 struct CancelWorkerOnDrop(Arc<CancellationToken>);
 
 impl Drop for CancelWorkerOnDrop {
@@ -703,10 +789,57 @@ fn content_modified() -> ResponseError {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
     use super::*;
+
+    #[test]
+    fn multiple_scan_notices_are_bounded_in_one_actionable_message() {
+        let mut notices = vec![WorkspaceScanNotice::DirectoryEntryLimit { limit: 8 }];
+        notices.extend(
+            (0..7).map(|index| WorkspaceScanNotice::ProjectResourceLimit {
+                project: PathBuf::from(format!("/workspace/project-{index}/.adocweave.toml")),
+            }),
+        );
+
+        let message = scan_notice_message(&notices).expect("scan notice");
+
+        assert!(
+            message.contains("limit of 8 directory entries"),
+            "{message}"
+        );
+        assert!(message.contains("workspace.scan.exclude"), "{message}");
+        assert!(
+            message.contains("resource limits of 7 projects"),
+            "{message}"
+        );
+        assert!(message.contains("resources.max-files"), "{message}");
+        assert!(message.contains("project-0"), "{message}");
+        assert!(message.contains("project-4"), "{message}");
+        assert!(!message.contains("project-5"), "{message}");
+        assert!(message.contains("and 2 more"), "{message}");
+    }
+
+    #[test]
+    fn scan_notice_paths_are_abbreviated_at_unicode_boundaries() {
+        let path = PathBuf::from(format!("/workspace/{}", "界".repeat(300)));
+
+        let abbreviated = abbreviated_scan_notice_path(&path);
+        let message = scan_notice_message(&[WorkspaceScanNotice::ProjectResourceLimit {
+            project: path.clone(),
+        }])
+        .expect("scan notice");
+
+        assert_eq!(
+            abbreviated.chars().count(),
+            MAX_REPORTED_SCAN_NOTICE_PATH_CHARS
+        );
+        assert!(abbreviated.ends_with("..."));
+        assert!(message.contains(&abbreviated));
+        assert!(!message.contains(path.to_string_lossy().as_ref()));
+    }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn concurrency_cpu_requests_never_exceed_the_explicit_limit() {
