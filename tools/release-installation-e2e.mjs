@@ -72,6 +72,9 @@ const candidate = realpathSync(resolve(candidateArgument));
 const manifestPath = manifestArgument
   ? resolve(manifestArgument)
   : join(candidate, "adocweave-dist-manifest.json");
+if (manifestArgument && !existsSync(manifestPath)) {
+  throw new Error(`distribution manifest does not exist: ${manifestPath}`);
+}
 const identity = productIdentity(product, { plan: distributionPlan });
 const manifest = existsSync(manifestPath)
   ? JSON.parse(readFileSync(manifestPath, "utf8"))
