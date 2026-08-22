@@ -12,6 +12,9 @@ export function candidatePlan(tagExists, plan = loadDistributionPlan()) {
   const scripts = products.filter(({ entry }) => entry.build === "script");
   return {
     candidates: { include: products.map(({ product }) => ({ artifact_key: product, product })) },
+    nativeCandidates: {
+      include: native.map(({ product }) => ({ artifact_key: product, product })),
+    },
     native: {
       include: native.flatMap(({ product, tag }) => plan.targets.map((target) => ({
         build: target.os === "win32" ? "windows" : "nix",
@@ -44,6 +47,7 @@ function main(output) {
     `preflight_required=${result.candidates.include.length > 0}`,
     `release_main=${result.candidates.include.length > 0}`,
     `candidate_matrix=${JSON.stringify(result.candidates)}`,
+    `native_candidate_matrix=${JSON.stringify(result.nativeCandidates)}`,
     `native_matrix=${JSON.stringify(result.native)}`,
     `script_matrix=${JSON.stringify(result.scripts)}`,
     "",

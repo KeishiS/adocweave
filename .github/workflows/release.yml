@@ -22,7 +22,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  source-gate:
+  source:
     name: verify
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -36,7 +36,7 @@ jobs:
 
   main-gate:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [source-gate]
+    needs: [source]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -49,7 +49,7 @@ jobs:
 
   candidate-plan:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [source-gate, main-gate]
+    needs: [source, main-gate]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
@@ -57,7 +57,7 @@ jobs:
       global_required: ${{ steps.plan.outputs.global_required }}
       native_required: ${{ steps.plan.outputs.native_required }}
       native_matrix: ${{ steps.plan.outputs.native_matrix }}
-      candidate_matrix: ${{ steps.plan.outputs.candidate_matrix }}
+      native_candidate_matrix: ${{ steps.plan.outputs.native_candidate_matrix }}
       script_matrix: ${{ steps.plan.outputs.script_matrix }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -194,17 +194,12 @@ jobs:
             target/distrib/adocweave-zed-*.tar.xz
             target/distrib/adocweave-vscode-*.vsix
 
-  verify-candidate:
-    if: >-
-      always() &&
-      needs.candidate-plan.outputs.candidate_required == 'true' &&
-      (needs.candidate-plan.outputs.native_required != 'true' ||
-        (needs.build-native.result == 'success' && needs.native-smoke.result == 'success')) &&
-      (needs.candidate-plan.outputs.global_required != 'true' || needs.build-global.result == 'success')
-    needs: [candidate-plan, build-native, native-smoke, build-global]
+  verify-native-candidate:
+    if: needs.candidate-plan.outputs.native_required == 'true'
+    needs: [candidate-plan, native-smoke]
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.candidate-plan.outputs.candidate_matrix) }}
+      matrix: ${{ fromJSON(needs.candidate-plan.outputs.native_candidate_matrix) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -230,12 +225,39 @@ jobs:
           retention-days: 14
           path: artifacts/*
 
+  verify-global-candidate:
+    if: needs.candidate-plan.outputs.global_required == 'true'
+    needs: [candidate-plan, build-global]
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.candidate-plan.outputs.script_matrix) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: artifacts-build-${{ matrix.artifact_key }}
+          path: artifacts
+      - name: Complete candidate metadata generation and verification
+        env:
+          PRODUCT: ${{ matrix.product }}
+        run: |
+          node tools/release-metadata.mjs generate "$PRODUCT" artifacts "$GITHUB_SHA"
+          node tools/release-metadata.mjs verify "$PRODUCT" artifacts "$GITHUB_SHA"
+          node tools/product-release.mjs --verify-candidate "$PRODUCT" artifacts
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-candidate-${{ matrix.product }}
+          if-no-files-found: error
+          retention-days: 14
+          path: artifacts/*
+
   installation-e2e:
-    if: >-
-      always() &&
-      needs.candidate-plan.outputs.native_required == 'true' &&
-      needs.verify-candidate.result == 'success'
-    needs: [candidate-plan, verify-candidate]
+    if: needs.candidate-plan.outputs.native_required == 'true'
+    needs: [candidate-plan, verify-native-candidate]
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.candidate-plan.outputs.native_matrix) }}
@@ -259,11 +281,8 @@ jobs:
           "${{ matrix.target }}"
 
   global-installation-e2e:
-    if: >-
-      always() &&
-      needs.candidate-plan.outputs.global_required == 'true' &&
-      needs.verify-candidate.result == 'success'
-    needs: [candidate-plan, verify-candidate]
+    if: needs.candidate-plan.outputs.global_required == 'true'
+    needs: [candidate-plan, verify-global-candidate]
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.candidate-plan.outputs.script_matrix) }}
