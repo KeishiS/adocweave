@@ -90,6 +90,20 @@ jobs:
       - name: Complete main integrations
         run: nix develop .#ci-fuzz -c cargo make main-integrations
 
+  fuzz-smoke:
+    name: fuzz-smoke
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    needs: [source, security]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+      - name: Fuzz known corpus
+        run: nix develop .#ci-fuzz -c cargo make fuzz-smoke
+
   nix-package-check:
     name: nix-package-check
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
@@ -106,7 +120,7 @@ jobs:
 
   candidate-plan:
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
-    needs: [source, main-integrations, nix-package-check]
+    needs: [source, main-integrations, fuzz-smoke, nix-package-check]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
