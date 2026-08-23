@@ -1,0 +1,44 @@
+= ADR 0035: Nix flakeの公開出力と検査を最小化
+
+:status: accepted
+
+== 文脈
+
+Nix flakeは、同じderivationを指す四つのpackage名、Nixpkgs overlay、CLIとLSPのapp、三つのcheckおよび
+五つの開発用shellを公開していました。専用のNixOS moduleを提供していないにもかかわらず、通常のpackageを
+``environment.systemPackages``へ追加できることも独立したcheckで確認していました。これらは同じpackageの参照方法と
+検査経路を増やし、どの出力を利用者向けに維持するのかを分かりにくくしていました。
+
+== 決定
+
+Linux向けpackageは``packages.${system}.default``だけを公開します。このpackageにCLIとLSPの両方を収録し、実行入口は
+``apps.${system}.default``と``apps.${system}.adocweave-lsp``で区別します。専用のNixpkgs overlayとNixOS moduleは
+提供しません。
+
+packageの構築、二つの実行ファイルのバージョン確認、および開発用toolがruntime closureへ混入していないことの確認は、
+``checks.${system}.default``へ集約します。公開時はx86_64-linuxとaarch64-linuxの両方でこのcheckを構築してから、
+packageをbinary cacheへ送信します。
+
+開発用shellは通常開発用の``default``、標準CI用の``ci``、fuzz検査用の``ci-fuzz``、browser検査用の
+``ci-browser``に限定します。HTML検証toolは通常開発と標準CIでも使用するため、独立したshellを置かず``default``と
+``ci``へ含めます。容量の大きいnightly RustとChromiumは用途が異なるため、専用shellの分離を保ちます。
+
+== 検討した代替案
+
+**各実行ファイルを別のpackageにする。** 導入する実行ファイルを選べますが、Cargo workspaceを二度構築する経路と
+cache対象が増えます。CLIとLSPは同じsource revisionから提供するため、一つのpackageを維持します。
+
+**すべてのCI toolを一つのshellへ含める。** shell名は減りますが、fuzz検査だけが必要とするnightly Rustと、browser検査
+だけが必要とするChromiumをすべてのjobで取得することになります。容量と取得時間を増やさずに責務を示せる四つのshellを
+維持します。
+
+**通常のNixOS package導入を専用checkとして残す。** ``environment.systemPackages``は任意のpackageを受け取る
+NixOS標準機能であり、このリポジトリ固有のmoduleや設定を検査しません。そのため独立した保証にはしません。
+
+== 帰結
+
+利用者がNix構成から参照するpackage名は``default``だけになります。旧package別名と
+``overlays.default``を使用する構成は、``packages.${system}.default``へ移行する必要があります。
+
+``nix flake check``がpackage構築と実行確認の単一入口になります。新しい公開package名またはappを追加するときは、
+利用者が参照する公開出力を増やす必要性をこの判断と照合します。
