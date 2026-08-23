@@ -1,0 +1,510 @@
+use std::fs;
+use std::path::Path;
+
+use adocweave::output::diagnostics::{LINT_RULES, LintConfig};
+use jsonschema::Draft;
+use schemars::generate::SchemaSettings;
+use serde_json::{Map, Value, json};
+
+use super::{
+    DEFAULT_WORKSPACE_SCAN_EXCLUDES, MAX_WORKSPACE_SCAN_EXCLUDES,
+    MAX_WORKSPACE_SCAN_PATTERN_CHARACTERS, ProjectConfigWire, ResolvedProjectConfig,
+    ResolvedResourceLimitPlan, SCHEMA_VERSION, SyntaxModeWire, default_blank_lines,
+};
+
+const SCHEMA_PATH: &str = "config/adocweave.schema.json";
+const SCHEMA_ID: &str = "https://github.com/KeishiS/adocweave/config/adocweave.schema.json";
+const WORKSPACE_SCAN_PATTERN: &str = r"^(?![A-Za-z]:)(?!/)(?!.*(?:^|/)\.{1,2}(?:/|$))(?:\*\*|(?:[^/\[\]{}\\*\x00-\x1F\x7F-\x9F]|\*(?!\*))+)(?:/(?:\*\*|(?:[^/\[\]{}\\*\x00-\x1F\x7F-\x9F]|\*(?!\*))+))*$";
+
+fn repository_root() -> &'static Path {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("crate must be inside the repository")
+}
+
+fn object_at<'a>(schema: &'a mut Value, pointer: &str) -> &'a mut Map<String, Value> {
+    schema
+        .pointer_mut(pointer)
+        .unwrap_or_else(|| panic!("generated schema has no {pointer}"))
+        .as_object_mut()
+        .unwrap_or_else(|| panic!("generated schema value at {pointer} is not an object"))
+}
+
+fn replace(schema: &mut Value, pointer: &str, value: Value) {
+    *schema
+        .pointer_mut(pointer)
+        .unwrap_or_else(|| panic!("generated schema has no {pointer}")) = value;
+}
+
+/// TOML has no null value, so an absent optional field must not become JSON null.
+fn remove_null_values(value: &mut Value) {
+    match value {
+        Value::Array(values) => {
+            for value in values {
+                remove_null_values(value);
+            }
+        }
+        Value::Object(object) => {
+            for value in object.values_mut() {
+                remove_null_values(value);
+            }
+            for keyword in ["enum", "type"] {
+                let sole_value = {
+                    let Some(values) = object.get_mut(keyword).and_then(Value::as_array_mut) else {
+                        continue;
+                    };
+                    values.retain(|value| match keyword {
+                        "enum" => !value.is_null(),
+                        "type" => value != "null",
+                        _ => unreachable!("fixed JSON Schema keyword"),
+                    });
+                    (values.len() == 1).then(|| values[0].clone())
+                };
+                if let Some(value) = sole_value {
+                    object.insert(keyword.into(), value);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn generated_schema() -> Value {
+    let mut root = SchemaSettings::draft2020_12()
+        .with(|settings| settings.inline_subschemas = true)
+        .into_generator()
+        .into_root_schema_for::<ProjectConfigWire>();
+    let root = root.as_object_mut().expect("root schema object");
+    root.insert("$id".into(), SCHEMA_ID.into());
+    root.insert("title".into(), "AdocWeave project configuration".into());
+    let mut schema = Value::Object(std::mem::take(root));
+    remove_null_values(&mut schema);
+
+    replace(
+        &mut schema,
+        "/properties/schema-version",
+        json!({ "type": "integer", "const": SCHEMA_VERSION }),
+    );
+    replace(
+        &mut schema,
+        "/properties/analysis/properties/attributes/additionalProperties",
+        json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "value": { "type": "string" },
+                "unset": { "const": true }
+            },
+            "oneOf": [
+                {
+                    "required": ["value"],
+                    "not": { "required": ["unset"] }
+                },
+                {
+                    "required": ["unset"],
+                    "not": { "required": ["value"] }
+                }
+            ]
+        }),
+    );
+    object_at(&mut schema, "/properties/analysis/properties/attributes")
+        .insert("default".into(), json!({}));
+    let syntax_default = match SyntaxModeWire::default() {
+        SyntaxModeWire::Permissive => "permissive",
+        SyntaxModeWire::Strict => "strict",
+    };
+    object_at(&mut schema, "/properties/analysis/properties/syntax-mode")
+        .insert("default".into(), syntax_default.into());
+
+    let lint_defaults = LintConfig::default();
+    for (name, default) in [
+        ("max-line-length", lint_defaults.max_line_length),
+        (
+            "max-consecutive-blank-lines",
+            lint_defaults.max_consecutive_blank_lines,
+        ),
+        ("max-diagnostics", lint_defaults.max_diagnostics),
+    ] {
+        replace(
+            &mut schema,
+            &format!("/properties/lint/properties/{name}"),
+            json!({ "type": "integer", "minimum": 1, "default": default }),
+        );
+    }
+    let mut lint_rules = LINT_RULES
+        .iter()
+        .map(|descriptor| descriptor.id.as_str())
+        .collect::<Vec<_>>();
+    lint_rules.sort_unstable();
+    object_at(&mut schema, "/properties/lint/properties/rules")
+        .insert("propertyNames".into(), json!({ "enum": lint_rules }));
+    object_at(&mut schema, "/properties/lint/properties/rules").insert("default".into(), json!({}));
+    replace(
+        &mut schema,
+        "/properties/lint/properties/rules/additionalProperties/properties/enabled",
+        json!({ "type": "boolean" }),
+    );
+    let resource_defaults = ResolvedResourceLimitPlan::default().filesystem_reads;
+    for (name, maximum) in [
+        ("max-files", resource_defaults.max_files as u64),
+        ("max-total-bytes", resource_defaults.max_total_bytes),
+        ("max-resource-bytes", resource_defaults.max_resource_bytes),
+    ] {
+        replace(
+            &mut schema,
+            &format!("/properties/resources/properties/{name}"),
+            json!({
+                "type": "integer",
+                "minimum": 1,
+                "maximum": maximum,
+                "default": maximum
+            }),
+        );
+    }
+    object_at(&mut schema, "/properties/resources/properties/roots")
+        .insert("default".into(), json!([]));
+    replace(
+        &mut schema,
+        "/properties/workspace/properties/scan/properties/exclude",
+        json!({
+            "type": "array",
+            "items": { "$ref": "#/$defs/workspaceScanPattern" },
+            "maxItems": MAX_WORKSPACE_SCAN_EXCLUDES,
+            "uniqueItems": true,
+            "default": DEFAULT_WORKSPACE_SCAN_EXCLUDES
+        }),
+    );
+
+    object_at(&mut schema, "/properties/local-targets").insert(
+        "allOf".into(),
+        json!([{
+            "if": {
+                "properties": { "enabled": { "const": true } },
+                "required": ["enabled"]
+            },
+            "then": { "required": ["project-root"] }
+        }]),
+    );
+
+    replace(
+        &mut schema,
+        "/properties/format/properties/max-consecutive-blank-lines",
+        json!({
+            "type": "integer",
+            "minimum": 1,
+            "default": default_blank_lines()
+        }),
+    );
+    replace(
+        &mut schema,
+        "/properties/html/properties/roles/items",
+        json!({ "type": "string", "pattern": "^[A-Za-z0-9_-]+$" }),
+    );
+    object_at(&mut schema, "/properties/html/properties/roles").insert(
+        "description".into(),
+        "HTMLへ`role-<name>` classとして出力するblock roleの名前。列挙していないroleは出力しません。".into(),
+    );
+    object_at(&mut schema, "/properties/html/properties/stylesheet-files")
+        .insert("default".into(), json!([]));
+
+    schema.as_object_mut().expect("root schema object").insert(
+        "$defs".into(),
+        json!({
+            "workspaceScanPattern": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": MAX_WORKSPACE_SCAN_PATTERN_CHARACTERS,
+                "pattern": WORKSPACE_SCAN_PATTERN,
+                "description": "ワークスペースルートを基準とする相対ディレクトリのパターン。区切りは`/`だけを使い、`*`と`?`は1階層、単独の`**`は複数階層に一致します。"
+            }
+        }),
+    );
+
+    schema
+}
+
+fn generated_schema_text() -> String {
+    let mut text = serde_json::to_string_pretty(&generated_schema())
+        .expect("serialize project configuration schema");
+    text.push('\n');
+    text
+}
+
+#[test]
+fn project_config_schema_is_current_and_valid() {
+    let generated = generated_schema_text();
+    let checked_in = fs::read_to_string(repository_root().join(SCHEMA_PATH))
+        .expect("checked-in project configuration schema");
+    assert_eq!(
+        checked_in, generated,
+        "run `cargo test -p adocweave-config regenerate_project_config_schema -- --ignored`"
+    );
+    assert!(jsonschema::meta::is_valid(&generated_schema()));
+}
+
+#[test]
+fn generated_schema_covers_the_configuration_contract() {
+    let schema = generated_schema();
+    let validator = jsonschema::options()
+        .with_draft(Draft::Draft202012)
+        .build(&schema)
+        .expect("compile generated schema");
+    let exact_pattern_total = (0..4)
+        .map(|index| format!("{index}{}", "a".repeat(1023)))
+        .collect::<Vec<_>>();
+    let mut excessive_patterns = exact_pattern_total.clone();
+    excessive_patterns.push("b".into());
+    let exact_pattern_length = "😀".repeat(MAX_WORKSPACE_SCAN_PATTERN_CHARACTERS);
+    let excessive_pattern_length = format!("{exact_pattern_length}😀");
+    let shared_cases = vec![
+        ("minimal", json!({ "schema-version": 1 }), true),
+        (
+            "resource roots",
+            json!({ "schema-version": 1, "resources": { "roots": ["docs", "docs/api"] } }),
+            true,
+        ),
+        (
+            "stylesheet file",
+            json!({ "schema-version": 1, "html": { "stylesheet-files": ["styles/manual.css"] } }),
+            true,
+        ),
+        (
+            "disabled local targets without root",
+            json!({ "schema-version": 1, "local-targets": { "enabled": false } }),
+            true,
+        ),
+        (
+            "enabled local targets with root",
+            json!({ "schema-version": 1, "local-targets": { "enabled": true, "project-root": "docs" } }),
+            true,
+        ),
+        (
+            "equal resource limits",
+            json!({ "schema-version": 1, "resources": { "max-total-bytes": 1000, "max-resource-bytes": 1000 } }),
+            true,
+        ),
+        (
+            "workspace pattern total at the limit",
+            json!({ "schema-version": 1, "workspace": { "scan": { "exclude": exact_pattern_total } } }),
+            true,
+        ),
+        (
+            "workspace pattern length at the Unicode scalar limit",
+            json!({ "schema-version": 1, "workspace": { "scan": { "exclude": [exact_pattern_length] } } }),
+            true,
+        ),
+        (
+            "workspace pattern exceeds the Unicode scalar limit",
+            json!({ "schema-version": 1, "workspace": { "scan": { "exclude": [excessive_pattern_length] } } }),
+            false,
+        ),
+        (
+            "workspace patterns",
+            json!({ "schema-version": 1, "workspace": { "scan": { "exclude": [".git", "**/.venv", "build-*", "tmp/?ache"] } } }),
+            true,
+        ),
+        (
+            "parent resource root",
+            json!({ "schema-version": 1, "resources": { "roots": ["../escape"] } }),
+            false,
+        ),
+        (
+            "absolute resource root",
+            json!({ "schema-version": 1, "resources": { "roots": ["/abs"] } }),
+            false,
+        ),
+        (
+            "absolute project root",
+            json!({ "schema-version": 1, "local-targets": { "project-root": "/abs" } }),
+            false,
+        ),
+        (
+            "parent project root",
+            json!({ "schema-version": 1, "local-targets": { "project-root": "../escape" } }),
+            false,
+        ),
+        (
+            "absolute stylesheet file",
+            json!({ "schema-version": 1, "html": { "stylesheet-files": ["/abs/style.css"] } }),
+            false,
+        ),
+        (
+            "parent stylesheet file",
+            json!({ "schema-version": 1, "html": { "stylesheet-files": ["../style.css"] } }),
+            false,
+        ),
+        (
+            "enabled local targets without root",
+            json!({ "schema-version": 1, "local-targets": { "enabled": true } }),
+            false,
+        ),
+        (
+            "unknown field",
+            json!({ "schema-version": 1, "unknown-section": { "value": 1 } }),
+            false,
+        ),
+        (
+            "absolute workspace pattern",
+            json!({ "schema-version": 1, "workspace": { "scan": { "exclude": ["/target"] } } }),
+            false,
+        ),
+        (
+            "parent workspace pattern",
+            json!({ "schema-version": 1, "workspace": { "scan": { "exclude": ["cache/../target"] } } }),
+            false,
+        ),
+        (
+            "platform-specific workspace separator",
+            json!({ "schema-version": 1, "workspace": { "scan": { "exclude": ["cache\\target"] } } }),
+            false,
+        ),
+        (
+            "recursive wildcard inside segment",
+            json!({ "schema-version": 1, "workspace": { "scan": { "exclude": ["cache/**target"] } } }),
+            false,
+        ),
+        (
+            "duplicate workspace pattern",
+            json!({ "schema-version": 1, "workspace": { "scan": { "exclude": ["target", "target"] } } }),
+            false,
+        ),
+        (
+            "unsupported schema version",
+            json!({ "schema-version": 2 }),
+            false,
+        ),
+    ];
+
+    for (name, config, accepted) in shared_cases {
+        assert_eq!(validator.is_valid(&config), accepted, "schema: {name}");
+        let source = toml::to_string(&config).expect("convert test configuration to TOML");
+        assert_eq!(
+            ResolvedProjectConfig::parse(&source, Path::new("/workspace")).is_ok(),
+            accepted,
+            "runtime: {name}"
+        );
+    }
+
+    for (name, config) in [
+        (
+            "excessive workspace pattern total",
+            json!({ "schema-version": 1, "workspace": { "scan": { "exclude": excessive_patterns } } }),
+        ),
+        (
+            "resource limit exceeds total",
+            json!({ "schema-version": 1, "resources": { "max-total-bytes": 1000, "max-resource-bytes": 1001 } }),
+        ),
+    ] {
+        assert!(validator.is_valid(&config), "schema: {name}");
+        let source = toml::to_string(&config).expect("convert test configuration to TOML");
+        assert!(
+            ResolvedProjectConfig::parse(&source, Path::new("/workspace")).is_err(),
+            "runtime: {name}"
+        );
+    }
+}
+
+#[test]
+fn generated_schema_enforces_types_enums_and_single_field_limits() {
+    let schema = generated_schema();
+    let validator = jsonschema::options()
+        .with_draft(Draft::Draft202012)
+        .build(&schema)
+        .expect("compile generated schema");
+    let resource_limits = ResolvedResourceLimitPlan::default().filesystem_reads;
+    let too_many_patterns = (0..=MAX_WORKSPACE_SCAN_EXCLUDES)
+        .map(|index| format!("directory-{index}"))
+        .collect::<Vec<_>>();
+    let invalid = vec![
+        ("missing schema version", json!({})),
+        ("schema version type", json!({ "schema-version": "1" })),
+        (
+            "TOML optional field cannot be null",
+            json!({ "schema-version": 1, "format": { "newline": null } }),
+        ),
+        (
+            "nested unknown field",
+            json!({ "schema-version": 1, "analysis": { "unknown": true } }),
+        ),
+        (
+            "syntax enum",
+            json!({ "schema-version": 1, "analysis": { "syntax-mode": "lenient" } }),
+        ),
+        (
+            "severity enum",
+            json!({ "schema-version": 1, "lint": { "rules": { "line-too-long": { "severity": "fatal" } } } }),
+        ),
+        (
+            "newline enum",
+            json!({ "schema-version": 1, "format": { "newline": "native" } }),
+        ),
+        (
+            "unknown lint rule",
+            json!({ "schema-version": 1, "lint": { "rules": { "unknown": {} } } }),
+        ),
+        (
+            "zero lint limit",
+            json!({ "schema-version": 1, "lint": { "max-line-length": 0 } }),
+        ),
+        (
+            "resource file ceiling",
+            json!({ "schema-version": 1, "resources": { "max-files": resource_limits.max_files + 1 } }),
+        ),
+        (
+            "resource total ceiling",
+            json!({ "schema-version": 1, "resources": { "max-total-bytes": resource_limits.max_total_bytes + 1 } }),
+        ),
+        (
+            "resource item ceiling",
+            json!({ "schema-version": 1, "resources": { "max-resource-bytes": resource_limits.max_resource_bytes + 1 } }),
+        ),
+        (
+            "workspace pattern count",
+            json!({ "schema-version": 1, "workspace": { "scan": { "exclude": too_many_patterns } } }),
+        ),
+        (
+            "workspace pattern length",
+            json!({ "schema-version": 1, "workspace": { "scan": { "exclude": ["a".repeat(MAX_WORKSPACE_SCAN_PATTERN_CHARACTERS + 1)] } } }),
+        ),
+        (
+            "zero format limit",
+            json!({ "schema-version": 1, "format": { "max-consecutive-blank-lines": 0 } }),
+        ),
+        (
+            "invalid HTML role",
+            json!({ "schema-version": 1, "html": { "roles": ["not valid"] } }),
+        ),
+        (
+            "ambiguous attribute",
+            json!({ "schema-version": 1, "analysis": { "attributes": { "release": { "value": "draft", "unset": true } } } }),
+        ),
+    ];
+    for (name, config) in invalid {
+        assert!(!validator.is_valid(&config), "schema accepted {name}");
+    }
+
+    for (name, config) in [
+        (
+            "resource roots may repeat because the runtime preserves them",
+            json!({ "schema-version": 1, "resources": { "roots": ["docs", "docs"] } }),
+        ),
+        (
+            "empty stylesheet URL remains a runtime value",
+            json!({ "schema-version": 1, "html": { "stylesheet-urls": [""] } }),
+        ),
+        (
+            "single lint rule field",
+            json!({ "schema-version": 1, "lint": { "rules": { "line-too-long": { "enabled": false } } } }),
+        ),
+    ] {
+        assert!(validator.is_valid(&config), "schema rejected {name}");
+    }
+}
+
+#[test]
+#[ignore = "maintainer command that updates the checked-in schema"]
+fn regenerate_project_config_schema() {
+    fs::write(repository_root().join(SCHEMA_PATH), generated_schema_text())
+        .expect("write project configuration schema");
+}

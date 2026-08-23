@@ -1,85 +1,164 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "workspaceScanPattern": {
+      "description": "ワークスペースルートを基準とする相対ディレクトリのパターン。区切りは`/`だけを使い、`*`と`?`は1階層、単独の`**`は複数階層に一致します。",
+      "maxLength": 1024,
+      "minLength": 1,
+      "pattern": "^(?![A-Za-z]:)(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?:\\*\\*|(?:[^/\\[\\]{}\\\\*\\x00-\\x1F\\x7F-\\x9F]|\\*(?!\\*))+)(?:/(?:\\*\\*|(?:[^/\\[\\]{}\\\\*\\x00-\\x1F\\x7F-\\x9F]|\\*(?!\\*))+))*$",
+      "type": "string"
+    }
+  },
   "$id": "https://github.com/KeishiS/adocweave/config/adocweave.schema.json",
-  "title": "AdocWeave project configuration",
-  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "required": [
-    "schema-version"
-  ],
   "properties": {
-    "schema-version": {
-      "const": 1
-    },
     "analysis": {
-      "type": "object",
       "additionalProperties": false,
       "properties": {
-        "syntax-mode": {
-          "enum": [
-            "permissive",
-            "strict"
-          ]
-        },
         "attributes": {
-          "type": "object",
           "additionalProperties": {
-            "type": "object",
             "additionalProperties": false,
             "oneOf": [
               {
-                "required": [
-                  "value"
-                ],
                 "not": {
                   "required": [
                     "unset"
                   ]
                 },
-                "properties": {
-                  "value": {
-                    "type": "string"
-                  }
-                }
+                "required": [
+                  "value"
+                ]
               },
               {
-                "required": [
-                  "unset"
-                ],
                 "not": {
                   "required": [
                     "value"
                   ]
                 },
-                "properties": {
-                  "unset": {
-                    "const": true
-                  }
-                }
+                "required": [
+                  "unset"
+                ]
               }
-            ]
-          }
+            ],
+            "properties": {
+              "unset": {
+                "const": true
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "default": {},
+          "type": "object"
+        },
+        "syntax-mode": {
+          "default": "permissive",
+          "enum": [
+            "permissive",
+            "strict"
+          ],
+          "type": "string"
         }
-      }
+      },
+      "type": "object"
     },
-    "lint": {
-      "type": "object",
+    "format": {
       "additionalProperties": false,
       "properties": {
-        "max-line-length": {
-          "type": "integer",
-          "minimum": 1
+        "final-newline": {
+          "type": "boolean"
         },
         "max-consecutive-blank-lines": {
-          "type": "integer",
-          "minimum": 1
+          "default": 1,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "newline": {
+          "enum": [
+            "lf",
+            "cr-lf"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "html": {
+      "additionalProperties": false,
+      "properties": {
+        "complete": {
+          "default": false,
+          "type": "boolean"
+        },
+        "roles": {
+          "default": [],
+          "description": "HTMLへ`role-<name>` classとして出力するblock roleの名前。列挙していないroleは出力しません。",
+          "items": {
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "stylesheet-files": {
+          "default": [],
+          "items": {
+            "description": "プロジェクトディレクトリの内側を指す、`/`区切りの相対パス。",
+            "minLength": 1,
+            "pattern": "^(?![A-Za-z]:)(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\]+$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "stylesheet-urls": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "lint": {
+      "additionalProperties": false,
+      "properties": {
+        "max-consecutive-blank-lines": {
+          "default": 2,
+          "minimum": 1,
+          "type": "integer"
         },
         "max-diagnostics": {
-          "type": "integer",
-          "minimum": 1
+          "default": 1000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max-line-length": {
+          "default": 100,
+          "minimum": 1,
+          "type": "integer"
         },
         "rules": {
-          "type": "object",
+          "additionalProperties": {
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "severity": {
+                "enum": [
+                  "error",
+                  "warning",
+                  "information",
+                  "hint"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "default": {},
           "propertyNames": {
             "enum": [
               "asciidoc-file-link",
@@ -115,88 +194,13 @@
               "unused-attribute"
             ]
           },
-          "additionalProperties": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "enabled": {
-                "type": "boolean"
-              },
-              "severity": {
-                "enum": [
-                  "error",
-                  "warning",
-                  "information",
-                  "hint"
-                ]
-              }
-            }
-          }
-        }
-      }
-    },
-    "resources": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "include": {
-          "type": "boolean"
-        },
-        "roots": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/relativePath"
-          },
-          "uniqueItems": true
-        },
-        "max-files": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 10000
-        },
-        "max-total-bytes": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 52428800
-        },
-        "max-resource-bytes": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 10485760
-        }
-      }
-    },
-    "workspace": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "scan": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "exclude": {
-              "type": "array",
-              "items": {
-                "$ref": "#/$defs/workspaceScanPattern"
-              },
-              "maxItems": 256,
-              "uniqueItems": true
-            }
-          }
-        }
-      }
-    },
-    "local-targets": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "enabled": {
-          "type": "boolean"
-        },
-        "project-root": {
-          "$ref": "#/$defs/relativePath"
+          "type": "object"
         }
       },
+      "type": "object"
+    },
+    "local-targets": {
+      "additionalProperties": false,
       "allOf": [
         {
           "if": {
@@ -215,71 +219,93 @@
             ]
           }
         }
-      ]
-    },
-    "format": {
-      "type": "object",
-      "additionalProperties": false,
+      ],
       "properties": {
-        "newline": {
-          "enum": [
-            "lf",
-            "cr-lf"
-          ]
-        },
-        "final-newline": {
+        "enabled": {
+          "default": false,
           "type": "boolean"
         },
-        "max-consecutive-blank-lines": {
-          "type": "integer",
-          "minimum": 1
+        "project-root": {
+          "description": "プロジェクトディレクトリの内側を指す、`/`区切りの相対パス。",
+          "minLength": 1,
+          "pattern": "^(?![A-Za-z]:)(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\]+$",
+          "type": "string"
         }
-      }
+      },
+      "type": "object"
     },
-    "html": {
-      "type": "object",
+    "resources": {
       "additionalProperties": false,
       "properties": {
-        "complete": {
+        "include": {
+          "default": true,
           "type": "boolean"
         },
-        "stylesheet-files": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/relativePath"
-          }
+        "max-files": {
+          "default": 10000,
+          "maximum": 10000,
+          "minimum": 1,
+          "type": "integer"
         },
-        "stylesheet-urls": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1
-          }
+        "max-resource-bytes": {
+          "default": 10485760,
+          "maximum": 10485760,
+          "minimum": 1,
+          "type": "integer"
         },
-        "roles": {
-          "type": "array",
+        "max-total-bytes": {
+          "default": 52428800,
+          "maximum": 52428800,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "roots": {
+          "default": [],
           "items": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]+$"
+            "description": "プロジェクトディレクトリの内側を指す、`/`区切りの相対パス。",
+            "minLength": 1,
+            "pattern": "^(?![A-Za-z]:)(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\]+$",
+            "type": "string"
           },
-          "description": "HTMLへ`role-<name>` classとして出力するblock roleの名前。列挙していないroleは出力しません。"
+          "type": "array"
         }
-      }
+      },
+      "type": "object"
+    },
+    "schema-version": {
+      "const": 1,
+      "type": "integer"
+    },
+    "workspace": {
+      "additionalProperties": false,
+      "properties": {
+        "scan": {
+          "additionalProperties": false,
+          "properties": {
+            "exclude": {
+              "default": [
+                "**/.git",
+                "**/.venv",
+                "**/node_modules",
+                "**/target"
+              ],
+              "items": {
+                "$ref": "#/$defs/workspaceScanPattern"
+              },
+              "maxItems": 256,
+              "type": "array",
+              "uniqueItems": true
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
     }
   },
-  "$defs": {
-    "relativePath": {
-      "type": "string",
-      "minLength": 1,
-      "pattern": "^(?![A-Za-z]:)(?![\\\\/])(?!.*(?:^|[\\\\/])\\.\\.(?:[\\\\/]|$)).+$",
-      "description": "プロジェクトディレクトリの内側を指す相対パス。絶対パスと、親ディレクトリへ移動する`..`は指定できません。"
-    },
-    "workspaceScanPattern": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 1024,
-      "pattern": "^(?![A-Za-z]:)(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?:\\*\\*|(?:[^/\\[\\]{}\\\\*\\x00-\\x1F\\x7F-\\x9F]|\\*(?!\\*))+)(?:/(?:\\*\\*|(?:[^/\\[\\]{}\\\\*\\x00-\\x1F\\x7F-\\x9F]|\\*(?!\\*))+))*$",
-      "description": "ワークスペースルートを基準とする相対ディレクトリのパターン。区切りは`/`だけを使い、`*`と`?`は1階層、単独の`**`は複数階層に一致します。"
-    }
-  }
+  "required": [
+    "schema-version"
+  ],
+  "title": "AdocWeave project configuration",
+  "type": "object"
 }
