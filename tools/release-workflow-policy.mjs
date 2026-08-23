@@ -2,6 +2,8 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "n
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parseReleaseNotesArguments, releaseNoteHeadings } from "./release-notes.mjs";
+import { parseReleaseVersionArguments } from "./sync-release-version.mjs";
 
 // This policy checks what other gates cannot: supply-chain pinning,
 // write-permission scope, direct secret access, and product-specific release
@@ -461,6 +463,35 @@ export function validateCargoMakeReferences(sources) {
   }
 }
 
+export function validateReleaseGuideContract(source) {
+  const commands = [...source.matchAll(/^node tools\/sync-release-version\.mjs(?:\s+([^\n]+))?$/gm)]
+    .map((match) => match[1]?.trim().split(/\s+/).filter(Boolean) ?? []);
+  for (const args of commands) parseReleaseVersionArguments(args);
+
+  const expectedUpdate = ["--product", "PRODUCT", "--version", "X.Y.Z"];
+  const expectedCheck = ["--product", "PRODUCT", "--check"];
+  const hasCommand = (expected) => commands.some(
+    (args) => JSON.stringify(args) === JSON.stringify(expected),
+  );
+  if (!hasCommand(expectedUpdate) || !hasCommand(expectedCheck)) {
+    fail("Release手順は選択製品のversion更新と同期検査を実行してください");
+  }
+  const releaseNoteCommands = [...source.matchAll(/^node tools\/release-notes\.mjs(?:\s+([^\n]+))?$/gm)]
+    .map((match) => match[1]?.trim().split(/\s+/).filter(Boolean) ?? []);
+  const parsedReleaseNoteCommands = releaseNoteCommands.map(parseReleaseNotesArguments);
+  if (!parsedReleaseNoteCommands.some((command) =>
+    command.mode === "check" && command.product === "PRODUCT")) {
+    fail("Release手順は選択製品のRelease Notesを検査してください");
+  }
+  if (!source.includes("release/notes.template.md")) {
+    fail("Release Notesの構造は雛形を正本として参照してください");
+  }
+  const duplicated = releaseNoteHeadings("X.Y.Z").filter((heading) => source.includes(heading));
+  if (duplicated.length > 0) {
+    fail(`Release Notesの見出しを手順書へ複製しないでください: ${duplicated.join("、")}`);
+  }
+}
+
 function loadCargoMakeReferenceSources() {
   const sources = {
     "CONTRIBUTING.adoc": read("CONTRIBUTING.adoc"),
@@ -635,6 +666,7 @@ export function validateReleaseWorkflowPolicy({ makefile = read("Makefile.toml")
   validateStandardSourceAndCandidateGates(workflows, sources);
   validateGateTaskContract(makefile);
   validateCargoMakeReferences(references);
+  validateReleaseGuideContract(references["CONTRIBUTING.adoc"] ?? "");
   validateBuildReuseContract(references);
 }
 

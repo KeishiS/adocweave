@@ -7,7 +7,7 @@
 
 ## 対応環境
 
-Linux、macOSおよびWindows向けのLanguage Serverを配布します。対応するOSとCPUは配布manifestで確認できます。
+対応targetはRelease添付の配布manifestで確認できます。
 
 ## 対応関係
 

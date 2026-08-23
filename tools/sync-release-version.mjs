@@ -493,7 +493,7 @@ export function syncReleaseVersion({
   }
 }
 
-function parseArguments(args) {
+export function parseReleaseVersionArguments(args) {
   if (args.length === 1 && args[0] === "--check") {
     return { mode: "check", product: undefined, version: undefined };
   }
@@ -513,7 +513,7 @@ function parseArguments(args) {
 }
 
 export function main(args) {
-  const options = parseArguments(args);
+  const options = parseReleaseVersionArguments(args);
   const registry = JSON.parse(
     readFileSync(new URL("release/version-sync.json", ROOT), "utf8"),
   );

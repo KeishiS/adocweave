@@ -9,6 +9,7 @@ import {
   validateGateTaskContract,
   validatePinnedActions,
   validateProductReleaseRouting,
+  validateReleaseGuideContract,
   validateStandardSourceAndCandidateGates,
   validateWritePermissionGrants,
 } from "./release-workflow-policy.mjs";
@@ -24,6 +25,32 @@ test("利用者向け文書とmessageは開発者向けcargo-make taskだけを�
   assert.throws(
     () => validateCargoMakeReferences({ "guide.adoc": "cargo make main-gate\n" }),
     /開発者向けではない.*main-gate/,
+  );
+});
+
+test("Release手順は製品別の同期と雛形を正本にする", () => {
+  const guide = `
+node tools/sync-release-version.mjs --product PRODUCT --version X.Y.Z
+release/notes.template.md
+node tools/release-notes.mjs --check PRODUCT
+node tools/sync-release-version.mjs --product PRODUCT --check
+`;
+  assert.doesNotThrow(() => validateReleaseGuideContract(guide));
+  assert.throws(
+    () => validateReleaseGuideContract(guide.replace("--product PRODUCT --version", "--version")),
+    /使用方法/,
+  );
+  assert.throws(
+    () => validateReleaseGuideContract(guide.replace("release/notes.template.md", "release/notes.md")),
+    /雛形/,
+  );
+  assert.throws(
+    () => validateReleaseGuideContract(guide.replace("--check PRODUCT", "--check PRODUCT EXTRA")),
+    /使用方法/,
+  );
+  assert.throws(
+    () => validateReleaseGuideContract(`${guide}\n## 対応関係\n`),
+    /見出しを手順書へ複製/,
   );
 });
 
