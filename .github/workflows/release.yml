@@ -47,6 +47,18 @@ jobs:
         with:
           persist-credentials: false
       - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+      - name: Locked toolchain exposure for dependency caching
+        run: nix develop .#ci -c bash -c 'command -v cargo' | xargs dirname >> "$GITHUB_PATH"
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          prefix-key: source
+          key: ${{ hashFiles('flake.lock', 'flake.nix', 'nix/**/*.nix') }}
+          workspaces: |
+            . -> target
+            editors/zed -> target
+          cache-bin: "false"
+          cache-on-failure: "false"
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       - name: Complete source gate
         run: nix develop .#ci -c cargo make verify
 

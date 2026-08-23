@@ -426,6 +426,20 @@ function sourceAndCandidateWorkflow() {
         name: "verify",
         steps: [
           { if: "github.event_name == 'workflow_dispatch'", run: 'test "$GITHUB_REF" = refs/heads/main' },
+          {
+            run: 'nix develop .#ci -c bash -c \'command -v cargo\' | xargs dirname >> "$GITHUB_PATH"',
+          },
+          {
+            uses: "Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6",
+            with: {
+              "prefix-key": "source",
+              key: "${{ hashFiles('flake.lock', 'flake.nix', 'nix/**/*.nix') }}",
+              workspaces: ". -> target\neditors/zed -> target\n",
+              "cache-bin": "false",
+              "cache-on-failure": "false",
+              "save-if": "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}",
+            },
+          },
           { run: "nix develop .#ci -c cargo make verify" },
         ],
       },
@@ -499,7 +513,7 @@ test("Pull Requestはpath条件なしで標準source gateを1回だけ直接実�
     (workflow) => { workflow.jobs.source.needs = ["main-gate"]; },
     (workflow) => { workflow.jobs.source.strategy = { matrix: { shard: [1, 2] } }; },
     (workflow) => { workflow.jobs.source.uses = "./.github/workflows/quality.yml"; },
-    (workflow) => { workflow.jobs.source.steps[1].run += " || true"; },
+    (workflow) => { workflow.jobs.source.steps[3].run += " || true"; },
     (workflow) => { delete workflow.jobs.source.steps[0].if; },
     (workflow) => { workflow.jobs["main-gate"].steps.push({ run: "cargo make verify" }); },
   ]) {
@@ -511,6 +525,21 @@ test("Pull Requestはpath条件なしで標準source gateを1回だけ直接実�
   const eventTypes = sourceAndCandidateWorkflow();
   eventTypes.on.pull_request.types = ["opened", "synchronize", "reopened"];
   validateSourceAndCandidateWorkflow(eventTypes);
+});
+
+test("sourceのRust cacheは固定環境を使い、main pushだけで保存する", () => {
+  for (const mutate of [
+    (workflow) => { workflow.jobs.source.steps.splice(1, 1); },
+    (workflow) => { workflow.jobs.source.steps.splice(2, 1); },
+    (workflow) => { workflow.jobs.source.steps[2].with["save-if"] = "true"; },
+    (workflow) => { workflow.jobs.source.steps[2].with["cache-on-failure"] = "true"; },
+    (workflow) => { workflow.jobs.source.steps[2].with.workspaces = ". -> target"; },
+    (workflow) => { workflow.jobs.source.steps.push(workflow.jobs.source.steps.splice(2, 1)[0]); },
+  ]) {
+    const workflow = sourceAndCandidateWorkflow();
+    mutate(workflow);
+    assert.throws(() => validateSourceAndCandidateWorkflow(workflow), /cache/iu);
+  }
 });
 
 test("削除したpath分類と手動aggregateをworkflowへ戻さない", () => {
