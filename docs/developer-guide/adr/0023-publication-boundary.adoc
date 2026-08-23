@@ -24,8 +24,14 @@ xref:../../../CONTRIBUTING.adoc[コントリビューションガイド]を基�
 [#publication-authority]
 === 公開権限
 
-計画、構築、検査およびcandidate集約はread-onlyで実行します。GitHub Releaseへの書込みとOIDCは、保護した
-``github-release`` Environmentを使う公開jobだけへ与えます。外部actionは完全なcommit SHAへ固定します。
+計画、構築、検査およびcandidate集約はread-onlyで実行します。GitHub Releaseへの書込みと、attestationへ
+署名するためのOIDCは、保護した``github-release`` Environmentを使う公開jobだけへ与えます。外部actionは
+完全なcommit SHAへ固定します。
+
+registryへ公開するjobは、GitHub Releaseの公開後に別のworkflowとして動きます。repositoryへの書込みは持たず、
+公開先ごとに必要な資格情報だけを受け取ります。tokenによる認証しかない公開先ではそのtokenだけを、公開元を
+OIDCで確認できる公開先ではtokenを持たず``id-token``の書込みだけを与えます。後者ではCIに長期の資格情報が
+残らないため、公開先が対応している場合はこちらを選びます。
 
 tagを作成できる主体を公開jobだけに限るtag rulesetは使用しません。個人所有リポジトリでは組込みの
 GitHub Actions appをbypass対象にできず、bypassなしでは公開workflow自身もtagを作成できないためです。
