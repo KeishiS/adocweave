@@ -61,7 +61,7 @@ args = [
 
 [tasks.test]
 private = true
-description = "Run all workspace tests and require regenerated protocol declarations to stay unchanged"
+description = "Run all workspace tests and require generated declarations and schemas to stay unchanged"
 script_runner = "@shell"
 script = '''
 # ts-rsは既存fileへ追記するため、消えた型が残らないようworkspace testの前に作り直します。
@@ -170,7 +170,6 @@ args = [
   "tools/textlint-plugin-post-release-smoke.test.mjs",
   "tools/textlint-plugin-consumer-e2e.test.mjs",
   "tools/verify-textlint-plugin-reproducibility.test.mjs",
-  "tools/config-schema.test.mjs",
 ]
 
 [tasks.check-windows-target]

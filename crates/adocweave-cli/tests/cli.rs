@@ -2315,12 +2315,15 @@ fn check_reports_invalid_explicit_ordered_numbers_without_losing_the_list() {
 fn format_check_is_non_mutating_and_reports_needed_changes() {
     let formatted = run_with_stdin(&["format", "--check", "-"], b"clean\n");
     let formatted_crlf = run_with_stdin(&["format", "--check", "-"], b"clean\r\n");
+    let formatted_without_final_newline = run_with_stdin(&["format", "--check", "-"], b"clean");
     let unformatted = run_with_stdin(&["format", "--check", "-"], b"dirty  \n");
 
     assert!(formatted.status.success());
     assert!(formatted.stdout.is_empty());
     assert!(formatted_crlf.status.success());
     assert!(formatted_crlf.stdout.is_empty());
+    assert!(formatted_without_final_newline.status.success());
+    assert!(formatted_without_final_newline.stdout.is_empty());
     assert!(!unformatted.status.success());
     assert!(unformatted.stdout.is_empty());
     assert!(String::from_utf8_lossy(&unformatted.stderr).contains("not formatted"));

@@ -13,7 +13,7 @@ ADRは、複数の機能に影響する長期的な設計判断と、その理�
 * xref:0008-minimal-documentation-management.adoc[ADR 0008: 現行情報に限定した文書管理]
 * xref:0009-public-configuration-boundaries.adoc[ADR 0009: 公開設定と検査ポリシーの責務分離]
 * xref:0010-position-dependent-document-attributes.adoc[ADR 0010: 読込順に従う文書属性environment]
-* xref:0011-versioned-project-configuration.adoc[ADR 0011: バージョン付きプロジェクト設定と権限境界]
+* xref:0011-versioned-project-configuration.adoc[ADR 0011: バージョン付きプロジェクト設定と権限境界（Schemaの正本はADR 0037で改訂）]
 * xref:0012-workspace-analysis-boundary.adoc[ADR 0012: runtime非依存のWorkspace解析境界]
 * xref:0013-vscode-release-boundary.adoc[ADR 0013: VSIXとLanguage Serverの同一release境界（ADR 0023、0027、0028で改訂）]
 * xref:0014-race-resistant-local-filesystem-boundary.adoc[ADR 0014: local filesystem境界の競合耐性]
@@ -39,3 +39,4 @@ ADRは、複数の機能に影響する長期的な設計判断と、その理�
 * xref:0034-standard-runtime-dependency-audit.adoc[ADR 0034: 配布runtimeの依存監査を標準toolへ集約（SBOM公開はADR 0036で改訂）]
 * xref:0035-minimal-nix-flake-outputs.adoc[ADR 0035: Nix flakeの公開出力と検査を最小化]
 * xref:0036-no-unconsumed-sbom.adoc[ADR 0036: 利用要件のないSBOM公開を廃止]
+* xref:0037-rust-owned-project-schema.adoc[ADR 0037: プロジェクト設定Schemaの正本をRustへ集約]

@@ -25,6 +25,9 @@ use adocweave_workspace::RetainedResourceLimits;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
+#[cfg(test)]
+mod schema;
+
 /// Conventional project configuration filename.
 pub const FILE_NAME: &str = ".adocweave.toml";
 
@@ -879,6 +882,7 @@ impl ResolvedProjectConfig {
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 struct ProjectConfigWire {
     schema_version: u32,
@@ -950,6 +954,7 @@ impl ProjectConfigWire {
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 struct WorkspaceWire {
     #[serde(default)]
@@ -957,6 +962,7 @@ struct WorkspaceWire {
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 struct WorkspaceScanWire {
     /// Absent and empty are different answers. Stating no pattern at all leaves
@@ -1010,6 +1016,7 @@ impl WorkspaceWire {
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case")]
 enum SyntaxModeWire {
     #[default]
@@ -1027,6 +1034,7 @@ impl From<SyntaxModeWire> for SyntaxMode {
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 struct AnalysisWire {
     #[serde(default)]
@@ -1036,6 +1044,7 @@ struct AnalysisWire {
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 struct AttributeWire {
     value: Option<String>,
@@ -1057,6 +1066,7 @@ impl AttributeWire {
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 struct LintWire {
     #[serde(default)]
@@ -1104,6 +1114,7 @@ impl LintWire {
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case")]
 enum SeverityWire {
     Error,
@@ -1124,6 +1135,7 @@ impl From<SeverityWire> for Severity {
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 struct RuleWire {
     enabled: Option<bool>,
@@ -1131,12 +1143,13 @@ struct RuleWire {
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 struct ResourcesWire {
     #[serde(default = "include_preprocessing")]
     include: bool,
     #[serde(default)]
-    roots: Vec<PathBuf>,
+    roots: Vec<ProjectRelativePathWire>,
     max_files: Option<usize>,
     max_total_bytes: Option<u64>,
     max_resource_bytes: Option<u64>,
@@ -1189,9 +1202,7 @@ impl ResourcesWire {
             .roots
             .into_iter()
             .enumerate()
-            .map(|(index, path)| {
-                resolve_relative(directory, path, format!("resources.roots.{index}"))
-            })
+            .map(|(index, path)| path.resolve(directory, format!("resources.roots.{index}")))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(ResourceSettings {
             include: self.include,
@@ -1202,18 +1213,19 @@ impl ResourcesWire {
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 struct LocalTargetsWire {
     #[serde(default)]
     enabled: bool,
-    project_root: Option<PathBuf>,
+    project_root: Option<ProjectRelativePathWire>,
 }
 
 impl LocalTargetsWire {
     fn resolve(self, directory: &Path) -> Result<LocalTargetSettings, ConfigError> {
         let project_root = self
             .project_root
-            .map(|path| resolve_relative(directory, path, "local-targets.project-root"))
+            .map(|path| path.resolve(directory, "local-targets.project-root"))
             .transpose()?;
         if self.enabled && project_root.is_none() {
             return Err(ConfigError::new(
@@ -1230,6 +1242,7 @@ impl LocalTargetsWire {
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case")]
 enum NewlineWire {
     #[default]
@@ -1238,6 +1251,7 @@ enum NewlineWire {
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 struct FormatWire {
     newline: Option<NewlineWire>,
@@ -1274,12 +1288,13 @@ impl FormatWire {
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 struct HtmlWire {
     #[serde(default)]
     complete: bool,
     #[serde(default)]
-    stylesheet_files: Vec<PathBuf>,
+    stylesheet_files: Vec<ProjectRelativePathWire>,
     #[serde(default)]
     stylesheet_urls: Vec<String>,
     #[serde(default)]
@@ -1311,9 +1326,7 @@ impl HtmlWire {
             .stylesheet_files
             .into_iter()
             .enumerate()
-            .map(|(index, path)| {
-                resolve_relative(directory, path, format!("html.stylesheet-files.{index}"))
-            })
+            .map(|(index, path)| path.resolve(directory, format!("html.stylesheet-files.{index}")))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(HtmlSettings {
             policy,
@@ -1355,38 +1368,52 @@ where
     Ok(value)
 }
 
-fn resolve_relative(
-    directory: &Path,
-    path: PathBuf,
-    field: impl Into<String>,
-) -> Result<PathBuf, ConfigError> {
-    if path.as_os_str().is_empty() {
-        return Err(
-            ConfigError::new(ConfigErrorCode::InvalidPath, "path must not be empty").at(field),
-        );
-    }
-    if path.is_absolute() {
-        return Err(ConfigError::new(
-            ConfigErrorCode::InvalidPath,
-            "project settings cannot grant an absolute path",
+#[derive(Debug, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(transparent)]
+/// プロジェクトディレクトリの内側を指す、`/`区切りの相対パス。
+struct ProjectRelativePathWire(
+    #[cfg_attr(
+        test,
+        schemars(
+            with = "String",
+            length(min = 1),
+            regex(pattern = PROJECT_RELATIVE_PATH_PATTERN)
         )
-        .at(field));
+    )]
+    PathBuf,
+);
+
+#[cfg(test)]
+const PROJECT_RELATIVE_PATH_PATTERN: &str = r"^(?![A-Za-z]:)(?!/)(?!.*(?:^|/)\.\.(?:/|$))[^\\]+$";
+
+impl ProjectRelativePathWire {
+    fn resolve(self, directory: &Path, field: impl Into<String>) -> Result<PathBuf, ConfigError> {
+        let path = self.0;
+        let field = field.into();
+        let Some(source) = path.to_str() else {
+            return Err(ConfigError::new(
+                ConfigErrorCode::InvalidPath,
+                "path must use Unicode characters",
+            )
+            .at(field));
+        };
+        let has_drive_prefix =
+            source.as_bytes().get(1) == Some(&b':') && source.as_bytes()[0].is_ascii_alphabetic();
+        if source.is_empty()
+            || source.starts_with('/')
+            || source.contains('\\')
+            || has_drive_prefix
+            || source.split('/').any(|component| component == "..")
+        {
+            return Err(ConfigError::new(
+                ConfigErrorCode::InvalidPath,
+                "path must stay inside the project directory and use `/` separators",
+            )
+            .at(field));
+        }
+        Ok(directory.join(path))
     }
-    if path.components().any(|component| {
-        matches!(
-            component,
-            std::path::Component::ParentDir
-                | std::path::Component::RootDir
-                | std::path::Component::Prefix(_)
-        )
-    }) {
-        return Err(ConfigError::new(
-            ConfigErrorCode::InvalidPath,
-            "project settings cannot escape their directory",
-        )
-        .at(field));
-    }
-    Ok(directory.join(path))
 }
 
 #[cfg(test)]
@@ -1647,6 +1674,43 @@ roles = ["definition", "theorem"]
         ] {
             assert!(ResolvedProjectConfig::parse(source, Path::new("/workspace")).is_err());
         }
+    }
+
+    #[test]
+    fn configured_paths_use_portable_project_relative_syntax() {
+        for source in [
+            "schema-version = 1\n[resources]\nroots = [\"C:/private\"]",
+            "schema-version = 1\n[resources]\nroots = [\"C:\\\\private\"]",
+            "schema-version = 1\n[local-targets]\nproject-root = \"\\\\server\\\\share\"",
+            "schema-version = 1\n[html]\nstylesheet-files = [\"styles\\\\manual.css\"]",
+        ] {
+            let error = ResolvedProjectConfig::parse(source, Path::new("/workspace"))
+                .expect_err("platform-specific path must be rejected");
+            assert_eq!(error.code, ConfigErrorCode::InvalidPath, "{source}");
+        }
+
+        let config = ResolvedProjectConfig::parse(
+            concat!(
+                "schema-version = 1\n",
+                "[resources]\nroots = [\"docs/api\"]\n",
+                "[local-targets]\nproject-root = \"docs\"\n",
+                "[html]\nstylesheet-files = [\"styles/manual.css\"]\n",
+            ),
+            Path::new("/workspace"),
+        )
+        .expect("portable relative paths");
+        assert_eq!(
+            config.resources.roots,
+            [PathBuf::from("/workspace/docs/api")]
+        );
+        assert_eq!(
+            config.local_targets.project_root,
+            Some(PathBuf::from("/workspace/docs"))
+        );
+        assert_eq!(
+            config.html.stylesheet_files,
+            [PathBuf::from("/workspace/styles/manual.css")]
+        );
     }
 
     #[test]

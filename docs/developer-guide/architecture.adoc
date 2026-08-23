@@ -96,7 +96,8 @@ project設定の探索と読込では``adocweave-host``の検証済みsessionを
 
 リポジトリ自身のファイルを読む規約検査は、その規約を約束するcrateの``tests/``に置きます。
 たとえば、追跡中の全文書がlosslessに解析できることは``adocweave``、設定schemaと実装の一致は
-``adocweave-config``、状態機械がfilesystemへ依存しないことは``adocweave-workspace``が検査します。
+Rustの設定型からSchemaを生成する``adocweave-config``、状態機械がfilesystemへ依存しないことは
+``adocweave-workspace``が検査します。
 
 利用側アプリは外部resourceの取得、pathやURLの検査、認証、キャッシュ、timeoutおよび利用者固有の
 参照索引を担当します。コアは渡された入力から決定的な解析結果を生成し、取得処理を呼び戻しません。
