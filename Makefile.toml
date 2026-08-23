@@ -483,8 +483,9 @@ script_runner = "@shell"
 script = '''
 node --test \
   tools/checked-gh-prose.test.mjs \
+  tools/claude-github-prose-config.test.mjs \
   tools/codex-github-prose-config.test.mjs \
-  tools/codex-github-prose-hook.test.mjs \
+  tools/github-prose-hook.test.mjs \
   tools/textlint/github-markdown-lint.test.mjs \
   tools/textlint/repository-files.test.mjs \
   tools/textlint/repository-lint-config.test.mjs \
@@ -654,7 +655,7 @@ private = true
 description = "Reject documentation .md files except repository metadata"
 script_runner = "@shell"
 script = '''
-unexpected="$(rg --files --hidden -g '*.md' -g '!.git/**' | rg -v '^(AGENTS\.md|\.github/pull_request_template\.md|\.github/SECURITY\.md|release/notes\.md|release/notes\.template\.md|editors/vscode/README\.md)$' || true)"
+unexpected="$(rg --files --hidden -g '*.md' -g '!.git/**' | rg -v '^(AGENTS\.md|\.claude/skills/[^/]+/SKILL\.md|\.github/pull_request_template\.md|\.github/SECURITY\.md|release/notes\.md|release/notes\.template\.md|editors/vscode/README\.md)$' || true)"
 if [ -n "$unexpected" ]; then
   echo "repository documentation must use .adoc except repository metadata:" >&2
   echo "$unexpected" >&2
