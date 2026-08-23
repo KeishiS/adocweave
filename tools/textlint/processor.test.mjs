@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -9,7 +8,8 @@ import { TextlintKernel } from "@textlint/kernel";
 import technicalWriting from "textlint-rule-preset-ja-technical-writing";
 
 import { Processor } from "./processor.mjs";
-import { classifyTrackedFiles } from "./repository-lint-config.mjs";
+import { listRepositoryAsciiDocFiles } from "./repository-files.mjs";
+import { classifyFiles } from "./repository-lint-config.mjs";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const targets = JSON.parse(readFileSync(new URL("./targets.json", import.meta.url), "utf8"));
@@ -206,14 +206,7 @@ unsupported_marker();
 });
 
 test("すべての執筆文書を原文に対応するTxtASTへ変換する", () => {
-  const tracked = execFileSync("git", ["ls-files", "*.adoc"], {
-    cwd: repositoryRoot,
-    encoding: "utf8"
-  })
-    .trim()
-    .split("\n")
-    .filter(Boolean);
-  const authored = classifyTrackedFiles(targets, tracked).authored;
+  const authored = classifyFiles(targets, listRepositoryAsciiDocFiles(repositoryRoot)).authored;
   assert.notEqual(authored.length, 0);
   const processor = new Processor().processor(".adoc");
   for (const path of authored) {

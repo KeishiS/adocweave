@@ -482,6 +482,7 @@ dependencies = ["build-textlint-wasm-node", "textlint-dependencies"]
 script_runner = "@shell"
 script = '''
 node --test \
+  tools/textlint/repository-files.test.mjs \
   tools/textlint/repository-lint-config.test.mjs \
   tools/textlint/terminology-rule.test.mjs
 npm run lint --prefix tools/textlint
