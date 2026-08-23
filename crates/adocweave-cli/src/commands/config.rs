@@ -111,7 +111,7 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&outcome.output).expect("config JSON");
 
         assert!(value["source"].is_null());
-        assert_eq!(value["schemaVersion"], 1);
+        assert_eq!(value["schemaVersion"], 2);
         assert_eq!(value["resources"]["include"], true);
         assert_eq!(
             value["workspace"]["scan"]["exclude"],
@@ -121,9 +121,9 @@ mod tests {
     }
 
     #[test]
-    fn workspace_scan_patterns_are_visible_in_resolved_configuration() {
+    fn resolved_workspace_scan_patterns_include_defaults_and_unique_additions() {
         let config = adocweave_config::ResolvedProjectConfig::parse(
-            "schema-version = 1\n[workspace.scan]\nexclude = [\".git\", \"**/.venv\"]\n",
+            "schema-version = 2\n[workspace.scan]\nexclude = [\"**/.git\", \"build\", \"build\"]\n",
             std::path::Path::new("/project"),
         )
         .expect("configuration");
@@ -137,7 +137,13 @@ mod tests {
             serde_json::from_str(&run(Some(&snapshot)).output).expect("config JSON");
         assert_eq!(
             value["workspace"]["scan"]["exclude"],
-            serde_json::json!([".git", "**/.venv"])
+            serde_json::json!([
+                "**/.git",
+                "**/.venv",
+                "**/node_modules",
+                "**/target",
+                "build"
+            ])
         );
     }
 

@@ -1,5 +1,7 @@
 = ADR 0019: 初期ワークスペース走査とリソース読込の分離
 
+:status: accepted; exclusion composition amended by ADR 0038
+
 == 状態
 
 採用

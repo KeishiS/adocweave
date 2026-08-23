@@ -1807,7 +1807,7 @@ fn draft_policy_read_rejects_a_symlink_that_stays_inside_the_root() {
     let root = TestDir::new("draft-policy-symlink");
     let target = root.path().join("target.toml");
     let link = root.path().join(".adocweave.toml");
-    fs::write(&target, "schema-version = 1\n").expect("target");
+    fs::write(&target, "schema-version = 2\n").expect("target");
     symlink(&target, &link).expect("policy symlink");
     let session = policy(root.path(), 100).session().expect("session");
     let job = unbounded_job();

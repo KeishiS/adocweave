@@ -66,7 +66,7 @@ impl ProjectScopeId {
 /// without constraining a real one.
 pub const MAX_PROJECT_FILE_BYTES: u64 = 1024 * 1024;
 /// Configuration schema version accepted by this package.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 const MAX_WORKSPACE_SCAN_EXCLUDES: usize = 256;
 const MAX_WORKSPACE_SCAN_PATTERN_CHARACTERS: usize = 1024;
 const MAX_WORKSPACE_SCAN_PATTERN_TOTAL_CHARACTERS: usize = 4 * 1024;
@@ -622,11 +622,11 @@ pub struct WorkspaceScanSettings {
     exclude: Vec<WorkspaceScanPattern>,
 }
 
-/// The built-in patterns, used when a workspace states none.
+/// The built-in patterns applied before workspace-specific additions.
 ///
 /// A workspace folder without a project file reaches this through the derived
-/// default of the settings that contain it, which is the common case: the scan
-/// that fails on a large repository is usually the one nobody configured.
+/// default of the settings that contain it. Project configuration can add
+/// patterns but cannot remove these common generated directories.
 impl Default for WorkspaceScanSettings {
     fn default() -> Self {
         Self {
@@ -642,7 +642,7 @@ impl Default for WorkspaceScanSettings {
 }
 
 impl WorkspaceScanSettings {
-    /// Returns the authored portable patterns in configuration order.
+    /// Returns the effective portable patterns in matching order.
     pub fn exclude_patterns(&self) -> impl Iterator<Item = &str> {
         self.exclude.iter().map(|pattern| pattern.source.as_str())
     }
@@ -821,7 +821,7 @@ pub struct HtmlSettings {
     pub stylesheet_urls: Vec<String>,
 }
 
-/// Fully typed schema-version-1 project configuration.
+/// Fully typed schema-version-2 project configuration.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResolvedProjectConfig {
     /// Parsed schema version.
@@ -907,7 +907,7 @@ impl ProjectConfigWire {
         if self.schema_version != SCHEMA_VERSION {
             return Err(ConfigError::new(
                 ConfigErrorCode::UnsupportedSchema,
-                "only schema version 1 is supported",
+                "only schema version 2 is supported",
             )
             .at("schema-version"));
         }
@@ -965,18 +965,13 @@ struct WorkspaceWire {
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 struct WorkspaceScanWire {
-    /// Absent and empty are different answers. Stating no pattern at all leaves
-    /// the choice to this package, while an empty list is a project saying that
-    /// it wants every directory scanned.
     #[serde(default)]
-    exclude: Option<Vec<String>>,
+    exclude: Vec<String>,
 }
 
 impl WorkspaceWire {
     fn resolve(self) -> Result<WorkspaceSettings, ConfigError> {
-        let Some(authored) = self.scan.exclude else {
-            return Ok(WorkspaceSettings::default());
-        };
+        let authored = self.scan.exclude;
         if authored.len() > MAX_WORKSPACE_SCAN_EXCLUDES {
             return Err(ConfigError::new(
                 ConfigErrorCode::InvalidLimit,
@@ -997,21 +992,20 @@ impl WorkspaceWire {
             )
             .at("workspace.scan.exclude"));
         }
-        let mut sources = std::collections::BTreeSet::new();
-        let exclude = authored
-            .into_iter()
-            .enumerate()
-            .map(|(index, source)| {
-                let field = format!("workspace.scan.exclude.{index}");
-                if !sources.insert(source.clone()) {
-                    return Err(invalid_workspace_scan_pattern().at(field));
-                }
-                WorkspaceScanPattern::parse(source, field)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(WorkspaceSettings {
-            scan: WorkspaceScanSettings { exclude },
-        })
+        let mut scan = WorkspaceScanSettings::default();
+        let mut sources = scan
+            .exclude
+            .iter()
+            .map(|pattern| pattern.source.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        for (index, source) in authored.into_iter().enumerate() {
+            let field = format!("workspace.scan.exclude.{index}");
+            let pattern = WorkspaceScanPattern::parse(source.clone(), field)?;
+            if sources.insert(source) {
+                scan.exclude.push(pattern);
+            }
+        }
+        Ok(WorkspaceSettings { scan })
     }
 }
 
@@ -1447,7 +1441,7 @@ mod tests {
     fn strict_project_config_resolves_shared_consumer_options() {
         let config = ResolvedProjectConfig::parse(
             r#"
-schema-version = 1
+schema-version = 2
 
 [analysis]
 syntax-mode = "strict"
@@ -1528,12 +1522,19 @@ roles = ["definition", "theorem"]
         assert_eq!(config.resources.roots, [PathBuf::from("/workspace/docs")]);
         assert_eq!(
             config.workspace.scan.exclude_patterns().collect::<Vec<_>>(),
-            ["target", "**/.git", "generated-*"]
+            [
+                "**/.git",
+                "**/.venv",
+                "**/node_modules",
+                "**/target",
+                "target",
+                "generated-*",
+            ]
         );
         assert!(config.workspace.scan.excludes(Path::new("target")));
         assert!(config.workspace.scan.excludes(Path::new("nested/.git")));
         assert!(config.workspace.scan.excludes(Path::new("generated-html")));
-        assert!(!config.workspace.scan.excludes(Path::new("src/target")));
+        assert!(config.workspace.scan.excludes(Path::new("src/target")));
         assert_eq!(
             config.resources.limit_plan,
             ResolvedResourceLimitPlan {
@@ -1574,10 +1575,10 @@ roles = ["definition", "theorem"]
         // used to turn include resolution off, because the parsed default said
         // false while a workspace without a project file said true.
         for source in [
-            "schema-version = 1\n",
-            "schema-version = 1\n[lint]\nmax-line-length = 100\n",
-            "schema-version = 1\n[resources]\nroots = [\"docs\"]\n",
-            "schema-version = 1\n[resources]\ninclude = true\n",
+            "schema-version = 2\n",
+            "schema-version = 2\n[lint]\nmax-line-length = 100\n",
+            "schema-version = 2\n[resources]\nroots = [\"docs\"]\n",
+            "schema-version = 2\n[resources]\ninclude = true\n",
         ] {
             let config =
                 ResolvedProjectConfig::parse(source, Path::new("/workspace")).expect("valid");
@@ -1590,7 +1591,7 @@ roles = ["definition", "theorem"]
         assert!(default.preprocess.enable_includes);
 
         let disabled = ResolvedProjectConfig::parse(
-            "schema-version = 1\n[resources]\ninclude = false\n",
+            "schema-version = 2\n[resources]\ninclude = false\n",
             Path::new("/workspace"),
         )
         .expect("valid");
@@ -1601,7 +1602,7 @@ roles = ["definition", "theorem"]
     #[test]
     fn html_roles_must_be_class_tokens() {
         let error = ResolvedProjectConfig::parse(
-            "schema-version = 1\n[html]\nroles = [\"ok\", \"not ok\"]\n",
+            "schema-version = 2\n[html]\nroles = [\"ok\", \"not ok\"]\n",
             Path::new("/workspace"),
         )
         .expect_err("invalid role");
@@ -1612,21 +1613,21 @@ roles = ["definition", "theorem"]
     #[test]
     fn rejects_unknown_fields_versions_rules_and_ambiguous_attributes() {
         for (source, code) in [
-            ("schema-version = 2", ConfigErrorCode::UnsupportedSchema),
+            ("schema-version = 1", ConfigErrorCode::UnsupportedSchema),
             (
-                "schema-version = 1\nunknown = true",
+                "schema-version = 2\nunknown = true",
                 ConfigErrorCode::InvalidToml,
             ),
             (
-                "schema-version = 1\n[lint.rules.unknown]\nenabled = true",
+                "schema-version = 2\n[lint.rules.unknown]\nenabled = true",
                 ConfigErrorCode::InvalidRule,
             ),
             (
-                "schema-version = 1\n[analysis.attributes.secret]\nvalue = \"x\"\nunset = true",
+                "schema-version = 2\n[analysis.attributes.secret]\nvalue = \"x\"\nunset = true",
                 ConfigErrorCode::InvalidAttribute,
             ),
             (
-                "schema-version = 1\n[analysis.attributes.secret]\nvalue = \"x\"\nunset = false",
+                "schema-version = 2\n[analysis.attributes.secret]\nvalue = \"x\"\nunset = false",
                 ConfigErrorCode::InvalidAttribute,
             ),
         ] {
@@ -1643,7 +1644,7 @@ roles = ["definition", "theorem"]
     fn every_catalog_rule_is_accepted_by_project_configuration() {
         for descriptor in adocweave::output::diagnostics::LINT_RULES {
             let source = format!(
-                "schema-version = 1\n[lint.rules.{}]\nenabled = false\nseverity = \"hint\"\n",
+                "schema-version = 2\n[lint.rules.{}]\nenabled = false\nseverity = \"hint\"\n",
                 descriptor.id.as_str()
             );
             let config = ResolvedProjectConfig::parse(&source, Path::new("/workspace"))
@@ -1667,10 +1668,10 @@ roles = ["definition", "theorem"]
     #[test]
     fn project_config_cannot_expand_host_authority() {
         for source in [
-            "schema-version = 1\n[resources]\nroots = [\"../private\"]",
-            "schema-version = 1\n[resources]\nroots = [\"/private\"]",
-            "schema-version = 1\n[resources]\nmax-files = 10001",
-            "schema-version = 1\n[resources]\nmax-total-bytes = 10\nmax-resource-bytes = 11",
+            "schema-version = 2\n[resources]\nroots = [\"../private\"]",
+            "schema-version = 2\n[resources]\nroots = [\"/private\"]",
+            "schema-version = 2\n[resources]\nmax-files = 10001",
+            "schema-version = 2\n[resources]\nmax-total-bytes = 10\nmax-resource-bytes = 11",
         ] {
             assert!(ResolvedProjectConfig::parse(source, Path::new("/workspace")).is_err());
         }
@@ -1679,10 +1680,10 @@ roles = ["definition", "theorem"]
     #[test]
     fn configured_paths_use_portable_project_relative_syntax() {
         for source in [
-            "schema-version = 1\n[resources]\nroots = [\"C:/private\"]",
-            "schema-version = 1\n[resources]\nroots = [\"C:\\\\private\"]",
-            "schema-version = 1\n[local-targets]\nproject-root = \"\\\\server\\\\share\"",
-            "schema-version = 1\n[html]\nstylesheet-files = [\"styles\\\\manual.css\"]",
+            "schema-version = 2\n[resources]\nroots = [\"C:/private\"]",
+            "schema-version = 2\n[resources]\nroots = [\"C:\\\\private\"]",
+            "schema-version = 2\n[local-targets]\nproject-root = \"\\\\server\\\\share\"",
+            "schema-version = 2\n[html]\nstylesheet-files = [\"styles\\\\manual.css\"]",
         ] {
             let error = ResolvedProjectConfig::parse(source, Path::new("/workspace"))
                 .expect_err("platform-specific path must be rejected");
@@ -1691,7 +1692,7 @@ roles = ["definition", "theorem"]
 
         let config = ResolvedProjectConfig::parse(
             concat!(
-                "schema-version = 1\n",
+                "schema-version = 2\n",
                 "[resources]\nroots = [\"docs/api\"]\n",
                 "[local-targets]\nproject-root = \"docs\"\n",
                 "[html]\nstylesheet-files = [\"styles/manual.css\"]\n",
@@ -1714,8 +1715,8 @@ roles = ["definition", "theorem"]
     }
 
     #[test]
-    fn workspace_scan_excludes_distinguish_an_absent_list_from_an_empty_one() {
-        let unset = ResolvedProjectConfig::parse("schema-version = 1\n", Path::new("/workspace"))
+    fn workspace_scan_excludes_append_unique_patterns_to_the_built_in_set() {
+        let unset = ResolvedProjectConfig::parse("schema-version = 2\n", Path::new("/workspace"))
             .expect("valid config");
         assert_eq!(
             unset.workspace.scan.exclude_patterns().collect::<Vec<_>>(),
@@ -1746,15 +1747,18 @@ roles = ["definition", "theorem"]
         assert_eq!(WorkspaceScanSettings::default(), unset.workspace.scan);
 
         let empty = ResolvedProjectConfig::parse(
-            "schema-version = 1\n[workspace.scan]\nexclude = []\n",
+            "schema-version = 2\n[workspace.scan]\nexclude = []\n",
             Path::new("/workspace"),
         )
         .expect("valid config");
-        assert_eq!(empty.workspace.scan.exclude_patterns().count(), 0);
-        assert!(!empty.workspace.scan.excludes(Path::new("node_modules")));
+        assert_eq!(empty.workspace.scan, unset.workspace.scan);
 
         let authored = ResolvedProjectConfig::parse(
-            "schema-version = 1\n[workspace.scan]\nexclude = [\"build\"]\n",
+            concat!(
+                "schema-version = 2\n",
+                "[workspace.scan]\n",
+                "exclude = [\"**/.git\", \"build\", \"build\", \"**/target\"]\n",
+            ),
             Path::new("/workspace"),
         )
         .expect("valid config");
@@ -1764,16 +1768,23 @@ roles = ["definition", "theorem"]
                 .scan
                 .exclude_patterns()
                 .collect::<Vec<_>>(),
-            ["build"],
+            [
+                "**/.git",
+                "**/.venv",
+                "**/node_modules",
+                "**/target",
+                "build",
+            ],
         );
-        assert!(!authored.workspace.scan.excludes(Path::new("node_modules")));
+        assert!(authored.workspace.scan.excludes(Path::new("node_modules")));
+        assert!(authored.workspace.scan.excludes(Path::new("build")));
     }
 
     #[test]
     fn workspace_scan_patterns_have_portable_component_semantics() {
         let config = ResolvedProjectConfig::parse(
             r#"
-schema-version = 1
+schema-version = 2
 [workspace.scan]
 exclude = ["**/.venv", "build/?emp", "vendor/**"]
 "#,
@@ -1796,7 +1807,7 @@ exclude = ["**/.venv", "build/?emp", "vendor/**"]
         }
 
         let wildcard = ResolvedProjectConfig::parse(
-            "schema-version = 1\n[workspace.scan]\nexclude = [\"**/a*?z\"]\n",
+            "schema-version = 2\n[workspace.scan]\nexclude = [\"**/a*?z\"]\n",
             Path::new("/workspace"),
         )
         .expect("valid wildcard pattern");
@@ -1804,7 +1815,7 @@ exclude = ["**/.venv", "build/?emp", "vendor/**"]
         assert!(!wildcard.workspace.scan.excludes(Path::new("nested/az")));
 
         let unicode = ResolvedProjectConfig::parse(
-            "schema-version = 1\n[workspace.scan]\nexclude = [\"emoji/?\", \"**/cache/**\"]\n",
+            "schema-version = 2\n[workspace.scan]\nexclude = [\"emoji/?\", \"**/cache/**\"]\n",
             Path::new("/workspace"),
         )
         .expect("valid Unicode and recursive patterns");
@@ -1825,7 +1836,7 @@ exclude = ["**/.venv", "build/?emp", "vendor/**"]
 
         let config = ResolvedProjectConfig::parse(
             concat!(
-                "schema-version = 1\n",
+                "schema-version = 2\n",
                 "[workspace.scan]\n",
                 "exclude = [\"**/target\", \"prefix/**\", \"**\", \"*\"]\n",
             ),
@@ -1836,28 +1847,51 @@ exclude = ["**/.venv", "build/?emp", "vendor/**"]
         let path = PathBuf::from(&opaque).join("target");
 
         assert!(
-            config.workspace.scan.exclude[0].matches(
-                &path
-                    .components()
-                    .map(|component| component.as_os_str().to_str())
-                    .collect::<Vec<_>>()
-            )
+            config
+                .workspace
+                .scan
+                .exclude
+                .iter()
+                .find(|pattern| pattern.source == "**/target")
+                .expect("recursive target pattern")
+                .matches(
+                    &path
+                        .components()
+                        .map(|component| component.as_os_str().to_str())
+                        .collect::<Vec<_>>()
+                )
         );
         assert!(config.workspace.scan.excludes(&path));
         assert!(
-            config.workspace.scan.exclude[1].matches(
-                &PathBuf::from("prefix")
-                    .join(&opaque)
-                    .components()
-                    .map(|component| component.as_os_str().to_str())
-                    .collect::<Vec<_>>()
-            )
+            config
+                .workspace
+                .scan
+                .exclude
+                .iter()
+                .find(|pattern| pattern.source == "prefix/**")
+                .expect("prefix pattern")
+                .matches(
+                    &PathBuf::from("prefix")
+                        .join(&opaque)
+                        .components()
+                        .map(|component| component.as_os_str().to_str())
+                        .collect::<Vec<_>>()
+                )
         );
-        assert!(!config.workspace.scan.exclude[3].matches(&[opaque.to_str()]));
+        assert!(
+            !config
+                .workspace
+                .scan
+                .exclude
+                .iter()
+                .find(|pattern| pattern.source == "*")
+                .expect("single component pattern")
+                .matches(&[opaque.to_str()])
+        );
     }
 
     #[test]
-    fn workspace_scan_patterns_reject_non_portable_or_ambiguous_inputs() {
+    fn workspace_scan_patterns_reject_non_portable_inputs_and_enforce_limits() {
         for pattern in [
             "",
             "/target",
@@ -1872,7 +1906,7 @@ exclude = ["**/.venv", "build/?emp", "vendor/**"]
             "cache/{a,b}",
         ] {
             let source = format!(
-                "schema-version = 1\n[workspace.scan]\nexclude = [{}]\n",
+                "schema-version = 2\n[workspace.scan]\nexclude = [{}]\n",
                 toml::Value::String(pattern.to_owned())
             );
             let error = ResolvedProjectConfig::parse(&source, Path::new("/workspace"))
@@ -1880,21 +1914,53 @@ exclude = ["**/.venv", "build/?emp", "vendor/**"]
             assert_eq!(error.code, ConfigErrorCode::InvalidPath, "{pattern:?}");
         }
         let duplicate = ResolvedProjectConfig::parse(
-            "schema-version = 1\n[workspace.scan]\nexclude = [\"target\", \"target\"]\n",
+            "schema-version = 2\n[workspace.scan]\nexclude = [\"target\", \"target\"]\n",
             Path::new("/workspace"),
         )
-        .expect_err("duplicate pattern");
-        assert_eq!(duplicate.code, ConfigErrorCode::InvalidPath);
+        .expect("duplicate patterns are idempotent");
+        assert_eq!(
+            duplicate
+                .workspace
+                .scan
+                .exclude_patterns()
+                .filter(|pattern| *pattern == "target")
+                .count(),
+            1
+        );
+
+        let maximum = (0..MAX_WORKSPACE_SCAN_EXCLUDES)
+            .map(|index| format!("\"directory-{index}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let maximum = ResolvedProjectConfig::parse(
+            &format!("schema-version = 2\n[workspace.scan]\nexclude = [{maximum}]\n"),
+            Path::new("/workspace"),
+        )
+        .expect("exact pattern count limit");
+        assert_eq!(
+            maximum.workspace.scan.exclude_patterns().count(),
+            DEFAULT_WORKSPACE_SCAN_EXCLUDES.len() + MAX_WORKSPACE_SCAN_EXCLUDES
+        );
 
         let too_many = (0..=MAX_WORKSPACE_SCAN_EXCLUDES)
             .map(|index| format!("\"directory-{index}\""))
             .collect::<Vec<_>>()
             .join(", ");
         let error = ResolvedProjectConfig::parse(
-            &format!("schema-version = 1\n[workspace.scan]\nexclude = [{too_many}]\n"),
+            &format!("schema-version = 2\n[workspace.scan]\nexclude = [{too_many}]\n"),
             Path::new("/workspace"),
         )
         .expect_err("too many patterns");
+        assert_eq!(error.code, ConfigErrorCode::InvalidLimit);
+
+        let repeated = std::iter::repeat_n("\"target\"", MAX_WORKSPACE_SCAN_EXCLUDES + 1)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let error = ResolvedProjectConfig::parse(
+            &format!("schema-version = 2\n[workspace.scan]\nexclude = [{repeated}]\n"),
+            Path::new("/workspace"),
+        )
+        .expect_err("duplicates do not bypass the pattern count limit");
         assert_eq!(error.code, ConfigErrorCode::InvalidLimit);
 
         let excessive_characters = (0..5)
@@ -1902,7 +1968,7 @@ exclude = ["**/.venv", "build/?emp", "vendor/**"]
             .collect::<Vec<_>>()
             .join(", ");
         let error = ResolvedProjectConfig::parse(
-            &format!("schema-version = 1\n[workspace.scan]\nexclude = [{excessive_characters}]\n"),
+            &format!("schema-version = 2\n[workspace.scan]\nexclude = [{excessive_characters}]\n"),
             Path::new("/workspace"),
         )
         .expect_err("too many pattern characters");
@@ -1914,13 +1980,13 @@ exclude = ["**/.venv", "build/?emp", "vendor/**"]
             .collect::<Vec<_>>()
             .join(", ");
         ResolvedProjectConfig::parse(
-            &format!("schema-version = 1\n[workspace.scan]\nexclude = [{exact_total}]\n"),
+            &format!("schema-version = 2\n[workspace.scan]\nexclude = [{exact_total}]\n"),
             Path::new("/workspace"),
         )
         .expect("exact total pattern character limit");
 
         let unicode_boundary = format!(
-            "schema-version = 1\n[workspace.scan]\nexclude = [\"{}\"]\n",
+            "schema-version = 2\n[workspace.scan]\nexclude = [\"{}\"]\n",
             "😀".repeat(MAX_WORKSPACE_SCAN_PATTERN_CHARACTERS)
         );
         ResolvedProjectConfig::parse(&unicode_boundary, Path::new("/workspace"))
@@ -1930,7 +1996,7 @@ exclude = ["**/.venv", "build/?emp", "vendor/**"]
     #[test]
     fn errors_never_echo_attribute_values() {
         let error = ResolvedProjectConfig::parse(
-            "schema-version = 1\n[analysis.attributes.secret]\nvalue = \"do-not-log\"\nunset = true",
+            "schema-version = 2\n[analysis.attributes.secret]\nvalue = \"do-not-log\"\nunset = true",
             Path::new("/workspace"),
         )
         .expect_err("ambiguous attribute");
@@ -1943,7 +2009,7 @@ exclude = ["**/.venv", "build/?emp", "vendor/**"]
         let nested = root.0.join("docs/guide");
         fs::create_dir_all(&nested).expect("create nested directory");
         let config_path = root.0.join(FILE_NAME);
-        fs::write(&config_path, "schema-version = 1\n").expect("write config");
+        fs::write(&config_path, "schema-version = 2\n").expect("write config");
         let input = nested.join("index.adoc");
         fs::write(&input, "= Guide\n").expect("write input");
 
@@ -1963,7 +2029,7 @@ exclude = ["**/.venv", "build/?emp", "vendor/**"]
     fn discovery_for_a_missing_document_starts_from_its_existing_parent() {
         let root = TestDirectory::new();
         fs::create_dir_all(root.0.join("docs/new")).expect("document parent");
-        fs::write(root.0.join(FILE_NAME), "schema-version = 1\n").expect("project config");
+        fs::write(root.0.join(FILE_NAME), "schema-version = 2\n").expect("project config");
         let policy = LocalTargetPolicy::new(&root.0).expect("boundary policy");
 
         let snapshot =
@@ -1993,7 +2059,7 @@ exclude = ["**/.venv", "build/?emp", "vendor/**"]
 
         let project = TestDirectory::new();
         let outside = TestDirectory::new();
-        fs::write(outside.0.join("config.toml"), "schema-version = 1\n").expect("outside config");
+        fs::write(outside.0.join("config.toml"), "schema-version = 2\n").expect("outside config");
         symlink(outside.0.join("config.toml"), project.0.join(FILE_NAME)).expect("config symlink");
 
         let error = discover_and_load(&project.0, &project.0).expect_err("symlink rejected");
@@ -2009,7 +2075,7 @@ exclude = ["**/.venv", "build/?emp", "vendor/**"]
         let outside = TestDirectory::new();
         let target = outside.0.join("config.toml");
         let selected = project.0.join("selected.toml");
-        fs::write(&target, "schema-version = 1\n").expect("target configuration");
+        fs::write(&target, "schema-version = 2\n").expect("target configuration");
         symlink(&target, &selected).expect("selected configuration symlink");
 
         let snapshot = ConfigSnapshot::load(&selected).expect("explicit configuration");
@@ -2028,7 +2094,7 @@ exclude = ["**/.venv", "build/?emp", "vendor/**"]
 
         let project = TestDirectory::new();
         let outside = TestDirectory::new();
-        fs::write(project.0.join(FILE_NAME), "schema-version = 1\n").expect("trusted config");
+        fs::write(project.0.join(FILE_NAME), "schema-version = 2\n").expect("trusted config");
         fs::write(outside.0.join(FILE_NAME), "schema-version = 99\n").expect("outside config");
         let displaced = project.0.with_extension("anchored");
 
@@ -2057,7 +2123,7 @@ exclude = ["**/.venv", "build/?emp", "vendor/**"]
         fs::write(project.0.join("docs/sub/index.adoc"), "= Trusted\n").expect("trusted start");
         fs::write(
             project.0.join("docs/sub").join(FILE_NAME),
-            "schema-version = 1\n",
+            "schema-version = 2\n",
         )
         .expect("trusted config");
         fs::write(project.0.join("docs/other/index.adoc"), "= Redirected\n")
@@ -2095,7 +2161,7 @@ exclude = ["**/.venv", "build/?emp", "vendor/**"]
         let project = TestDirectory::new();
         let outside = TestDirectory::new();
         let config_path = project.0.join(FILE_NAME);
-        fs::write(&config_path, "schema-version = 1\n").expect("trusted config");
+        fs::write(&config_path, "schema-version = 2\n").expect("trusted config");
         fs::write(outside.0.join(FILE_NAME), "schema-version = 99\n").expect("outside config");
         let displaced = project.0.with_extension("anchored-explicit");
         let policy = LocalTargetPolicy::new(&project.0).expect("workspace policy");

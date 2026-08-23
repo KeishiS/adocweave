@@ -93,7 +93,7 @@ fn configured_resource_limit_rejects_root_before_processing() {
     let root = tempfile::tempdir().expect("root");
     std::fs::write(
         root.path().join(".adocweave.toml"),
-        "schema-version = 1\n[resources]\nmax-files = 1\nmax-total-bytes = 4\nmax-resource-bytes = 4\n",
+        "schema-version = 2\n[resources]\nmax-files = 1\nmax-total-bytes = 4\nmax-resource-bytes = 4\n",
     )
     .expect("configuration");
     std::fs::write(root.path().join("document.adoc"), "12345").expect("document");
@@ -119,7 +119,7 @@ fn workspace_scan_excludes_do_not_filter_explicit_cli_inputs() {
     std::fs::create_dir(&excluded).expect("excluded directory");
     std::fs::write(
         root.path().join(".adocweave.toml"),
-        "schema-version = 1\n[workspace.scan]\nexclude = [\"generated\"]\n",
+        "schema-version = 2\n[workspace.scan]\nexclude = [\"generated\"]\n",
     )
     .expect("configuration");
     std::fs::write(excluded.join("document.adoc"), "= Title\n\ntext\n").expect("document");
@@ -145,7 +145,7 @@ fn each_kind_of_failure_reports_its_own_exit_status() {
         .expect("document with a diagnostic");
     std::fs::write(
         root.path().join(".adocweave.toml"),
-        "schema-version = 1\n[resources]\nmax-files = 1\nmax-total-bytes = 4\nmax-resource-bytes = 4\n",
+        "schema-version = 2\n[resources]\nmax-files = 1\nmax-total-bytes = 4\nmax-resource-bytes = 4\n",
     )
     .expect("configuration");
     let run = |arguments: &[&str]| {
@@ -210,7 +210,7 @@ fn configured_resource_limit_bounds_standard_input_while_reading() {
     let config = root.path().join(".adocweave.toml");
     std::fs::write(
         &config,
-        "schema-version = 1\n[resources]\nmax-files = 1\nmax-total-bytes = 4\nmax-resource-bytes = 4\n",
+        "schema-version = 2\n[resources]\nmax-files = 1\nmax-total-bytes = 4\nmax-resource-bytes = 4\n",
     )
     .expect("configuration");
     let mut child = adocweave()
@@ -244,7 +244,7 @@ fn explicit_primary_parent_does_not_expand_include_root_authority() {
     std::fs::create_dir(&includes).expect("include root");
     std::fs::write(
         root.path().join(".adocweave.toml"),
-        "schema-version = 1\n[resources]\ninclude = true\nroots = [\"includes\"]\nmax-files = 2\nmax-total-bytes = 128\nmax-resource-bytes = 128\n",
+        "schema-version = 2\n[resources]\ninclude = true\nroots = [\"includes\"]\nmax-files = 2\nmax-total-bytes = 128\nmax-resource-bytes = 128\n",
     )
     .expect("configuration");
     std::fs::write(
@@ -289,7 +289,7 @@ fn analysis_resource_count_includes_root_and_includes() {
     let root = tempfile::tempdir().expect("root");
     std::fs::write(
         root.path().join(".adocweave.toml"),
-        "schema-version = 1\n[resources]\ninclude = true\nroots = [\".\"]\nmax-files = 1\nmax-total-bytes = 64\nmax-resource-bytes = 64\n",
+        "schema-version = 2\n[resources]\ninclude = true\nroots = [\".\"]\nmax-files = 1\nmax-total-bytes = 64\nmax-resource-bytes = 64\n",
     )
     .expect("configuration");
     std::fs::write(
@@ -328,7 +328,7 @@ fn multi_project_scan_applies_file_limits_per_resolved_scope() {
         std::fs::write(
             project.join(".adocweave.toml"),
             format!(
-                "schema-version = 1\n[resources]\nmax-files = {FILES_PER_PROJECT}\nmax-total-bytes = 1048576\nmax-resource-bytes = 1024\n"
+                "schema-version = 2\n[resources]\nmax-files = {FILES_PER_PROJECT}\nmax-total-bytes = 1048576\nmax-resource-bytes = 1024\n"
             ),
         )
         .expect("configuration");
@@ -370,7 +370,7 @@ fn multi_path_byte_budget_is_shared_only_within_the_resolved_project() {
     std::fs::create_dir(&same).expect("same project");
     std::fs::write(
         same.join(".adocweave.toml"),
-        "schema-version = 1\n[resources]\nmax-files = 4\nmax-total-bytes = 3\nmax-resource-bytes = 3\n",
+        "schema-version = 2\n[resources]\nmax-files = 4\nmax-total-bytes = 3\nmax-resource-bytes = 3\n",
     )
     .expect("same config");
     std::fs::write(same.join("a.adoc"), "aa").expect("first");
@@ -393,7 +393,7 @@ fn multi_path_byte_budget_is_shared_only_within_the_resolved_project() {
         std::fs::create_dir(&project).expect("project");
         std::fs::write(
             project.join(".adocweave.toml"),
-            "schema-version = 1\n[resources]\nmax-files = 2\nmax-total-bytes = 3\nmax-resource-bytes = 3\n",
+            "schema-version = 2\n[resources]\nmax-files = 2\nmax-total-bytes = 3\nmax-resource-bytes = 3\n",
         )
         .expect("config");
         std::fs::write(project.join("document.adoc"), "xx").expect("document");
@@ -426,7 +426,7 @@ fn multi_path_include_budget_is_shared_only_within_the_resolved_project() {
     std::fs::create_dir(&same_files).expect("file-limit project");
     std::fs::write(
         same_files.join(".adocweave.toml"),
-        "schema-version = 1\n[resources]\ninclude = true\nroots = [\".\"]\nmax-files = 3\nmax-total-bytes = 1024\nmax-resource-bytes = 1024\n",
+        "schema-version = 2\n[resources]\ninclude = true\nroots = [\".\"]\nmax-files = 3\nmax-total-bytes = 1024\nmax-resource-bytes = 1024\n",
     )
     .expect("file-limit config");
     std::fs::write(same_files.join("a.adoc"), FIRST_SOURCE).expect("first primary");
@@ -457,7 +457,7 @@ fn multi_path_include_budget_is_shared_only_within_the_resolved_project() {
     std::fs::write(
         same_bytes.join(".adocweave.toml"),
         format!(
-            "schema-version = 1\n[resources]\ninclude = true\nroots = [\".\"]\nmax-files = 4\nmax-total-bytes = {byte_limit}\nmax-resource-bytes = {byte_limit}\n"
+            "schema-version = 2\n[resources]\ninclude = true\nroots = [\".\"]\nmax-files = 4\nmax-total-bytes = {byte_limit}\nmax-resource-bytes = {byte_limit}\n"
         ),
     )
     .expect("byte-limit config");
@@ -491,7 +491,7 @@ fn multi_path_include_budget_is_shared_only_within_the_resolved_project() {
         std::fs::write(
             project.join(".adocweave.toml"),
             format!(
-                "schema-version = 1\n[resources]\ninclude = true\nroots = [\".\"]\nmax-files = 2\nmax-total-bytes = {project_limit}\nmax-resource-bytes = {project_limit}\n"
+                "schema-version = 2\n[resources]\ninclude = true\nroots = [\".\"]\nmax-files = 2\nmax-total-bytes = {project_limit}\nmax-resource-bytes = {project_limit}\n"
             ),
         )
         .expect("independent config");
@@ -1065,8 +1065,8 @@ fn invalid_project_config_fails_regardless_of_threshold_and_output_format() {
         .as_nanos();
     let root = std::env::temp_dir().join(format!("adocweave-invalid-config-ci-{unique}"));
     std::fs::create_dir(&root).expect("create project");
-    std::fs::write(root.join(".adocweave.toml"), "schema-version = 99\n")
-        .expect("write invalid config");
+    std::fs::write(root.join(".adocweave.toml"), "schema-version = 1\n")
+        .expect("write obsolete config");
     std::fs::write(root.join("document.adoc"), "content\n").expect("write document");
 
     for format in ["human", "json", "github", "sarif"] {
@@ -1202,7 +1202,7 @@ fn project_config_is_discovered_and_can_be_disabled_explicitly() {
     std::fs::create_dir_all(&docs).expect("create project");
     std::fs::write(
         root.join(".adocweave.toml"),
-        include_str!("../../../fixtures/config/shared-v1/.adocweave.toml"),
+        include_str!("../../../fixtures/config/shared-v2/.adocweave.toml"),
     )
     .expect("write config");
     std::fs::write(docs.join("manual.adoc"), "One\n\nTwo\n").expect("write document");
@@ -1236,7 +1236,7 @@ fn project_config_bounds_cli_diagnostics_before_json_projection() {
     std::fs::create_dir(&root).expect("create project");
     std::fs::write(
         root.join(".adocweave.toml"),
-        "schema-version = 1\n[lint]\nmax-line-length = 4\nmax-diagnostics = 1\n",
+        "schema-version = 2\n[lint]\nmax-line-length = 4\nmax-diagnostics = 1\n",
     )
     .expect("write config");
     std::fs::write(root.join("manual.adoc"), "long \n*x\n").expect("write document");
@@ -1270,7 +1270,7 @@ fn commands_validate_only_the_configuration_paths_they_consume() {
     std::fs::create_dir(&root).expect("create project");
     std::fs::write(
         root.join(".adocweave.toml"),
-        "schema-version = 1\n[html]\ncomplete = true\nstylesheet-files = [\"missing.css\"]\n",
+        "schema-version = 2\n[html]\ncomplete = true\nstylesheet-files = [\"missing.css\"]\n",
     )
     .expect("write config");
     std::fs::write(root.join("manual.adoc"), "text\n").expect("write document");
@@ -1303,7 +1303,7 @@ fn configured_include_accepts_explicit_roots_without_a_redundant_flag() {
     std::fs::create_dir(&root).expect("create project");
     std::fs::write(
         root.join(".adocweave.toml"),
-        "schema-version = 1\n[resources]\ninclude = true\n",
+        "schema-version = 2\n[resources]\ninclude = true\n",
     )
     .expect("write config");
     std::fs::write(root.join("manual.adoc"), "include::part.adoc[]\n").expect("root");
@@ -1335,7 +1335,7 @@ fn config_show_reports_source_and_redacts_attribute_values() {
     let config = root.join("project.toml");
     std::fs::write(
         &config,
-        "schema-version = 1\n[analysis.attributes.token]\nvalue = \"do-not-print\"\n",
+        "schema-version = 2\n[analysis.attributes.token]\nvalue = \"do-not-print\"\n",
     )
     .expect("write config");
 
@@ -1743,7 +1743,7 @@ fn multi_file_format_preflights_configured_includes_before_writing() {
     std::fs::create_dir(&root).expect("create project");
     std::fs::write(
         root.join(".adocweave.toml"),
-        "schema-version = 1\n[resources]\ninclude = true\nroots = [\".\"]\n",
+        "schema-version = 2\n[resources]\ninclude = true\nroots = [\".\"]\n",
     )
     .expect("write config");
     let first = root.join("a.adoc");
@@ -1897,11 +1897,22 @@ fn local_target_permission_failure_has_stable_cli_contract() {
 
 #[test]
 fn local_target_inspection_limit_has_stable_cli_contract() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/local-target/permission-limit/limit");
+    let root = tempfile::tempdir().expect("inspection limit directory");
+    std::fs::write(
+        root.path().join(".adocweave.toml"),
+        "schema-version = 2\n\n[resources]\nmax-files = 1\n",
+    )
+    .expect("inspection limit configuration");
+    std::fs::write(
+        root.path().join("root.adoc"),
+        "xref:first.adoc[first]\nxref:second.adoc[second]\n",
+    )
+    .expect("inspection limit root");
+    std::fs::write(root.path().join("first.adoc"), "first\n").expect("first inspection target");
+    std::fs::write(root.path().join("second.adoc"), "second\n").expect("second inspection target");
     let run = |json: bool, include: bool| {
         let mut command = adocweave();
-        command.current_dir(&root).args([
+        command.current_dir(root.path()).args([
             "check",
             "--config",
             ".adocweave.toml",
@@ -1936,7 +1947,7 @@ fn local_target_inspection_limit_has_stable_cli_contract() {
 
     let mut stdin = adocweave();
     let mut stdin = stdin
-        .current_dir(&root)
+        .current_dir(root.path())
         .args([
             "check",
             "--config",
@@ -2522,7 +2533,7 @@ fn stdin_and_include_share_the_project_retained_and_total_byte_boundary() {
         std::fs::write(
             &config,
             format!(
-                "schema-version = 1\n[resources]\ninclude = true\nroots = [\".\"]\nmax-files = {max_files}\nmax-total-bytes = {limit}\nmax-resource-bytes = {limit}\n"
+                "schema-version = 2\n[resources]\ninclude = true\nroots = [\".\"]\nmax-files = {max_files}\nmax-total-bytes = {limit}\nmax-resource-bytes = {limit}\n"
             ),
         )
         .expect("configuration");

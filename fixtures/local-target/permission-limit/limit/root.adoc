@@ -1,2 +1,0 @@
-xref:first.adoc[first]
-xref:second.adoc[second]
