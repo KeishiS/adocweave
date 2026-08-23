@@ -41,7 +41,7 @@ GitHub Release archiveとNixパッケージは別の配布経路であり、Nix�
 [source,console]
 ----
 nix run github:KeishiS/adocweave -- --version --json
-nix run 'github:KeishiS/adocweave?ref=vX.Y.Z' -- convert document.adoc
+nix run 'github:KeishiS/adocweave?ref=adocweave-cli/vX.Y.Z' -- convert document.adoc
 nix run github:KeishiS/adocweave#adocweave-lsp
 ----
 
