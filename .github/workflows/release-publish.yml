@@ -32,8 +32,9 @@ jobs:
           test -z "$(git status --porcelain --untracked-files=all)"
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: release-candidate-${{ inputs.product }}
+          pattern: release-candidate-${{ inputs.product }}*
           path: artifacts
+          merge-multiple: true
       - name: Isolated candidate directory verification
         run: test -z "$(git status --porcelain --untracked-files=all | sed '\|^?? artifacts/|d')"
       - name: Immutable release input verification

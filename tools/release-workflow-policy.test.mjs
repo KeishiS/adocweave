@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import {
+  validateCandidateArtifactFlow,
   validateCargoMakeReferences,
   validateBuildReuseContract,
   validateNoDirectSecretAccess,
@@ -236,14 +237,14 @@ function productRoutingWorkflows() {
           outputs: { product: "${{ steps.plan.outputs.product }}" },
         },
         "installation-e2e": {},
-        "verify-global-candidate": {},
+        "build-global": {},
         "publish-native": {
           needs: ["candidate-plan", "installation-e2e"],
           uses: "./.github/workflows/release-publish.yml",
           with: { product: "${{ needs.candidate-plan.outputs.product }}" },
         },
         "publish-global": {
-          needs: ["candidate-plan", "verify-global-candidate"],
+          needs: ["candidate-plan", "build-global"],
           uses: "./.github/workflows/release-publish.yml",
           with: { product: "${{ needs.candidate-plan.outputs.product }}" },
         },
@@ -263,7 +264,10 @@ function productRoutingWorkflows() {
           steps: [
             {
               uses: "actions/download-artifact@0000000000000000000000000000000000000000",
-              with: { name: "release-candidate-${{ inputs.product }}" },
+              with: {
+                pattern: "release-candidate-${{ inputs.product }}*",
+                "merge-multiple": true,
+              },
             },
             { name: "Immutable source tree verification", run: "git status --porcelain --untracked-files=all" },
             {
@@ -333,11 +337,188 @@ test("product release routing rejects a post-release job shared by every product
 
 test("product release routing rejects a generic candidate artifact", () => {
   const workflows = productRoutingWorkflows();
-  workflows["release-publish.yml"].jobs.publish.steps[0].with.name = "release-candidate";
+  workflows["release-publish.yml"].jobs.publish.steps[0].with.pattern = "release-candidate-*";
   assert.throws(
     () => validateProductReleaseRouting(workflows),
     /download only the selected product candidate/,
   );
+});
+
+function candidateArtifactWorkflows() {
+  const upload = "actions/upload-artifact@0000000000000000000000000000000000000000";
+  const download = "actions/download-artifact@0000000000000000000000000000000000000000";
+  return {
+    "release.yml": {
+      jobs: {
+        "build-native": {
+          steps: [{
+            uses: upload,
+            with: {
+              name: "release-candidate-${{ matrix.product }}-asset-${{ matrix.target }}",
+              path: "target/distrib/adocweave-${{ matrix.product }}-${{ matrix.target }}.zip",
+              "retention-days": 30,
+            },
+          }],
+        },
+        "build-global": {
+          steps: [
+            { run: "nix develop .#ci-browser -c cargo make test-global-product-candidate" },
+            {
+              name: "Complete candidate metadata generation and verification",
+              run: 'node tools/release-metadata.mjs generate "$PRODUCT" target/distrib "$GITHUB_SHA"\n' +
+                'node tools/release-metadata.mjs verify "$PRODUCT" target/distrib "$GITHUB_SHA"\n' +
+                'node tools/product-release.mjs --verify-candidate "$PRODUCT" target/distrib',
+            },
+            {
+              uses: upload,
+              with: {
+                name: "release-candidate-${{ matrix.product }}",
+                path: "target/distrib/*",
+                "retention-days": 30,
+              },
+            },
+          ],
+        },
+        "finalize-native-candidate": {
+          needs: ["native-smoke"],
+          steps: [
+            {
+              uses: download,
+              with: {
+                pattern: "release-candidate-${{ matrix.product }}-asset-*",
+                path: "artifacts",
+                "merge-multiple": true,
+              },
+            },
+            {
+              run: 'node tools/release-metadata.mjs generate "$PRODUCT" artifacts "$GITHUB_SHA"\n' +
+                'node tools/release-metadata.mjs verify "$PRODUCT" artifacts "$GITHUB_SHA"\n' +
+                'node tools/product-release.mjs --verify-candidate "$PRODUCT" artifacts',
+            },
+            {
+              uses: upload,
+              with: {
+                name: "release-candidate-${{ matrix.product }}-metadata",
+                path: "artifacts/adocweave-dist-manifest.json\nartifacts/sha256.sum\n",
+                "retention-days": 30,
+              },
+            },
+          ],
+        },
+        "installation-e2e": {
+          needs: ["finalize-native-candidate"],
+          steps: [
+            {
+              uses: download,
+              with: {
+                name: "release-candidate-${{ matrix.product }}-asset-${{ matrix.target }}",
+                path: "artifacts",
+              },
+            },
+            {
+              uses: download,
+              with: { name: "release-candidate-${{ matrix.product }}-metadata", path: "artifacts" },
+            },
+            { run: "node tools/release-installation-e2e.mjs" },
+          ],
+        },
+      },
+    },
+    "native-artifact-smoke.yml": {
+      jobs: { smoke: { steps: [{
+        uses: download,
+        with: {
+          name: "release-candidate-${{ matrix.product }}-asset-${{ matrix.target }}",
+          path: "target/distrib",
+        },
+      }] } },
+    },
+    "release-publish.yml": {
+      jobs: { publish: { steps: [{
+        uses: download,
+        with: {
+          pattern: "release-candidate-${{ inputs.product }}*",
+          path: "artifacts",
+          "merge-multiple": true,
+        },
+      }] } },
+    },
+  };
+}
+
+test("release candidateの公開fileは一度だけuploadして後続jobで直接使用する", () => {
+  validateCandidateArtifactFlow(candidateArtifactWorkflows());
+
+  const findAction = (job, action) => job.steps.find(
+    (step) => step.uses?.startsWith(`actions/${action}-artifact@`),
+  );
+  const moveVerificationAfterUpload = (job) => {
+    const index = job.steps.findIndex((step) => step.run?.includes("release-metadata.mjs verify"));
+    job.steps.push(...job.steps.splice(index, 1));
+  };
+  for (const [name, expected, mutate] of [
+    ["native archive reupload", /metadataだけを一度upload/, (workflows) => {
+      findAction(workflows["release.yml"].jobs["finalize-native-candidate"], "upload").with.path = "artifacts/*";
+    }],
+    ["temporary artifact", /一時artifact名/, (workflows) => {
+      findAction(workflows["release.yml"].jobs["build-native"], "upload").with.name = "artifacts-build-cli";
+    }],
+    ["native upload before verification", /検証後のmetadata/, (workflows) => {
+      moveVerificationAfterUpload(workflows["release.yml"].jobs["finalize-native-candidate"]);
+    }],
+    ["disguised native verification", /検証後のmetadata/, (workflows) => {
+      const job = workflows["release.yml"].jobs["finalize-native-candidate"];
+      moveVerificationAfterUpload(job);
+      const uploadIndex = job.steps.findIndex((step) => step.uses?.startsWith("actions/upload-artifact@"));
+      job.steps.splice(uploadIndex, 0, {
+        run: 'echo node tools/release-metadata.mjs generate "$PRODUCT" artifacts "$GITHUB_SHA"\n' +
+          'echo node tools/release-metadata.mjs verify "$PRODUCT" artifacts "$GITHUB_SHA"\n' +
+          'echo node tools/product-release.mjs --verify-candidate "$PRODUCT" artifacts',
+      });
+    }],
+    ["global upload before verification", /検証、metadata生成後/, (workflows) => {
+      moveVerificationAfterUpload(workflows["release.yml"].jobs["build-global"]);
+    }],
+    ["smoke reupload", /三つの生成箇所/, (workflows) => {
+      workflows["native-artifact-smoke.yml"].jobs.smoke.steps.push({
+        uses: "actions/upload-artifact@0000000000000000000000000000000000000000",
+        with: { name: "copied-native", path: "target/distrib/*" },
+      });
+    }],
+    ["publish reupload", /三つの生成箇所/, (workflows) => {
+      workflows["release-publish.yml"].jobs.publish.steps.push({
+        uses: "actions/upload-artifact@0000000000000000000000000000000000000000",
+        with: { name: "copied-candidate", path: "artifacts/*" },
+      });
+    }],
+    ["unofficial artifact action", /三つの生成箇所/, (workflows) => {
+      findAction(workflows["release.yml"].jobs["build-native"], "upload").uses =
+        "owner/actions/upload-artifact-wrapper@0000000000000000000000000000000000000000";
+    }],
+    ["candidate overwrite", /上書きしない/, (workflows) => {
+      findAction(workflows["release.yml"].jobs["build-native"], "upload").with.overwrite = true;
+    }],
+    ["quoted candidate overwrite", /上書きしない/, (workflows) => {
+      findAction(workflows["release.yml"].jobs["build-native"], "upload").with.overwrite = "true";
+    }],
+    ["installation without metadata", /target別archiveと検証済みmetadata/, (workflows) => {
+      const job = workflows["release.yml"].jobs["installation-e2e"];
+      const index = job.steps.findIndex((step) => step.with?.name?.endsWith("-metadata"));
+      job.steps.splice(index, 1);
+    }],
+    ["generic publication download", /選択製品/, (workflows) => {
+      findAction(workflows["release-publish.yml"].jobs.publish, "download").with.pattern =
+        "release-candidate-*";
+    }],
+  ]) {
+    const workflows = candidateArtifactWorkflows();
+    mutate(workflows);
+    assert.throws(
+      () => validateCandidateArtifactFlow(workflows),
+      expected,
+      `${name}を拒否しませんでした`,
+    );
+  }
 });
 
 test("product release routing rejects publication before verification", () => {
@@ -498,16 +679,12 @@ function sourceAndCandidateWorkflow() {
         needs: ["candidate-plan"],
         steps: [{ run: "nix develop .#ci-browser -c cargo make test-global-product-candidate" }],
       },
-      "verify-native-candidate": {
+      "finalize-native-candidate": {
         needs: ["native-smoke"],
         steps: [{ run: "node tools/product-release.mjs --verify-candidate" }],
       },
-      "verify-global-candidate": {
-        needs: ["build-global"],
-        steps: [{ run: "node tools/product-release.mjs --verify-candidate" }],
-      },
       "installation-e2e": {
-        needs: ["verify-native-candidate"],
+        needs: ["finalize-native-candidate"],
         steps: [{ run: "node tools/release-installation-e2e.mjs" }],
       },
       "publish-native": {
@@ -515,7 +692,7 @@ function sourceAndCandidateWorkflow() {
         uses: "./.github/workflows/release-publish.yml",
       },
       "publish-global": {
-        needs: ["candidate-plan", "verify-global-candidate"],
+        needs: ["candidate-plan", "build-global"],
         uses: "./.github/workflows/release-publish.yml",
       },
     },
