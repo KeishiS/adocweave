@@ -58,7 +58,14 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
           persist-credentials: false
-      - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+      # このjobはnpmを実行するだけで、Rust toolchainもHTML validatorも使わない。
+      # CI用Nix環境はそれらを含むため、release manifestのversionをsetup-nodeへ渡す。
+      - name: Resolve the pinned Node.js version
+        id: node-version
+        run: echo "value=$(jq -er .nodeVersion toolchains.json)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ steps.node-version.outputs.value }}
       - name: Published package download and verification
         env:
           GH_TOKEN: ${{ github.token }}
@@ -72,14 +79,14 @@ jobs:
           test "$(jq -r .draft <<<"$release")" = false
           test "$(jq -r .prerelease <<<"$release")" = false
           test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)"
-          mkdir -p npm
+          mkdir -p npm-candidate
           node tools/release-contract.mjs "--product=$RELEASE_PRODUCT" "--tag=$RELEASE_TAG"
-          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir npm
-          node tools/product-release.mjs --verify-candidate "$RELEASE_PRODUCT" npm
-          node tools/release-metadata.mjs verify "$RELEASE_PRODUCT" npm "$(git rev-parse HEAD)"
-          tarball="$(node tools/npm-package-asset.mjs resolve "$RELEASE_PRODUCT" npm)"
-          (cd npm && grep -F "$(basename "$tarball")" sha256.sum | sha256sum --check --strict -)
-          for file in npm/*; do
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir npm-candidate
+          node tools/product-release.mjs --verify-candidate "$RELEASE_PRODUCT" npm-candidate
+          node tools/release-metadata.mjs verify "$RELEASE_PRODUCT" npm-candidate "$(git rev-parse HEAD)"
+          tarball="$(node tools/npm-package-asset.mjs resolve "$RELEASE_PRODUCT" npm-candidate)"
+          (cd npm-candidate && grep -F "$(basename "$tarball")" sha256.sum | sha256sum --check --strict -)
+          for file in npm-candidate/*; do
             gh attestation verify "$file" --repo "$GITHUB_REPOSITORY"
           done
           echo "tarball=$tarball" >> "$GITHUB_ENV"
@@ -87,8 +94,8 @@ jobs:
         env:
           RELEASE_PRODUCT: ${{ inputs.product }}
         run: |
-          # Trusted Publishingではid-token以外の資格情報を使わない。CI用Nix環境の
-          # npmは、この認証方式が要求する版を満たすよう固定してある。
-          nix develop .#ci -c npm publish "$tarball"
-          nix develop .#ci -c node tools/npm-package-asset.mjs \
-            verify-published "$RELEASE_PRODUCT" npm
+          # Trusted Publishingはid-token以外の資格情報を使わない代わりに、
+          # 対応するnpmを必要とする。満たさない場合はここで止める。
+          node tools/npm-package-asset.mjs --require-trusted-publishing "$(npm --version)"
+          npm publish "$tarball"
+          node tools/npm-package-asset.mjs verify-published "$RELEASE_PRODUCT" npm-candidate

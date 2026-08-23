@@ -339,8 +339,17 @@ npm publish PACKAGE-X.Y.Z.tgz
 登録します。登録後は``npm-publish.yml``がOIDCで公開できるため、初回公開に使った資格情報を失効させます。
 Trusted Publishing経由の公開にはprovenanceが自動で付きます。
 
-再利用workflowから公開したときにnpmがどのworkflow file名で照合するかは、最初の自動公開で確認します。
-``npm-publish.yml``で通らない場合は、呼び出し元のworkflow file名で登録し直します。
+npmへの公開は、GitHub Releaseを公開したあとに次を実行します。``release.yml``からは呼びません。
+
+[source,console]
+----
+gh workflow run npm-publish.yml -f tag=adocweave-PRODUCT/vX.Y.Z -f product=PRODUCT
+----
+
+再利用workflowとして呼び出すと、npmは実際に``npm publish``を実行するworkflowではなく、呼び出し元の
+workflow file名で公開元を照合します。Trusted Publisherはpackageごとに一つしか登録できないため、
+``release.yml``を登録すると、送信だけが失敗したときにRelease全体を再実行しなければ回復できません。
+``npm-publish.yml``を登録して単独で実行すれば、通常の公開と復旧が同じ操作になります。
 
 npmへの送信だけが失敗した場合は、同じtagと製品を指定して``npm-publish.yml``を実行します。公開済みversionの
 上書きはnpmが拒否するため、再実行しても公開済みの版は変わりません。公開後に問題が見つかった場合は
