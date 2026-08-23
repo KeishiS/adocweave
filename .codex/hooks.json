@@ -1,0 +1,18 @@
+{
+  "description": "GitHubへ文章を投稿する前に、リポジトリ共通の禁止語を検査します。",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^Bash$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/tools/codex-github-prose-hook.mjs\"",
+            "timeout": 10,
+            "statusMessage": "GitHubへの投稿内容を確認しています"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -54,12 +54,16 @@ function validateCatalog(catalog) {
   return Object.freeze(entries);
 }
 
-export function createTerminologyRule(catalog) {
+export function createTerminologyRule(catalog, options = {}) {
   const entries = validateCatalog(catalog);
+  const { ignoreStandaloneUrls = false } = options;
   return (context) => {
     const { Syntax, RuleError, locator, report } = context;
     return {
       [Syntax.Str](node) {
+        if (ignoreStandaloneUrls && /^(?:https?:\/\/|mailto:|www\.)\S+$/iu.test(node.value)) {
+          return;
+        }
         for (const entry of entries) {
           let start = 0;
           while (start <= node.value.length) {
