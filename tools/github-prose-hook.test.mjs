@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { inspectCodexGitHubProse } from "./codex-github-prose-hook.mjs";
+import { inspectGitHubProse } from "./github-prose-hook.mjs";
 
 function inspect(command) {
-  return inspectCodexGitHubProse({
+  return inspectGitHubProse({
     hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command }
   });
 }
