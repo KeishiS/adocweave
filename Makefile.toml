@@ -599,7 +599,11 @@ description = "Run the official VS Code extension host against the real AdocWeav
 dependencies = ["build-lsp", "vscode-dependencies"]
 script_runner = "@shell"
 script = '''
+# The host loads the extension from dist and its test suite from dist-test, so
+# this task builds both. Until #675 the test bundle arrived through a dependency
+# on test-vscode, and dropping that left the host without an entry point.
 npm run build --prefix editors/vscode
+npm run build:test --prefix editors/vscode
 if [ "$(uname -s)" = Linux ]; then
   Xvfb :99 -screen 0 1280x1024x24 >/dev/null 2>&1 &
   xvfb_pid=$!
