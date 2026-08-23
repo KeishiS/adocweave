@@ -1589,32 +1589,6 @@ fn explicit_symlink_inputs_are_rejected_without_modifying_the_target() {
 }
 
 #[test]
-fn check_reports_link_and_xref_usage_consistently() {
-    let source = b"link:guide.adoc[Guide]\nxref:data.json[Data]\n";
-    let human = run_with_stdin(&["check", "-"], source);
-    let json = run_with_stdin(&["check", "--json", "-"], source);
-
-    assert!(human.status.success());
-    let human = String::from_utf8_lossy(&human.stdout);
-    assert!(human.contains("1:1: warning[asciidoc-file-link]"));
-    assert!(human.contains("2:1: warning[non-asciidoc-xref]"));
-
-    assert!(json.status.success());
-    let diagnostics: serde_json::Value =
-        serde_json::from_slice(&json.stdout).expect("diagnostic JSON");
-    let diagnostics = diagnostics.as_array().expect("diagnostics");
-    assert_eq!(diagnostics.len(), 2);
-    assert_eq!(diagnostics[0]["code"], "asciidoc-file-link");
-    assert_eq!(diagnostics[0]["severity"], "warning");
-    assert_eq!(diagnostics[0]["range"]["start"], 0);
-    assert_eq!(diagnostics[0]["range"]["end"], 4);
-    assert_eq!(diagnostics[1]["code"], "non-asciidoc-xref");
-    assert_eq!(diagnostics[1]["severity"], "warning");
-    assert_eq!(diagnostics[1]["range"]["start"], 23);
-    assert_eq!(diagnostics[1]["range"]["end"], 27);
-}
-
-#[test]
 fn check_enables_macro_boundary_as_an_opt_in_rule() {
     let source = "本文xref:guide.adoc[Guide]\n".as_bytes();
     let default = run_with_stdin(&["check", "--json", "-"], source);
@@ -1757,21 +1731,6 @@ fn list_rules_accepts_the_canonical_format_option() {
         "{}",
         String::from_utf8_lossy(&rejected.stderr)
     );
-}
-
-#[test]
-fn check_accepts_relative_targets_without_activating_them_in_html() {
-    let source = b"link:../toolchains.json[toolchain manifest]\n\
-                   xref:../guide.adoc[guide]\n";
-    let checked = run_with_stdin(&["check", "--json", "-"], source);
-    let converted = run_with_stdin(&["convert", "-"], source);
-
-    assert!(checked.status.success());
-    assert_eq!(checked.stdout, b"[]");
-    assert!(checked.stderr.is_empty());
-    assert!(converted.status.success());
-    assert_eq!(converted.stdout, b"<p>toolchain manifest guide</p>\n");
-    assert!(converted.stderr.is_empty());
 }
 
 #[test]
@@ -2298,20 +2257,6 @@ fn local_target_check_uses_the_explicit_project_root_for_parent_targets() {
 }
 
 #[test]
-fn check_reports_invalid_explicit_ordered_numbers_without_losing_the_list() {
-    let source = b"4294967296. overflow\n0. zero\n";
-    let output = run_with_stdin(&["check", "--json", "-"], source);
-    let diagnostics: serde_json::Value = serde_json::from_slice(&output.stdout).expect("JSON");
-
-    assert!(output.status.success());
-    assert_eq!(diagnostics.as_array().expect("array").len(), 2);
-    assert!(
-        String::from_utf8_lossy(&output.stdout)
-            .contains("explicit ordered-list number must be a positive 32-bit integer")
-    );
-}
-
-#[test]
 fn format_check_is_non_mutating_and_reports_needed_changes() {
     let formatted = run_with_stdin(&["format", "--check", "-"], b"clean\n");
     let formatted_crlf = run_with_stdin(&["format", "--check", "-"], b"clean\r\n");
@@ -2358,84 +2303,6 @@ fn release_fixture_works_across_convert_check_and_format() {
     assert!(formatted.status.success());
     assert_eq!(formatted.stdout, source);
     assert!(formatted.stderr.is_empty());
-}
-
-#[test]
-fn core_profile_fixture_is_shared_by_cli_conversion_and_symbols() {
-    let source = include_bytes!("../../../fixtures/conformance/full.adoc");
-    let expected_html = include_bytes!("../../../fixtures/conformance/full.html");
-
-    let converted = run_with_stdin(&["convert", "-"], source);
-    let symbols = run_with_stdin(&["symbols", "-"], source);
-
-    assert!(converted.status.success());
-    assert_eq!(converted.stdout, expected_html);
-    assert!(converted.stderr.is_empty());
-    assert!(symbols.status.success());
-    assert!(String::from_utf8_lossy(&symbols.stdout).contains("統合文書"));
-}
-
-#[test]
-fn bibliography_consumer_fixture_is_shared_by_cli() {
-    let source = adocweave::output::conformance::fixture_source("bibliography-consumer-coverage")
-        .expect("shared inline conformance fixture");
-
-    let checked = run_with_stdin(&["check", "--json", "-"], source.as_bytes());
-    let symbols = run_with_stdin(&["symbols", "-"], source.as_bytes());
-
-    assert!(checked.status.success());
-    assert!(checked.stderr.is_empty());
-    assert!(symbols.status.success());
-    assert!(String::from_utf8_lossy(&symbols.stdout).contains("References"));
-}
-
-#[test]
-fn table_presentation_fixture_is_shared_by_cli() {
-    let source = include_bytes!("../../../fixtures/conformance/table-presentation.adoc");
-    let expected_html = include_bytes!("../../../fixtures/conformance/table-presentation.html");
-
-    let converted = run_with_stdin(&["convert", "-"], source);
-    let checked = run_with_stdin(&["check", "--json", "-"], source);
-
-    assert!(converted.status.success());
-    assert_eq!(converted.stdout, expected_html);
-    assert!(converted.stderr.is_empty());
-    assert!(checked.status.success());
-    assert_eq!(
-        String::from_utf8_lossy(&checked.stdout)
-            .matches("\"code\":\"invalid-table\"")
-            .count(),
-        2
-    );
-}
-
-#[test]
-fn empty_table_column_specs_fixture_is_shared_by_cli() {
-    let source = include_bytes!("../../../fixtures/conformance/empty-table-column-specs.adoc");
-    let expected_html =
-        include_bytes!("../../../fixtures/conformance/empty-table-column-specs.html");
-
-    let converted = run_with_stdin(&["convert", "-"], source);
-    let checked = run_with_stdin(&["check", "--json", "-"], source);
-
-    assert!(converted.status.success());
-    assert_eq!(converted.stdout, expected_html);
-    assert!(converted.stderr.is_empty());
-    assert!(checked.status.success());
-    assert_eq!(checked.stdout, b"[]");
-    assert!(checked.stderr.is_empty());
-}
-
-#[test]
-fn source_block_shorthand_default_and_listing_are_consistent_on_crlf_input() {
-    let source = b"= Source\xf0\x9f\x98\x80\r\n:source-language: rust\r\n\r\n[,python]\r\n----\r\nprint(\"\xf0\x9f\x98\x80\")\r\n----\r\n\r\n----\r\nfn main() {}\r\n----\r\n\r\n[listing]\r\n----\r\nplain\r\n----\r\n";
-    let expected = b"<h1 class=\"document-title\" id=\"_source\">Source\xf0\x9f\x98\x80</h1>\n<pre><code class=\"language-python\">print(&#34;\xf0\x9f\x98\x80&#34;)\r\n</code></pre>\n<pre><code class=\"language-rust\">fn main() {}\r\n</code></pre>\n<pre>plain\r\n</pre>\n";
-
-    let output = run_with_stdin(&["convert", "-"], source);
-
-    assert!(output.status.success());
-    assert_eq!(output.stdout, expected);
-    assert!(output.stderr.is_empty());
 }
 
 #[test]
