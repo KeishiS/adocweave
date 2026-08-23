@@ -8,12 +8,9 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
-const consumers = JSON.parse(
-  readFileSync(resolve(root, "fixtures/conformance/consumers.json"), "utf8"),
-);
-const fixtureRoot = resolve(root, consumers.fixtureRoot);
+const fixtureRoot = resolve(root, "fixtures/conformance");
 const manifest = JSON.parse(
-  readFileSync(resolve(root, consumers.manifest), "utf8"),
+  readFileSync(resolve(root, "crates/adocweave/conformance/cases.json"), "utf8"),
 );
 const require = createRequire(import.meta.url);
 const wasm = require(resolve(root, "target/adocweave-wasm-node/adocweave_wasm.js"));
@@ -70,6 +67,47 @@ function wasmResult(request) {
   }
 }
 
+function expectedProduct(entry, inlineField, fileField, readFile) {
+  const hasInline = Object.hasOwn(entry, inlineField);
+  const hasFile = Object.hasOwn(entry, fileField);
+  assert.equal(
+    hasInline && hasFile,
+    false,
+    `${entry.name}: ${inlineField} and ${fileField} are mutually exclusive`,
+  );
+  if (hasInline) return { present: true, value: entry[inlineField] };
+  if (hasFile) {
+    return {
+      present: true,
+      value: readFile(resolve(fixtureRoot, entry[fileField])),
+    };
+  }
+  return { present: false };
+}
+
+test("inline期待値は空配列を保持しfile期待値との重複を拒否する", () => {
+  const inline = expectedProduct(
+    { name: "inline-empty", expectedDiagnostics: [] },
+    "expectedDiagnostics",
+    "expectedDiagnosticsFile",
+    readJson,
+  );
+  assert.deepEqual(inline, { present: true, value: [] });
+  assert.throws(
+    () => expectedProduct(
+      {
+        name: "duplicate-expectation",
+        expectedDiagnostics: [],
+        expectedDiagnosticsFile: "diagnostics.json",
+      },
+      "expectedDiagnostics",
+      "expectedDiagnosticsFile",
+      readJson,
+    ),
+    /mutually exclusive/,
+  );
+});
+
 for (const entry of manifest.cases) {
   test(`native and WASM agree: ${entry.name}`, () => {
     const request = requestFor(entry);
@@ -77,33 +115,45 @@ for (const entry of manifest.cases) {
     const actual = wasmResult(request);
     assert.deepEqual(actual, expected);
 
-    if (entry.expectedHtmlFile) {
-      assert.equal(
-        actual.value.html,
-        readFileSync(resolve(fixtureRoot, entry.expectedHtmlFile), "utf8"),
-      );
-    }
-    if (entry.expectedAstFile) {
-      assert.equal(
-        actual.value.ast,
-        readFileSync(resolve(fixtureRoot, entry.expectedAstFile), "utf8").trimEnd(),
-      );
-    }
-    for (const [field, product] of [
-      ["expectedDiagnosticsFile", "diagnostics"],
-      ["expectedRenderDiagnosticsFile", "renderDiagnostics"],
-      ["expectedProjectionFile", "projection"],
-      ["expectedSymbolsFile", "symbols"],
+    for (const [inlineField, fileField, product, readFile] of [
+      [
+        "expectedHtml",
+        "expectedHtmlFile",
+        "html",
+        (path) => readFileSync(path, "utf8"),
+      ],
+      [
+        "expectedAst",
+        "expectedAstFile",
+        "ast",
+        (path) => readFileSync(path, "utf8").trimEnd(),
+      ],
+      ["expectedDiagnostics", "expectedDiagnosticsFile", "diagnostics", readJson],
+      [
+        "expectedRenderDiagnostics",
+        "expectedRenderDiagnosticsFile",
+        "renderDiagnostics",
+        readJson,
+      ],
+      ["expectedProjection", "expectedProjectionFile", "projection", readJson],
+      ["expectedSymbols", "expectedSymbolsFile", "symbols", readJson],
     ]) {
-      if (entry[field]) {
-        assert.deepEqual(
-          actual.value[product],
-          JSON.parse(readFileSync(resolve(fixtureRoot, entry[field]), "utf8")),
-        );
+      const expectedProductValue = expectedProduct(
+        entry,
+        inlineField,
+        fileField,
+        readFile,
+      );
+      if (expectedProductValue.present) {
+        assert.deepEqual(actual.value[product], expectedProductValue.value);
       }
     }
     if (entry.expectedErrorCode) {
       assert.equal(actual.error.code, entry.expectedErrorCode);
     }
   });
+}
+
+function readJson(path) {
+  return JSON.parse(readFileSync(path, "utf8"));
 }
