@@ -154,7 +154,11 @@ jobs:
           > dist-manifest.json
       - name: Darwin archive portability normalization
         if: endsWith(matrix.target, '-apple-darwin')
-        run: tools/normalize-darwin-archives.sh target/distrib "${{ matrix.target }}"
+        run: >-
+          tools/normalize-darwin-archives.sh
+          target/distrib
+          "${{ matrix.product }}"
+          "${{ matrix.target }}"
       - name: Fixed Windows Rust and cargo-dist installation
         if: matrix.build == 'windows'
         shell: pwsh

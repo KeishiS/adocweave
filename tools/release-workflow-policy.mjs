@@ -337,6 +337,25 @@ export function validateCandidateArtifactFlow(workflows) {
   }
 
   const nativeUpload = artifactActionSteps(jobs["build-native"], "upload")[0]?.with;
+  const nativeSteps = jobs["build-native"]?.steps ?? [];
+  const nativeBuildIndex = nativeSteps.findIndex((step) =>
+    step.name === "Target archive builds" && step.run?.includes("tools/run-pinned-dist.sh build")
+  );
+  const darwinNormalization = nativeSteps.filter((step) =>
+    step.run?.includes("tools/normalize-darwin-archives.sh")
+  );
+  const normalizationIndex = nativeSteps.indexOf(darwinNormalization[0]);
+  const nativeUploadIndex = nativeSteps.findIndex((step) =>
+    typeof step.uses === "string" && step.uses.startsWith("actions/upload-artifact@")
+  );
+  if (darwinNormalization.length !== 1 ||
+      darwinNormalization[0]?.if !== "endsWith(matrix.target, '-apple-darwin')" ||
+      darwinNormalization[0]?.run?.trim() !==
+        'tools/normalize-darwin-archives.sh target/distrib "${{ matrix.product }}" "${{ matrix.target }}"' ||
+      nativeBuildIndex < 0 || normalizationIndex <= nativeBuildIndex ||
+      nativeUploadIndex <= normalizationIndex) {
+    fail("Darwin archiveはbuild後かつupload前に選択製品とtargetを指定して正規化してください");
+  }
   if (nativeUpload?.name !== "release-candidate-${{ matrix.product }}-asset-${{ matrix.target }}" ||
       nativeUpload.path !== "target/distrib/adocweave-${{ matrix.product }}-${{ matrix.target }}.zip" ||
       nativeUpload["retention-days"] !== 30) {
