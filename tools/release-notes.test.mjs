@@ -88,6 +88,25 @@ test("対応関係には製品版と関連API世代だけを追記する", () =>
   assert.doesNotMatch(rendered, /統一package version|release manifest|Rust APIの破壊的変更|Rust toolchain/);
 });
 
+test("v0.46.2相当のLSP変更説明へ未検査の不変文を追加しない", () => {
+  const { version } = productRelease("lsp");
+  const rendered = renderReleaseNotes(sampleSource("lsp", version, {
+    "## 主な変更":
+      "- workspace-scan-incomplete診断を廃止し、window/showMessageへ移します。",
+    "## 対応関係":
+      "Language Server protocolの通知方法を変更するため、client側の対応が必要です。",
+    [`## v${version}への移行`]:
+      "診断の処理をwindow/showMessageの受信へ切り替えてください。",
+  }), "lsp");
+
+  assert.match(rendered, /workspace-scan-incomplete/);
+  assert.match(rendered, /window\/showMessage/);
+  assert.doesNotMatch(
+    rendered,
+    /(?:CLI引数|Language Server protocol|設定schema)は変更していません/,
+  );
+});
+
 test("現在のRelease Notesは題名で選択した製品のtagに対応する", () => {
   const source = loadReleaseNotesSource();
   const { product } = releaseNotesSelection(source);
