@@ -12,8 +12,6 @@ if [[ ! "$revision" =~ ^[0-9a-f]{40}$ ]]; then
 fi
 
 readonly database="${CARGO_TARGET_DIR:-target}/rustsec-advisory-db"
-readonly notice="$(mktemp "${TMPDIR:-/tmp}/adocweave-third-party-notices.XXXXXX.adoc")"
-trap 'rm -f "$notice"' EXIT
 if [[ ! -d "$database/.git" ]]; then
   rm -rf "$database"
   git init --quiet "$database"
@@ -38,20 +36,7 @@ cargo audit "${audit_args[@]}" --file editors/zed/Cargo.lock
 
 cargo deny --manifest-path Cargo.toml --all-features check --config deny.toml licenses bans sources
 cargo deny --manifest-path editors/zed/Cargo.toml --all-features check --config deny.toml licenses bans sources
-# The shipped boundary is audited on its own so a failure names it directly, and
-# then the whole tree is audited: Biome, TypeScript, esbuild and vsce run in CI
-# and build the VSIX, so a vulnerability in one of them reaches the artifact even
-# though the package itself never ships.
 npm audit --omit=dev --prefix editors/vscode
 npm audit --include=dev --prefix editors/vscode
 npm audit --include=dev --prefix tools/textlint
 npm audit --include=dev --prefix tools/textlint-plugin-e2e
-
-node tools/verify-dependency-boundaries.mjs
-node tools/verify-vscode-dependencies.mjs
-node tools/verify-textlint-dependencies.mjs
-node tools/verify-textlint-plugin-dependencies.mjs
-# 生成したnoticeはarchiveへ同梱する成果物であり、内容を照合する検査がほかにないため、
-# 生成logicのtestをここで実行します。
-node --test tools/generate-third-party-notices.test.mjs
-node tools/generate-third-party-notices.mjs "$notice"

@@ -1,0 +1,48 @@
+= ADR 0033: Make taskの外向き入口と実処理の分離
+
+:status: accepted
+
+== 文脈
+
+``Makefile.toml``には、日常の検査、CIのjob、製品別の構築、個別のtestおよびarchive操作が同じ階層のtaskとして
+並んでいました。外から直接実行できるtaskは100件を超え、上位taskが別名と中間taskを何段もたどっていました。
+また、BrowserやZedなどのarchiveを扱うshell処理がMakefileへ埋め込まれ、依存関係の定義と成果物の実装を同時に
+読まなければ処理を追えませんでした。
+
+個人開発では、検査を細かく組み替えられることより、目的ごとの入口が少なく、その入口から実処理までを短く
+追えることを優先します。後方互換のためだけのtask名は維持しません。
+
+== 決定
+
+開発者が直接使用する検査入口を、sourceの``verify``、securityの``security-audit``、配布candidateの
+``acceptance``、公開前の``release-check``に分けます。整形操作の``fmt``と``fmt-check``、引数なしの
+``cargo make``を``verify``へ接続する``default``も維持します。CIが製品を選択するために直接呼ぶtaskは
+名前と用途を固定し、それ以外のtaskは``private``にします。
+
+``verify``はsource検査の実体とし、``source-gate``との別名関係を廃止します。``verify``ではlockfileから決まる
+依存境界とnoticeを検査し、``security-audit``ではlicense、取得元およびadvisoryを監査します。
+``security-audit``は旧``dependency-governance``との中間関係を持ちません。``acceptance``は``verify``を前提としてmain向けの
+統合検査とglobal配布candidateの受入検査だけを行い、source検査を繰り返しません。``release-check``が
+``verify``、``security-audit``、``acceptance``、配布計画および成果物sizeの検査を一つの実行計画へ合成します。
+
+Makefileにはtask間の依存関係、実行するtoolおよび引数だけを置きます。archiveの構築、展開、内容一覧、再構築および
+checksum比較は``tools/``以下の専用scriptへ置きます。Web向けとNode.js向けで共通するWebAssemblyのcompileは一つの
+private taskへ集約し、binding生成だけを分けます。workspace全体のtestに含まれる部分testは上位gateで再実行しません。
+
+== 検討した代替案
+
+**既存taskをすべて公開したまま分類名だけ付ける。** 一覧は短くならず、内部taskを公開taskとして維持する負担が
+残るため採用しません。
+
+**製品ごとのMake taskへarchive処理を残す。** 一つのfileで処理を読めますが、依存関係の記述とshell実装が混在し、
+archive形式の検証を単独で試験しにくいため採用しません。
+
+== 帰結
+
+日常の検査は4入口から選べ、CIのsource jobもローカルと同じ``verify``を実行します。内部taskの名前は互換性を
+保証せず、個別の切り分けでは対応する``cargo``、``npm``、``node``または``tools/``のscriptを直接使用します。
+
+``acceptance``と``security-audit``はsource検査を含まないため、単独では変更全体の検査になりません。公開前は
+この3入口を合成する``release-check``を使い、
+Pull Requestでは``verify``を使います。この決定は、ADR 0023が定める公開taskの名前と用途、およびADR 0031の標準source gateを
+具体化し、従来の``source-gate``別名とhost用の疑似native archive経路を置き換えます。

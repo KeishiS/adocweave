@@ -165,7 +165,7 @@ link:../../release/distribution-plan.json[配布計画]の``versionSource``と``
 Release Notesの本文は``release/notes.md``に人が書き、公開workflowの``tools/release-notes.mjs``が、選択した
 製品、製品バージョンおよび、その製品が互換性の判断に使う公開API世代との一致を検査します。Browserでは
 WASM protocol schemaだけを関連API世代とし、Worker内部の封筒は含めません。CLI引数や
-Language Server protocolなどの変更と移行方法は人が本文へ記載します。``cargo make release-contract``が、
+Language Server protocolなどの変更と移行方法は人が本文へ記載します。``cargo make verify``に含まれるrelease contractが、
 六製品のrouting、製品ごとの成果物集合、
 配布manifestおよびRelease Notesの形を検査します（xref:adr/0026-no-unverified-release-claims.adoc[ADR 0026]、
 xref:adr/0027-product-release-trains.adoc[ADR 0027]）。
@@ -231,21 +231,19 @@ tagとGitHub Releaseには影響しません。送信だけが失敗した場合
 
 == 検証
 
-配布仕様の確認には次のtaskを使用します。
+配布candidateの受入検査と公開前検査には、次の代表taskを使用します。
 
 [source,console]
 ----
-cargo make platform-contract
-cargo make release-contract
-cargo make dist-plan
 cargo make acceptance
 cargo make release-check
 ----
 
-``acceptance``は、``verify``に加えて、CIが行う自動受入検証のうち現在のhostで実行できるもの
-（global成果物の実Chromium検査、native smoke、installation E2E）を実行します。
-``release-check``は公開前の完全な検査です。標準の``verify``が行うsource検査に、配布物および導入経路の
-検査を加えます。Rust workspaceのcrateはすべて``publish = false``であり、製品別tagと対応する単一の
+``acceptance``は、``verify``済みのsourceを前提として、CIが行う統合検査とglobal成果物の受入検査を
+現在のhostで実行します。
+``release-check``は公開前の完全な検査です。標準の``verify``が行うsource検査に、``security-audit``が行う
+依存関係の出所、license、advisoryおよび例外の監査と、配布物および導入経路の検査を加えます。
+Rust workspaceのcrateはすべて``publish = false``であり、製品別tagと対応する単一の
 Rust API baselineを持たないため、公開製品のrelease gateではRust APIのSemVer差分を検査しません。
 
 ``platform-contract``は、WindowsとPOSIXのpath計算、実行file名、archive path、Windows DLL許可一覧、
@@ -257,20 +255,15 @@ macOS deployment target、VSIX metadataおよび一時ディレクトリ削除�
 ``cross-native-check``はWindows MSVCとmacOS ARM64向けに``cargo check``を実行します。この検査は型検査と
 条件付きcompileだけを対象とし、linkと実行は行いません。
 
-対象OSでローカル成果物を検証する場合は、次のtaskを使用します。既定では``target/distrib``を読み、
+対象OSでローカルのnative成果物を検証する場合は、次のtoolを使用します。既定では``target/distrib``を読み、
 現在のOSとarchitectureに対応するtargetを配布計画から選択します。別ディレクトリを使用する場合は
 ``NATIVE_ARTIFACT_DIR``、candidate外のmanifestを使用する場合は``NATIVE_MANIFEST``を指定します。
 
 [source,console]
 ----
-cargo make native-artifact-smoke
-cargo make installation-e2e
-cargo make textlint-plugin-reproducibility
-cargo make textlint-plugin-release-consumer-e2e
+node tools/local-native-check.mjs smoke cli
+node tools/local-native-check.mjs installation cli
 ----
-
-``textlint-plugin-reproducibility``は、通常のpackage検証後に同じcandidateをclean rebuildと比較する手動検査です。
-Pull Requestでは実行しません。
 
 このfixtureは、MSVCでのlink、Windowsの実際のfile lock、macOS SDKでのlink、Mach-Oの実行、
 quarantine属性および各OSでのprocess lifecycleを再現しません。これらは対象OSのnative runnerで

@@ -35,3 +35,4 @@ ADRは、複数の機能に影響する長期的な設計判断と、その理�
 * xref:0030-minimal-textlint-release-gates.adoc[ADR 0030: textlint境界と配布検査の最小化（Pull Request検査はADR 0031で改訂）]
 * xref:0031-path-independent-pull-request-gate.adoc[ADR 0031: 変更pathに依存しないPull Request検査]
 * xref:0032-same-run-release-publication.adoc[ADR 0032: 同一workflow runでのリリース公開]
+* xref:0033-make-task-boundary.adoc[ADR 0033: Make taskの外向き入口と実処理の分離]

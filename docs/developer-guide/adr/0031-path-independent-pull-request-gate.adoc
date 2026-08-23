@@ -1,5 +1,5 @@
 = ADR 0031: 変更pathに依存しないPull Request検査
-:status: accepted; candidate flow amended by ADR 0032
+:status: accepted; candidate flow amended by ADR 0032; task boundary amended by ADR 0033
 
 == 文脈
 

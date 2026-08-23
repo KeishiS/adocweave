@@ -48,7 +48,7 @@ jobs:
           persist-credentials: false
       - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
       - name: Complete source gate
-        run: nix develop .#ci -c cargo make source-gate
+        run: nix develop .#ci -c cargo make verify
 
   main-gate:
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'

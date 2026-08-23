@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import {
+  validateCargoMakeReferences,
+  validateBuildReuseContract,
   validateNoDirectSecretAccess,
   validateGateTaskContract,
   validatePinnedActions,
@@ -12,6 +14,32 @@ import {
 } from "./release-workflow-policy.mjs";
 
 const makefile = readFileSync(new URL("../Makefile.toml", import.meta.url), "utf8");
+
+test("利用者向け文書とmessageは開発者向けcargo-make taskだけを案内する", () => {
+  validateCargoMakeReferences({ "guide.adoc": "cargo make verify\ncargo make acceptance\ncargo make\n" });
+  assert.throws(
+    () => validateCargoMakeReferences({ "guide.adoc": "cargo make html5-check\n" }),
+    /開発者向けではない.*html5-check/,
+  );
+  assert.throws(
+    () => validateCargoMakeReferences({ "guide.adoc": "cargo make main-gate\n" }),
+    /開発者向けではない.*main-gate/,
+  );
+});
+
+test("textlint candidateはmain検査のCargo buildを再利用する", () => {
+  validateBuildReuseContract({
+    "tools/package-textlint-plugin-release.sh":
+      'target="${ADOCWEAVE_TEXTLINT_PLUGIN_CARGO_TARGET_DIRECTORY:-target/textlint-wasm-build}"',
+  });
+  assert.throws(
+    () => validateBuildReuseContract({
+      "tools/package-textlint-plugin-release.sh":
+        'target="${ADOCWEAVE_TEXTLINT_PLUGIN_CARGO_TARGET_DIRECTORY:-target/another-build}"',
+    }),
+    /同じCargo target directory/,
+  );
+});
 
 function mutateTask(source, name, mutate) {
   const heading = `[tasks.${name}]`;
@@ -362,7 +390,7 @@ function sourceAndCandidateWorkflow() {
         name: "verify",
         steps: [
           { if: "github.event_name == 'workflow_dispatch'", run: 'test "$GITHUB_REF" = refs/heads/main' },
-          { run: "nix develop .#ci -c cargo make source-gate" },
+          { run: "nix develop .#ci -c cargo make verify" },
         ],
       },
       "main-gate": {
@@ -431,7 +459,7 @@ test("Pull Requestはpath条件なしで標準source gateを1回だけ直接実�
     (workflow) => { workflow.jobs.source.uses = "./.github/workflows/quality.yml"; },
     (workflow) => { workflow.jobs.source.steps[1].run += " || true"; },
     (workflow) => { delete workflow.jobs.source.steps[0].if; },
-    (workflow) => { workflow.jobs["main-gate"].steps.push({ run: "cargo make source-gate" }); },
+    (workflow) => { workflow.jobs["main-gate"].steps.push({ run: "cargo make verify" }); },
   ]) {
     const workflow = sourceAndCandidateWorkflow();
     mutate(workflow);
@@ -524,12 +552,18 @@ test("sourceとmainの標準task境界をMakefileで固定する", () => {
   );
 
   for (const [name, mutate] of [
-    ["source dependency", (source) => mutateTask(source, "source-gate", (body) => body.replace('  "fmt-check",\n', ""))],
-    ["main dependency", (source) => mutateTask(source, "main-gate", (body) => body.replace('  "fuzz",\n', ""))],
+    ["source dependency", (source) => mutateTask(source, "verify", (body) => body.replace('  "fmt-check",\n', ""))],
+    ["main dependency", (source) => mutateTask(source, "main-gate", (body) => body.replace('  "fuzz-smoke",\n', ""))],
     ["main candidate", (source) => mutateTask(source, "main-gate", (body) => body.replace('  "nix-package-check",\n]', '  "nix-package-check",\n  "release-global-candidate",\n]'))],
-    ["verify alias", (source) => mutateTask(source, "verify", (body) => body.replace('alias = "source-gate"', 'alias = "main-gate"'))],
-    ["acceptance", (source) => mutateTask(source, "acceptance", (body) => body.replace('  "source-gate",\n', ""))],
-    ["release-check", (source) => mutateTask(source, "release-check", (body) => body.replace('  "main-gate",\n', ""))],
+    ["verify alias", (source) => mutateTask(source, "verify", (body) => `${body}\nalias = "main-gate"\n`)],
+    ["acceptance", (source) => mutateTask(source, "acceptance", (body) => body.replace('  "main-gate",\n', ""))],
+    ["release-check", (source) => mutateTask(source, "release-check", (body) => body.replace('  "security-audit",\n', ""))],
+    ["public internal task", (source) => mutateTask(source, "clippy", (body) => body.replace("private = true\n", ""))],
+    ["compatibility alias", (source) => `${source}\n[tasks.old-verify]\nalias = "verify"\n`],
+    ["archive implementation", (source) => mutateTask(source, "acceptance", (body) => `${body}\nscript = '''\ntar -tf candidate.tar.xz\n'''\n`)],
+    ["duplicated wasm compile", (source) => mutateTask(source, "build-wasm", (body) => `${body}\n# cargo build -p adocweave-wasm --release --target wasm32-unknown-unknown\n`)],
+    ["duplicated workspace test", (source) => mutateTask(source, "test", (body) => `${body}\n# cargo test --workspace --all-features\n`)],
+    ["three VSIX builds", (source) => mutateTask(source, "test-vscode-release-determinism", (body) => `${body}\nnpm run package --prefix editors/vscode\n`)],
   ]) {
     assert.throws(
       () => validateGateTaskContract(mutate(makefile)),

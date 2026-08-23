@@ -10,7 +10,8 @@ const lock = JSON.parse(
 const catalog = JSON.parse(
   readFileSync(new URL("../security/textlint-build-licenses.json", import.meta.url), "utf8")
 );
-const governance = readFileSync(new URL("dependency-governance.sh", import.meta.url), "utf8");
+const governance = readFileSync(new URL("security-audit.sh", import.meta.url), "utf8");
+const makefile = readFileSync(new URL("../Makefile.toml", import.meta.url), "utf8");
 
 test("textlint依存の取得元とintegrityを固定する", () => {
   const violations = Object.entries(lock.packages)
@@ -31,5 +32,5 @@ test("textlint依存のライセンス目録が実際と一致する", () => {
 
 test("textlintの開発用依存を監査する", () => {
   assert.match(governance, /^npm audit --include=dev --prefix tools\/textlint$/m);
-  assert.match(governance, /^node tools\/verify-textlint-dependencies\.mjs$/m);
+  assert.match(makefile, /^node tools\/verify-textlint-dependencies\.mjs$/m);
 });
