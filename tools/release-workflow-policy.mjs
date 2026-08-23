@@ -162,7 +162,7 @@ export function validateProductReleaseRouting(workflows) {
   }
   for (const [jobName, dependency] of [
     ["publish-native", "installation-e2e"],
-    ["publish-global", "verify-global-candidate"],
+    ["publish-global", "build-global"],
   ]) {
     const job = release.jobs?.[jobName];
     if (job?.uses !== "./.github/workflows/release-publish.yml" ||
@@ -192,7 +192,8 @@ export function validateProductReleaseRouting(workflows) {
   const download = publish.jobs?.publish?.steps?.find(
     (step) => typeof step.uses === "string" && step.uses.includes("actions/download-artifact"),
   );
-  if (download?.with?.name !== "release-candidate-${{ inputs.product }}") {
+  if (download?.with?.pattern !== "release-candidate-${{ inputs.product }}*" ||
+      download.with?.["merge-multiple"] !== true) {
     fail("release publish must download only the selected product candidate");
   }
   const verification = publish.jobs?.publish?.steps?.find(
@@ -274,6 +275,155 @@ export function validateProductReleaseRouting(workflows) {
   const source = JSON.stringify(workflows);
   for (const forbidden of ["candidate_sha", "run-id", "github-token", "actions/workflows/"]) {
     if (source.includes(forbidden)) fail(`release workflows must not use cross-run input: ${forbidden}`);
+  }
+}
+
+function artifactActionSteps(job, action) {
+  return (job?.steps ?? []).filter(
+    (step) => typeof step.uses === "string" && step.uses.startsWith(`actions/${action}-artifact@`),
+  );
+}
+
+function pathEntries(value) {
+  return typeof value === "string" ? value.trim().split(/\s+/).filter(Boolean).sort() : [];
+}
+
+function shellCommands(value) {
+  return typeof value === "string"
+    ? value.split("\n").map((line) => line.trim()).filter((line) => line && !line.startsWith("#"))
+    : [];
+}
+
+function hasExactShellCommands(step, expected) {
+  return JSON.stringify(shellCommands(step?.run)) === JSON.stringify(expected);
+}
+
+export function validateCandidateArtifactFlow(workflows) {
+  const release = workflows["release.yml"];
+  const smoke = workflows["native-artifact-smoke.yml"];
+  const publish = workflows["release-publish.yml"];
+  if (!release || !smoke || !publish) fail("release candidate artifact workflows are required");
+  const artifactReferences = [release, smoke, publish].flatMap((workflow) =>
+    Object.values(workflow.jobs ?? {}).flatMap((job) =>
+      [...artifactActionSteps(job, "upload"), ...artifactActionSteps(job, "download")]
+        .flatMap((step) => [step.with?.name, step.with?.pattern].filter(Boolean))
+    )
+  );
+  if (artifactReferences.some((reference) => reference.includes("artifacts-build-"))) {
+    fail("release archiveを一時artifact名でuploadして再uploadしないでください");
+  }
+
+  const jobs = release.jobs ?? {};
+  const uploadLocations = [
+    ["release.yml", release],
+    ["native-artifact-smoke.yml", smoke],
+    ["release-publish.yml", publish],
+  ].flatMap(([workflowName, workflow]) =>
+    Object.entries(workflow.jobs ?? {}).flatMap(([jobName, job]) =>
+      artifactActionSteps(job, "upload").map((step) => ({ jobName, step, workflowName }))
+    )
+  );
+  const expectedUploadLocations = [
+    "release.yml job build-global",
+    "release.yml job build-native",
+    "release.yml job finalize-native-candidate",
+  ];
+  const actualUploadLocations = uploadLocations
+    .map(({ jobName, workflowName }) => `${workflowName} job ${jobName}`)
+    .sort();
+  if (JSON.stringify(actualUploadLocations) !== JSON.stringify(expectedUploadLocations) ||
+      uploadLocations.some(({ step }) => String(step.with?.overwrite ?? "false").toLowerCase() === "true")) {
+    fail("candidate fileのuploadは三つの生成箇所で各一度だけ実行し、上書きしないでください");
+  }
+
+  const nativeUpload = artifactActionSteps(jobs["build-native"], "upload")[0]?.with;
+  if (nativeUpload?.name !== "release-candidate-${{ matrix.product }}-asset-${{ matrix.target }}" ||
+      nativeUpload.path !== "target/distrib/adocweave-${{ matrix.product }}-${{ matrix.target }}.zip" ||
+      nativeUpload["retention-days"] !== 30) {
+    fail("native archiveはbuild時にtarget別candidate artifactとして一度だけuploadしてください");
+  }
+  const smokeDownloads = artifactActionSteps(smoke.jobs?.smoke, "download");
+  if (smokeDownloads.length !== 1 ||
+      smokeDownloads[0].with?.name !== "release-candidate-${{ matrix.product }}-asset-${{ matrix.target }}" ||
+      smokeDownloads[0].with?.path !== "target/distrib") {
+    fail("native smokeはbuild済みのtarget別candidate artifactを直接検査してください");
+  }
+
+  const finalizer = jobs["finalize-native-candidate"];
+  const finalizerDownloads = artifactActionSteps(finalizer, "download");
+  const finalizerUpload = artifactActionSteps(finalizer, "upload")[0];
+  const finalizerSteps = finalizer?.steps ?? [];
+  const finalizerDownloadIndex = finalizerSteps.indexOf(finalizerDownloads[0]);
+  const finalizerCommands = [
+    'node tools/release-metadata.mjs generate "$PRODUCT" artifacts "$GITHUB_SHA"',
+    'node tools/release-metadata.mjs verify "$PRODUCT" artifacts "$GITHUB_SHA"',
+    'node tools/product-release.mjs --verify-candidate "$PRODUCT" artifacts',
+  ];
+  const finalizerVerificationIndex = finalizerSteps.findIndex((step) =>
+    hasExactShellCommands(step, finalizerCommands)
+  );
+  const finalizerUploadIndex = finalizerSteps.indexOf(finalizerUpload);
+  if (!needs(finalizer).includes("native-smoke") || finalizerDownloads.length !== 1 ||
+      finalizerDownloads[0].with?.pattern !== "release-candidate-${{ matrix.product }}-asset-*" ||
+      finalizerDownloads[0].with?.path !== "artifacts" ||
+      finalizerDownloads[0].with?.["merge-multiple"] !== true ||
+      finalizerDownloadIndex < 0 || finalizerVerificationIndex <= finalizerDownloadIndex ||
+      finalizerUploadIndex <= finalizerVerificationIndex ||
+      finalizerUpload?.with?.name !== "release-candidate-${{ matrix.product }}-metadata" ||
+      finalizerUpload?.with?.["retention-days"] !== 30 ||
+      JSON.stringify(pathEntries(finalizerUpload?.with?.path)) !== JSON.stringify([
+        "artifacts/adocweave-dist-manifest.json",
+        "artifacts/sha256.sum",
+      ])) {
+    fail("native candidateはarchiveを再uploadせず、検証後のmetadataだけを一度uploadしてください");
+  }
+
+  const global = jobs["build-global"];
+  const globalSteps = global?.steps ?? [];
+  const globalBuild = globalSteps.findIndex(
+    (step) => step.run?.trim() === "nix develop .#ci-browser -c cargo make test-global-product-candidate",
+  );
+  const globalCommands = [
+    'node tools/release-metadata.mjs generate "$PRODUCT" target/distrib "$GITHUB_SHA"',
+    'node tools/release-metadata.mjs verify "$PRODUCT" target/distrib "$GITHUB_SHA"',
+    'node tools/product-release.mjs --verify-candidate "$PRODUCT" target/distrib',
+  ];
+  const globalMetadata = globalSteps.findIndex(
+    (step) => hasExactShellCommands(step, globalCommands),
+  );
+  const globalUploadIndex = globalSteps.findIndex(
+    (step) => typeof step.uses === "string" && step.uses.startsWith("actions/upload-artifact@"),
+  );
+  const globalUpload = globalSteps[globalUploadIndex]?.with;
+  if (globalBuild < 0 || globalMetadata <= globalBuild || globalUploadIndex <= globalMetadata ||
+      globalUpload?.name !== "release-candidate-${{ matrix.product }}" ||
+      globalUpload?.path !== "target/distrib/*" || globalUpload?.["retention-days"] !== 30) {
+    fail("global candidateはbuild、検証、metadata生成後に完成fileを一度だけuploadしてください");
+  }
+
+  const installation = jobs["installation-e2e"];
+  const installationSteps = installation?.steps ?? [];
+  const installationDownloads = artifactActionSteps(installation, "download");
+  const installationRun = installationSteps.findIndex(
+    (step) => step.run?.includes("release-installation-e2e.mjs"),
+  );
+  const installationNames = installationDownloads.map((step) => step.with?.name).sort();
+  if (!needs(installation).includes("finalize-native-candidate") ||
+      JSON.stringify(installationNames) !== JSON.stringify([
+        "release-candidate-${{ matrix.product }}-asset-${{ matrix.target }}",
+        "release-candidate-${{ matrix.product }}-metadata",
+      ].sort()) ||
+      installationDownloads.some((step) => step.with?.path !== "artifacts") ||
+      installationRun < 0 || installationDownloads.some((step) => installationSteps.indexOf(step) > installationRun)) {
+    fail("installation E2Eはtarget別archiveと検証済みmetadataを直接使用してください");
+  }
+
+  const publishDownload = artifactActionSteps(publish.jobs?.publish, "download");
+  if (publishDownload.length !== 1 ||
+      publishDownload[0].with?.pattern !== "release-candidate-${{ inputs.product }}*" ||
+      publishDownload[0].with?.path !== "artifacts" ||
+      publishDownload[0].with?.["merge-multiple"] !== true) {
+    fail("publicationは選択製品の一度だけuploadしたcandidate file群を結合してください");
   }
 }
 
@@ -616,8 +766,7 @@ export function validateStandardSourceAndCandidateGates(workflows, sources = {})
     "build-native",
     "native-smoke",
     "build-global",
-    "verify-native-candidate",
-    "verify-global-candidate",
+    "finalize-native-candidate",
     "installation-e2e",
     "publish-native",
     "publish-global",
@@ -635,10 +784,12 @@ export function validateStandardSourceAndCandidateGates(workflows, sources = {})
       fail(`成果物job ${jobName}はmain candidate経路だけで実行してください`);
     }
   }
-  if (!hasOnlyRun(
-    jobs["build-global"],
-    "nix develop .#ci-browser -c cargo make test-global-product-candidate",
-  )) {
+  const globalCandidateCommand = "nix develop .#ci-browser -c cargo make test-global-product-candidate";
+  const globalCandidateRuns = (jobs["build-global"]?.steps ?? [])
+    .map((step) => step.run?.trim())
+    .filter((run) => run === globalCandidateCommand);
+  if (globalCandidateRuns.length !== 1 ||
+      occurrences(jobRuns(jobs["build-global"]), globalCandidateCommand) !== 1) {
     fail("build-globalは製品別の完成candidate taskを1回実行してください");
   }
 }
@@ -663,6 +814,7 @@ export function validateReleaseWorkflowPolicy({ makefile = read("Makefile.toml")
   validateWritePermissionGrants(workflows);
   validateNoDirectSecretAccess(sources, workflows);
   validateProductReleaseRouting(workflows);
+  validateCandidateArtifactFlow(workflows);
   validateStandardSourceAndCandidateGates(workflows, sources);
   validateGateTaskContract(makefile);
   validateCargoMakeReferences(references);

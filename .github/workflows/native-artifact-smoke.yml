@@ -30,7 +30,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: artifacts-build-${{ matrix.product }}-${{ matrix.target }}
+          name: release-candidate-${{ matrix.product }}-asset-${{ matrix.target }}
           path: target/distrib
       # This job also runs on macOS and Windows runners, so it cannot use the Nix
       # devShell. Writing the Node.js version here would split it from the release

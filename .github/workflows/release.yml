@@ -189,9 +189,9 @@ jobs:
             Out-File -Encoding utf8 dist-manifest.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: artifacts-build-${{ matrix.product }}-${{ matrix.target }}
+          name: release-candidate-${{ matrix.product }}-asset-${{ matrix.target }}
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
           path: target/distrib/adocweave-${{ matrix.product }}-${{ matrix.target }}.zip
 
   native-smoke:
@@ -218,18 +218,21 @@ jobs:
         env:
           PRODUCT: ${{ matrix.product }}
         run: nix develop .#ci-browser -c cargo make test-global-product-candidate
+      - name: Complete candidate metadata generation and verification
+        env:
+          PRODUCT: ${{ matrix.product }}
+        run: |
+          node tools/release-metadata.mjs generate "$PRODUCT" target/distrib "$GITHUB_SHA"
+          node tools/release-metadata.mjs verify "$PRODUCT" target/distrib "$GITHUB_SHA"
+          node tools/product-release.mjs --verify-candidate "$PRODUCT" target/distrib
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: artifacts-build-${{ matrix.artifact_key }}
+          name: release-candidate-${{ matrix.product }}
           if-no-files-found: error
-          retention-days: 7
-          path: |
-            target/distrib/adocweave-browser-*.tar.xz
-            target/distrib/adocweave-textlint-plugin-asciidoc-*.tgz
-            target/distrib/adocweave-zed-*.tar.xz
-            target/distrib/adocweave-vscode-*.vsix
+          retention-days: 30
+          path: target/distrib/*
 
-  verify-native-candidate:
+  finalize-native-candidate:
     if: needs.candidate-plan.outputs.native_required == 'true'
     needs: [candidate-plan, native-smoke]
     strategy:
@@ -243,7 +246,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          pattern: artifacts-build-${{ matrix.artifact_key }}*
+          pattern: release-candidate-${{ matrix.product }}-asset-*
           path: artifacts
           merge-multiple: true
       - name: Complete candidate metadata generation and verification
@@ -255,44 +258,16 @@ jobs:
           node tools/product-release.mjs --verify-candidate "$PRODUCT" artifacts
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: release-candidate-${{ matrix.product }}
+          name: release-candidate-${{ matrix.product }}-metadata
           if-no-files-found: error
           retention-days: 30
-          path: artifacts/*
-
-  verify-global-candidate:
-    if: needs.candidate-plan.outputs.global_required == 'true'
-    needs: [candidate-plan, build-global]
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.candidate-plan.outputs.script_matrix) }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: artifacts-build-${{ matrix.artifact_key }}
-          path: artifacts
-      - name: Complete candidate metadata generation and verification
-        env:
-          PRODUCT: ${{ matrix.product }}
-        run: |
-          node tools/release-metadata.mjs generate "$PRODUCT" artifacts "$GITHUB_SHA"
-          node tools/release-metadata.mjs verify "$PRODUCT" artifacts "$GITHUB_SHA"
-          node tools/product-release.mjs --verify-candidate "$PRODUCT" artifacts
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: release-candidate-${{ matrix.product }}
-          if-no-files-found: error
-          retention-days: 30
-          path: artifacts/*
+          path: |
+            artifacts/adocweave-dist-manifest.json
+            artifacts/sha256.sum
 
   installation-e2e:
     if: needs.candidate-plan.outputs.native_required == 'true'
-    needs: [candidate-plan, verify-native-candidate]
+    needs: [candidate-plan, finalize-native-candidate]
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.candidate-plan.outputs.native_matrix) }}
@@ -306,7 +281,11 @@ jobs:
         uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: release-candidate-${{ matrix.product }}
+          name: release-candidate-${{ matrix.product }}-asset-${{ matrix.target }}
+          path: artifacts
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: release-candidate-${{ matrix.product }}-metadata
           path: artifacts
       - name: Product installation and complete removal
         run: >-
@@ -328,7 +307,7 @@ jobs:
 
   publish-global:
     if: needs.candidate-plan.outputs.global_required == 'true'
-    needs: [candidate-plan, verify-global-candidate]
+    needs: [candidate-plan, build-global]
     uses: ./.github/workflows/release-publish.yml
     with:
       product: ${{ needs.candidate-plan.outputs.product }}
