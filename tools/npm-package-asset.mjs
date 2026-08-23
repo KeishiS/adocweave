@@ -47,7 +47,9 @@ export function resolvePackageAsset(productId, directory, root = ROOT) {
   }
   return Object.freeze({
     ...product,
-    path: join(directory, matches[0]),
+    // npmは``foo/bar.tgz``の形をGitHubの``owner/repo``短縮記法として解釈し、
+    // localのfileではなくremoteを取りに行く。絶対pathで渡してこれを避ける。
+    path: resolve(join(directory, matches[0])),
     version: pattern.exec(matches[0])[1]
   });
 }
@@ -74,6 +76,30 @@ export async function verifyPublishedPackage(asset, fetchJson = defaultFetchJson
   return Object.freeze({ packageName: asset.packageName, version: asset.version });
 }
 
+// npmのTrusted Publishingが要求する下限。満たさないnpmは、OIDCを使わず
+// 資格情報を探しに行くため、原因の分かりにくい認証失敗になる。
+export const TRUSTED_PUBLISHING_MINIMUM_NPM = "11.5.1";
+
+export function assertTrustedPublishingNpm(
+  version,
+  minimum = TRUSTED_PUBLISHING_MINIMUM_NPM
+) {
+  const normalized = version.trim();
+  if (!/^\d+\.\d+\.\d+/u.test(normalized)) {
+    throw new Error(`npmのversionを解釈できません: ${version}`);
+  }
+  const order = (value) => value.split("-")[0].split(".").map(Number);
+  const [actual, expected] = [order(normalized), order(minimum)];
+  for (let index = 0; index < 3; index += 1) {
+    if (actual[index] === expected[index]) continue;
+    if (actual[index] > expected[index]) return normalized;
+    throw new Error(
+      `Trusted Publishingにはnpm ${minimum}以上が必要です: ${normalized}`
+    );
+  }
+  return normalized;
+}
+
 async function defaultFetchJson(url) {
   const response = await fetch(url, { headers: { accept: "application/json" } });
   if (!response.ok) throw new Error(`npm registryへの問い合わせに失敗しました: ${response.status}`);
@@ -82,6 +108,10 @@ async function defaultFetchJson(url) {
 
 async function main() {
   const [command, productId, target] = process.argv.slice(2);
+  if (command === "--require-trusted-publishing" && productId) {
+    assertTrustedPublishingNpm(productId);
+    return;
+  }
   if (command === "resolve" && productId && target) {
     process.stdout.write(`${resolvePackageAsset(productId, target).path}\n`);
     return;
@@ -92,7 +122,10 @@ async function main() {
     process.stdout.write(`Published ${published.packageName} ${published.version} to npm\n`);
     return;
   }
-  throw new Error("使用方法：node tools/npm-package-asset.mjs resolve|verify-published PRODUCT DIRECTORY");
+  throw new Error(
+    "使用方法：node tools/npm-package-asset.mjs resolve|verify-published PRODUCT DIRECTORY" +
+    " | --require-trusted-publishing NPM_VERSION"
+  );
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
