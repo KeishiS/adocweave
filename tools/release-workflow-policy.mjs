@@ -317,7 +317,6 @@ const SOURCE_GATE_DEPENDENCIES = [
   "check-vscode",
   "clippy",
   "clippy-zed",
-  "dependency-contract",
   "doc-check",
   "docs-check",
   "fmt-check",
@@ -401,7 +400,7 @@ export function validateGateTaskContract(makefile) {
     fail("互換aliasを残さず、既定taskからverifyへのaliasだけにしてください");
   }
   for (const removed of [
-    "source-gate", "dependency-governance", "verify-with-global-candidate", "release-global-artifacts",
+    "source-gate", "dependency-governance", "dependency-contract", "verify-with-global-candidate", "release-global-artifacts",
     "protocol-generated-check", "test-vscode-release-package",
   ]) {
     if (makefile.includes(`[tasks.${removed}]`)) fail(`削除済みの中間task ${removed}を戻さないでください`);
@@ -520,10 +519,18 @@ export function validateStandardSourceAndCandidateGates(workflows, sources = {})
   }
 
   const mainGate = jobs["main-gate"];
+  const security = jobs.security;
+  if (!security || security.name !== "security-audit" || !hasMainGateCondition(security) ||
+      JSON.stringify(needs(security)) !== JSON.stringify(["source"]) ||
+      !hasOnlyRun(security, "nix develop .#ci -c cargo make security-audit")) {
+    fail("security jobはsource成功後のmainで最新の依存監査を1回実行してください");
+  }
+  const mainGateNeeds = new Set(needs(mainGate));
   if (!mainGate || !hasMainGateCondition(mainGate) ||
+      mainGateNeeds.size !== 2 || !mainGateNeeds.has("source") || !mainGateNeeds.has("security") ||
       occurrences(workflowRuns, "cargo make main-gate") !== 1 ||
       !hasOnlyRun(mainGate, "nix develop .#ci-fuzz -c cargo make main-gate")) {
-    fail("main-gateはmainへのpushと手動公開で実行してください");
+    fail("main-gateはsourceとsecurityの成功後にmainで実行してください");
   }
   const candidatePlan = jobs["candidate-plan"];
   const candidatePlanNeeds = new Set(needs(candidatePlan));

@@ -393,9 +393,15 @@ function sourceAndCandidateWorkflow() {
           { run: "nix develop .#ci -c cargo make verify" },
         ],
       },
-      "main-gate": {
+      security: {
+        name: "security-audit",
         if: "(github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'",
         needs: ["source"],
+        steps: [{ run: "nix develop .#ci -c cargo make security-audit" }],
+      },
+      "main-gate": {
+        if: "(github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'",
+        needs: ["source", "security"],
         steps: [{ run: "nix develop .#ci-fuzz -c cargo make main-gate" }],
       },
       "candidate-plan": {
@@ -507,6 +513,9 @@ test("手動公開のcandidate planはsourceとmain gateの成功後に選択製
     (workflow) => { workflow.jobs["main-gate"].if = `failure() && ${workflow.jobs["main-gate"].if}`; },
     (workflow) => { workflow.jobs["main-gate"].steps = []; },
     (workflow) => { workflow.jobs["main-gate"].steps[0].run += " || true"; },
+    (workflow) => { workflow.jobs["main-gate"].needs = ["source"]; },
+    (workflow) => { workflow.jobs.security.steps[0].run += " --offline"; },
+    (workflow) => { workflow.jobs.security.if = "github.event_name == 'pull_request'"; },
     (workflow) => { workflow.jobs.source.steps.push({ run: "cargo make main-gate" }); },
     (workflow) => { workflow.jobs["candidate-plan"].if = "failure()"; },
   ]) {

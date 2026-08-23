@@ -24,7 +24,6 @@ let
   commonPackages = with pkgs; [
     actionlint
     cargo-dist
-    cargo-audit
     cargo-deny
     cargo-make
     curl

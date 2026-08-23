@@ -3,6 +3,8 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
+import { vscodeRuntimePackages } from "./verify-vscode-dependencies.mjs";
+
 const root = fileURLToPath(new URL("..", import.meta.url));
 
 function fail(message) {
@@ -80,18 +82,6 @@ export function cargoTreePackageKeys(rootPackageName, target) {
   );
 }
 
-export function npmRuntimePackages(packageManifest, packageLock) {
-  const dependencies = Object.keys(packageManifest.dependencies ?? {});
-  return dependencies
-    .map((name) => {
-      const entry = packageLock.packages?.[`node_modules/${name}`];
-      if (!entry?.version) fail(`${name} has no locked npm package`);
-      if (!entry.license) fail(`${name} ${entry.version} has no license metadata`);
-      return { name, version: entry.version, license: entry.license };
-    })
-    .sort((left, right) => packageKey(left).localeCompare(packageKey(right)));
-}
-
 function groupedRows(packages) {
   const grouped = new Map();
   for (const pkg of packages) {
@@ -156,6 +146,17 @@ ${table(packages)}
 `;
 }
 
+export function renderVscodeThirdPartyNotices(packages) {
+  return `= Third-party notices
+
+このファイルには、VS Code拡張へ同梱するnpm packageのSPDX licenseとversionを記載します。各licenseの全文と
+著作権表示は、packageおよび記載されたSPDX licenseを参照してください。この表はAdocWeave自身の
+\`MIT OR Apache-2.0\` licenseを置き換えません。
+
+${table(packages, "npm packageとversion")}
+`;
+}
+
 function cargoMetadata(args) {
   const result = spawnSync("cargo", ["metadata", "--locked", "--format-version=1", ...args], {
     cwd: root,
@@ -170,7 +171,7 @@ export function generateThirdPartyNotices(outputPath) {
   const zedMetadata = cargoMetadata(["--manifest-path", "editors/zed/Cargo.toml"]);
   const vscodeManifest = JSON.parse(readFileSync(new URL("../editors/vscode/package.json", import.meta.url), "utf8"));
   const vscodeLock = JSON.parse(readFileSync(new URL("../editors/vscode/package-lock.json", import.meta.url), "utf8"));
-  const vscodePackages = npmRuntimePackages(vscodeManifest, vscodeLock);
+  const vscodePackages = vscodeRuntimePackages(vscodeManifest, vscodeLock);
   const output = resolve(root, outputPath);
   mkdirSync(dirname(output), { recursive: true });
   writeFileSync(output, renderThirdPartyNotices(rootMetadata, zedMetadata, vscodePackages));
@@ -188,16 +189,27 @@ export function generateTextlintPluginNotices(outputPath) {
   );
 }
 
+export function generateVscodeThirdPartyNotices(outputPath) {
+  const manifest = JSON.parse(readFileSync(new URL("../editors/vscode/package.json", import.meta.url), "utf8"));
+  const lock = JSON.parse(readFileSync(new URL("../editors/vscode/package-lock.json", import.meta.url), "utf8"));
+  const output = resolve(root, outputPath);
+  mkdirSync(dirname(output), { recursive: true });
+  writeFileSync(output, renderVscodeThirdPartyNotices(vscodeRuntimePackages(manifest, lock)));
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
   const textlintPlugin = args[0] === "--textlint-plugin";
-  const outputPath = textlintPlugin ? args[1] : args[0];
-  if (!outputPath || args.length !== (textlintPlugin ? 2 : 1)) {
-    process.stderr.write("usage: node tools/generate-third-party-notices.mjs [--textlint-plugin] OUTPUT_PATH\n");
+  const vscode = args[0] === "--vscode";
+  const specialized = textlintPlugin || vscode;
+  const outputPath = specialized ? args[1] : args[0];
+  if (!outputPath || args.length !== (specialized ? 2 : 1)) {
+    process.stderr.write("usage: node tools/generate-third-party-notices.mjs [--textlint-plugin|--vscode] OUTPUT_PATH\n");
     process.exit(2);
   }
   try {
     if (textlintPlugin) generateTextlintPluginNotices(outputPath);
+    else if (vscode) generateVscodeThirdPartyNotices(outputPath);
     else generateThirdPartyNotices(outputPath);
   } catch (error) {
     process.stderr.write(`${error.message}\n`);

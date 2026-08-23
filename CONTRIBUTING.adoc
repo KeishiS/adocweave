@@ -13,7 +13,7 @@ cargo make verify
 ----
 
 ``cargo make verify``はPull Request用の標準検査であり、``cargo make``の既定taskです。書式、lint、test、
-生成fileの差分、browserおよびeditor adapter、HTML5標準適合性、人が書いた文書および静的な依存関係境界を
+生成fileの差分、browserおよびeditor adapter、HTML5標準適合性、人が書いた文書および配布metadataを
 まとめて検査します。
 
 次のtask名は、並行して開発するMarginalis、Renkanと共通の外向きの名前です。repositoryが変わっても
@@ -24,7 +24,7 @@ cargo make verify
 |task |意味
 
 |``verify``
-|ソース、文書、adapterおよび静的な依存関係境界の検査（既定task）
+|ソース、文書、adapterおよび配布metadataの検査（既定task）
 
 |``security-audit``
 |依存関係の出所、license、advisoryおよび例外の監査
@@ -148,13 +148,13 @@ remote名、ブランチ名、mergeの方式および必須checkの構成は、M
 [#dependencies]
 == 依存関係
 
-依存境界、許可するlicenseと取得元、および一時的な例外は``security/``以下の機械可読な設定を
-基準とします。文書へパッケージ一覧やバージョンを転記しません。
+依存関係は各manifestとlockfileを基準とし、文書や別の目録へパッケージ一覧とバージョンを転記しません。
+Rustの許可licenseと取得元は``deny.toml``、VS Code拡張の配布runtimeに許可するlicenseとnpm registryは
+``tools/verify-vscode-dependencies.mjs``で定義します。
 
 依存関係を更新するときは次を確認します。
 
-. 対象のmanifestとlockfileだけを更新し、無関係な依存境界の変更を分離します。
-. RustSec Advisory Databaseの固定revisionを更新し、新しいadvisoryを確認します。
+. 対象のmanifestとlockfileだけを更新し、無関係な依存関係の変更を分離します。
 . ``cargo make security-audit``を実行します。
 . license、取得元、生成されるnotice、SBOMおよびbrowser sizeの差分を確認します。
 . 通常の品質検査を通してからpull requestを統合します。
@@ -163,17 +163,18 @@ remote名、ブランチ名、mergeの方式および必須checkの構成は、M
 一覧を保守しても実害を防げないためです。重複が問題になるのは成果物の大きさとbuild時間であり、
 これらはbrowser archiveとraw WebAssemblyの上限、VSIXのsize上限および``wasm-size``が検査します。
 
-VS Code拡張の依存は、配布物へ同梱するものと、CIおよびVSIX生成で実行するものを別の方針で扱います。
-どちらも取得元をnpm registryに限り、sha512のintegrityを求めます。同梱する依存には利用者に対する
-license上の義務があるため、許可するlicenseを限定します。ビルド用の依存は利用者の環境で動かないため
-同梱する依存より広い範囲を許し、許可するlicenseを
-link:security/vscode-build-licenses.json[`security/vscode-build-licenses.json`]へ記録します。
-一覧に無いlicenseが現れた場合だけ検査を失敗させます。使われなくなったlicenseを一覧から消す必要は
-ありません。
-脆弱性は、同梱する依存だけを対象とする監査と、ビルド用を含む全体の監査の両方を実行します。
+``security-audit``は、``cargo-deny``が実行時に取得する最新のRustSec Advisory Databaseを使い、root workspaceと
+Zed拡張のadvisory、licenseおよび取得元を検査します。npmはVS Code拡張の配布runtime treeだけを標準の
+``npm audit --omit=dev``で検査します。そのruntime treeでは、推移依存を含めて取得元をnpm registryに限定し、
+利用者への通知が必要なlicenseを許可した集合へ限定します。Browserとtextlint用パッケージはruntime npm依存を
+持ちません。
 
-Advisoryを一時的に除外する場合は、RustSec advisory ID、担当者、影響しないと判断した理由、将来の期限および
-追跡Issueを記録します。包括的な除外や無期限の例外は追加しません。期限切れの例外は検査を失敗させます。
+ビルド専用のnpm依存は配布runtimeの脆弱性・license検査へ含めません。lockfileに固定し、``npm ci --ignore-scripts``が
+取得時にintegrityを検証します。観測したビルド依存のlicense集合を別の目録として保守しません。
+
+Advisoryを一時的に除外する場合だけ``deny.toml``へ構造化したignoreを追加し、``reason``を
+``理由: 説明; 期限: YYYY-MM-DD; Issue: https://github.com/KeishiS/adocweave/issues/番号``の形で記載します。
+空の例外一覧、包括的な除外および無期限の例外は置きません。
 
 Dependabotのpull requestでも通常のreviewと必須検査を省略しません。Cargo更新ではlockfile、license、取得元、
 advisoryおよびRust stableへの影響を、GitHub Actions更新では完全なcommit SHAへの固定とRelease Notesを
@@ -221,7 +222,7 @@ pull requestを作成するときは、link:.github/pull_request_template.md[Pul
 変更の目的、主な変更点、実行した検証を簡潔に記載し、未実施の検証がある場合は理由を記載してください。
 
 CIの必須checkは``verify``の一つだけです。すべてのPull Requestで変更pathにかかわらず同じsource gateを実行し、
-書式、lint、test、生成fileの差分、人が書いた文書および静的な依存関係境界を検査します。成果物の構築有無を
+書式、lint、test、生成fileの差分、人が書いた文書および配布metadataを検査します。成果物の構築有無を
 pathから判定せず、実行しないjobの``skipped``を別のjobで照合しません。失敗した場合は、Nix開発環境で
 ``cargo make verify``を再実行し、設定の基準である``.github/workflows``と``Makefile.toml``を確認してください。
 

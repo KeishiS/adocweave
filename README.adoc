@@ -87,7 +87,7 @@ nix develop
 cargo make verify
 ----
 
-``cargo make verify``はPull Request用の標準検査です。書式、lint、test、生成fileの差分、依存関係、
+``cargo make verify``はPull Request用の標準検査です。書式、lint、test、生成fileの差分、配布metadata、
 ブラウザーとエディターのadapter、HTML5標準適合性および文書を検査します。fuzz、Nixパッケージ、
 cross targetおよび実環境を使う統合検査は、``main``へ統合したcommitに対して実行します。
 

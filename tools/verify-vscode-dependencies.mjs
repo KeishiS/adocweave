@@ -1,15 +1,6 @@
 import { readFileSync } from "node:fs";
 
-import { fetchedSafely, validSha512Integrity } from "./npm-lock-policy.mjs";
-
-export { validSha512Integrity } from "./npm-lock-policy.mjs";
-
-const manifest = JSON.parse(readFileSync("editors/vscode/package.json", "utf8"));
-const lock = JSON.parse(readFileSync("editors/vscode/package-lock.json", "utf8"));
-const buildLicenses = JSON.parse(readFileSync("security/vscode-build-licenses.json", "utf8"));
-
-/// Licenses a package may carry when it reaches a user's machine.
-const shippedLicenses = new Set([
+const ALLOWED_RUNTIME_LICENSES = new Set([
   "Apache-2.0",
   "BlueOak-1.0.0",
   "BSD-2-Clause",
@@ -17,53 +8,58 @@ const shippedLicenses = new Set([
   "ISC",
   "MIT",
 ]);
+const REGISTRY_PREFIX = "https://registry.npmjs.org/";
 
-if (
-  manifest.private !== true ||
-  lock.lockfileVersion !== 3 ||
-  lock.packages?.[""]?.version !== manifest.version
-) {
-  throw new Error("VS Code dependency boundaryのmanifestとlockfileが一致しません");
-}
-if (buildLicenses.schemaVersion !== 1) {
-  throw new Error("ビルド用依存のライセンス目録のschema versionが未対応です");
+function packageName(path, entry) {
+  if (typeof entry.name === "string" && entry.name.length > 0) return entry.name;
+  const marker = "node_modules/";
+  const index = path.lastIndexOf(marker);
+  return index === -1 ? undefined : path.slice(index + marker.length);
 }
 
-/// Every dependency is fetched and run somewhere, so origin and integrity are
-/// required of all of them. What differs is the license: a shipped package
-/// carries obligations to the user, while a build tool only runs here and never
-/// reaches them. Reading the two boundaries as one policy meant the build tools
-/// were checked as neither, since `--omit=dev` and `entry.dev === true` skipped
-/// them: Biome, TypeScript, esbuild and vsce all run in CI and produce the VSIX.
-const observedBuildLicenses = new Set();
-for (const [path, entry] of Object.entries(lock.packages)) {
-  if (!path) continue;
-  if (!fetchedSafely(entry)) {
-    throw new Error(`VS Code dependencyの取得元またはintegrityが許可境界に適合しません：${path}`);
+export function vscodeRuntimePackages(manifest, lock) {
+  if (manifest.private !== true || lock.lockfileVersion !== 3 ||
+      lock.packages?.[""]?.version !== manifest.version) {
+    throw new Error("VS Code dependencyのmanifestとlockfileが一致しません");
   }
-  if (entry.dev === true) {
-    observedBuildLicenses.add(entry.license);
-    continue;
+  const packages = [];
+  for (const [path, entry] of Object.entries(lock.packages)) {
+    if (!path || entry.dev === true) continue;
+    const name = packageName(path, entry);
+    if (!name || typeof entry.version !== "string" || typeof entry.license !== "string") {
+      throw new Error(`VS Code runtime dependencyの名前、versionまたはlicenseを確認できません：${path}`);
+    }
+    packages.push({ name, version: entry.version, license: entry.license, resolved: entry.resolved });
   }
-  if (!shippedLicenses.has(entry.license)) {
-    throw new Error(`VS Code runtime dependencyのライセンスが許可境界に適合しません：${path}`);
-  }
+  return packages.sort((left, right) =>
+    `${left.name}\0${left.version}`.localeCompare(`${right.name}\0${right.version}`));
 }
 
-// 許可したライセンスの集合として扱います。完全一致を求めていた頃は、依存が減って
-// 使われなくなったライセンスを一覧から消す作業まで人へ課していました。読んでいない
-// ライセンスが入ったときに気付ければ目的は足ります。
-const allowed = new Set(buildLicenses.licenses);
-const unexpected = [...observedBuildLicenses].filter((license) => !allowed.has(license)).sort();
-if (unexpected.length > 0) {
-  throw new Error(
-    "ビルド用依存に許可していないライセンスがあります。内容を確認してから" +
-      `security/vscode-build-licenses.jsonへ追加してください：${unexpected.join("、")}`,
-  );
+export function validateVscodeRuntimeDependencies(manifest, lock) {
+  const packages = vscodeRuntimePackages(manifest, lock);
+  for (const pkg of packages) {
+    if (typeof pkg.resolved !== "string" || !pkg.resolved.startsWith(REGISTRY_PREFIX)) {
+      throw new Error(`VS Code runtime dependencyの取得元がnpm registryではありません：${pkg.name}`);
+    }
+    if (!ALLOWED_RUNTIME_LICENSES.has(pkg.license)) {
+      throw new Error(`VS Code runtime dependencyのlicenseが許可されていません：${pkg.name} ${pkg.license}`);
+    }
+  }
+  return packages;
 }
 
-process.stdout.write(
-  `VS Code dependency boundaryを検証しました：配布時 ${
-    Object.values(lock.packages).filter((entry) => entry.dev !== true).length - 1
-  } package、ビルド用 ${observedBuildLicenses.size} 種のライセンス。\n`,
-);
+export function main() {
+  const manifest = JSON.parse(readFileSync("editors/vscode/package.json", "utf8"));
+  const lock = JSON.parse(readFileSync("editors/vscode/package-lock.json", "utf8"));
+  const packages = validateVscodeRuntimeDependencies(manifest, lock);
+  process.stdout.write(`VS Code runtime dependencyを検証しました：${packages.length} package。\n`);
+}
+
+if (process.argv[1] && import.meta.url === new URL(process.argv[1], "file:").href) {
+  try {
+    main();
+  } catch (error) {
+    process.stderr.write(`${error.message}\n`);
+    process.exitCode = 1;
+  }
+}

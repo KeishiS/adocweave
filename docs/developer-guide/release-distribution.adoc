@@ -105,6 +105,7 @@ devShellのNode.jsを使い、flakeはshellを構築する時点でNixpkgsのNod
 直接書くと、devShellのNode.jsと分かれても誰も気付かないため、必ずtoolchain manifestから取得します。
 
 VSIXは固定したNode.js依存とlockfileからbundleし、runtimeの``node_modules``とsource mapを同梱しません。
+bundleへ到達する推移runtime依存の名前、versionおよびlicenseは``THIRD_PARTY_NOTICES.adoc``として同梱します。
 同梱fileが許可一覧と完全に一致すること、package sizeおよび機械固有pathの不在を確認します。公開するbyte列が
 入力だけから決まることは、成果物を公開する経路で同じsourceからもう一度構築してSHA-256を比較して確認します。
 VS Code拡張とZed拡張はLanguage Serverを同梱せず、取得、検証、展開、cache、更新および削除を実装しません。
@@ -242,7 +243,7 @@ cargo make release-check
 ``acceptance``は、``verify``済みのsourceを前提として、CIが行う統合検査とglobal成果物の受入検査を
 現在のhostで実行します。
 ``release-check``は公開前の完全な検査です。標準の``verify``が行うsource検査に、``security-audit``が行う
-依存関係の出所、license、advisoryおよび例外の監査と、配布物および導入経路の検査を加えます。
+配布runtimeの取得元、licenseおよび最新advisoryの監査と、配布物および導入経路の検査を加えます。
 Rust workspaceのcrateはすべて``publish = false``であり、製品別tagと対応する単一の
 Rust API baselineを持たないため、公開製品のrelease gateではRust APIのSemVer差分を検査しません。
 
@@ -272,11 +273,12 @@ quarantine属性および各OSでのprocess lifecycleを再現しません。こ
 === Pull Requestとmainの検査境界
 
 Pull Requestでは、変更pathにかかわらず一つの標準source gateを実行します。``cargo make verify``と同じ範囲で、
-書式、lint、test、生成fileの差分、人が書いた文書および静的な依存関係境界を検査します。追跡pathを成果物ごとに
+書式、lint、test、生成fileの差分、人が書いた文書および配布metadataを検査します。追跡pathを成果物ごとに
 分類せず、実行しないjobを``skipped``にして最後に組合せを照合する処理も行いません。必須checkの表示名は
 ``verify``のまま維持します。
 
-Pull Requestでは配布candidateを構築しません。``main``へのpushではcross target、fuzz、Nixパッケージなどのmain gateを
+Pull Requestでは配布candidateを構築しません。``main``へのpushでは最新advisoryを使う依存監査の成功後に、
+cross target、fuzz、Nixパッケージなどのmain gateを
 実行します。公開workflowを``main``で開始すると同じmain gateを再実行し、選択した製品だけを構築して、実際のOSやBrowserを使う
 runtime受入検査を行います。native成果物は対象OSのrunnerで、Browser成果物は実Chromiumで、textlint用パッケージは
 完成archiveと固定consumerで検査します。成果物のmetadata、checksumおよび収録fileも、公開するbyte列に対して確認します。

@@ -43,6 +43,15 @@ const plan = {
       executable: null,
       build: "script",
     },
+    {
+      product: "vscode",
+      versionSource: "editors/vscode/package.json#version",
+      assetKind: "vscode",
+      assetName: "adocweave-vscode-{version}.vsix",
+      archive: "vsix",
+      executable: null,
+      build: "script",
+    },
   ],
 };
 
@@ -53,11 +62,11 @@ function fixture(product) {
   const selected = selectProduct(plan, product);
   const assets = productAssetContracts(selected, plan, productVersion(selected));
   for (const asset of assets) {
-    const archiveRoot = asset.name.replace(/\.(?:tar\.xz|zip)$/, "");
+    const archiveRoot = asset.name.replace(/\.(?:tar\.xz|vsix|zip)$/, "");
     const stage = join(root, archiveRoot);
     mkdirSync(stage);
     writeFileSync(join(stage, asset.executable ?? "index.mjs"), `${asset.name}\n`);
-    if (asset.archive === "zip") {
+    if (asset.archive === "zip" || asset.archive === "vsix") {
       execFileSync("zip", ["-X", "-q", "-r", join(artifacts, asset.name), archiveRoot], { cwd: root });
     } else {
       execFileSync("tar", ["--sort=name", "--mtime=@0", "--owner=0", "--group=0", "--numeric-owner",
@@ -108,6 +117,21 @@ test("Browser metadataは1 archiveとその依存関係だけを記録する", (
     assert.ok(purls.some((entry) => entry.startsWith("pkg:npm/%40adocweave/browser@")));
     assert.equal(purls.some((entry) => entry.includes("adocweave-vscode")), false);
     assert.equal(purls.some((entry) => entry.includes("textlint-plugin")), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("VS Code metadataは推移runtime依存をSBOMへ記録する", () => {
+  const { artifacts, root } = fixture("vscode");
+  try {
+    writeMetadata(artifacts, commit(), "vscode", plan);
+    const sbom = JSON.parse(readFileSync(join(artifacts, "adocweave.spdx.json"), "utf8"));
+    const npmPackages = sbom.packages.filter((entry) =>
+      entry.externalRefs?.some(({ referenceLocator }) => referenceLocator.startsWith("pkg:npm/")));
+    assert.equal(npmPackages.length, 10);
+    assert.ok(npmPackages.some(({ name }) => name === "vscode-languageclient"));
+    assert.ok(npmPackages.some(({ name }) => name === "vscode-jsonrpc"));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

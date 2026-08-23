@@ -4,6 +4,7 @@ import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 
 import { cargoTreePackageKeys } from "./generate-third-party-notices.mjs";
+import { vscodeRuntimePackages } from "./verify-vscode-dependencies.mjs";
 import {
   loadDistributionPlan,
   productAssetContracts,
@@ -194,11 +195,8 @@ function vscodePackages() {
     fail("VS Code package lock does not match its manifest");
   }
   const packages = [npmPackage(packageJson.name, packageJson.version, packageJson.license)];
-  for (const [path, entry] of Object.entries(lock.packages)) {
-    if (!path || entry.dev === true || typeof entry.version !== "string") continue;
-    const name = entry.name ?? path.split("node_modules/").at(-1);
-    if (!name) fail(`VS Code package lock entry has no name: ${path}`);
-    packages.push(npmPackage(name, entry.version, entry.license));
+  for (const entry of vscodeRuntimePackages(packageJson, lock)) {
+    packages.push(npmPackage(entry.name, entry.version, entry.license));
   }
   return [...new Map(packages.map((entry) => [entry.SPDXID, entry])).values()]
     .sort((left, right) => compareText(left.SPDXID, right.SPDXID));

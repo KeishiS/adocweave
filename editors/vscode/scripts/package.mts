@@ -23,6 +23,7 @@ const allowed: ReadonlySet<string> = new Set([
   "[Content_Types].xml",
   "extension.vsixmanifest",
   "extension/LICENSE.txt",
+  "extension/THIRD_PARTY_NOTICES.adoc",
   "extension/readme.md",
   "extension/dist/extension.cjs",
   "extension/language-configuration.json",
@@ -63,6 +64,13 @@ function normalizedPackage(scratch: string, suffix: string): NormalizedPackage {
   // Like rust-analyzer, ship one LICENSE that states the dual license and carries
   // both texts: extension registries and editors only detect a file named LICENSE.
   copyFileSync(join(extensionRoot, "LICENSE"), join(stage, "LICENSE"));
+  const notice = join(scratch, `THIRD_PARTY_NOTICES-${suffix}.adoc`);
+  execFileSync(
+    "node",
+    [join(repositoryRoot, "tools", "generate-third-party-notices.mjs"), "--vscode", notice],
+    { cwd: repositoryRoot, stdio: "inherit" },
+  );
+  copyFileSync(notice, join(stage, "THIRD_PARTY_NOTICES.adoc"));
   copyFileSync(join(extensionRoot, "dist", "extension.cjs"), join(stage, "dist", "extension.cjs"));
   copyFileSync(join(extensionRoot, "resources", "icon.png"), join(stage, "resources", "icon.png"));
   copyFileSync(

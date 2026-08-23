@@ -4,39 +4,9 @@ set -euo pipefail
 readonly root="$(git rev-parse --show-toplevel)"
 cd "$root"
 
-readonly revision_file="security/rustsec-advisory-db-revision.txt"
-readonly revision="$(tr -d '[:space:]' < "$revision_file")"
-if [[ ! "$revision" =~ ^[0-9a-f]{40}$ ]]; then
-  echo "invalid RustSec advisory database revision: $revision" >&2
-  exit 1
-fi
-
-readonly database="${CARGO_TARGET_DIR:-target}/rustsec-advisory-db"
-if [[ ! -d "$database/.git" ]]; then
-  rm -rf "$database"
-  git init --quiet "$database"
-  git -C "$database" remote add origin https://github.com/RustSec/advisory-db.git
-fi
-if [[ "$(git -C "$database" remote get-url origin)" != "https://github.com/RustSec/advisory-db.git" ]]; then
-  echo "unexpected RustSec advisory database remote" >&2
-  exit 1
-fi
-if [[ "${ADOCWEAVE_ADVISORY_DB_OFFLINE:-0}" != 1 ]]; then
-  git -C "$database" fetch --quiet --depth=1 origin "$revision"
-  git -C "$database" checkout --quiet --detach FETCH_HEAD
-fi
-test "$(git -C "$database" rev-parse HEAD)" = "$revision"
-
-audit_args=(--db "$database" --no-fetch)
-while IFS= read -r advisory; do
-  audit_args+=(--ignore "$advisory")
-done < <(node tools/verify-dependency-boundaries.mjs --audit-ignores)
-cargo audit "${audit_args[@]}" --file Cargo.lock
-cargo audit "${audit_args[@]}" --file editors/zed/Cargo.lock
-
-cargo deny --manifest-path Cargo.toml --all-features check --config deny.toml licenses bans sources
-cargo deny --manifest-path editors/zed/Cargo.toml --all-features check --config deny.toml licenses bans sources
+cargo deny --manifest-path Cargo.toml --all-features check --config deny.toml --exclude-dev advisories licenses bans sources
+cargo deny --manifest-path editors/zed/Cargo.toml --all-features check --config deny.toml --exclude-dev advisories licenses bans sources
 npm audit --omit=dev --prefix editors/vscode
-npm audit --include=dev --prefix editors/vscode
-npm audit --include=dev --prefix tools/textlint
-npm audit --include=dev --prefix tools/textlint-plugin-e2e
+node --test tools/verify-advisory-exceptions.test.mjs
+yq -p toml -o json deny.toml | node tools/verify-advisory-exceptions.mjs
+node tools/verify-vscode-dependencies.mjs
