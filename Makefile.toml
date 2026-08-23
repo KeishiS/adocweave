@@ -482,6 +482,10 @@ dependencies = ["build-textlint-wasm-node", "textlint-dependencies"]
 script_runner = "@shell"
 script = '''
 node --test \
+  tools/checked-gh-prose.test.mjs \
+  tools/codex-github-prose-config.test.mjs \
+  tools/codex-github-prose-hook.test.mjs \
+  tools/textlint/github-markdown-lint.test.mjs \
   tools/textlint/repository-files.test.mjs \
   tools/textlint/repository-lint-config.test.mjs \
   tools/textlint/terminology-rule.test.mjs
