@@ -177,9 +177,9 @@ JSON／WASM protocolでは既存の言語enum値``latex``を維持し、``latexm
 
 == 公開適合性fixture
 
-利用側はlink:../../fixtures/public-conformance.json[公開適合性fixture]で、入力AsciiDoc、投影、
-HTML、解析診断および描画診断の対応を検査できます。各caseに記録したanalysis profileとrender profileを
-適用し、``stableContract``のJSON pointer、HTML断片および診断codeを比較します。
+利用側はlink:../../crates/adocweave/conformance/cases.json[適合性manifest]から``publicContract``を持つcaseを
+選び、入力AsciiDoc、投影、HTML、解析診断および描画診断の対応を検査できます。caseに記録した解析条件と
+描画条件を適用し、``publicContract``のJSON pointer、HTML断片および診断codeを比較します。
 
 公開fixtureは次の構文を分離して扱います。
 
@@ -190,7 +190,7 @@ HTML、解析診断および描画診断の対応を検査できます。各case
 * table、quoteおよびlist
 * 安全でないURLの解析診断、描画診断および非active HTML fallback
 
-公開仕様は``stableContract``に列挙した意味上の値とHTML構造だけです。期待出力ファイル全体はAdocWeave内の
+公開仕様は``publicContract``に列挙した意味上の値とHTML構造だけです。期待出力ファイル全体はAdocWeave内の
 決定性とruntime間の一致を検査するgolden fileであり、JSONのkey順と空白、HTMLの属性順、字下げ、
 空白、末尾改行および未選択の投影fieldは利用側の安定APIではありません。利用側はこれらのbyte列を
 固定せず、必要な項目だけを選択して検査します。
@@ -203,13 +203,11 @@ HTML断片、およびquoteの既存``blockPresentations``だけを保証しま�
 
 == golden fixtureの保守
 
-期待出力fileは手で書き換えず、現在の実装から書き出します。公開適合性fixtureと、native・WASM間の
-一致を検査する共有fixtureのそれぞれに、書き出すコマンドと、ファイルがその書き出し結果と一致することを
-検査するtestがあります。
+期待出力fileは手で書き換えず、現在の実装から書き出します。単一manifestに登録したcaseはWASM adapter側の
+一つのcommandで書き出し、同じtestでfileが書き出し結果と一致することを検査します。
 
 [source,console]
 ----
-cargo test -p adocweave --test public_conformance_fixture regenerate_public_fixture_products -- --ignored
 cargo test -p adocweave-wasm --test conformance regenerate_shared_fixture_products -- --ignored
 ----
 
@@ -219,7 +217,3 @@ cargo test -p adocweave-wasm --test conformance regenerate_shared_fixture_produc
 
 一致を検査するtestはgateに含めます。これにより、ファイルの整形が書き手ごとに揺れることも、複数のcaseが
 参照するfileの更新漏れも、コミット前に分かります。
-
-共有fixtureのcaseの一部は、公開適合性fixtureのfileをそのまま期待出力として参照します。これらのfileは
-公開適合性fixture側のコマンドが書き出し、共有側は書き換えません。一つのfileを二つのコマンドが
-書き換えると、どちらを実行したかで内容が変わるためです。

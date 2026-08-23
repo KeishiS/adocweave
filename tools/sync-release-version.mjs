@@ -139,7 +139,7 @@ function validateProduct(product, label) {
   for (const [index, generator] of product.generators.entries()) {
     const generatorLabel = `${label}.generators[${index}]`;
     exactKeys(generator, ["id", "outputs"], generatorLabel);
-    if (!["protocol", "public-conformance"].includes(generator.id)) {
+    if (generator.id !== "protocol") {
       fail(`${generatorLabel}のgenerator IDは許可されていません`);
     }
     if (generatorIds.has(generator.id)) fail(`${generatorLabel}のIDは重複しています`);
@@ -331,43 +331,6 @@ export function runRepositoryGenerator({ id, mode, root }) {
       ],
       root,
     );
-    return;
-  }
-  if (id === "public-conformance") {
-    if (mode === "check") {
-      run(
-        "cargo",
-        [
-          "test",
-          "--locked",
-          "-p",
-          "adocweave",
-          "--test",
-          "public_conformance_fixture",
-          "public_fixture_regeneration_is_clean",
-          "--",
-          "--exact",
-        ],
-        root,
-      );
-    } else {
-      run(
-        "cargo",
-        [
-          "test",
-          "--locked",
-          "-p",
-          "adocweave",
-          "--test",
-          "public_conformance_fixture",
-          "regenerate_public_fixture_products",
-          "--",
-          "--ignored",
-          "--exact",
-        ],
-        root,
-      );
-    }
     return;
   }
   fail(`未知のgeneratorです：${id}`);

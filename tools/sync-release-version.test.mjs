@@ -101,6 +101,7 @@ test("六つの製品と製品内のroutingだけを受理する", () => {
     (value) => { delete value.products[0].authority.count; },
     (value) => { value.products[0].targets[0].unknown = true; },
     (value) => { value.products[0].generators[0].id = "unknown"; },
+    (value) => { value.products[0].generators[0].id = "public-conformance"; },
     (value) => { value.products[0].generators[0].outputs[0].path = "../outside"; },
   ];
   for (const mutate of cases) {
