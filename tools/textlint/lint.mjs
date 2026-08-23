@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -7,7 +6,8 @@ import { TextlintKernel } from "@textlint/kernel";
 import commentsFilter from "textlint-filter-rule-comments";
 
 import plugin from "./processor.mjs";
-import { classifyTrackedFiles, createRepositoryRules } from "./repository-lint-config.mjs";
+import { listRepositoryAsciiDocFiles } from "./repository-files.mjs";
+import { classifyFiles, createRepositoryRules } from "./repository-lint-config.mjs";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const targets = JSON.parse(readFileSync(new URL("./targets.json", import.meta.url), "utf8"));
@@ -15,15 +15,7 @@ const terminology = JSON.parse(
   readFileSync(new URL("../../config/japanese-terminology.json", import.meta.url), "utf8")
 );
 
-const tracked = execFileSync("git", ["ls-files", "-z", "*.adoc"], {
-  cwd: repositoryRoot,
-  encoding: "utf8"
-})
-  .split("\0")
-  .filter(Boolean)
-  .sort();
-
-const classified = classifyTrackedFiles(targets, tracked);
+const classified = classifyFiles(targets, listRepositoryAsciiDocFiles(repositoryRoot));
 if (classified.unknown.length > 0) {
   console.error(`校正対象が分類されていません。\n${classified.unknown.join("\n")}`);
   process.exitCode = 2;
