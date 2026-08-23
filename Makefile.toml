@@ -97,7 +97,7 @@ node --test \
   tools/release-metadata.test.mjs \
   tools/release-notes.test.mjs \
   tools/verify-vscode-dependencies.test.mjs
-node tools/release-notes.mjs --check lsp
+node tools/release-notes.mjs --check
 args=""
 metadata="$(mktemp "${TMPDIR:-/tmp}/adocweave-release-metadata.XXXXXX.json")"
 zed_metadata="$(mktemp "${TMPDIR:-/tmp}/adocweave-zed-release-metadata.XXXXXX.json")"

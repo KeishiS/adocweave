@@ -1,6 +1,6 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { dirname } from "node:path";
+import { dirname, posix } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const LOCAL_TARGET_EXCLUSIONS = [
@@ -39,6 +39,28 @@ export function trackedAdocPaths(git = spawnSync) {
   return parseNullSeparatedPaths(result.stdout);
 }
 
+export function validateCurrentDocumentAdrLinks(sources) {
+  const adrDirectory = "docs/developer-guide/adr/";
+  const superseded = new Set(
+    Object.entries(sources)
+      .filter(([path, source]) =>
+        path.startsWith(adrDirectory) && /^:status:\s+superseded\b/m.test(source))
+      .map(([path]) => path),
+  );
+  const obsoleteLinks = [];
+  for (const [sourcePath, source] of Object.entries(sources)) {
+    if (sourcePath.startsWith(adrDirectory)) continue;
+    for (const match of source.matchAll(/(?:xref|link):([^\s\[]+\.adoc(?:#[^\s\[]*)?)\[/g)) {
+      const target = match[1].split("#", 1)[0];
+      const resolved = posix.normalize(posix.join(posix.dirname(sourcePath), target));
+      if (superseded.has(resolved)) obsoleteLinks.push(`${sourcePath} -> ${resolved}`);
+    }
+  }
+  if (obsoleteLinks.length > 0) {
+    throw new Error(`現行文書から置換済みADRを参照できません:\n${obsoleteLinks.join("\n")}`);
+  }
+}
+
 function run(command, args) {
   return spawnSync(command, args, { encoding: "utf8" });
 }
@@ -53,6 +75,9 @@ export function main() {
   const executable = "target/debug/adocweave";
   const diagnosticsLog = "target/adoc-check-diagnostics.log";
   const plan = trackedAdocPlan(trackedAdocPaths());
+  validateCurrentDocumentAdrLinks(Object.fromEntries(
+    plan.map(({ path }) => [path, readFileSync(path, "utf8")]),
+  ));
   mkdirSync(dirname(diagnosticsLog), { recursive: true });
   writeFileSync(diagnosticsLog, "");
 

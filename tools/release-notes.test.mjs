@@ -3,9 +3,12 @@ import test from "node:test";
 
 import {
   buildReleaseNotes,
+  loadReleaseNotesTemplateSource,
   loadReleaseNotesSource,
+  parseReleaseNotesArguments,
   parseReleaseNotesSource,
   releaseNoteHeadings,
+  releaseNotesSelection,
   releaseNotesTitle,
   renderReleaseNotes,
   validateReleaseNotes,
@@ -35,6 +38,14 @@ test("toolchain manifestはRustとNode.jsの版だけを持つ", () => {
   assert.equal(toolchains.schemaVersion, 1);
   assert.match(toolchains.rustVersion, /^\d+\.\d+\.\d+$/);
   assert.match(toolchains.nodeVersion, /^\d+\.\d+\.\d+$/);
+});
+
+test("Release Notesの題名と見出しを雛形から構成する", () => {
+  const template = loadReleaseNotesTemplateSource();
+  const parsed = parseReleaseNotesSource(template);
+  assert.equal(parsed.title, "# AdocWeave PRODUCT vX.Y.Z");
+  assert.deepEqual(parsed.sections.map(({ heading }) => heading), releaseNoteHeadings("X.Y.Z"));
+  assert.equal(releaseNotesTitle("cli", "1.2.3"), "# AdocWeave cli v1.2.3");
 });
 
 test("distribution planのversionSourceから六製品の版を取得する", () => {
@@ -77,12 +88,39 @@ test("対応関係には製品版と関連API世代だけを追記する", () =>
   assert.doesNotMatch(rendered, /統一package version|release manifest|Rust APIの破壊的変更|Rust toolchain/);
 });
 
-test("現在のRelease NotesはLSP製品のtagに対応する", () => {
-  const release = productRelease("lsp");
-  const tag = `${release.route.tagPrefix}${release.version}`;
+test("現在のRelease Notesは題名で選択した製品のtagに対応する", () => {
   const source = loadReleaseNotesSource();
-  assert.doesNotThrow(() => validateReleaseNotesSource(source, "lsp", release.version));
-  const body = buildReleaseNotes("lsp", tag);
-  assert.doesNotThrow(() => validateReleaseNotes(body, "lsp"));
-  assert.throws(() => buildReleaseNotes("lsp", `adocweave-lsp/v9.9.9`), /専用/);
+  const { product } = releaseNotesSelection(source);
+  const release = productRelease(product);
+  const tag = `${release.route.tagPrefix}${release.version}`;
+  assert.doesNotThrow(() => validateReleaseNotesSource(source, product, release.version));
+  const body = buildReleaseNotes(product, tag);
+  assert.doesNotThrow(() => validateReleaseNotes(body, product));
+  assert.throws(() => buildReleaseNotes(product, `${release.route.tagPrefix}9.9.9`), /専用/);
+});
+
+test("Release Notesの題名は登録済み製品の現在版を指定する", () => {
+  const { version } = productRelease("lsp");
+  assert.deepEqual(
+    releaseNotesSelection(sampleSource("lsp", version)),
+    { product: "lsp", version },
+  );
+  assert.throws(() => releaseNotesSelection("# Release Notes\n"), /判定できません/);
+  assert.throws(() => releaseNotesSelection(sampleSource("unknown", version)), /未知の製品/);
+  assert.throws(() => releaseNotesSelection(sampleSource("lsp", "9.9.9")), /公開版と一致しません/);
+});
+
+test("Release NotesのCLIは検査と生成の引数を厳密に区別する", () => {
+  assert.deepEqual(parseReleaseNotesArguments(["--check"]), {
+    mode: "check", product: undefined, tag: undefined,
+  });
+  assert.deepEqual(parseReleaseNotesArguments(["--check", "lsp"]), {
+    mode: "check", product: "lsp", tag: undefined,
+  });
+  assert.deepEqual(parseReleaseNotesArguments(["lsp", "adocweave-lsp/v0.47.0"]), {
+    mode: "render", product: "lsp", tag: "adocweave-lsp/v0.47.0",
+  });
+  for (const args of [[], ["--check", "lsp", "extra"], ["lsp"], ["lsp", "tag", "extra"]]) {
+    assert.throws(() => parseReleaseNotesArguments(args), /使用方法/);
+  }
 });
