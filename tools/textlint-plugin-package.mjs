@@ -50,6 +50,38 @@ export function validateTextlintPluginManifest(manifest) {
   }
 }
 
+export const TEXTLINT_CONSUMER_MANIFEST_URL = new URL(
+  "./textlint-plugin-e2e/package.json",
+  import.meta.url,
+);
+
+// packageは範囲でtextlintを受け入れるが、継続的な検査は一つの組合せで行う。
+// 固定consumerの依存を、その検査対象versionの正本とする。
+export function verifiedTextlintVersion(path = TEXTLINT_CONSUMER_MANIFEST_URL) {
+  const version = JSON.parse(readFileSync(path, "utf8")).dependencies?.textlint;
+  if (typeof version !== "string" || !/^\d+\.\d+\.\d+$/u.test(version)) {
+    throw new Error("固定consumerのtextlint versionを解釈できません");
+  }
+  return version;
+}
+
+function versionOrder(left, right) {
+  const parsed = (value) => value.split(".").map(Number);
+  const [leftParts, rightParts] = [parsed(left), parsed(right)];
+  for (let index = 0; index < 3; index += 1) {
+    if (leftParts[index] !== rightParts[index]) return leftParts[index] - rightParts[index];
+  }
+  return 0;
+}
+
+// peerDependenciesで使う``^X.Y.Z``と完全一致だけを解釈する。前release版は扱わない。
+export function satisfiesPeerRange(version, range) {
+  if (!range.startsWith("^")) return version === range;
+  const base = range.slice(1);
+  const nextMajor = `${Number(base.split(".")[0]) + 1}.0.0`;
+  return versionOrder(version, base) >= 0 && versionOrder(version, nextMajor) < 0;
+}
+
 export function textlintPluginName(packageName) {
   const match = /^(@[^/]+)\/textlint-plugin-(.+)$/.exec(packageName);
   if (!match) throw new Error(`textlint plugin package名が不正です: ${packageName}`);

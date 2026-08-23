@@ -77,7 +77,7 @@ dependencies = [
 
 [[package]]
 name = "adocweave-textlint-wasm"
-version = "0.46.2"
+version = "0.47.0"
 dependencies = [
  "adocweave",
  "adocweave-textlint",
