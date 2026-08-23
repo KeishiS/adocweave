@@ -675,14 +675,21 @@ function sourceAndCandidateWorkflow() {
         needs: ["source"],
         steps: [{ run: "nix develop .#ci -c cargo make security-audit" }],
       },
-      "main-gate": {
+      "main-integrations": {
+        name: "main-integrations",
         if: "(github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'",
         needs: ["source", "security"],
-        steps: [{ run: "nix develop .#ci-fuzz -c cargo make main-gate" }],
+        steps: [{ run: "nix develop .#ci-fuzz -c cargo make main-integrations" }],
+      },
+      "nix-package-check": {
+        name: "nix-package-check",
+        if: "(github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'",
+        needs: ["source", "security"],
+        steps: [{ run: "nix flake check" }],
       },
       "candidate-plan": {
         if: "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'",
-        needs: ["source", "main-gate"],
+        needs: ["source", "main-integrations", "nix-package-check"],
         steps: [{ run: 'node tools/product-candidate-plan.mjs "$GITHUB_OUTPUT" "${{ inputs.product }}"' }],
       },
       "build-native": {
@@ -732,12 +739,12 @@ test("Pull Requestはpath条件なしで標準source gateを1回だけ直接実�
     (workflow) => { workflow.on.push.paths = ["src/**"]; },
     (workflow) => { workflow.jobs.source.name = "source"; },
     (workflow) => { workflow.jobs.source.if = "github.event_name == 'pull_request'"; },
-    (workflow) => { workflow.jobs.source.needs = ["main-gate"]; },
+    (workflow) => { workflow.jobs.source.needs = ["main-integrations"]; },
     (workflow) => { workflow.jobs.source.strategy = { matrix: { shard: [1, 2] } }; },
     (workflow) => { workflow.jobs.source.uses = "./.github/workflows/quality.yml"; },
     (workflow) => { workflow.jobs.source.steps[3].run += " || true"; },
     (workflow) => { delete workflow.jobs.source.steps[0].if; },
-    (workflow) => { workflow.jobs["main-gate"].steps.push({ run: "cargo make verify" }); },
+    (workflow) => { workflow.jobs["main-integrations"].steps.push({ run: "cargo make verify" }); },
   ]) {
     const workflow = sourceAndCandidateWorkflow();
     mutate(workflow);
@@ -772,7 +779,7 @@ test("削除したpath分類と手動aggregateをworkflowへ戻さない", () =>
     ["quality input", (workflow) => { workflow.jobs.source.with = { run_rust_source: true }; }],
     ["not reachable", (workflow) => { workflow.jobs.source.steps.push({ run: "echo not reachable" }); }],
     ["always aggregate", (workflow) => { workflow.jobs.source.if = "always()"; }],
-    ["result aggregate", (workflow) => { workflow.jobs["build-native"].if = "needs.main-gate.result == 'success'"; }],
+    ["result aggregate", (workflow) => { workflow.jobs["build-native"].if = "needs.main-integrations.result == 'success'"; }],
     ["PR candidate", (workflow) => { workflow.jobs["candidate-plan"].strategy = { matrix: { product: ["pr"], artifact_key: ["local"] } }; }],
   ];
   for (const [name, mutate] of mutations) {
@@ -790,25 +797,33 @@ test("削除したpath分類と手動aggregateをworkflowへ戻さない", () =>
   assert.throws(() => validateSourceAndCandidateWorkflow(workflow), /削除済みjob merge-gate/);
 });
 
-test("手動公開のcandidate planはsourceとmain gateの成功後に選択製品の計画を1回だけ生成する", () => {
+test("手動公開のcandidate planはsourceとmain検査の成功後に選択製品の計画を1回だけ生成する", () => {
   for (const mutate of [
-    (workflow) => { workflow.jobs["candidate-plan"].needs = ["main-gate"]; },
+    (workflow) => { workflow.jobs["candidate-plan"].needs = ["source", "main-integrations"]; },
     (workflow) => { workflow.jobs["candidate-plan"].steps = [{ run: "node custom-plan.mjs" }]; },
     (workflow) => { workflow.jobs["candidate-plan"].steps.push({ run: "node tools/product-candidate-plan.mjs" }); },
-    (workflow) => { delete workflow.jobs["main-gate"].if; },
-    (workflow) => { workflow.jobs["main-gate"].if += " || github.event_name == 'pull_request'"; },
-    (workflow) => { workflow.jobs["main-gate"].if = `failure() && ${workflow.jobs["main-gate"].if}`; },
-    (workflow) => { workflow.jobs["main-gate"].steps = []; },
-    (workflow) => { workflow.jobs["main-gate"].steps[0].run += " || true"; },
-    (workflow) => { workflow.jobs["main-gate"].needs = ["source"]; },
+    (workflow) => { delete workflow.jobs["main-integrations"].if; },
+    (workflow) => { workflow.jobs["main-integrations"].if += " || github.event_name == 'pull_request'"; },
+    (workflow) => { workflow.jobs["main-integrations"].if = `failure() && ${workflow.jobs["main-integrations"].if}`; },
+    (workflow) => { workflow.jobs["main-integrations"].steps = []; },
+    (workflow) => { workflow.jobs["main-integrations"].steps[0].run += " || true"; },
+    (workflow) => { workflow.jobs["main-integrations"].needs = ["source"]; },
+    (workflow) => { delete workflow.jobs["nix-package-check"]; },
+    (workflow) => { workflow.jobs["nix-package-check"].if += " || github.event_name == 'pull_request'"; },
+    (workflow) => { workflow.jobs["nix-package-check"].needs = ["source"]; },
+    (workflow) => { workflow.jobs["nix-package-check"].steps[0].run = "nix flake check --no-build"; },
+    (workflow) => { workflow.jobs["main-integrations"].steps.push({ run: "nix flake check" }); },
     (workflow) => { workflow.jobs.security.steps[0].run += " --offline"; },
     (workflow) => { workflow.jobs.security.if = "github.event_name == 'pull_request'"; },
-    (workflow) => { workflow.jobs.source.steps.push({ run: "cargo make main-gate" }); },
+    (workflow) => { workflow.jobs.source.steps.push({ run: "cargo make main-integrations" }); },
     (workflow) => { workflow.jobs["candidate-plan"].if = "failure()"; },
   ]) {
     const workflow = sourceAndCandidateWorkflow();
     mutate(workflow);
-    assert.throws(() => validateSourceAndCandidateWorkflow(workflow), /source|candidate-plan|main-gate/);
+    assert.throws(
+      () => validateSourceAndCandidateWorkflow(workflow),
+      /source|candidate-plan|main-integrations|nix-package-check/,
+    );
   }
 
   const reordered = sourceAndCandidateWorkflow();
@@ -843,14 +858,14 @@ test("global成果物は製品別の完成candidate taskで検査する", () => 
 
 test("sourceとmainの標準task境界をMakefileで固定する", () => {
   validateGateTaskContract(makefile);
-  validateGateTaskContract(
-    mutateTask(makefile, "main-gate", (body) => body.replace('  "nix-package-check",\n]', '  "nix-package-check",\n  "test-grammar",\n]')),
-  );
 
   for (const [name, mutate] of [
     ["source dependency", (source) => mutateTask(source, "verify", (body) => body.replace('  "fmt-check",\n', ""))],
-    ["main dependency", (source) => mutateTask(source, "main-gate", (body) => body.replace('  "fuzz-smoke",\n', ""))],
-    ["main candidate", (source) => mutateTask(source, "main-gate", (body) => body.replace('  "nix-package-check",\n]', '  "nix-package-check",\n  "release-global-candidate",\n]'))],
+    ["integration dependency", (source) => mutateTask(source, "main-integrations", (body) => body.replace('  "fuzz-smoke",\n', ""))],
+    ["integration extra dependency", (source) => mutateTask(source, "main-integrations", (body) => body.replace('  "fuzz-smoke",\n]', '  "fuzz-smoke",\n  "test-grammar",\n]'))],
+    ["main integration", (source) => mutateTask(source, "main-gate", (body) => body.replace('  "main-integrations",\n', ""))],
+    ["main nix", (source) => mutateTask(source, "main-gate", (body) => body.replace('  "nix-package-check",\n', ""))],
+    ["main candidate", (source) => mutateTask(source, "main-integrations", (body) => body.replace('  "fuzz-smoke",\n]', '  "fuzz-smoke",\n  "release-global-candidate",\n]'))],
     ["verify alias", (source) => mutateTask(source, "verify", (body) => `${body}\nalias = "main-gate"\n`)],
     ["acceptance", (source) => mutateTask(source, "acceptance", (body) => body.replace('  "main-gate",\n', ""))],
     ["release-check", (source) => mutateTask(source, "release-check", (body) => body.replace('  "security-audit",\n', ""))],
