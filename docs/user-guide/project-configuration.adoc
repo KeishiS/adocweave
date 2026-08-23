@@ -98,6 +98,7 @@ roleのうち列挙していないものは出力しません。名前にはASCI
 一つの処理が保持できるfilesystem rootは128件までです。多数の下位ディレクトリを許可する場合は、必要な範囲を
 含む上位ディレクトリへまとめてください。この上限は``max-files``とは別に適用します。
 
+[#workspace-scan]
 ``workspace.scan.exclude``は、Language Serverがワークスペースを最初に走査するときに、内容を調べない
 ディレクトリを指定します。
 

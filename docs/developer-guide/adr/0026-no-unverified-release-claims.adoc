@@ -1,5 +1,5 @@
 = ADR 0026: 未検査の変更なし宣言をRelease Notesへ生成しない
-:status: accepted
+:status: accepted; Rust API release ledger superseded by ADR 0027
 
 == 文脈
 
@@ -17,13 +17,9 @@ Release Notes生成器は、``release/unchanged-contracts.json``に列挙したC
 Release Notesへ、外部から利用する仕様が前の版から変わっていないという文を自動生成しません。
 ``release/unchanged-contracts.json``と``release-claims``を廃止します。
 
-機械生成する内容は、現在の正本から直接決まる値と、``cargo-semver-checks``の検出結果と照合した
-``release/breaking-rust-api.json``のRust API差分に限定します。CLI引数、Language Server protocol、設定schema、
+機械生成する内容は、現在の正本から直接決まる値に限定します。CLI引数、Language Server protocol、設定Schema、
 WASM protocolなどの変更内容、利用者への影響および移行方法は、人が``release/notes.md``へ記載します。
-
-``semver-check``は公開Rust APIだけを前のstable tagと比較し、検出結果と記録の一致を検査します。設定schema、
-WASM protocolおよびtextlint packageの既存のschema試験、protocol試験、package内容の試験は、現在の実装が正本と
-一致することを引き続き検査します。ただし、これらの結果を前の版から変更がないという保証には使いません。
+公開Rust APIの差分台帳を維持しない判断はxref:0027-product-release-trains.adoc[ADR 0027]で置き換えました。
 
 この決定は、ADR 0022のうち生成TypeScript宣言を``release-claims``でtag間比較する部分を改訂します。
 Rustの型からTypeScript宣言を生成し、その宣言を現在の公開仕様とする決定は維持します。

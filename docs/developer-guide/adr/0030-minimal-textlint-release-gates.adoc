@@ -45,4 +45,5 @@ textlint用candidateの検査は、完成archiveの検証と固定consumer E2E�
 
 再現性の追加調査と公開後の取得経路は残りますが、標準source gateから分離します。ADR 0017およびADR 0023のうち、
 textlint用パッケージの検査回数と実行環境に関する決定を本ADRで置き換えます。GitHub Releaseで``.tgz``を配布し、
-実行時依存を持たせず、checksum、SBOM、第三者依存の通知およびArtifact Attestationを生成する決定は維持します。
+実行時依存を持たせず、checksum、第三者依存の通知およびArtifact Attestationを生成する決定は維持します。
+SBOMを公開しない判断はxref:0036-no-unconsumed-sbom.adoc[ADR 0036]で置き換えました。
