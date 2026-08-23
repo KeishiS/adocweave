@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  classifyTrackedFiles,
+  classifyFiles,
   createRepositoryRules,
   validateTargetConfiguration
 } from "./repository-lint-config.mjs";
@@ -27,8 +27,8 @@ const terminology = {
   ]
 };
 
-test("追跡文書を執筆対象、除外対象、未分類へ分ける", () => {
-  const result = classifyTrackedFiles(targets, [
+test("文書を執筆対象、除外対象、未分類へ分ける", () => {
+  const result = classifyFiles(targets, [
     "README.adoc",
     "docs/guide.adoc",
     "fixtures/input.adoc",
@@ -42,7 +42,7 @@ test("追跡文書を執筆対象、除外対象、未分類へ分ける", () =>
 });
 
 test("除外ディレクトリと似た接頭辞を持つ文書を除外しない", () => {
-  const result = classifyTrackedFiles(targets, ["fixtures-other/input.adoc"]);
+  const result = classifyFiles(targets, ["fixtures-other/input.adoc"]);
   assert.deepEqual(result.excluded, []);
   assert.deepEqual(result.unknown, ["fixtures-other/input.adoc"]);
 });
@@ -78,7 +78,7 @@ test("壊れた対象設定を分類前に拒否する", () => {
     [{ ...targets, unexpected: true }, /項目がschemaと一致しません/]
   ];
   for (const [configuration, expected] of cases) {
-    assert.throws(() => classifyTrackedFiles(configuration, []), expected);
+    assert.throws(() => classifyFiles(configuration, []), expected);
   }
 });
 

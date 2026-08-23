@@ -151,14 +151,14 @@ export function validateTargetConfiguration(value) {
   });
 }
 
-export function classifyTrackedFiles(configuration, trackedFiles) {
+export function classifyFiles(configuration, files) {
   const targets = validateTargetConfiguration(configuration);
-  if (!Array.isArray(trackedFiles) || trackedFiles.some((path) => typeof path !== "string")) {
-    throw new Error("追跡文書一覧は文字列の配列で指定してください。");
+  if (!Array.isArray(files) || files.some((path) => typeof path !== "string")) {
+    throw new Error("文書一覧は文字列の配列で指定してください。");
   }
 
   const classified = { authored: [], excluded: [], unknown: [] };
-  for (const path of trackedFiles) {
+  for (const path of files) {
     if (
       targets.authoredFiles.includes(path) ||
       targets.authoredDirectories.some((directory) => path.startsWith(directory))
