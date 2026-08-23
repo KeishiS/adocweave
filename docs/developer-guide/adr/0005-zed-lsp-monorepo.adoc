@@ -1,11 +1,10 @@
 = ADR 0005: Zed LSPのmonorepo管理
-:status: accepted
+:status: accepted; release unit amended by ADR 0027; editor/LSP boundary amended by ADR 0028
 
 == 文脈
 
-Zed extensionは、同じReleaseのmanifest、checksumおよびattestationを検証してLanguage Server binaryを取得します。
-Core、LSP、Zed extension、browser artifactおよびNix packageは一つのrelease manifestとconformance fixtureを共有し、
-同一release trainで整合性を確保する必要があります。
+Zed拡張、Language Serverおよびコアを同じリポジトリで管理すると、同じcommitで起動境界、queryおよび
+回帰試験を横断して確認できます。
 
 Zed extensionとLanguage Serverを別repositoryへ分離すると、Zed固有のreviewと公開を独立できる可能性があります。一方で、
 releaseのバージョン、binary provenance、LSP protocol、Tree-sitter queryおよびrollbackの整合性をrepository間で新たに
@@ -13,15 +12,14 @@ releaseのバージョン、binary provenance、LSP protocol、Tree-sitter query
 
 == 決定
 
-Zed extensionとLanguage ServerはAdocWeave monorepoに維持し、独立repositoryおよび独立release trainは導入しません。
-Zed固有の責務はmonorepo内に局所化します。Core、LSPおよびZedにまたがる変更では、
-同一release trainで成果物と利用者向け仕様の整合性を維持します。
+Zed拡張とLanguage ServerはAdocWeave monorepoに維持し、独立repositoryを導入しません。Zed固有の責務は
+monorepo内に局所化します。各製品はxref:0027-product-release-trains.adoc[ADR 0027]に従って独立して公開し、
+拡張はxref:0028-editor-language-server-boundary.adoc[ADR 0028]に従ってLanguage Serverを取得しません。
 
 == 非採用案
 
-Zed extensionだけを別repositoryで公開し、LSP binaryを本体Releaseから取得する案は採用しません。この案ではextensionと
-binaryのバージョン不一致、artifact provenance、offline cacheおよびrollbackの障害を二つのrelease履歴にまたがって
-調査する必要があり、現在の開発規模に対して運用コストが大きいです。
+Zed拡張だけを別repositoryで管理する案は採用しません。protocol変更、Tree-sitter queryおよび回帰fixtureを
+repository間で調整する運用費用が、現在の開発規模に対して大きいためです。
 
 == 再評価条件
 
@@ -39,5 +37,5 @@ binaryのバージョン不一致、artifact provenance、offline cacheおよび
 
 == 帰結
 
-一つのcommit、release manifestおよびGitHub Releaseで利用者が必要とする成果物を追跡できます。
-横断変更のCIは必要ですが、Zed固有の変更はmonorepo内の独立したtestとartifact jobへ局所化できます。
+一つのcommitでコア、Language ServerおよびZed拡張の横断変更を確認できます。各製品のversionとReleaseは
+独立したまま、Zed固有の変更と試験をmonorepo内へ局所化できます。

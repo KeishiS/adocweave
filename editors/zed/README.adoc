@@ -1,28 +1,13 @@
 = Zed開発用拡張
 
-開発版のbuild、導入、動作確認、問題の切り分けおよび削除手順は
-xref:../../docs/developer-guide/zed-development.adoc[Zedへ開発版を導入する]を基準とする。
+このディレクトリはZedが読み込む拡張のrootです。``extension.toml``、Rust製WebAssemblyアダプターおよび
+AsciiDoc言語設定を保持します。拡張の責務とLanguage Serverへの依存方向は
+xref:../../docs/developer-guide/architecture.adoc#component-boundaries[アーキテクチャ]を参照してください。
 
-このディレクトリはZedが選択する拡張rootであり、`extension.toml`、Rust製WASM adapterおよび
-AsciiDoc言語設定を保持する。Language Serverの導入と選択は
-xref:../../docs/user-guide/release-installation.adoc#zed-installation[Zedへの導入]を参照する。拡張は、設定した
-絶対path、Zedから見える``PATH``の順に``adocweave-lsp``を探す。Language Serverの取得、更新、互換性確認および
-process管理は担当せず、標準のLSP初期化とZedのclientへ委譲する。
+開発版の構築、導入、動作確認および削除は
+xref:../../docs/developer-guide/zed-development.adoc[Zedへ開発版を導入する]を参照してください。
+利用者がLanguage Serverを導入して選択する方法は
+xref:../../docs/user-guide/release-installation.adoc#zed-installation[Zedへの導入]を参照してください。
 
-基本的な構文色付けは``languages/asciidoc``と``languages/asciidoc_inline``のTree-sitter queryが担当する。
-LSP Semantic Tokensはリンク、参照、anchor等の意味的補足であり、基本色付けの代替ではない。
-
-== 受け入れ確認
-
-2026-07-20にLinux版Zedで次を確認した。
-
-- AsciiDocの言語認識と``adocweave-lsp``の自動起動
-- Unicodeを含む診断と編集後の診断更新
-- LSP文書シンボルを使用したOutline
-- 見出し空白を挿入するCode Action
-- 通常テキストを整形し、ソースブロック本体を保持する冪等なFormat Document
-- 見出しレベル、生成IDおよび対象部分を表示するHover
-- ソース言語``ru``に対する``rust``補完
-
-Tree-sitter queryを変更した場合は、
-xref:../../docs/developer-guide/zed-development.adoc[開発版の動作確認]に従って目視確認する。
+基本的な構文色付けは``languages/asciidoc``と``languages/asciidoc_inline``のTree-sitter queryが担当します。
+Semantic Tokensはリンク、参照およびanchorなどの意味的な情報を補い、基本色付けの代わりにはなりません。

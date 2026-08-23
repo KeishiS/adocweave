@@ -1,42 +1,5 @@
 = ADR 0006: stable tagへの直接公開
 :status: superseded by ADR 0023
 
-決定の正本はxref:0023-publication-boundary.adoc[ADR 0023: 公開と配布の境界]です。
-この文書は当時の文脈と判断の経緯を残します。
-
-== 文脈
-
-このrepositoryは個人開発であり、stable公開前の候補成果物に対して導入、完全性および由来を
-自動検証します。RCとstableを別tagで公開すると、同等の検証とバージョン同期を二度運用する一方、
-追加の独立した受け入れ情報は得られません。
-
-== 決定
-
-release candidate tagを受理しません。すべてのrelease対象変更を``main``へ統合した後、手動workflowに
-その先端commitを候補SHAとして渡します。workflowは候補SHAがdispatch開始時点のmain先端と一致することと、
-同じSHAのmain candidateの成功を検証し、そのSHAを公開対象として固定します。
-
-検証後は公開jobが``vX.Y.Z`` tagを一度だけ作成し、同じworkflow runでstable GitHub Releaseを公開します。
-公開後の修正はtagを付け替えず、新しいstableなバージョンとして公開します。
-
-書き込み権限はworkflow tokenが持ちます。``github-release`` Environmentが、その権限を使える範囲を限定する
-権限・監査境界です。release用workflowで``contents: write``を持つjobはこの公開jobだけであり、Environmentの
-deployment branch制限によって、許可したbranchから開始したrunだけがこのjobへ到達します。
-
-tagを作成できる主体を公開jobだけに限る機械的な仕組みはありません。個人所有リポジトリでは組み込みの
-GitHub Actions appをtag rulesetのbypass対象へ指定できず(GitHub APIが拒否します)、bypassなしの
-rulesetは公開workflowのtag作成も拒否します。専用のpublisher用GitHub Appを唯一のbypass対象とすれば
-実現できますが、Appの作成、インストールおよび鍵の管理という運用費用が個人開発では見合わないため
-使用しません。tagの作成経路は、``contents: write``を公開jobだけへ付与するworkflow構成と、Environmentの
-deployment branch制限で間接的に限定します。リポジトリをorganizationへ移す場合は、Actions appを
-bypassとするtag rulesetを再評価します。
-
-== 帰結
-
-公開経路はstable SemVerだけを扱います。tag作成前の自動検査を公開条件とし、
-公開後の修正は新しいバージョンで行うため、tag後の検査結果でtagを変更しません。
-公開開始後に人が承認を挟む停止点はありません。候補SHAを指定した``workflow_dispatch``を公開判断とし、
-その開始時点でmain先端だった候補SHAを以後の公開identityとして扱います。
-開始後にmainが進んでも候補SHAと成果物は差し替えません。
-未知の環境での長期試験が必要になった場合だけ、通常release trainとは別の検証用branchまたは
-事前配布を明示的に設計します。
+この判断はxref:0023-publication-boundary.adoc[ADR 0023: 公開と配布の境界]に置き換えました。
+現在の公開手順と保証はxref:../release-distribution.adoc[配布仕様]を参照してください。

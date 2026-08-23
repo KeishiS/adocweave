@@ -1,310 +1,126 @@
 = 配布仕様
 
-この文書では、GitHub Releaseへ公開する成果物、権限境界および検証方法を定義します。利用者向けの
-導入、checksumおよびattestationの確認手順は
-xref:../user-guide/release-installation.adoc[インストールと更新]を参照してください。
+この文書は、GitHub Releaseへ公開する成果物と安全上の保証の正本です。利用者の導入、更新、checksumおよび
+attestationの確認はxref:../user-guide/release-installation.adoc[インストールと更新]、開発者がreleaseを
+準備して公開する手順はxref:../../CONTRIBUTING.adoc[コントリビューションガイド]を参照してください。
 
-配布対象の機械可読な基準は次のファイルです。
+[#distribution-authorities]
+== 機械可読な正本
 
-* link:../../release/distribution-plan.json[配布計画]
-* link:../../release/adocweave-dist-manifest.schema.json[JSON Schema]
+[cols="2,3",options="header"]
+|===
+|対象 |正本
 
-成果物名、対象環境、個数および
-バージョンを本文へ重複して記載しません。
+|製品、tag prefix、成果物、対象環境、versionの参照先
+|link:../../release/distribution-plan.json[配布計画]
 
+|配布manifestの形式
+|link:../../release/adocweave-dist-manifest.schema.json[JSON Schema]
+
+|RustとNode.jsの構築版
+|link:../../toolchains.json[toolchain manifest]
+
+|人が記述するversion固有の変更
+|link:../../release/notes.md[Release Notes]
+|===
+
+成果物名、対象環境、個数、versionおよびmanifestのfield一覧を本文へ複製しません。
+
+[#distribution-boundary]
 == 配布境界
 
-CLI、Language Server、Browser、Zed拡張、VS Code拡張およびtextlint用AsciiDoc Processorを、独立した
-六つの配布製品とします。各製品は自身のmanifestにバージョンの正本を持ち、一つのGitHub Releaseには
-一製品の成果物だけを公開します。GitHubが自動生成するソースarchiveは、検証対象の配布物に含めません。
+配布計画に記載した各製品は、独立したversion、tagおよびGitHub Releaseを持ちます。一つのReleaseには一製品の
+成果物だけを公開します。変更していない製品の成果物を別のReleaseへコピーせず、同じ製品versionを再発行しません。
+GitHubが自動生成するsource archiveは検証対象の成果物に含めません。
 
-VS Code拡張は、GitHub Releaseへ添付したVSIXと同一のfileをOpen VSX Registryへも公開します。Open VSX向けに
-成果物を作り直さず、公開はGitHub Releaseの公開後に行います（xref:adr/0023-publication-boundary.adoc[ADR 0023]）。
-crates.io、npm、Homebrew、WinGet、Visual Studio MarketplaceおよびZed Extension Registryには公開しません。
+VS Code拡張だけは、GitHub Releaseへ添付したVSIXと同じbyte列をOpen VSX Registryへも公開します。
+Open VSX向けに構築し直しません。ほかのpackage registryへは公開しません。textlint用Processorはnpm互換の
+archiveですが、GitHub ReleaseのURLを明示した導入だけを対象とします。
 
-textlint用Processorはnpm互換の``.tgz``ですが、npm registryまたはGitHub Packagesへ公開しません。
-パッケージには``private: true``を設定し、GitHub ReleaseのURLを明示した導入だけを対象とします。
+公開には配布計画の``tagPrefix``に従うstable tagを使用します。tag、source commit、versionの正本、
+配布manifestおよび成果物が一致しない場合は公開しません。
 
-公開には``adocweave-<product>/vX.Y.Z``形式のstable tagだけを使用します。tag、対象コミット、製品の
-バージョン正本、配布manifestおよび成果物が一致しない場合は公開しません。変更していない製品の成果物を
-別のReleaseへコピーせず、同じ製品バージョンを再発行しません。
+この公開単位を選んだ理由はxref:adr/0027-product-release-trains.adoc[ADR 0027]、公開先と権限境界は
+xref:adr/0023-publication-boundary.adoc[ADR 0023]を参照してください。
 
-privateリポジトリから取得する場合、利用者が明示的に与えたGitHub認証だけを使用します。credentialを
-archive、manifest、log、ソースコードまたは設定例へ埋め込みません。
+[#artifact-contracts]
+== 成果物の保証
 
-== ネイティブアーカイブ
+NativeのCLIとLanguage Serverは別のarchiveとして、対象OSのnative runnerで構築します。archive layout、
+実行file、licenseおよび第三者依存の通知は配布計画と成果物検査を基準とします。構築対象のarchitecture、
+link方式、最小OS版、実行権限およびstdio lifecycleを実際の成果物で確認します。
 
-CLIとLanguage Serverは別々の``.zip`` archiveとして配布します。全platformで同じflatなarchive layoutを使用し、
-次のファイルだけを含めます。
+Native binaryへOS code signingは行いません。Artifact Attestationは構築元を示しますが、OS code signingの
+代替ではありません。利用者に表示されるOS警告と確認方法は利用者向け文書に記載します。
 
-* 対応する実行ファイル
-* `README.adoc`
-* `LICENSE-MIT`
-* `LICENSE-APACHE`
-* `THIRD_PARTY_NOTICES.adoc`
+Browser packageは公開client、Web WorkerおよびWebAssemblyを一組として配布します。公開APIと内容は
+xref:core-profile.adoc#wasm-api[WebAssembly API]を基準とし、Worker内部のmessage形式は公開互換仕様に
+含めません。完成archiveをcross-origin isolationのない静的配信とbundlerの両方で実行し、size上限も
+成果物検査で確認します。
 
-Native binaryはCargoの``dist`` profileで対象OSとarchitectureのnative runner上に構築します。具体的な
-target、ランナー、最小OSバージョン、linkage、archiveおよび実行ファイル名は配布計画を基準とします。Linux musl
-binaryではELF architecture、静的linkおよび実行権限を検査します。macOS binaryではMach-O architecture、
-deployment target、system dynamic libraryだけへのlinkおよび実行権限を検査します。Windows binaryでは
-PE architecture、``.exe``名、CRLF入力、空白とUnicodeを含むpathおよびstdio process lifecycleを検査します。
-
-Windowsで成果物を構築する``cargo-dist``は、公式GitHub Releaseのバージョン付きZIPを使用します。取得する
-バージョン、asset名、URL、SHA-256およびZIP内の許可ファイル一覧は
-``release/windows-dist-bootstrap.json``へ固定します。
-SHA-256と許可ファイル一覧を検証してから、``dist.exe``だけを一時ディレクトリから実行用ディレクトリへ移します。
-任意のnetwork installer、package registryからのソースbuildおよび実行toolのキャッシュは使用しません。
-download、SHA-256検証、ZIP内の許可ファイル一覧の検証または展開のいずれかに失敗した場合はcandidateの構築を
-中止し、成功と失敗のどちらでも一時ディレクトリの削除を試みます。
-
-Native binaryへDeveloper ID、notarizationまたはAuthenticodeによるOS code signingは行いません。GitHub Artifact
-Attestationはbuild provenanceであり、OS code signingの代替ではありません。macOSではdownload元に応じて
-quarantine確認が必要になる場合があり、Windowsでは発行元未署名の警告が表示される場合があります。
-
-第三者依存の通知はCargoとnpmのlockfileから生成し、各成果物へ到達するパッケージの名前、バージョンおよび
-SPDX licenseを列挙します。license情報がないパッケージは受理しません。
-
-展開後のsmoke testは、ワークスペースの``target``にある実行ファイルを誤用しないよう、新しい一時ディレクトリ内の
-実行ファイルだけを使用します。CLIではバージョン、文書検査、変換および整形を確認します。Language Serverでは
-バージョンに加え、初期化、文書open、診断、shutdownおよびexitをstdio経由で確認します。
-
-== ブラウザーパッケージとエディター拡張
-
-Browser、Zed拡張およびVS Code拡張は、それぞれの製品Releaseへ公開します。Browser packageの
-内容と公開APIはxref:core-profile.adoc#wasm-api[WebAssembly API]、展開と配備は
-xref:../user-guide/release-installation.adoc#browser-library-deployment[Browser libraryの配備]を基準とします。
-Browser packageは展開前のarchiveを2 MiB以下、archive内のraw WASMを1.25 MiB以下とします。
-公開clientはPromiseを返す一つの解析入口だけを持ち、Worker内部のprotocol versionを公開互換仕様に含めません。
-JavaScriptとWASMの互換性はWASM protocol schemaだけで検査します。
-``main``のcandidate検査では公開archiveを展開し、
-cross-origin isolationを使わない静的配信環境およびbundlerで構築した経路から同じ公開APIを実行して、
-この性能予算と実行時の互換性を確認します。静的なarchive検査と実行検査は一つのtask graphで行い、
-実行検査後に同じarchiveをcandidateとして保存します。
-受入検査に使うbrowserは``flake.lock``で固定したChromiumです。CIはこのbrowserを持つdevShellでgateを
-実行し、runner imageに同梱されたbrowserを使いません。ほかのtoolと同じく、バージョンの変更は
-``flake.lock``の差分として記録に残ります。Chromiumは大きいため、このgateを実行するjobだけが取得します。
-
-Chromiumの起動確認は1回20秒、最大3回、合計75秒を上限とします。
-起動に失敗した場合は新しいprofileで再試行し、各試行の番号、経過時間、標準エラー出力および終了状態を記録します。
-各試行の上限にはDevTools接続の確認と、失敗したbrowser processの終了処理を含めます。まず通常終了を要求し、
-期限内に終了しない場合は強制終了してprocessを切り離します。試行または合計の上限へ達した場合は終了待ちを続けず、
-進行中の起動確認を中止します。
-この上限を定めた時点の基準値はraw WASMが1,085,621 byte、archiveが277,152 byte
-（約271 KiB）です。raw WASMの上限には基準値から約21%の余裕を設けます。archiveの2 MiBという上限は、
-圧縮方式の変更や収録物の拡張を妨げないための余裕を含みます。上限を変更する場合は、実際の成果物を計測し、
-増減の理由と新しい余裕が適切かをreviewします。
-
-=== Node.jsのバージョン
-
-Node.jsのバージョンは``toolchains.json``の``nodeVersion``だけが決めます。CIのほとんどのjobは
-devShellのNode.jsを使い、flakeはshellを構築する時点でNixpkgsのNode.jsがこの値と一致することを
-確かめます。一致しない場合、shellは構築できません。
-
-``native-artifact-smoke``はmacOSとWindowsのrunnerでも動くためdevShellを使えず、``setup-node``が
-必要です。このworkflowは``nodeVersion``を読んで``setup-node``へ渡します。バージョンをworkflowへ
-直接書くと、devShellのNode.jsと分かれても誰も気付かないため、必ずtoolchain manifestから取得します。
-
-VSIXは固定したNode.js依存とlockfileからbundleし、runtimeの``node_modules``とsource mapを同梱しません。
-bundleへ到達する推移runtime依存の名前、versionおよびlicenseは``THIRD_PARTY_NOTICES.adoc``として同梱します。
-同梱fileが許可一覧と完全に一致すること、package sizeおよび機械固有pathの不在を確認します。公開するbyte列が
-入力だけから決まることは、成果物を公開する経路で同じsourceからもう一度構築してSHA-256を比較して確認します。
-VS Code拡張とZed拡張はLanguage Serverを同梱せず、取得、検証、展開、cache、更新および削除を実装しません。
-エディターで有効な設定に絶対pathで指定した実行ファイルを優先し、次にeditor processから見える``PATH``を使用します。
-見つからない場合は共通の導入文書へ案内します。未信頼のprojectまたはworktreeの設定から任意の実行ファイルを
-起動しません。VS Codeは未信頼ワークスペースで拡張を無効にし、ZedはWorktree Trustに従います。
-Language Server processの起動、標準入出力、初期化、終了および再起動は、
-各editorの標準LSP client APIへ委ねます。
-
-互換性は製品バージョンやAdocWeave固有のAPI世代ではなく、LSPの初期化で交換する標準capabilityから判断します。
-各editorのLSP clientは提供されたcapabilityに対応する機能だけを有効にし、初期化できない場合は起動失敗として
-理由を表示します。
-Language Serverとeditor拡張は引き続き独立した製品として構築、検証および公開します。この責務境界は
+VS Code拡張とZed拡張はLanguage Serverを同梱せず、download、cacheまたは更新を実装しません。現在の導入方法と
+実行fileの選択規則は利用者向け文書を基準とします。この境界の理由は
 xref:adr/0028-editor-language-server-boundary.adoc[ADR 0028]を参照してください。
 
-[#textlint-processor-package]
-== textlint用AsciiDoc Processorパッケージ
+textlint用ProcessorはProcessor、TxtAST変換、型定義、Node.js向けWebAssembly、licenseおよび第三者依存の通知を
+同じarchiveへ収録します。install時のscript、実行時npm依存、``node_modules``、source mapおよび機械固有pathを
+収録せず、実行時に追加downloadしません。includeと自動修正は公開範囲に含めません。公開interfaceと利用法は
+xref:../../packages/textlint-plugin-asciidoc/README.adoc[packageのREADME]を基準とします。
 
-``@adocweave/textlint-plugin-asciidoc``は、npmがURLから導入できる``.tgz``として、textlint製品の
-GitHub Releaseへ公開します。公開APIはtextlintの``Processor``に限定し、``.adoc``、``.asciidoc``、
-``.asc``および利用者が明示した追加拡張子をTxtASTへ変換します。日本語規則、AdocWeave固有の用語集、
-検査対象一覧および文書検査taskは収録しません。
+第三者依存の通知はlockfileから生成し、成果物へ到達するpackageの名前、versionおよびSPDX licenseを記録します。
+license情報のないpackageは受理しません。SBOMを公開しない判断は
+xref:adr/0036-no-unconsumed-sbom.adoc[ADR 0036]を参照してください。
 
-パッケージにはProcessor、TxtAST adapter、UTF-16位置変換、型定義、README、license、第三者依存の通知、
-``parseText``だけを公開するNode.js向けWebAssemblyとwrapperを収録します。WebAssemblyは同じパッケージへ固定して
-収録し、別のWebAssemblyへの差し替えは認めません。install時のscript、実行時npm依存、
-``node_modules``、source mapおよび機械固有pathを収録せず、実行時の追加downloadも行いません。
+[#distribution-integrity]
+== 完全性と来歴
 
-入力は10 MiB、TxtAST planは50 MiB、planのnodeは1,000,000件、``sourceId``は4 KiBを上限とします。
-WebAssemblyのlinear memory、tarballおよび展開後の内容の上限は、成果物検証器で管理します。
-収録fileはlink:../../packages/textlint-plugin-asciidoc/package.json[`package.json`]の``files``を正本とし、
-生成した配布物を照合します。実CLIの受入検査はNode.jsのheapを128 MiBに制限して実行します。
+配布manifestは製品、version、source commitおよび公開成果物を記録します。checksum一覧は公開成果物と
+配布manifestを対象とします。candidateディレクトリに未知のfile、subdirectory、欠落、改変または異なる
+source commitがある場合は受理しません。
 
-自動修正は公開範囲に含めません。Processorはtextlint規則が返した診断から``fix``を除去します。
-``textlint --fix``を実行しても入力のbyte列が変化しないことを受入検査で確認します。includeは展開せず、
-一つの物理ファイルだけを診断対象とします。
+公開する成果物、配布manifestおよびchecksum一覧にはGitHub Artifact Attestationを付けます。credentialや
+署名fileはarchiveへ埋め込みません。privateリポジトリから取得する場合も、利用者が明示的に与えたGitHub認証だけを
+使用し、credentialをmanifest、log、sourceまたは設定例へ記録しません。
 
-包装時は配布仕様で定めた許可file一覧、archive内の絶対path、親directory参照、symlinkおよびsizeを検査します。
-``main``のcandidate検査では、完成したarchiveを独立した検証器へ1回だけ渡します。続いて、固定したNode.jsとtextlintを持つ
-consumer fixtureへ同じarchiveを1回だけ導入し、
-``.adoc``、``.asciidoc``、``.asc``、標準入力、LF、CRLF、日本語、結合文字および絵文字について、診断位置と
-``--fix``による非変更を検査します。対応するNode.jsとtextlintの版は、固定consumerで検証する値をpackage metadataと
-利用手順へ記載します。
-
-再現性を手動で調べる場合は、検証済みのcandidateと、追跡しているsourceを一時ディレクトリへ複製して1回だけ
-構築したarchiveのSHA-256とbyte列を比較します。この検査はPull Requestのgateには含めません。
-
-公開後はGitHub Releaseの実URLからarchiveと``sha256.sum``を取得してchecksumを照合し、同じ実URLを指定した
-``npx``の単発実行を確認します。公開後の検査は公開処理の後にだけ実行し、公開前gateには
-含めません。失敗しても既に公開したReleaseを自動で差し戻せないため、結果を公開後の異常として調査します。
-この検査境界の理由はxref:adr/0030-minimal-textlint-release-gates.adoc[ADR 0030]を参照してください。
-
-== 配布メタデータ
-
-各製品バージョンの正本とtag prefixは
-link:../../release/distribution-plan.json[配布計画]の``versionSource``と``tagPrefix``で対応付けます。
-配布計画自体はバージョンを重複して保持しません。RustとNode.jsの構築版は``toolchains.json``に記録します。
-Release Notesの本文は``release/notes.md``に人が書き、公開workflowの``tools/release-notes.mjs``が、選択した
-製品、製品バージョンおよび、その製品が互換性の判断に使う公開API世代との一致を検査します。Browserでは
-WASM protocol schemaだけを関連API世代とし、Worker内部の封筒は含めません。CLI引数や
-Language Server protocolなどの変更と移行方法は人が本文へ記載します。``cargo make verify``に含まれるrelease contractが、
-六製品のrouting、製品ごとの成果物集合、
-配布manifestおよびRelease Notesの形を検査します（xref:adr/0026-no-unverified-release-claims.adoc[ADR 0026]、
-xref:adr/0027-product-release-trains.adoc[ADR 0027]）。
-
-``tools/release-metadata.mjs``を配布manifestとchecksumの生成器とします。target別の成果物を
-一つのcandidateディレクトリへ集約した後、実際に公開するarchiveから次を決定的に生成します。
-
-* 配布manifestへの製品名、製品バージョン、source commitおよび公開archive名の記録
-* checksum一覧への公開archiveと配布manifestの名前順での記録
-
-``sha256.sum``自身のdigestは同じfileへ記録できません。公開archive、配布manifestおよび``sha256.sum``を含む
-すべての公開成果物にはArtifact Attestationを付け、checksum一覧自体の出所も検証できるようにします。
-SBOMを公開しない判断と再導入の条件はxref:adr/0036-no-unconsumed-sbom.adoc[ADR 0036]に記録します。
-
-生成器の検証機能はmetadataを同じ入力から再生成し、byte単位の一致とcandidateディレクトリ内の成果物集合を
-確認します。未知のfile、subdirectory、欠落、改変またはsource commitの不一致を受理しません。
-
-公開するすべての成果物にはGitHub Artifact Attestationsによるprovenanceを付与します。credentialや署名fileは
-archiveへ埋め込みません。
-
+[#publication-permissions]
 == 権限境界
 
-計画、build、smoke testおよびcandidate集約はread-onlyで実行し、repository secretを参照しません。
-公開jobもrepository secretを参照せず、書き込みにはworkflow tokenを使用します。
-Releaseへの書き込みとOIDCは、``github-release`` Environmentを使用するこの公開jobだけへ付与します。
-release用workflowで``contents: write``を持つjobはここだけであり、Environmentのdeployment branch制限に
-よって、許可したbranchから開始したrunだけがこのjobへ到達します。同じrunのcommit、candidate、checksum
-および成果物集合を承認後に再検査し、成功後に公開します。
-Environmentのdeployment branch制限はGitHub上の外部設定であり、workflow自身では検査しません。公開担当者は
-dispatch前にこの設定をRelease checklistで確認します。外部actionは完全なcommit SHAへ固定します。
+計画、構築、成果物検査およびcandidate集約はread-onlyで実行し、repository secretを参照しません。
+GitHub Releaseへの書込みとOIDCは、保護した``github-release`` Environmentを使用する公開jobだけへ付与します。
+公開jobは承認後にもsource commit、candidate、checksumおよび成果物集合を再検査します。外部actionは完全な
+commit SHAへ固定します。
 
-この権限境界は3製品で共通の前提です。すべてのworkflowで外部actionを完全なcommit SHAへ固定し、
-jobごとに``timeout-minutes``を設定し、Pull Requestとmain pushのjobはread-only権限で実行して
-repository secretを参照しません。書き込み権限を持つ公開workflowは各repositoryに置き、共通のworkflowへ
-集約しません。``release-workflow-policy``がこれらの条件を検査します。
+Open VSXへ公開する場合だけ、専用workflowが最小権限のtokenを使用します。このworkflowはGitHub Releaseから
+取得したVSIXのchecksumとattestationを確認し、別の成果物を公開しません。
 
-``adocweave-*/v*`` tagを作成できる主体を公開jobだけに限る機械的な仕組みはありません。tagの作成経路はEnvironmentの
-制限で間接的に限定されるだけで、repositoryへ書き込める利用者は手元からもtagを作成できます。
-tag rulesetを使わない理由はxref:adr/0006-direct-stable-releases.adoc[ADR 0006]に記載しています。
+CLIのstable Releaseを公開した場合だけ、専用workflowが``CACHIX_AUTH_TOKEN``を使用します。workflowは公開済みの
+tagとcommit、成果物のchecksumおよびattestationを再検査し、同じcommitから構築したNix package closureだけを
+Cachixへ送信します。repositoryに対する権限はread-onlyで、ほかのjobはこのtokenを参照しません。
 
-公開処理は、``main``と製品を指定して開始した一つのworkflow runで検査、candidate構築、承認および公開を行います。
-成果物は一度だけ構築し、公開jobでは同じrunのartifactを取得してmetadataを再検証し、attestationを作成してから、
-``GITHUB_SHA``へtagを作成します。
-その後private draftへ成果物を追加し、成果物集合が揃った後にstable releaseとして公開します。
+repositoryへの書込み権限がある利用者による手元からのtag作成を、workflowだけで機械的に禁止することはできません。
+tag rulesetを追加せず、Environmentと公開前検査を権限境界にする理由は
+xref:adr/0023-publication-boundary.adoc#publication-authority[ADR 0023]を参照してください。
 
-VS Code拡張を公開した場合だけ、同じrunが``open-vsx-publish.yml``を呼び出し、GitHub Releaseに添付されたVSIXをdownloadして
-checksumとattestationを検証してからOpen VSX Registryへ公開します。Open VSXのAPIはOIDCによる委任へ対応しないため、
-このworkflowだけがrepository secret``OPEN_VSX_TOKEN``(namespace``adocweave``のpublish token)を参照します。
-書き込み権限を持たず、送信に失敗してもtagとGitHub Releaseへ影響しません。
+[#publication-failure]
+== 公開と失敗時保証
 
-``open-vsx-publish.yml``はtagを指定して単独でも実行できます。GitHub Releaseは公開済みで作り直せないため、
-Open VSXへの送信だけが失敗した場合は、同じtagでこのworkflowを実行して回復します。同じversionの再公開は
-Open VSXが拒否するため、公開済みの版を上書きしません。
+公開は、固定した``main``のcommitから一つのworkflow runでcandidateを一度だけ構築し、その同じ成果物を検査、承認、
+attestationおよび公開へ渡します。tagより前の失敗ではtagとReleaseを作りません。公開途中の失敗では、そのrunが
+作成した非公開状態だけを識別して片付け、他のrunや利用者が作った状態を変更しません。
 
-CLIを公開した場合だけ、同じrunが``binary-cache-publish.yml``を呼び出し、公開tagをcheckoutしてx86_64-linuxとaarch64-linuxの
-Nixパッケージをbuildしてruntime closureをbinary cache``keishis.cachix.org``へpushします。Cachixへの
-書き込みはOIDCで委任できないため、このjobだけがrepository secret``CACHIX_AUTH_TOKEN``(cacheのwrite token)を
-参照します。参照できるworkflow、jobおよびsecret名は``release-workflow-policy``の許可一覧で固定し、
-pull requestやmainへのpushでは参照しません。このjobはGitHubへの書き込み権限を持たず、pushに失敗しても
-tagとGitHub Releaseには影響しません。送信だけが失敗した場合は、同じtagを指定してこのworkflowを単独で実行できます。
+一度公開したstable Releaseは自動で差し戻しません。公開後の確認で問題が見つかった場合は新しいversionで修正します。
+同一runで公開する理由と状態の所有方法はxref:adr/0032-same-run-release-publication.adoc[ADR 0032]を参照してください。
 
-== 検証
+[#distribution-verification]
+== 検証境界
 
-配布candidateの受入検査と公開前検査には、次の代表taskを使用します。
+Pull Requestではsource、試験、生成fileおよび文書を標準の``verify``で検査し、配布candidateは構築しません。
+``main``ではcross target、fuzz、Nix packageなどの統合検査を行います。公開workflowではこれらを固定commitに対して
+再確認し、選択した製品の完成成果物を対象OS、Browserまたは固定consumerで検査します。
 
-[source,console]
-----
-cargo make acceptance
-cargo make release-check
-----
+taskの現在の入口とreleaseの操作手順はxref:../../CONTRIBUTING.adoc[コントリビューションガイド]を基準とします。
+検査をこの境界へ分ける理由はxref:adr/0031-path-independent-pull-request-gate.adoc[ADR 0031]、
+task間の責務はxref:adr/0033-make-task-boundary.adoc[ADR 0033]を参照してください。
 
-``acceptance``は、``verify``済みのsourceを前提として、CIが行う統合検査とglobal成果物の受入検査を
-現在のhostで実行します。
-``release-check``は公開前の完全な検査です。標準の``verify``が行うsource検査に、``security-audit``が行う
-配布runtimeの取得元、licenseおよび最新advisoryの監査と、配布物および導入経路の検査を加えます。
-Rust workspaceのcrateはすべて``publish = false``であり、製品別tagと対応する単一の
-Rust API baselineを持たないため、公開製品のrelease gateではRust APIのSemVer差分を検査しません。
-
-``platform-contract``は、WindowsとPOSIXのpath計算、実行file名、archive path、Windows DLL許可一覧、
-macOS deployment target、VSIX metadataおよび一時ディレクトリ削除の再試行条件をfixtureで検証します。
-このtaskはhost OSに依存せず、pull requestとlocalで同じtestを実行します。
-実OS操作ではファイルシステム、process制御、時刻、platformおよびpath実装をruntime adapterとして注入し、
-``platform-contract``の判定からNode.jsのhost APIを分離します。
-
-``cross-native-check``はWindows MSVCとmacOS ARM64向けに``cargo check``を実行します。この検査は型検査と
-条件付きcompileだけを対象とし、linkと実行は行いません。
-
-対象OSでローカルのnative成果物を検証する場合は、次のtoolを使用します。既定では``target/distrib``を読み、
-現在のOSとarchitectureに対応するtargetを配布計画から選択します。別ディレクトリを使用する場合は
-``NATIVE_ARTIFACT_DIR``、candidate外のmanifestを使用する場合は``NATIVE_MANIFEST``を指定します。
-
-[source,console]
-----
-node tools/local-native-check.mjs smoke cli
-node tools/local-native-check.mjs installation cli
-----
-
-このfixtureは、MSVCでのlink、Windowsの実際のfile lock、macOS SDKでのlink、Mach-Oの実行、
-quarantine属性および各OSでのprocess lifecycleを再現しません。これらは対象OSのnative runnerで
-``native-release-smoke``とinstallation E2Eを実行して確認します。
-
-=== Pull Requestとmainの検査境界
-
-Pull Requestでは、変更pathにかかわらず一つの標準source gateを実行します。``cargo make verify``と同じ範囲で、
-書式、lint、test、生成fileの差分、人が書いた文書および配布metadataを検査します。追跡pathを成果物ごとに
-分類せず、実行しないjobを``skipped``にして最後に組合せを照合する処理も行いません。必須checkの表示名は
-``verify``のまま維持します。
-
-Pull Requestでは配布candidateを構築しません。``main``へのpushでは最新advisoryを使う依存監査の成功後に、
-cross target、fuzz、Nixパッケージなどのmain gateを
-実行します。公開workflowを``main``で開始すると同じmain gateを再実行し、選択した製品だけを構築して、実際のOSやBrowserを使う
-runtime受入検査を行います。native成果物は対象OSのrunnerで、Browser成果物は実Chromiumで、textlint用パッケージは
-完成archiveと固定consumerで検査します。成果物のmetadata、checksumおよび収録fileも、公開するbyte列に対して確認します。
-
-いずれかの検査に失敗したrunは公開へ進みません。修正を``main``へ統合した後、新しいcommitから公開workflowを開始します。
-この分離の理由はxref:adr/0031-path-independent-pull-request-gate.adoc[ADR 0031]を参照してください。
-
-公開workflowは、dispatchで固定された``main``の``GITHUB_SHA``からcandidateを一度だけ構築し、tagとReleaseが
-存在しないことを承認後に検査します。このSHAを公開identityとして固定し、
-後からmainへcommitが追加されても対象を差し替えません。通常CIのrunは新しいcommitで取り消せますが、
-開始した公開workflowは取り消しません。
-
-=== candidateの保持期間
-
-candidateは同じworkflow runのartifactとして30日間保持します。Environmentの承認はこの期間内に行ってください。
-期間を過ぎるとartifactが失われ、公開jobはcandidateを取得できずに失敗します。
-その場合は新しいpatch versionを準備し、release対象の変更を最初から作り直します。
-
-Pull Requestのrunだけを``cancel-in-progress``の対象とします。開始した公開workflowは新しい``main`` pushで
-取り消さず、開始時に固定したcommitとcandidateを後続runで置き換えません。同じ製品の公開workflowは同時に
-一件だけ実行します。
-
-tag作成前の検査またはattestationに失敗した場合は、tagとReleaseを作成しません。tag作成後にGitHub APIによる
-draft作成、asset uploadまたは公開が失敗または取り消された場合は、run IDの非公開markerが一致する
-private draftだけをRelease一覧から特定して削除します。その後、Release一覧を正常に取得でき、対象Releaseがなく、
-tag refがこのrunで作成したtag objectを指したままである場合だけtag refを削除します。
-Releaseが残る場合やtag refが変化した場合は、他者の状態を壊さないよう自動削除しません。cleanupが完了した場合は
-同じrunの失敗jobを再実行できます。完了しない場合はGitHubの画面で作成者とrunを確認し、新しいpatch versionを準備します。
-
-この文書と配布計画を配布仕様の基準とし、task定義とworkflow構成はこれらに適合させます。リリース作業と公開後の確認は
-xref:../../CONTRIBUTING.adoc[コントリビューションガイド]に従います。
+textlint用Processorは公開後に実際のRelease URLから取得し、公開checksumとの一致と``npx``による単発実行を
+確認します。この確認は公開済みの成果物に対してだけ行い、公開前の検査と重複させません。

@@ -1,431 +1,130 @@
 = 利用側アプリの実行仕様
 
-この文書では、サーバー、デスクトップアプリ、Language ServerおよびWeb Workerが解析から変換までを
-実行する場合の責務、順序および安全性の境界を定義します。
+この文書は、CLI、Language Server、WebAssemblyその他の利用側アプリに共通する実行順序と失敗時保証の正本です。
+各コンポーネントの責務と依存方向はxref:architecture.adoc#component-boundaries[アーキテクチャ]を参照してください。
+内部型、フィールドおよび状態遷移はRust APIと試験を基準とします。
 
-コアcrateはthread pool、async runtime、ファイルシステム、ネットワーク、DB、時刻およびログ出力を所有しません。
-利用側アプリが処理の投入、外部情報の取得、キャンセル、結果の採用および観測を管理します。
-
+[#analysis-execution]
 == 解析
 
-=== 所有権と実行順序
+利用側アプリは次の順序で処理します。
 
-利用側アプリは``AnalysisRequest``へ、不透明な``SourceId``、文書バージョン、単調増加するgeneration、
-入力スナップショットおよび完全な``AnalysisOptions``を所有値として渡します。
+. 入力本文、設定、処理上限および外部リソースの同じ時点のスナップショットを取得します。
+. includeを有効にした場合は、不足するリソースを安全な取得境界から読み、同じ前処理を途中から再開します。
+. 前処理済み本文を一度解析し、不変な``Analysis``を得ます。
+. 必要な外部参照やmediaを解決し、型付きの変換入力として渡します。
+. 入力の版と設定が現在値に一致する場合だけ結果を公開します。
 
-推奨する実行順序は次のとおりです。
+解析結果は入力本文、設定および外部リソースと同じ版に属します。利用側アプリは解析中の値を公開せず、
+採用後の``Analysis``を書き換えません。同じ解析結果を診断、整形、問い合わせおよび出力で共有します。
 
-. 文書の逐次更新処理で新しいgenerationとキャンセルtokenを作ります。
-. 上限を設けたCPU workerの実行枠を取得します。
-. ``AnalysisRequest::analyze``へtokenを``CancellationCheck``として渡します。
-. 結果を共有状態へ入れる前に``AnalysisResult::is_current``を確認します。
-. 文書revisionが一致し、tokenがキャンセルされていない場合だけ結果を採用します。
+includeを無効にした場合はdirectiveを展開せず、外部リソースを暗黙に取得しません。WASMでも、取得済みのリソースを
+要求へ明示した場合だけ前処理します。
 
-Semaphore、``spawn_blocking``またはthread poolなどの具体的な投入方法は利用側アプリが選びます。待ち行列にも
-明示的な上限を設け、runtime既定の無制限queueをAdocWeaveの処理上限として扱いません。
+[#asynchronous-execution]
+== 非同期実行
 
-``AnalysisRequest::analyze``はpanicを捕捉しません。通常入力の失敗は``ParseError``として扱い、panicの隔離と
-workerの再起動はFFI、taskまたはthreadなどの利用側アプリの境界で行います。panicを構文診断へ変換しません。
+非同期の利用側アプリは、文書の版、設定の世代、ワークスペースの世代および取消しを一つの処理単位として保持します。
+外部I/Oの完了後、前処理の再開前および結果の公開前に現在値と照合し、古い処理を破棄します。
 
-この境界は、AdocWeave自身がpanicしないことを前提とします。lint規則が、宣言していない修正候補や適用できない
-修正候補を作った場合は、AdocWeaveの欠陥です。それでも実行を終わらせません。Language Serverは一つのプロセスで
-打鍵に応答するため、ここでプロセスが終わるとエディターの作業内容が失われます。CLIはそれまでに見つけた診断を
-すべて失います。どちらも、修正候補を伴わない診断を返すより悪い結果です。
+CPU解析はプロトコルやUIのevent loopから分離し、同時実行数と待機数を制限します。取消しはコアへ伝えますが、
+すでに完了した処理でも古い結果は公開しません。共有状態のロックはスナップショットの取得と採用判定に限定し、
+CPU処理、外部I/O、実行枠の待機およびクライアントとの通信中には保持しません。
 
-そのため、修正候補だけを落として診断は返します。欠陥はdebug buildのdebug assertionで停止するため、
-開発中に見つかります。release buildでは停止しません。
+キャッシュを使う場合は、入力本文だけでなく意味へ影響する設定と外部リソースもキーへ含めます。処理途中の値、
+取消済みの値、上限を超えた値および失敗した値はキャッシュへ採用しません。
 
-=== 協調キャンセル
+[#execution-observability]
+== 観測
 
-``Engine::analyze_with``、``preprocess_with``、``preprocess_and_analyze_with``、
-``lint_analysis_cancellable``および``PreprocessedAnalysis::project_origins_cancellable``は、
-呼出側が所有する同じ``CancellationCheck``を受け取ります。前処理と解析の入口では、
-``PreprocessInputs``の``cancellation``へ渡します。指定しない場合はキャンセルを行いません。Workspace解析は前処理、構文解析、lintおよび生成元への位置投影へ
-同じtokenを渡し、いずれかの段階でキャンセルを検出した場合は途中結果を返しません。
+通常のログ、メトリクスおよびトレースには、結果分類、処理時間、入出力のbyte数および診断数だけを記録します。
+入力本文、展開後の属性値、リンク先、xrefの参照先および生成HTMLは記録しません。本文を必要とするデバッグ機能には、
+明示的な有効化とアクセス制御が必要です。
 
-各段階は開始時と終了時に加えて、行、構文nodeまたは投影対象rangeを処理する長いloopで検査します。
-長いloopでは最大256作業単位ごとに検査するため、入力の大きさにかかわらず検査間隔は一定です。
-協調キャンセルは処理threadを強制停止しないため、利用側アプリは返却後にもgenerationとtokenを確認してから
-結果を採用します。
+[#resource-execution]
+== 外部リソース
 
-``Engine::analyze``、``preprocess``、``preprocess_and_analyze``、``lint_analysis``および
-``PreprocessedAnalysis::project_origins``は、キャンセルしないtokenを使う互換用APIです。
+コアはリソースの取得を行いません。利用側アプリは論理的なソースIDを保ったまま、ファイルシステム、ネットワークまたは
+データベースから取得し、安全性を確認した本文だけを渡します。一回の処理中は、同じIDが指す内容を変更しません。
 
-=== キャッシュ
+前処理は不足するリソースを要求した位置で停止し、対応する応答だけを受理して再開します。別の要求への応答や、
+一度使った継続の再利用は拒否します。取得失敗時は処理を終了し、途中まで作った解析結果を公開しません。
+利用側アプリが診断を残して処理を継続する場合は、失敗したリソースの代替内容を明示的に渡します。
 
-``AnalysisCacheKey``は、パッケージバージョン、生入力、``SourceId``および解析結果・診断を変える
-``AnalysisOptions``から決定します。``RenderPolicy``と``OutputLimits``は含めません。
-Mapとsetは規範順に並べるため、挿入順は結果へ影響しません。``AnalysisOptions``または構成型へfieldを追加する
-場合は、キャッシュキーも同時に更新します。
+native環境のローカルファイルは``adocweave-host``を通して読みます。許可したrootの外側、symlinkによる境界越え、
+不正なUTF-8および上限超過を通常の不在と区別します。検査後に未確認のパスから開き直しません。
+候補の読込、ワークスペースへの取込みおよび課金は、すべて成功した場合だけ一つの変更として採用します。
+取消し、競合または失敗時は以前の状態と使用量を維持します。
 
-文書バージョンとgenerationはキャッシュキーへ含めません。同じ入力、設定および処理系なら解析結果を共有できます。
-ただし、キャッシュから得た結果にもrevisionの採用判定を適用します。
+ファイルシステムの競合に対する保証とOSごとの差は
+xref:adr/0014-race-resistant-local-filesystem-boundary.adoc[ADR 0014]を参照してください。project設定から決まる
+root、走査対象および上限の現在の動作はxref:../user-guide/project-configuration.adoc[プロジェクト設定]を
+基準とします。Language Serverの初期走査と通知は
+xref:language-server.adoc#lsp-workspace[Language Serverの実行仕様]を基準とします。
 
-=== 観測
+資源使用量は、一回の読込、一つの論理処理、ワークスペースでの継続保持および一回の解析スナップショットという
+異なる寿命で制限します。具体的な設定項目と既定値は、Rust型から生成する
+link:../../config/adocweave.schema.json[プロジェクト設定スキーマ]を基準とします。
 
-通常のログ、メトリクスおよびtraceには次の情報だけを使用します。
+[#source-map]
+== ソースマップ
 
-* 成功、キャンセル、入力不正、上限超過、失敗、panicまたはstaleの結果分類
-* 処理時間
-* 入力と出力のbyte数
-* 診断数
+include展開後のbyte範囲は、ソースマップによって元の``SourceId``と範囲へ対応付けます。診断、修正候補、参照、
+リソースおよび文書シンボルは元の位置へ投影します。複数の元範囲または変換された範囲にまたがる修正候補は
+適用不可とします。
 
-入力本文、展開後の属性値、リンク先、xref locatorおよび生成HTMLを通常の観測情報へ含めません。
-本文を必要とするデバッグ機能には、明示的な有効化とアクセス制御を設けます。
-
-[#preprocessing]
-== 外部ファイルの展開
-
-通常の解析はファイルシステムやネットワークへアクセスしません。利用側アプリが必要なresourceを取得して
-``ResourceSnapshot``を構築し、文書構造の解析前にプリプロセッサへ渡します。NativeとWASMは、同じスナップショットと
-設定から同じ展開結果を生成します。
-
-まだsnapshotにないresourceを取得するNative利用側は、I/O非依存の
-``WorkspaceSnapshot::preprocess_resumable``を使います。``WorkspacePreprocessStep``は、前処理完了、
-一件のresource要求、失敗、取消を型で区別します。CLIは``NeedResource``を同期的に読んですぐに再開し、
-Language Serverは同じ単回使用の継続をI/O完了まで保持します。両者はソースの先頭から前処理をやり直しません。
-
-利用側は現在の要求から``found``、``not_found``または``load_failed``で応答を作ります。
-CLIのように読込み診断を報告して残りの文書を解析する利用側は``failed_with_placeholder``を使い、
-Language Serverのように不完全な結果を公開しない利用側は``load_failed``でその実行を終了します。
-別の要求に対する応答は受理しません。非同期の利用側はrevision、workspace generationおよび取消tokenも継続と一緒に保持し、
-それらが変わった場合は``resume``を呼ばずに継続を破棄します。
-
-一回の処理中は``ResourceLookup``の参照内容を固定します。本文は``Arc<str>``で共有されますが、利用側アプリが
-保持するresourceは``max_includes``だけでは制限されません。workspaceのresource件数と総byte数には
-``RetainedResourceBudget``および``AnalysisSnapshotBudget``も適用します。
-
-``WorkspacePreprocessStep::Complete``が返す``WorkspacePreprocessDraft``は、前処理済み文書とinclude journalを
-解析より先に公開します。``WorkspacePreprocessDraft::analyze``は保持済みの前処理結果から解析を続け、
-前処理を繰り返しません。完了したincludeのjournalは重複をまとめず実行順に保持し、
-snapshot内の本文、後から取得した本文、不在と確定したresourceおよび読込失敗を型で区別します。
-``WorkspacePreprocessFailure::dependencies``も、失敗までにsnapshotとhost応答から観測した依存先を返します。
-
-解析後の結果の採用は二段階で判定します。workspace層の
-``Workspace::finalize_draft``は、rootのrevisionと本文、開始時のsnapshotから参照した本文、再開時に取得した本文、
-および不在と確定したresourceを現在のworkspaceと照合します。参照していないresourceだけが更新された場合は、
-workspace generationが変わっていても確定できます。root以外の本文は``Arc<str>``の同一性で照合するため、
-同じ本文を共有したままrevisionまたはdisk・overlayの層が変わった場合も確定できます。
-
-Language Serverは、確定処理とは別に``WorkspaceAnalysisDraft::matches_canonical_context``を呼び、開始時の
-generationと``EffectiveProcessingOptions``のcontractが現在の規範状態と一致する場合だけ結果を採用します。
-設定値が同じでも、別に構築した``EffectiveProcessingOptions``は同じcontractではありません。設定変更時は
-古い継続とdraftを破棄します。この厳格な判定によって、workspace層で許可する無関係な更新と、Language Serverが
-一つだけ保持する規範的な解析結果を区別します。
-
-WASMの解析requestでincludeを展開する場合は、``preprocess.resources``へ取得済みresourceを、
-``preprocess.options``へ前処理設定を指定します。``preprocess``を省略した場合は入力のソースをそのまま解析し、
-暗黙のresource取得やinclude展開を行いません。
-
-文書外属性は``AnalysisOptions.attributes``、WASMでは``analysisOptions.attributes``へ指定します。
-文字列はhard-lockedなset、``null``はhard-lockedなunsetを表します。前処理と解析を組み合わせるRust APIでは、
-``EffectiveProcessingOptions``が文書外属性と属性展開の深さ・生成byte数の上限について、両者が一致していることを検証します。
-``EffectiveProcessingOptions::preprocess_and_analyze``と``WorkspaceSnapshot::analyze_with_options``は、
-この検証済みの値をそのまま使います。
-
-解析設定と前処理設定を別々に受け取る``preprocess_and_analyze``では、文書外属性と二つの属性展開上限を
-同じ値にします。不一致はincludeの探索や解析を始める前に
-``PreprocessedAnalysisError::Options``として返され、原因は``ProcessingOptionsError``で区別できます。
-``WorkspaceSnapshot::analyze``とWASMのcombined requestも同じ不一致を処理前に検査し、
-公開境界の``invalid-options``として返します。処理中に既定の上限を再取得して、呼出側が指定した境界を
-置き換えることはありません。
-
-``discover_includes``は、完全でescapeされていないinclude directiveをI/Oなしで列挙します。この結果は条件分岐内を
-含む候補の集合であり、実際に使用するかどうかと安全性はプリプロセッサが判断します。
-
-Native側のディレクトリ列挙とファイル読込は``LocalFilesystemSession``を経由します。Linuxではpolicy作成時に
-各rootのディレクトリhandleを取得し、session作成時や走査中にrootのpathから開き直しません。このsessionは許可したrootごとの
-filesystem adapter、symlink判定および全rootで共有するファイル数・byte数の上限を所有します。初期走査では
-``.adoc``の通常ファイル候補を決定的な順序で列挙します。Language Serverは各候補に最も近い
-``.adocweave.toml``を解決してから、その設定の読込上限を持つsessionで本文を読みます。呼出側はpathから
-公開用の論理IDを割り当てます。個別読込では
-呼出側が``LogicalSourceId``と絶対pathを同時に渡します。``*_outcome`` APIによる単一resourceの読込結果は
-``FilesystemReadOutcome``として返します。対象が存在する``Found``は``LoadedFilesystemSource``を保持し、
-対象fileの不在を確認した``NotFound``は論理IDと候補pathを保持します。権限不足、root外のpath、symlink検証失敗、
-不正なUTF-8および上限超過は``NotFound``へ変換せず、従来どおりerrorとして返します。
-従来の読込APIは不在を``ResourceError::Missing``として返し、既存のbinding、本文cacheおよび保持量を維持します。
-``LoadedFilesystemSource``は論理ID、不変な本文および世代付きresource bindingを一回の読込結果として保持します。bindingは読込に
-使用したsession、候補path、canonical pathおよびgenerationを対応付けます。検査に使ったcanonical pathはfieldとして
-直接構築できないprovenanceへ分離しますが、依存関係の監視を行うadapterはaccessorから参照できます。
-相対pathだけを渡して複数rootのどれかを暗黙に選ぶAPIは提供しません。
-
-Includeの取得側は、この低水準APIを直接組み立てません。``IncludeFilesystemJob``が一回の処理の予算を所有し、
-``IncludeFilesystemTransaction``が``LocalFilesystemDraft``とhandle相対の読込・検査をまとめます。
-呼出側はsessionと``IncludeFilesystemRequest``を与え、``Found``、``NotFound``または``Failed``の
-型付き結果を受け取ります。``read``は本文と許可済みの監視候補を返し、``inspect``は本文を読まずに同じauthorityの
-対象を検証します。すべての読込みとWorkspace候補の構築が成功した場合だけtransactionをcommitします。
-取消し、失敗し、または古くなったtransactionは破棄し、live stateとWorkspaceが保持するbindingを変更しません。
-読込で得た世代付きbindingの正本はWorkspaceが保持し、不要になったbindingだけをtransactionへ渡して解放します。
-
-内部のcoordinatorは同じ処理に参加する全sessionで、resource取得試行数、取得byte数、directory列挙試行数、
-列挙entry数、候補stateの変更数およびsession数を共有します。fileの読込とdirectory列挙はI/Oの前に残量を予約し、
-実際に得た量だけを確定します。上限の境界では、EOFと超過を区別するために設定したprobe量だけ追加で読みます。
-draftを破棄してもjobの使用量は戻りません。同じ論理処理を再試行する場合は同じcoordinatorを使い、文書revisionや
-設定世代が変わって別の処理を始める場合は新しいcoordinatorを作ります。
-
-Language Serverの初期ワークスペース走査は、走査ごとに一つのcoordinatorを作ります。ディレクトリ列挙用sessionと
-各project scopeの本文読込用sessionは同じcoordinatorを共有します。project scopeごとに一つのdraftへ候補を蓄積し、
-全候補の読込とWorkspace候補の構築に成功した後で候補sessionへ反映します。計画中はlive stateを変更しません。
-置換要求で棄却した走査と取消した走査は候補全体を破棄します。受理した走査が上限やI/Oの検査に失敗した場合は、
-従来どおり空の信頼済みstateをfail closedで採用します。
-
-初期走査全体では、本文読込10,000回、取得本文50 MiB、directory entry 100,000件、候補変更10,000回、
-参加session 10,002件を上限とします。project設定の探索後に読む``.adocweave.toml``も、本文と同じ読込回数・
-byte上限へ含めます。project設定から決まるsession単位の上限より先に、走査全体の上限へ
-達する場合があります。
-
-Linuxでは、CLIの入力・include・設定由来stylesheet、project設定の探索と読込、およびLanguage Serverの
-ワークスペース走査・読込が同じhandle相対adapterを使用します。CLIは最初に作業ディレクトリのauthorityを確立し、
-そのhandleから入力ディレクトリと設定に記載されたrootを派生させます。command lineで明示したrootは、
-利用者が直接選んだ別のauthorityとして追加します。
-明示した``--config``が作業ディレクトリ外を指す場合は設定本文だけを独立したauthorityで読み、設定に記載された
-resource rootやstylesheetは作業ディレクトリのauthority内にある場合だけ利用します。live previewの依存関係監視も
-raw pathを開かず、workspace、設定由来stylesheetおよび明示したstylesheetに対応する保持済みauthorityから、
-pollごとに上限付きsessionを作って本文のhashを計算します。
-``format --write``と``check --fix``の置換処理も、入力を読んだauthorityから親ディレクトリhandleを取得し、
-比較、一時ファイル作成およびrenameの途中でraw pathを開き直しません。
-rename直前に内容を再確認しますが、比較とrenameは一つのcompare-and-swap操作ではありません。このAPIを使わない
-別processが最後の比較後に書き換える場合まで、変更の消失を防ぐ保証はしません。
-``adocweave-workspace``はファイルシステムへアクセスせず、検証済みの論理IDと本文を取り込みます。
-macOSとWindowsでは``StaticSnapshotOnly``を返し、同時に書き換えられる
-ワークスペースをsecurity境界として扱いません。
-設定から派生するrootについては、macOSとWindowsでも静的状態のanchor外pathとsymlinkを拒否します。
-``LocalFilesystemPolicy``が保持するroot数は128件に制限し、本文の読込件数とは別にfile descriptorの消費を抑えます。
-用途ごとに選んだrootと上限は``LocalFilesystemAccess``へまとめ、path一覧とpolicyを別々に渡しません。
-Language Serverは初回走査とファイル変更通知で、解決したproject設定ごとのsessionを共有します。変更通知では
-本文キャッシュを使用せずに対象を再度openしますが、走査から継続するファイル数・byte数の上限は初期化しません。
-resourceを削除した場合は、そのprojectの読込課金と保持課金を解放します。
-projectの識別には設定pathだけでなくworkspace rootも含めます。設定を持たない複数のworkspace rootが
-同じ既定budgetを共有することはありません。設定の新設または削除でresourceのprojectが変わる場合は、
-diskとoverlayを新しい範囲へ移し、旧ファイルシステム課金を解放して参照されなくなったsessionとplanを破棄します。
-project設定の変更通知と本文の変更通知を同時に受け取った場合は、project全体を先に再読込し、新しいplanを
-適用してから本文をWorkspaceへ渡します。既存sessionのplanと現在の設定が一致しない場合は個別読込を拒否し、
-旧planで本文を読みません。
-CLIの複数path処理は、全入力のproject設定を本文読込前に解決します。同じproject scopeから異なる設定内容を
-観測した場合は処理を開始せず、各入力で別のplanを使いません。
-
-resourceの課金は、session単位の``FilesystemReadLimits``、論理処理単位の``FilesystemJobLimits``、
-diskとoverlayの保持を継続的に課金する``RetainedResourceBudget``、および一回の解析が参照する
-``AnalysisSnapshotBudget``の四つに分かれます。課金対象と寿命が異なるため、一つの型へ統合しません。
-利用側はproject設定から解決した``ResolvedResourceLimitPlan``と処理の種類からこれらを選びますが、
-include取得の呼出側へjobの課金とsessionの配線を公開しません。
-本文は``FilesystemReadLimits``を適用した後にだけ読み込み、diskまたはoverlayは
-``RetainedResourceBudget``を確認した後にだけWorkspaceへ取り込みます。解析時はroot文書に最も近い設定の
-上限で``AnalysisSnapshotBudget``を作り、include許可範囲へ絞った有効resourceに適用します。
-ファイルシステムの再読込後に保持上限またはWorkspace更新を拒否した場合は、再読込前の課金へ戻します。
-``RetainedResourceBudget::try_replace_layers``とWorkspaceはresource数と保持byte数を差分更新し、
-候補の検証が成功した後にだけresourceと合計値を更新します。初期走査でも保持済みresource全体を
-入力ごとに複製または再集計しません。
-解析スナップショットは許可範囲のresourceを列挙しながら件数、各本文のbyte数および合計byte数を加算し、
-上限を超えた時点で後続resourceを複製せずに拒否します。許可範囲外のresourceはこの加算に含めません。
-複数のworkspace rootでは、設定の有無にかかわらず別rootのresourceをスナップショットへ含めません。
-同じworkspace root内でproject設定がある場合は、その設定の``resources.roots``が許可する
-nested projectのresourceをroot文書のplanで課金します。
-
-workspace rootの再読込は、新しいfilesystem session、plan、保持予算およびWorkspaceを一時状態へ構築し、
-全て成功した後に置き換えます。``ConfigErrorCode::ReadFailed``による一時的な設定ファイルの読込失敗だけは、
-直前の正常なWorkspace snapshotとdocument viewを保持します。構文、schemaまたは設定値が不正なproject設定や、
-有効な設定の厳格化によって既存resourceを受け入れられない場合は、空のtrusted stateへ移行します。
-旧planまたは既定値へfallbackせず、open documentを再解析して``workspace-input-error``を設定し、
-古いdocument viewを破棄します。それ以外の通常のproject移行でdisk、overlay、保持予算および解析rootの
-いずれかを更新できない場合は、同じ操作に含まれる全状態を更新前へ戻します。
-初回読込後にopen documentを戻す段階でも、設定ファイルの読込失敗は同じ分類を維持します。
-``didOpen``と再読込時のopen documentは同じresource root検査を通り、許可範囲外のURIは
-DocumentStore、Workspace、保持予算およびgenerationを変更せずに拒否します。
-
-複数rootは独立したファイルシステム境界です。あるroot内のsymlinkが別の許可済みrootを指す場合も、
-読込開始時に選んだrootから外へ移動するため拒否します。同じファイルを両方のrootから参照する必要がある場合は、
-symlinkではなく対象ファイルが属するroot以下の絶対pathを指定します。
-
-``base_uri``はroot文書の相対targetへ前置する論理的なsnapshot keyであり、実在するpathを意味しません。
-Include先の相対targetは、そのresource keyの親を基準に解決します。取得方法、キャッシュ、認証、timeout、
-redirect、response size、content typeおよびnetwork addressの制限は利用側アプリが管理します。
-
-プリプロセッサはincludeの深さ、件数、展開後byte数、node数およびsource map segment数を制限します。
-Includeを無効にした場合はdirectiveを展開せず、スナップショットも参照しません。循環、絶対path、path traversal、
-制御文字および許可していないschemeを拒否します。
-
-CLI、Language Serverおよびワークスペース走査は、同一のpath検査、用途別の上限付き読込、byte数集計および
-ファイルシステム競合耐性を使用します。本文と設定はUTF-8として、stylesheetはbyte列として読みます。
-各adapterで異なるsymlink判定を設けません。
-CLIはproject設定を解決してからroot本文を上限付きで読み、rootを最初の解析snapshot resourceとして課金します。
-includeは同じplanの残り件数と残りbyte数だけを使用し、Language Serverと同じ
-``AnalysisSnapshotBudget``でresource件数、各本文のbyte数および合計byte数を検査します。
-Canonical pathは検査、キャッシュおよびprovenanceに限定し、診断とsource mapにはinclude要求から導出した
-論理的な``SourceId``を使用します。Aliasが同じcanonical fileを指す場合も論理IDは統合しません。
-
-=== ソースマップ
-
-展開後の半開byte rangeは、source mapによって元の``SourceId``とrangeへ対応付けます。展開後の座標と
-元resourceの座標は別の型として扱い、複数segmentを横断するrangeは複数のoriginへ投影します。
-
-診断、関連情報、修正候補、参照、resourceおよび文書symbolは元の位置へ投影します。複数originまたは
-変換されたsegmentにまたがる修正候補は適用不可とします。Include directiveの記述位置と参照先resourceの
-位置を区別するため、Document LinkとDefinitionは展開後offsetを推測しません。WASMも同じmapping情報を
-公開します。
-
-WASMの``attributeQueries``は、各bindingの操作、有効値、決定bindingおよび属性参照を返します。
-前処理を指定したrequestでは、bindingと参照の``sourceId``およびrangeを元resourceへ投影します。
-
-=== fuzz targetの位置付け
-
-fuzz targetは**回帰の確認**に使います。探索のために長時間動かす運用は行いません。
-
-``cargo make acceptance``に含まれるfuzz検査は、``fuzz/corpus/``にある既知の入力を一時ディレクトリへ複写し、各targetを短時間
-実行します。実行後に一時ディレクトリを削除するため、その回に生成された入力は残りません。定期実行の
-workflowも設けていません。
-
-この形にしているのは、探索を続ける運用には、失敗したときに調べて直す人と、その時間が要るためです。
-個人が保守するリポジトリでその前提を置くと、失敗が放置されて検査そのものが信用されなくなります。
-「既知の入力で落ちない」という保証だけを、確実に維持できる形で残しています。
-
-``fuzz/corpus/``へ入力を足すのは、実際に不具合を見つけたときです。その入力をcorpusへ加えることで、
-同じ経路の再発を以後の検査が捉えます。生成された入力を自動で蓄積することはしません。
-
-``preprocess`` targetは、生成した入力でinclude展開を実行します。ほかのtargetは一つのsource文字列
-から始まるため、directiveの解析、tagと行の選択、indentとleveloffsetの変換、および展開後の位置を元へ
-戻すsource mapに、生成入力が届きません。このtargetはresource snapshotも与えるため、includeが解決して
-これらの経路を通ります。
-
-入力はNUL byteで区切り、先頭をroot文書、続く各部分を``part.adoc``、``other.adoc``および``nested.adoc``
-として渡します。resource名を固定しているのは、生成した``include::``が解決する対象を持つようにするためです。
+canonical pathは安全性の検査、キャッシュおよび来歴の記録に限定します。診断とソースマップには、利用側アプリが
+割り当てた論理的な``SourceId``を使用します。同じファイルを指す別名も、論理IDとして自動的に統合しません。
 
 [#render-inputs]
 == 変換入力
 
-``RenderInputs``は、同じ``Analysis``から得たreference query、resource queryおよび``cite:``マクロに対する
-解決結果をまとめた、出力形式に依存しないスナップショットです。変換処理はこの値を読むだけであり、ファイルシステム、
-ネットワーク、DBまたはresolverを呼び出しません。
+``RenderInputs``は、同じ``Analysis``から得た参照、リソースおよび``cite:``に対する解決結果をまとめる、
+出力形式に依存しないスナップショットです。変換処理はこの値を読むだけであり、ファイルシステム、ネットワーク、データベース
+またはresolverを呼び出しません。渡さなかった種類は、解決結果がない状態として扱います。
 
-``RenderInputs``は空の値から作り、``with_references``、``with_resources``、``with_citations``および
-``with_generated_bibliography``で必要な種類だけを与えます。渡さなかった種類は、解決結果または生成する
-参考文献がない状態として扱います。
+参照とリソースの結果は、解析結果が返した問い合わせのUTF-8 byte範囲で照合します。文字列のtargetでは照合しません。
+一つの問い合わせへ複数の結果を渡した場合は``duplicate-render-input``、対応する問い合わせがない場合は
+``unused-render-input``として報告します。
 
-=== 照合
+成功結果のURL、メディア型および表示文字列も非信頼入力です。URLとメディア型を出力直前に再検査し、不適合な値から
+有効なリンクやメディア要素を生成しません。解決できない場合は、明示したlabel、元のtargetまたは代替文字列を
+escapeした有効でない内容へ戻します。内部障害、権限または非公開の情報を代替表示へ含めません。
 
-参照と主resourceの解決結果は、元の構文node全体のUTF-8 byte rangeで照合します。Video posterは
-``poster``属性値のrangeで照合し、``ResourcePurpose::VideoPoster``として主videoと区別します。各resource queryは
-所有するmacroのrangeも保持します。引用の解決結果は``cite:``から閉じ括弧までのmacro全体のrangeで照合し、
-個々のkeyのrangeでは照合しません。一つのmacroが複数のkeyを挙げても、表示するのは引用一つ分の文字列だからです。
-target文字列による照合は、同じtargetの複数出現を区別できないため使用しません。
+[#citation-inputs]
+=== 引用と参考文献
 
-一つのqueryには結果を一つだけ渡します。同じ種類とrangeに複数の結果がある場合はどれも採用せず、
-``duplicate-render-input``を返します。解析結果に対応しない入力は``unused-render-input``とします。
-入力順へ依存せず、診断は共通の規範順に並べます。
+AdocWeaveは書誌ライブラリを読みません。利用側アプリは引用の表示文字列と、必要であれば文書内アンカーへのリンクを
+渡します。文字列はプレーンテキストとしてescapeし、AsciiDocやHTMLとして再解析しません。存在しないアンカーは
+リンクにせず、診断を返します。
 
-=== 成功、失敗およびフォールバック
+外部の書誌項目を表示する場合は``GeneratedBibliography``として渡します。変換処理は解析済みの引用から利用箇所を
+決定し、引用から項目へのリンクと項目から引用位置への逆参照を生成します。文書自身が同じIDを定義する場合は
+文書内の定義を優先します。不正なキー、重複、競合および未使用項目は安定した診断コードで報告します。
 
-参照の成功結果はhref、任意の表示文字列および型付きnoticeを、resourceの成功結果はhref、検証済みmedia type
-および任意のbyte lengthを持ちます。Media typeを取得できない場合は成功結果を構築せず、型付き失敗を返します。
-これらは利用側アプリから渡される非信頼入力であり、WASM入力境界ではmedia typeの構文を検証し、HTML変換では
-hrefとmacro種別に対するmedia typeの適合性を再検査します。不許可URLまたはmacroとmedia typeの不一致から
-active linkやmedia要素を生成しません。
+番号付きの一覧では、除外後の項目が表示順に1から連続する必要があります。条件を満たさない場合は
+``invalid-generated-bibliography-numbering``を返し、誤った対応関係を持つ一覧を出力しません。
 
-xrefに明示labelがある場合はそのlabelを優先します。空labelで解決に成功した場合だけ解決済み表示文字列を使い、
-値がなければ元targetへ戻します。表示文字列は公開可能なプレーンテキストとして扱い、AsciiDoc、属性参照または
-HTMLとして再解析しません。解決失敗から非公開のタイトル、権限情報または内部障害の詳細を表示しません。
+WASMは同じ構造をJSONで受け取り、範囲、項目数および合計byte数を検査します。native環境とWASMは同じ入力から
+同じHTML、診断、通知および構造情報を生成します。
 
-解決結果の欠落、失敗、重複またはURL拒否では、label、元targetまたは代替文字列をescapeした非activeな内容を
-出力します。安全に見える生targetも、解決結果なしにactive要素へ昇格させません。安全な上位対象へのfallbackに
-成功した場合はlinkを生成し、型付きnoticeと診断を残します。
-
-Imageはalt、iconはalt、title、targetの順、audioとvideoはtitle、targetの順で非activeな代替文字列を選びます。
-Video本体とposterは独立して解決します。安全なvideo本体を利用できる場合、posterだけの欠落、失敗、重複、
-URL拒否またはmedia type不一致ではposterを省略してvideoを維持し、posterの失敗理由を診断として返します。
-
-=== 引用の解決
-
-AdocWeaveは書誌libraryを読まないため、``cite:``をどう表示するかは利用側アプリが決めます。成功結果は
-表示順に並べた文字列の断片であり、断片ごとに参照先anchorを任意で指定できます。``(Smith 2024; Tanaka 2025)``
-のように、括弧や区切り文字は素の文字列のまま残し、著者名の部分だけをlinkにできます。
-
-断片の文字列は公開可能なプレーンテキストとして扱い、AsciiDoc、属性参照またはHTMLとして再解析しません。
-anchorは出力直前に検査し、その文書が実際に定義している対象を指す場合だけlinkを生成します。定義のない
-anchorはlinkにせず素の文字列として出力し、``unknown-citation-anchor``を返します。解決に失敗した場合は
-失敗の種類に対応する診断を返し、未解決の引用と同じ扱いに戻します。
-
-利用側が解決結果を渡さない場合でも、文書内の書誌項目を指すkeyはlinkになります。``[bibliography]``節の
-``bibanchor:``で定義したanchorと同じ名前のkeyは、``<<anchor>>``と同じくその項目を参照し、項目側の
-back referenceにも並びます。back referenceの番号は、読者が出会う順、つまり原文の位置の順に付きます。
-
-=== 生成する参考文献
-
-外部の書誌libraryにある項目を表示する場合は、``GeneratedBibliography``へ節の見出しと項目を渡します。
-各``GeneratedBibliographyEntry``はcitation key、項目本文および任意の表示labelを持ちます。見出し、本文、
-labelはプレーンテキストであり、AsciiDocのsourceへ連結して再解析しません。HTML文字、属性参照、macroおよび
-pass-through記法に見える文字列も、文字列のままescapeして表示します。
-
-変換処理は解析済みの``cite:``から生成項目の利用箇所を決定します。引用から項目へのlinkと、項目からすべての
-引用位置へ戻るback referenceを生成します。文書自身が同じIDを定義している場合は文書内の定義を優先し、
-生成項目を出力しません。空または制御文字を含むkey、入力内の重複、文書内定義との競合および未使用項目は、
-安定した診断codeで報告します。
-
-==== 番号付きの一覧
-
-本文の引用を``[1]``のような番号で表示する場合は、各項目の``with_number``へ番号を渡します。番号を渡した
-一覧は``ol``として、渡さない一覧は``ul``として出力します。番号そのものはHTMLへ書き込まず、``ol``が振る
-番号を表示に使います。
-
-番号は一覧全体の性質であり、項目ごとに選べません。すべての項目が番号を持つか、どの項目も持たないかの
-どちらかです。さらに、前述の除外（不正なkey、重複、文書内定義との競合）を適用した後に残る番号が、項目の
-並び順で1、2、…、nと読める必要があります。
-
-この条件を満たさない場合は``invalid-generated-bibliography-numbering``をerror severityで報告し、参考文献
-一覧を出力しません。番号を捨てて``ul``へ戻す方法は取りません。本文が``[2]``と示しているのに一覧の2番目が
-別の項目である状態は、読者を誤った項目へ導くためです。出力しなければ、利用側は番号を付け直すまで誤りに
-気付けます。
-
-除外は番号にも影響します。利用側が1から5まで採番し、3番目のkeyが文書内定義と競合して除外されると、残る
-番号は1、2、4、5となり条件を満たしません。この場合も一覧を出力しません。利用側は除外された項目を直すか、
-残った項目へ採番し直してください。
-
-WASMでは``renderInputs.generatedBibliography``へ同じ構造を渡します。項目の番号は``number``に渡します。
-項目数はrender inputの件数上限へ、見出し、key、本文およびlabelは出力byte数の上限へ加算します。RustとWASMは
-同じ構造化入力から同じHTMLと診断を生成します。
-
-=== 処理順序
-
-. 同じrevisionの``Analysis``からreference query、resource queryおよび引用を取得します。
-. I/O、権限検査、実在確認およびURL生成を変換処理の外で完了します。
-. queryのrangeを変更せず、成功または型付き失敗を``RenderInputs``へ格納します。参考文献一覧を表示する場合は、
-書誌情報をsourceへ変換せず``GeneratedBibliography``として格納します。
-. 同じ``Analysis``、``RenderPolicy``および``RenderInputs``を変換処理へ渡します。
-. 文書revisionが変わった場合は、古い入力を再利用せず新しいqueryから作り直します。
-
-WASM APIは同じ構造をJSONで受け取り、rangeが入力sourceのUTF-8境界内であること、入力数および文字列の
-合計byte数が処理上限内であることを確認します。失敗値には安定した種類だけを含め、自由形式のmessageを
-受け取りません。NativeとWASMは同じ入力から同じHTML、診断、noticeおよび構造情報を生成します。
-
+[#diagnostic-integration]
 == 診断の統合
 
-構文認識、意味解析および標準Lintの診断は``Analysis``の構築時に一度だけ統合します。利用側が構文木や
-意味情報を再走査して同じ問題を生成しません。
+構文、意味および標準Lintの診断は``Analysis``の構築時に一度だけ統合します。外部文書、データベース、権限または
+アプリ固有IDに関する診断は、``Analysis``を書き換えず別の結果として生成します。表示時はソース位置とコードによる
+安定した順序へ統合します。
 
-外部文書の存在、DB、権限およびアプリ固有の識別子に関する診断は、``Analysis``を書き換えず別の結果として
-生成します。``RenderPolicy``と``RenderInputs``に依存する問題も変換結果の診断として返します。解析診断、
-利用側アプリの診断および変換診断を表示するときは、source位置とcodeによる安定した順序へ統合します。
-
-診断codeは機械判定に使用できる安定した識別子とし、messageを判定条件にしません。診断IDはcodeとsource
-rangeから決定的に生成します。同じ入力、設定およびパッケージバージョンからは、範囲、重要度、関連情報および
-修正候補を含めて同じ順序の診断を返します。
-
-修正候補は重複しない``TextEdit``だけを持ちます。``Always``は構文上安全に適用できる変更、``Maybe``は利用者の
-判断を必要とする変更を表します。
+診断コードは機械判定に使用する安定した識別子です。メッセージを判定条件にしません。修正候補は重複しない
+``TextEdit``だけを持ち、安全に適用できる変更と利用者の判断を要する変更を区別します。
 
 [#web-worker-execution]
 == Web Workerでの実行
 
-ブラウザーでは公開されているBrowser clientを使用し、Workerの内部メッセージ形式やWASM補助fileを
-直接利用しません。公開入口は``analyze(request, { signal })``が返すPromiseだけです。一つのclientは一度に
-一つの要求を実行し、clientとWorkerは内部の``requestId``だけで要求と応答を対応付けます。この番号は公開結果へ
-含めません。
+ブラウザーでは公開ブラウザークライアントを使用し、Workerの内部メッセージやWASM補助ファイルを直接利用しません。公開入口は
+``analyze(request, { signal })``が返すPromiseです。クライアントは同時に一つの要求を実行し、取消し時またはWASMの
+trap時はWorkerを終了して、そのインスタンスを次の要求へ再利用しません。
 
-debounce、文書の版、古い結果の判定および``AbortController``は利用側アプリが所有します。取消しを受けた場合は
-実行中のWorkerを終了し、対応するPromiseをrejectします。WASMがtrapした場合もWorkerを終了し、そのWASM instanceを
-次の要求へ再利用しません。
-
-WASMもnativeと同じ処理上限を使用し、上限超過時に別のparserへ切り替えません。必要な出力だけを要求し、
-最後に成功した表示を保持したまま利用側アプリがエラーと再試行手段を表示します。DOM、認証、DB、
-ネットワーク、CSPおよび表示sandboxは利用側アプリが管理します。生成HTMLは信頼済みDOMとして扱いません。
-静的hostingとbundlerでは、配備後の公開entry URLを明示し、WorkerとWASMを同一originの別fileとして配信します。
-詳細はxref:../user-guide/release-installation.adoc#browser-library-deployment[Browser libraryの配備]を参照してください。
+debounce、文書の版、古い結果の判定、認証、ネットワーク、CSPおよび表示サンドボックスは利用側アプリが所有します。
+生成HTMLを信頼済みDOMとして扱いません。配備方法は
+xref:../user-guide/release-installation.adoc#browser-library-deployment[Browser libraryの配備]を参照してください。

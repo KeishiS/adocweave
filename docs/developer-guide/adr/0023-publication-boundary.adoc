@@ -1,75 +1,41 @@
 = ADR 0023: 公開と配布の境界
-
 :status: accepted; amended by ADR 0027, 0028, 0030, 0031, 0032, 0033, and 0036
 
 == 文脈
 
-公開と配布の決定は、これまで4本のADRに分かれていました。ADR 0006(stable tagへの直接公開)、
-ADR 0013(VSIXとLanguage Serverの同一release境界)、ADR 0017(GitHub Releaseでのtextlint Processor配布)、
-ADR 0021(3製品で共通の開発手順と公開仕様)です。いずれも「どこへ、どの単位で、どの権限で公開するか」を
-扱っており、方針を1つ変えるたびに複数のADRを読み直して整合を取る必要がありました。
-
-個人開発では、決定の所在が分散していること自体が負担になります。このADRは4本の決定をまとめ直し、
-今後は公開と配布に関する変更をこの1本で扱えるようにします。旧ADRは文脈の記録として残し、
-決定の正本をこのADRへ移します。
+公開先、製品の単位、検査および書込み権限が複数のADRへ分散し、一つの変更で複数の決定を更新する必要がありました。
+個人開発では、この調整自体が継続的な負担になります。
 
 == 決定
 
-=== 公開の単位
+公開先と権限境界をこのADRで定めます。製品ごとのversionと公開単位は
+xref:0027-product-release-trains.adoc[ADR 0027]、エディターとLanguage Serverの導入境界は
+xref:0028-editor-language-server-boundary.adoc[ADR 0028]、同じrunの成果物を公開する手順は
+xref:0032-same-run-release-publication.adoc[ADR 0032]を基準とします。現在の成果物と公開先は
+xref:../release-distribution.adoc[配布仕様]を基準とし、このADRへ一覧を複製しません。
 
-CLI、Language Server、browser package、Zed拡張、VS Code拡張(VSIX)およびtextlint用Processorを、
-同じパッケージバージョンとGitHub Releaseへまとめて公開します。異なるバージョンの組み合わせを想定しません。
-拡張は自身と完全に一致するバージョンのLanguage Serverだけを起動し、managed binaryは同じtagの配布manifestから
-選択します(旧ADR 0013)。
+GitHub Releaseを全製品の一次公開先とします。registryへも公開する製品では、GitHub Releaseで検証した同じbyte列を
+使用し、registry向けに構築し直しません。registryへの公開に必要なcredentialは、対象の専用jobだけが参照します。
 
-textlint用Processorはnpm互換の``.tgz``として同じReleaseへ添付し、npm registryとGitHub Packagesへは
-公開しません。パッケージには``private: true``を設定し、利用者はバージョンを固定したRelease URLで導入します
-(旧ADR 0017)。
+配布manifestの形式はlink:../../../release/adocweave-dist-manifest.schema.json[JSON Schema]、製品と成果物は
+link:../../../release/distribution-plan.json[配布計画]を正本とします。task名と操作手順は
+xref:../../../CONTRIBUTING.adoc[コントリビューションガイド]を基準とします。
 
-VS Code拡張はOpen VSX Registryへも公開します。公開するfileはGitHub Releaseへ添付したVSIXと同一で、
-Open VSX向けに作り直しません。Visual Studio MarketplaceとZed Extension Galleryへは公開しません。
+[#publication-authority]
+=== 公開権限
 
-=== 公開の手順
+計画、構築、検査およびcandidate集約はread-onlyで実行します。GitHub Releaseへの書込みとOIDCは、保護した
+``github-release`` Environmentを使う公開jobだけへ与えます。外部actionは完全なcommit SHAへ固定します。
 
-release candidate tagを受理しません。release対象の変更をすべて``main``へ統合した後、手動workflowへ
-その先端commitを候補SHAとして渡します。workflowは候補SHAがdispatch開始時点のmain先端と一致すること、
-同じSHAのmain candidateが成功していること、tagとReleaseが存在しないことを検証し、そのSHAを公開identityとして
-固定します。検証後、同じrunが``vX.Y.Z`` tagを一度だけ作成し、stable GitHub Releaseを公開します(旧ADR 0006)。
-
-成果物は再構築せず、検証済みcandidateを再利用します。公開後、同じrunがbinary cacheへのpushとOpen VSXへの
-公開を行います。これらが失敗してもtagとGitHub Releaseへは影響せず、jobの再実行で回復します。
-
-=== 3製品で共通にする範囲
-
-Marginalis、Renkanと共通にするのは、外から見える手順と公開仕様だけです(旧ADR 0021)。
-
-* ``release-manifest.json``の共通schema(``product``、``packageVersion``、``rustVersion``、``nodeVersion``、
-  ``releaseNotes``、``assets``)。AdocWeaveの成果物はbuildで作るため``assets``は空とし、拡張項目
-  ``distributionPlan``が配布計画を指します
-* ``release/notes.md``の題名と7見出し
-* 外向きのtask名``fmt``、``fmt-check``、``verify``、``security-audit``、``acceptance``、``release-check``
-* 必須checkは標準source gate``verify``の一つ
-* remote名``upstream``、ブランチ名``agent/<種別>/<目的>``、``main``追従はmerge、統合はsquash方式のauto-merge
-
-検査の中身と、書き込み権限を持つworkflowは各repositoryに置きます。
-
-=== 権限境界
-
-計画、build、smoke testおよびcandidate集約はread-onlyで実行し、repository secretを参照しません。
-Releaseへの書き込みとOIDCは``github-release`` Environmentを使用する公開jobだけへ与えます。
-OIDCで委任できない公開先(binary cacheとOpen VSX)は、公開後に動く専用jobがrepository secretを参照します。
-参照できるworkflow、jobおよびsecret名は``release-workflow-policy``の許可一覧で固定します。
+tagを作成できる主体を公開jobだけに限るtag rulesetは使用しません。個人所有リポジトリでは組込みの
+GitHub Actions appをbypass対象にできず、bypassなしでは公開workflow自身もtagを作成できないためです。
+専用GitHub Appと鍵を維持する費用も個人開発の範囲に見合いません。代わりに書込み権限を公開jobだけへ与え、
+Environmentのbranch制限と公開前検査で作成経路を限定します。organizationへ移す場合は、Actions appを
+bypass対象とするrulesetを再評価します。
 
 == 帰結
 
-* 公開と配布の方針を変えるとき、読み直すADRはこの1本です
-* 旧ADR 0006、0013、0017、0021は文脈の記録として残ります。決定を引用する場合はこのADRを参照します
-* Pull Requestには変更pathに依存しない標準source gateを適用し、未公開製品の全targetと全成果物のcandidateは``main``で
-  構築します。この検査境界はxref:0031-path-independent-pull-request-gate.adoc[ADR 0031]で定めます
-* 公開後の人手による受入は任意とし、機械で判定できる範囲(asset集合、checksum、attestation、バージョン、
-  binary cacheとOpen VSXへの登録)を自動の検証に委ねます
+公開先と書込み権限の判断は一か所になります。成果物の内容、製品の単位、検査手順およびmetadataの変更は、
+それぞれの正本だけを更新します。
 
-公開製品を一つにまとめる決定はxref:0027-product-release-trains.adoc[ADR 0027]、エディター拡張がLanguage Serverを
-配布して完全一致を要求する決定はxref:0028-editor-language-server-boundary.adoc[ADR 0028]で置き換えます。
-公開先と権限境界の決定は維持します。候補SHAと過去candidateの再利用は
-xref:0032-same-run-release-publication.adoc[ADR 0032]で置き換えます。
+ADR 0006、0013、0017および0021は本ADRへの到達性を保つstubとして残します。

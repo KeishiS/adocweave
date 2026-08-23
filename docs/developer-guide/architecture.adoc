@@ -1,166 +1,124 @@
 = アーキテクチャ
 
-この文書では、AdocWeaveのコンポーネント間の責務と、実装が維持する不変条件を定義します。
-公開APIと対応範囲はxref:core-profile.adoc[コアの対応範囲]、
-文法はxref:grammar.adoc[文法の詳細]を参照してください。
+この文書は、AdocWeaveを構成する各コンポーネントの責務と依存方向の正本です。公開APIと対応範囲は
+xref:core-profile.adoc[コアの対応範囲]、文法はxref:grammar.adoc[文法の詳細]、
+利用側アプリの実行順序はxref:server-execution.adoc[利用側アプリの実行仕様]を参照してください。
+
+[#component-boundaries]
+== コンポーネントの責務と依存方向
 
 [source,text]
 ----
-ソーステキスト
-  ├─ adocweave-host
-  │    └─ local authority、include job・transaction、検証済みread outcome
-  └─ adocweave-workspace
-       ├─ disk resourceとopen overlay
-       ├─ immutable snapshotと依存graph
-       ├─ I/O非依存の再開可能なinclude前処理
-       └─ adocweaveによる同一revisionの解析結果
-            ├─ losslessな構文情報
-            ├─ 出力形式に依存しない意味情報
-            ├─ 診断
-            └─ 参照・文書構造などの派生情報
-                 ├─ FormatterとLint
-                 ├─ HTMLその他の出力
-                 ├─ CLIとLanguage Server
-                 └─ 利用側アプリの拡張
+VS Code・Zed ──LSP──> adocweave-lsp
+ブラウザークライアント ──> Web Worker ──> adocweave-wasm ──> adocweave
+textlint ──> adocweave-textlint-wasm ─┬─> adocweave-textlint ──> adocweave
+                                      └─> adocweave
 
-adocweave-config（version付きの共有設定）
-  └─ adocweave、adocweave-host、adocweave-workspaceの型を使い、
-     設定の探索・読込と上限計画の解決をCLIとLanguage Serverへ提供
+adocweave-cli ─┬─> adocweave-config ─┬─> adocweave
+adocweave-lsp ─┘                      ├─> adocweave-host
+                ├─> adocweave-host   └─> adocweave-workspace ──> adocweave
+                ├─> adocweave-workspace
+                └─> adocweave
 ----
 
+矢印は利用する側から利用される側へ向きます。下位コンポーネントは上位のプロトコル、実行環境または
+製品固有の型へ依存しません。
+
+[cols="2,5",options="header"]
+|===
+|コンポーネント |所有する責務
+
+|``adocweave``
+|I/Oに依存しない構文解析、意味情報、診断、整形、出力および問い合わせ
+
+|``adocweave-host``
+|ローカルファイルの読込権限、競合に耐えるパス検査および資源使用量の計測
+
+|``adocweave-workspace``
+|ディスク上のリソース、開いている文書、世代、依存関係およびI/Oに依存しない再開可能な前処理
+
+|``adocweave-config``
+|Rustの設定型から生成するスキーマ、設定の探索と読込、および処理上限の解決
+
+|``adocweave-cli``
+|コマンド、標準入出力、ファイル操作、同期的な処理の調停および終了状態への変換
+
+|``adocweave-lsp``
+|LSPの通信、URIと位置の変換、通知順序、並行実行およびクライアントへの結果公開
+
+|``adocweave-wasm``
+|WebAssemblyの要求・応答の検証と、公開する通信型とコア型の相互変換
+
+|``adocweave-textlint``
+|解析結果からtextlint用TxtASTへの変換
+
+|``adocweave-textlint-wasm``
+|コア解析の実行とTxtAST変換をNode.jsへ公開するWebAssembly境界
+
+|ブラウザークライアントとWeb Worker
+|Promiseと取消を含む公開入口、Workerの生存期間およびWebAssemblyの隔離
+
+|VS Code拡張とZed拡張
+|言語登録、基本色付けおよびLanguage Serverプロセスの起動。文書解析は所有しません。
+|===
+
+crateとpackageの正確な構成、依存先および版は各manifestを基準とします。この図は実装の直接依存を示します。
+配布製品の一覧は
+link:../../release/distribution-plan.json[配布計画]を基準とし、この文書へ複製しません。
+
+[#single-analysis]
 == 単一解析
 
-入力は一度解析し、同一revisionの解析結果をFormatter、Lint、HTML、
-Language Serverおよび利用側アプリで共有します。
-利用側ごとにソースを再解析したり、見出し、参照、文書構造などを独自に再導出したりしません。
+入力は一度解析し、同じ版の解析結果を整形、診断、HTML、Language Serverおよび利用側アプリで共有します。
+利用側ごとにソースを再解析したり、見出し、参照または文書構造を再導出したりしません。
 
-解析結果は、入力、設定、構文情報、意味情報、診断および派生情報が同じrevisionに属する
-不変なスナップショットです。構築途中の結果を公開せず、公開後に意味情報を変更しません。
+構文層は元のbyte列、空白、不完全な入力および回復地点を保持します。意味層は見出し、段落、表、参照、
+属性などを出力形式に依存しない値として表します。HTMLやエディター固有の規則はParserへ持ち込みません。
+具体的な認識規則と回復結果はxref:grammar.adoc[文法の詳細]を基準とします。
 
-== 構文層と意味層
-
-構文層は元のbyte列、改行、空白、区切り記号、不完全な入力および回復地点を保持します。
-意味層は見出し、段落、リスト、表、参照、属性などを出力形式に依存しない値として表します。
-
-構文認識ではlosslessな構文情報と意味解析に必要な事実を同時に収集します。
-意味解析は文書属性、参照先、アンカーおよび文書全体の構造を一度だけ確定します。
-HTMLやエディター固有の表示規則をParserへ持ち込みません。
-
-不完全または未対応の入力も元の範囲を失わない構造として保持します。
-回復処理は必ず入力上を前進し、同じ位置を繰り返し処理しません。
-具体的な認識規則と回復結果はxref:grammar.adoc[文法の詳細]で定義します。
-
+[#host-boundary]
 == 利用側アプリとの境界
 
-コア解析はファイルシステム、ネットワーク、database、環境変数および非同期runtimeへ直接アクセスしません。
-外部resourceを必要とする処理は、利用側アプリが安全性と権限を確認したスナップショットをコアへ渡します。
+コアはファイルシステム、ネットワーク、データベース、環境変数および非同期の実行環境へ直接アクセスしません。
+利用側アプリは外部リソースを取得して権限と上限を確認し、一回の処理中に変化しないスナップショットとして渡します。
 
-``adocweave-workspace``は、disk resource、open overlay、解析root、include依存graphおよび世代付き
-スナップショットをruntime非依存かつI/O非依存の状態機械として提供します。ファイルシステム関連crateへ依存せず、
-検証済みのresource IDと本文だけを受け取ります。
-このcrateの``WorkspaceSnapshot::preprocess_resumable``がCLIとLanguage Serverに共通のinclude前処理を提供します。
-CLIは``NeedResource``を同期的な読込みですぐに再開し、Language Serverは継続をI/O完了まで保持します。
-完了時はincludeを実行順と結果付きで示す型付きjournalを返し、失敗時も失敗までに観測した依存先を返します。
+ローカルファイルの安全性は``adocweave-host``、保持中のリソースと解析世代は``adocweave-workspace``、
+設定と上限の解決は``adocweave-config``が所有します。CLIとLanguage Serverはこれらを組み合わせますが、
+同じパス検査、予算計測またはinclude規則を独自に実装しません。
 
-project設定のresource上限は``ResolvedResourceLimitPlan``として一度だけ解決します。resourceの課金は、
-一つのsessionが読む本文の``FilesystemReadLimits``、一つの論理処理に参加するsession間で共有する
-``FilesystemJobLimits``、Workspaceが保持するdiskとoverlayの``RetainedResourceBudget``、および一回の解析が参照する
-有効resourceの``AnalysisSnapshotBudget``に分かれます。session、保持と解析の範囲はplan内の対応する上限を使い、
-jobの範囲は処理の種類から上限を導出します。
-四つの課金範囲は対象と寿命が異なるため、一つの予算型へ統合しません。
-CLIとLanguage Serverは各文書に最も近いproject設定からplanを選び、読込と保持では
-allocationまたは取り込みを始める前に上限を適用します。
-課金範囲はworkspace rootと最も近いproject設定の組で識別し、設定の新設や削除で範囲が変わる場合は、
-旧範囲の課金解放と新範囲への移行を一つの更新として確定します。
+取得、取消しまたは解析に失敗した候補状態は公開状態へ反映しません。利用側アプリは結果を公開する直前に
+入力の版と設定を再確認し、古い結果を破棄します。詳しい実行順序と失敗時保証は
+xref:server-execution.adoc[利用側アプリの実行仕様]を基準とします。Language Server固有の通知と要求は
+xref:language-server.adoc[Language Serverの実行仕様]を基準とします。
 
-Nativeのinclude取得は``adocweave-host``の高水準な取得境界を使います。
-状態を持たない``IncludeFilesystem``は、失敗後も別の対象を検査するCLI向けの逐次読込・検査を提供します。
-``IncludeFilesystemJob``は一回の処理に参加するsession間の予算を所有し、Language Serverはこのjobから
-project scopeごとの``IncludeFilesystemTransaction``を開きます。transactionはsessionの候補stateと
-handle相対の読込・検査を所有します。論理的なsource ID、基準pathおよびtargetを含む
-``IncludeFilesystemRequest``を``read``または``inspect``に渡します。結果は本文、不在または失敗を区別する型で返り、
-許可済みの監視候補だけを公開します。処理の採用時はtransaction全体をcommitし、取消しまたは失敗したtransactionは
-live stateを変更しません。
+アプリ固有のID、データベーススキーマ、アクセス制御および検索用メタデータは、標準の意味情報へ混在させません。
+利用側アプリは採用済みの解析結果から独自情報を検証・投影します。拡張方法は
+xref:extensions.adoc[利用側アプリの拡張]を参照してください。
 
-読込で得た``IncludeFilesystemBinding``は公開内容を持たない世代付きの所有証明です。
-bindingを世代をまたいで保持する場合は、利用側アプリがその正本を持ち、不要になった値だけを
-transactionの``release``へ渡します。
-``adocweave-host``はconsumer別の所有者台帳を持ちません。
-Linuxではこの境界の内部がrootのディレクトリhandleを起点にfileを開き、path検査後に開き直しません。
-依存関係を監視するadapter以外はcanonical pathを利用せず、診断やsource mapの識別子にも使用しません。
-
-``adocweave-config``は、CLIとLanguage Serverが共有する設定schema、探索および型付き設定を提供します。
-このcrateは``adocweave``、``adocweave-host``および``adocweave-workspace``の型を使う統合層であり、
-project設定の探索と読込では``adocweave-host``の検証済みsessionを通じてファイルを読みます。
-設定は解析とI/O policyへの入力であり、ワークスペース外へのアクセス権限を追加しません。
-
-リポジトリ自身のファイルを読む規約検査は、その規約を約束するcrateの``tests/``に置きます。
-たとえば、追跡中の全文書がlosslessに解析できることは``adocweave``、設定schemaと実装の一致は
-Rustの設定型からSchemaを生成する``adocweave-config``、状態機械がfilesystemへ依存しないことは
-``adocweave-workspace``が検査します。
-
-利用側アプリは外部resourceの取得、pathやURLの検査、認証、キャッシュ、timeoutおよび利用者固有の
-参照索引を担当します。コアは渡された入力から決定的な解析結果を生成し、取得処理を呼び戻しません。
-詳しい実行順序はxref:server-execution.adoc[利用側アプリの実行仕様]で定義します。
-
-前処理を途中から再開する利用側アプリは、一回の処理中に``ResourceLookup``が参照する内容を変更しません。
-``Deferred``に対する応答は、対応する``ResourceRequest``からだけ構築します。コアは再開時に要求と応答の
-対応を検証し、異なる要求または以前の要求への応答を受理しません。resourceの読込に失敗した場合は、
-継続を消費して``HostResourceError``で終了します。同じ継続を別の応答で再利用することはできません。
-
-``ResourceDocument``の本文は``Arc<str>``で共有するため、応答、解決済みresource表およびinclude frameの間で
-本文全体を複製しません。一回の前処理が保持する解決済みresource数は``max_includes``以下であり、展開後の本文と
-source mapは``max_total_bytes``と``max_source_map_segments``で制限します。ただし、``ResourceLookup``自身が
-保持する未参照resourceはコアの上限に含まれません。利用側アプリはworkspaceのresource数と総byte数にも独立した
-上限を適用し、前処理の上限だけを保持予算として扱いません。
-
-アプリ固有のID、database schema、アクセス制御および検索用metadataは標準の意味情報へ混在させません。
-利用側アプリは標準解析後に同じスナップショットから独自情報を検証・投影します。
-拡張境界はxref:extensions.adoc[利用側アプリの拡張]で定義します。
-
+[#trust-boundary]
 == 純粋性と信頼境界
 
-同じ入力、設定、外部resourceのスナップショットおよびパッケージバージョンからは、
-同じ解析結果と出力を生成します。時刻、乱数、ファイルシステムの列挙順およびmapの挿入順を結果へ反映しません。
+同じ入力、設定、外部リソースのスナップショットおよびpackage版からは、同じ解析結果と出力を生成します。
+時刻、乱数、ファイルシステムの列挙順およびmapの挿入順を結果へ反映しません。
 
-文書入力、外部resourceおよび利用側アプリが返すURLを信頼済みのHTMLとして扱いません。
-HTML出力では要素、属性、classおよびURLを許可集合に制限し、各出力文脈に合わせてescapeします。
-具体的な出力規則はxref:html-contract.adoc[HTML出力の仕様]で定義します。
+文書入力、外部リソースおよび利用側アプリが返すURLを信頼済みのHTMLとして扱いません。HTML出力では
+要素、属性、classおよびURLを許可集合へ制限します。出力規則は
+xref:html-contract.adoc[HTML出力の仕様]を基準とします。
 
-処理上限は構造要素や診断の生成前に適用します。上限超過後に無制限の解析を継続したり、
-全件生成後の切り詰めだけで資源使用量を制御したりしません。
+処理上限は構造要素や診断を全件生成する前に適用します。CPU処理、外部I/O、実行枠の待機および
+クライアントとの通信中に共有状態のロックを保持しません。
 
-== 非同期実行
-
-非同期の利用側アプリは、解析対象の文書revisionとworkspace generationを記録します。
-結果は両方が現在値と一致する場合だけ採用し、異なる世代の解析結果を合成しません。
-
-再開可能な前処理の継続はworkspace generationを内部に持ちません。利用側アプリは継続、文書revision、
-workspace generationおよび取消tokenを一つのenvelopeとして保持します。resource取得の完了時、前処理の再開前、
-および結果の公開前にenvelopeと現在値を照合します。不一致の場合は応答を渡さずに継続を破棄し、新しい
-workspace snapshotから処理を開始します。この世代検査を``ResourceResponse``の相関検査で代用してはいけません。
-
-CPU解析はprotocolやUIのevent loopから分離し、同時実行数と待機数を制限します。
-キャンセルはコア解析へ伝播し、キャンセル済みまたは古い結果を診断、表示、編集およびキャッシュへ採用しません。
-Language Server固有の規則はxref:language-server.adoc[Language Serverの実行仕様]で定義します。
-
-共有状態のlockはスナップショット取得と結果採用判定に限定します。CPU解析、外部I/O、
-実行枠の待機およびclient通信中にlockを保持しません。
-
+[#change-invariants]
 == 変更時の不変条件
 
-実装変更では次の不変条件を維持します。
+実装変更では次の条件を維持します。
 
-* 出力形式、runtimeまたは利用側アプリごとのParserの複製禁止
-* 新しい構文要素の追加時における、構文情報、意味情報、診断、Formatter、Lint、出力、
-  Language Serverおよびfixtureの扱いの同一変更内での確認
-* 未処理要素の明示的な列挙
-* 入力長に対する構文認識と回復処理の線形性、および大量の未閉じmarkerに対する
-  開始位置ごとの残余入力の再走査禁止
-* root文書とinclude文書における前処理規則、処理上限およびsource map規則の共通化
-* 外部I/Oを利用側アプリ、決定的な解析と変換をコアが担う責務境界
-* 同一入力スナップショットに対するnativeとWASMの意味情報および出力の一致
-* command dispatch、byte decoding、出力形式の選択および最終出力のbyte上限に対する利用側アプリの責務
+* 出力形式、実行環境または利用側アプリごとのParserの複製禁止
+* 構文追加時における構文情報、意味情報、診断、整形、出力および代表アダプターの同時確認
+* 未処理要素の明示と、回復処理の入力上での前進
+* ルート文書とinclude文書における前処理規則、上限およびソースマップの共通化
+* 外部I/Oを利用側アプリ、決定的な解析と変換をコアが担う責務分離
+* 同じ入力スナップショットに対するnativeとWebAssemblyの意味情報および出力の一致
 
-ファイル数や行数だけを理由に新しい層を設けません。分割する場合は、構文認識、意味解析、
-出力、protocol変換、実行制御または外部I/Oという責務の違いを明確にします。
+ファイル数や行数だけを理由に層を追加しません。分割する場合は、解析、出力、プロトコル変換、実行制御または
+外部I/Oのいずれを所有するかを先に定めます。
