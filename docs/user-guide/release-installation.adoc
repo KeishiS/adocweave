@@ -189,9 +189,10 @@ npm install --save-dev textlint@15.8.0 \
   "$RELEASE_URL/adocweave-textlint-plugin-asciidoc-$VERSION.tgz"
 ----
 
-対応環境はNode.js 24.19.0とtextlint 15.8.0です。パッケージの``engines``と
-``peerDependencies``にも同じ版を記録します。パッケージにはNode.js用WebAssemblyを同梱するため、
-Rust、Cargo、``wasm-bindgen``、AdocWeave CLIおよび実行時の追加downloadは不要です。
+対応環境はNode.js 24.19.0以上とtextlint 15.8系です。パッケージの``engines``と``peerDependencies``へ
+同じ範囲を記録します。継続的な検査はNode.js 24.19.0とtextlint 15.8.0の組合せで行うため、上の例では
+その版を固定しています。パッケージにはNode.js用WebAssemblyを同梱するため、Rust、Cargo、
+``wasm-bindgen``、AdocWeave CLIおよび実行時の追加downloadは不要です。
 
 プロジェクトへ依存を導入せずに一度だけ試す場合は、``npx``の``--package``で必要な三つのパッケージを
 一時的に取得できます。次の例は、日本語技術文書向けの規則で``document.adoc``を検査します。

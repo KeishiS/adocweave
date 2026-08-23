@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 
+import {
+  satisfiesPeerRange,
+  verifiedTextlintVersion
+} from "../../tools/textlint-plugin-package.mjs";
+
 const manifest = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
 const toolchains = JSON.parse(readFileSync(new URL("../../toolchains.json", import.meta.url), "utf8"));
 const bridge = readFileSync(new URL("./bridge.mjs", import.meta.url), "utf8");
@@ -20,6 +25,22 @@ test("検証した組合せを下限とする範囲で依存を受け入れる",
     "@textlint/types": "^15.8.0",
     textlint: "^15.8.0",
   });
+});
+
+test("継続的に検査する組合せが受け入れる範囲に含まれる", () => {
+  const pinned = verifiedTextlintVersion();
+  assert.match(pinned, /^\d+\.\d+\.\d+$/u);
+  assert.ok(satisfiesPeerRange(pinned, manifest.peerDependencies.textlint));
+  assert.ok(satisfiesPeerRange(pinned, manifest.peerDependencies["@textlint/types"]));
+});
+
+test("受け入れる範囲の外側を拒否する", () => {
+  assert.equal(satisfiesPeerRange("15.8.0", "^15.8.0"), true);
+  assert.equal(satisfiesPeerRange("15.9.3", "^15.8.0"), true);
+  assert.equal(satisfiesPeerRange("15.7.9", "^15.8.0"), false);
+  assert.equal(satisfiesPeerRange("16.0.0", "^15.8.0"), false);
+  assert.equal(satisfiesPeerRange("15.8.0", "15.8.0"), true);
+  assert.equal(satisfiesPeerRange("15.8.1", "15.8.0"), false);
 });
 
 test("npmが描画するMarkdownのREADMEを収録する", () => {

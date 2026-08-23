@@ -18,7 +18,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   loadTextlintPluginManifest,
+  satisfiesPeerRange,
   textlintPluginName,
+  verifiedTextlintVersion,
 } from "./textlint-plugin-package.mjs";
 
 const EXPECTED_LINE = 3;
@@ -194,11 +196,18 @@ async function assertInstalledPackage(root, manifestContract) {
   assert.deepEqual(manifest.peerDependencies, {
     "@textlint/types": manifestContract.peerDependencies["@textlint/types"],
     textlint: textlintVersion,
-  }, `installed plugin peer dependencies must be pinned to ${textlintVersion}`);
+  }, `installed plugin peer dependencies must declare ${textlintVersion}`);
+  // pluginが受け入れる範囲と、固定consumerが導入する具体的なversionは別の値になる。
+  // 導入した版が固定どおりであることと、その版が範囲に含まれることを分けて確かめる。
+  const pinned = verifiedTextlintVersion();
   const textlintManifest = JSON.parse(
     await readFile(join(root, "node_modules", "textlint", "package.json"), "utf8"),
   );
-  assert.equal(textlintManifest.version, textlintVersion, `textlint must be pinned to ${textlintVersion}`);
+  assert.equal(textlintManifest.version, pinned, `textlint must be pinned to ${pinned}`);
+  assert.ok(
+    satisfiesPeerRange(pinned, textlintVersion),
+    `pinned textlint ${pinned} must satisfy the plugin peer range ${textlintVersion}`,
+  );
 }
 
 export async function installFixedConsumerAndPlugin({ archive, cwd }) {

@@ -5,6 +5,8 @@ import { basename, join, resolve, win32 } from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 
+import { satisfiesPeerRange, verifiedTextlintVersion } from "./textlint-plugin-package.mjs";
+
 const SOURCE = `= 題名\n\n${"あ".repeat(101)}。\n`;
 export const TEXTLINT_PLUGIN_ONE_SHOT = Object.freeze({
   preset: "ja-technical-writing",
@@ -69,12 +71,15 @@ export async function loadPackageManifest() {
   return loadTextlintPluginManifest();
 }
 
-export function npxSettings(manifest, oneShot = TEXTLINT_PLUGIN_ONE_SHOT) {
+export function npxSettings(manifest, oneShot = TEXTLINT_PLUGIN_ONE_SHOT, textlintVersion = undefined) {
   const packageName = manifest?.name;
-  const textlintVersion = manifest?.peerDependencies?.textlint;
+  // packageは範囲でtextlintを受け入れるが、単発実行の検査は固定した版で行う。
+  const pinned = textlintVersion ?? verifiedTextlintVersion();
   const { preset, rulePackage, ruleVersion } = oneShot;
   if (typeof packageName !== "string" || !packageName.includes("textlint-plugin-") ||
-      typeof textlintVersion !== "string" || typeof preset !== "string" ||
+      typeof manifest?.peerDependencies?.textlint !== "string" ||
+      !satisfiesPeerRange(pinned, manifest.peerDependencies.textlint) ||
+      typeof preset !== "string" ||
       typeof rulePackage !== "string" || typeof ruleVersion !== "string") {
     throw new Error("textlint pluginの単発実行設定が不足しています");
   }
@@ -82,7 +87,7 @@ export function npxSettings(manifest, oneShot = TEXTLINT_PLUGIN_ONE_SHOT) {
     plugin: packageName.replace("/textlint-plugin-", "/"),
     preset,
     rulePackage: `${rulePackage}@${ruleVersion}`,
-    textlint: `textlint@${textlintVersion}`,
+    textlint: `textlint@${pinned}`,
   };
 }
 

@@ -13,6 +13,7 @@ import {
 import {
   loadTextlintPluginManifest,
   textlintPluginName,
+  verifiedTextlintVersion,
   TEXTLINT_PLUGIN_WASM_PATHS,
 } from "./textlint-plugin-package.mjs";
 
@@ -153,8 +154,9 @@ async function writeManifest(cwd) {
     wrapper,
     "module.exports = { parseText() {} };\n",
   );
+  // 固定consumerが導入するのは範囲ではなく具体的なversionになる。
   await writeFile(join(textlint, "package.json"), JSON.stringify({
-    version: packageManifest.peerDependencies.textlint,
+    version: verifiedTextlintVersion(),
   }));
 }
 

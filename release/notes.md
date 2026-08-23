@@ -1,61 +1,35 @@
-# AdocWeave cli v0.47.0
+# AdocWeave textlint v0.47.0
 
 ## 主な変更
 
-- **プロジェクト設定の`schema-version`を2へ更新しました。** CLIはversion 1の設定を拒否します。`workspace.scan.exclude`に同じpatternを複数回書いた場合は、一度だけ適用します。
-- **`adocweave config show`が`workspace.scan.exclude`の実効値を表示するようにしました。** `.git`、`.venv`、`node_modules`および`target`の組込みpatternに、設定ファイルで指定した追加分を続けて表示します。
-- **製品ごとにtagとGitHub Releaseを分けました。** CLIの成果物はCLI専用のReleaseから取得できます。
-- **CLIのstable Releaseと同じcommitから構築したNix packageをCachixへ登録します。** x86_64-linuxとaarch64-linuxでは、条件が一致すればRustによる再構築を避けられます。
+- **`engines`と`peerDependencies`を範囲指定へ緩めました。** 従来はNode.js 24.19.0とtextlint 15.8.0へ完全一致で固定しており、動作する組合せでも導入時に警告や失敗が起きていました。今後はNode.js 24.19.0以上と、textlint 15.8系を受け入れます。CIで確認する組合せは変えていません。
+- **READMEをMarkdownへ変更しました。** package registryのpackageページで描画できる形式にします。記載内容は変えていません。
+
+Processorの公開interface、TxtASTへの変換結果および診断の位置は変えていません。
 
 ## 対応環境
 
-対応targetはRelease添付の配布manifestで確認できます。
+Node.js 24.19.0以上と、textlint 15.8系で動作します。WebAssemblyはパッケージへ同梱するため、Rust、Cargoまたは実行時の追加ダウンロードを必要としません。
 
 ## 対応関係
 
-CLIとLanguage Serverは同じ形式のプロジェクト設定を読み込みます。設定を共有する場合は、両方を0.47.0へ更新してください。
+textlintのProcessor Pluginとして動作します。AdocWeaveのほかの製品を同じ環境へ導入する必要はありません。
 
 ## v0.47.0への移行
 
-`.adocweave.toml`の`schema-version`を2へ変更します。`workspace.scan.exclude`へ組込みpatternを再列挙している場合は削除し、リポジトリ固有の追加分だけを残してください。
-
-変更前:
-
-```toml
-schema-version = 1
-
-[workspace.scan]
-exclude = ["**/.git", "**/.venv", "**/node_modules", "**/target", "**/generated"]
-```
-
-変更後:
-
-```toml
-schema-version = 2
-
-[workspace.scan]
-exclude = ["**/generated"]
-```
-
-`exclude = []`は追加patternがないことを表します。組込みの4 patternは解除できません。
-
-CLIとLanguage Serverの両方で同じ`.adocweave.toml`を使用している場合は、両製品の0.47.0を導入してから、実行ファイルの切替とversion 2への設定変更を一組の操作として行います。片方だけを0.47.0へ切り替えた状態では、version 1と2のどちらか一方の設定で新旧両方を動かすことはできません。CLIだけを使用している場合は、Language Serverを導入する必要はありません。
-
-CLIを取得する処理では、従来の`vX.Y.Z`形式ではなく`adocweave-cli/v0.47.0`を指定してください。このReleaseにはCLIの成果物だけを添付します。
-
-配布manifestを機械処理している場合は、`schemaVersion` 5へ対応してください。最上位の`packageVersion`は`productVersion`へ変わり、`product`が加わりました。`assets`の各要素は`name`だけを持ち、従来の`kind`、`target`、`archive`、`byteSize`、`sha256`および`executable`は含みません。対象環境とarchive形式は成果物名と導入文書で確認し、SHA-256は`sha256.sum`で検査してください。`adocweave.spdx.json`はこの版から添付しません。
-
-Nix flakeでは、`overlays.default`と`packages.${system}.adocweave`、`packages.${system}.adocweave-cli`および`packages.${system}.adocweave-lsp`を削除しました。導入するpackageは`packages.${system}.default`へ変更してください。このpackageにはCLIとLanguage Serverの両方が含まれます。CLIは`apps.${system}.default`、Language Serverは`apps.${system}.adocweave-lsp`で実行できます。
+- 利用者の作業は不要です。依存の指定方法と設定は変わりません。
+- Node.jsまたはtextlintのversionが合わず導入できなかった場合は、範囲指定へ緩めたことで導入できるようになります。
 
 ## 更新とロールバック
 
-CLIをバージョン別directoryへ展開し、`adocweave --version --json`が0.47.0を示すことを確認してから利用先を切り替えてください。Language Serverと設定を共有している場合は、両方の実行ファイルと`.adocweave.toml`を一組で切り替えます。version 1の設定を使う旧版へ戻す場合も、使用している実行ファイル、`schema-version`および`exclude`を一組で以前の内容へ戻します。
+依存として記録したversionを新しい版へ変更し、`npm install`を実行してから`package-lock.json`の差分と検査結果を確認してください。以前の版へ戻す場合は、同じ手順で戻したいversionを指定します。受入確認が終わるまで以前の`package-lock.json`を保持すると、問題がある場合に元へ戻せます。
 
 ## 既知の制約
 
-- 組込みの`.git`、`.venv`、`node_modules`および`target`をLanguage Serverの初期走査の対象へ戻す設定はありません。
-- `workspace.scan.exclude`はLanguage Serverの初期走査だけに適用します。CLIへ直接渡した入力は除外せずに読み込みます。
+- includeを展開せず、入力された一つの物理ファイルだけを解析します。
+- 自動修正に対応しません。規則が修正情報を返した場合も削除するため、`textlint --fix`でAsciiDoc文書を書き換えません。
+- 一つの入力は10 MiB、TxtAST planは50 MiB、planのnodeは1,000,000件、`sourceId`は4 KiBを上限とします。同梱WebAssemblyのlinear memoryは256 MiBを上限とします。
 
 ## 配布物の検証
 
-対象Releaseの`sha256.sum`でarchiveと`adocweave-dist-manifest.json`を検査します。続いて、downloadした各fileに対して`gh attestation verify <asset> --repo KeishiS/adocweave`を実行し、生成元を検証してください。第三者依存の名前、versionおよびlicenseはarchive内の`THIRD_PARTY_NOTICES.adoc`で確認できます。
+対象Releaseの`sha256.sum`でarchiveを検査し、`gh attestation verify <asset> --repo KeishiS/adocweave`でattestationを検証してください。
