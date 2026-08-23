@@ -351,14 +351,21 @@ function candidateArtifactWorkflows() {
     "release.yml": {
       jobs: {
         "build-native": {
-          steps: [{
-            uses: upload,
-            with: {
-              name: "release-candidate-${{ matrix.product }}-asset-${{ matrix.target }}",
-              path: "target/distrib/adocweave-${{ matrix.product }}-${{ matrix.target }}.zip",
-              "retention-days": 30,
+          steps: [
+            { name: "Target archive builds", run: "nix develop .#ci -c tools/run-pinned-dist.sh build" },
+            {
+              if: "endsWith(matrix.target, '-apple-darwin')",
+              run: 'tools/normalize-darwin-archives.sh target/distrib "${{ matrix.product }}" "${{ matrix.target }}"',
             },
-          }],
+            {
+              uses: upload,
+              with: {
+                name: "release-candidate-${{ matrix.product }}-asset-${{ matrix.target }}",
+                path: "target/distrib/adocweave-${{ matrix.product }}-${{ matrix.target }}.zip",
+                "retention-days": 30,
+              },
+            },
+          ],
         },
         "build-global": {
           steps: [
@@ -459,6 +466,17 @@ test("release candidateの公開fileは一度だけuploadして後続jobで直�
   for (const [name, expected, mutate] of [
     ["native archive reupload", /metadataだけを一度upload/, (workflows) => {
       findAction(workflows["release.yml"].jobs["finalize-native-candidate"], "upload").with.path = "artifacts/*";
+    }],
+    ["normalization without product", /Darwin archive/, (workflows) => {
+      const step = workflows["release.yml"].jobs["build-native"].steps[1];
+      step.run = 'tools/normalize-darwin-archives.sh target/distrib "${{ matrix.target }}"';
+    }],
+    ["normalization after upload", /Darwin archive/, (workflows) => {
+      const steps = workflows["release.yml"].jobs["build-native"].steps;
+      [steps[1], steps[2]] = [steps[2], steps[1]];
+    }],
+    ["normalization without Darwin condition", /Darwin archive/, (workflows) => {
+      delete workflows["release.yml"].jobs["build-native"].steps[1].if;
     }],
     ["temporary artifact", /一時artifact名/, (workflows) => {
       findAction(workflows["release.yml"].jobs["build-native"], "upload").with.name = "artifacts-build-cli";
