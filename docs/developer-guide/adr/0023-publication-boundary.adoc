@@ -1,6 +1,6 @@
 = ADR 0023: 公開と配布の境界
 
-:status: accepted; amended by ADR 0027, ADR 0028, ADR 0030, ADR 0031, ADR 0032, and ADR 0033
+:status: accepted; amended by ADR 0027, 0028, 0030, 0031, 0032, 0033, and 0036
 
 == 文脈
 

@@ -177,7 +177,7 @@ export function validateDistributionManifest(manifest, plan) {
   if (JSON.stringify(keys) !== JSON.stringify(expectedKeys)) {
     fail("distribution manifest has unknown or missing fields");
   }
-  if (manifest.schemaVersion !== 4) fail("distribution manifest schemaVersion must be 4");
+  if (manifest.schemaVersion !== 5) fail("distribution manifest schemaVersion must be 5");
   const entry = selectProduct(plan, manifest.product);
   if (!VERSION.test(manifest.productVersion)) fail("distribution manifest product version is invalid");
   if (!/^[0-9a-f]{40}$/.test(manifest.sourceCommit)) {
@@ -194,19 +194,12 @@ export function validateDistributionManifest(manifest, plan) {
   if (names.length !== expected.size) fail("distribution manifest asset count mismatch");
   for (const asset of manifest.assets) {
     const assetKeys = Object.keys(asset ?? {}).sort();
-    const expectedAssetKeys = ["archive", "byteSize", "executable", "kind", "name", "sha256", "target"];
+    const expectedAssetKeys = ["name"];
     if (JSON.stringify(assetKeys) !== JSON.stringify(expectedAssetKeys)) {
       fail("distribution manifest asset has unknown or missing fields");
     }
     const planned = expected.get(asset.name);
     if (!planned) fail(`unplanned distribution asset: ${asset.name}`);
-    for (const field of ["kind", "target", "archive", "executable"]) {
-      if (asset[field] !== planned[field]) fail(`asset ${asset.name} has invalid ${field}`);
-    }
-    if (!Number.isInteger(asset.byteSize) || asset.byteSize < 1) {
-      fail(`asset ${asset.name} has invalid byteSize`);
-    }
-    if (!/^[0-9a-f]{64}$/.test(asset.sha256)) fail(`asset ${asset.name} has invalid sha256`);
   }
 }
 

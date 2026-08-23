@@ -1,0 +1,53 @@
+= ADR 0036: 利用要件のないSBOM公開を廃止
+
+:status: accepted
+
+== 文脈
+
+各製品のGitHub Releaseには、SPDX 2.3 JSON形式の``adocweave.spdx.json``を添付していました。独自生成器が
+archiveを展開し、archive内の各fileのSHA-1とSHA-256、到達するCargoとnpmのpackage、およびarchiveからfileと
+依存packageへの関係を組み立てていました。依存間の関係や、同梱fileと依存packageの対応は表現していませんでした。
+
+リポジトリ内でSBOMを読む処理は生成器の自己検査だけで、導入手順にも利用方法はありませんでした。配布runtimeの
+licenseと取得元は標準依存監査と第三者依存の通知で確認し、成果物のbyte列はchecksum、生成元はGitHub Artifact
+Attestationsで確認しています。SBOMの提出を求める利用者、法令または運用上の要件はありません。
+
+配布manifestを読んでLanguage Serverを自動取得していたエディター機能はADR 0028で廃止済みです。旧エディターは
+固定済みの過去Releaseを参照するため、今後のRelease metadataを変更しても過去の取得経路には影響しません。
+
+== 決定
+
+今後のReleaseでは``adocweave.spdx.json``を公開しません。過去のReleaseに添付済みのfileは削除しません。
+
+現在のエディターには配布manifestを読む処理がないため、エディター固有の項目は置きません。配布manifestは公開処理が
+製品と成果物集合を照合するための目録とし、製品名、製品バージョン、source commitおよびarchive名だけを記録します。
+対象環境、archive形式、実行ファイル名は配布計画と重複し、byte数とSHA-256はchecksum生成時に再計算するため削除します。
+この破壊的変更を``schemaVersion`` 5で表します。
+
+``sha256.sum``には、同じReleaseで公開する全archiveと配布manifestを名前順に一度ずつ記録します。自己自身のdigestは
+記録できないため、``sha256.sum``を含むすべての公開成果物へArtifact Attestationを付けます。生成器はmanifestと
+checksumを同じ入力から再生成し、候補ディレクトリのfile集合とbyte単位で照合します。
+
+将来SBOMを再導入する場合は、先に利用者、使用目的、形式、必要な依存関係の粒度および更新条件をIssueへ記録します。
+生成には標準toolを使用し、リポジトリ固有コードでSBOM仕様を再実装しません。
+
+== 検討した代替案
+
+**Syftでarchiveを走査する。** native archiveでは依存情報を得られますが、bundle済みJavaScript、WebAssemblyおよび
+VSIXの構築元依存を復元できず、製品間で記録粒度が変わるため採用しません。
+
+**Cargoとnpmの標準生成器を組み合わせる。** Cargoのtarget別依存とnpmのruntime依存を取得できますが、複数形式の
+変換、製品別の選別および一つの文書への統合が必要です。現在はSBOMの利用要件がなく、新しいtoolと統合処理を保守する
+根拠がないため採用しません。
+
+**独自生成器を維持する。** 決定的なbyte列を生成できますが、archive形式、SPDX構造および依存抽出を継続して保守する
+必要があります。checksum、依存監査、第三者依存の通知およびattestationと重複するため採用しません。
+
+== 帰結
+
+Release metadataは配布manifestと``sha256.sum``の二つになり、archiveの展開とpackage managerごとの依存解析を行いません。
+利用者は従来どおり``sha256.sum``でdownloadしたarchiveを照合し、``gh attestation verify``でarchiveとchecksum一覧の
+生成元を確認できます。
+
+ADR 0023、0027、0030および0034のうち、SBOMの生成と公開に関する決定を本ADRで置き換えます。第三者依存の通知と標準依存監査、
+製品ごとのRelease、checksumおよびArtifact Attestationに関する決定は維持します。

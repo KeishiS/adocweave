@@ -89,7 +89,6 @@ function fixture() {
     ],
     releaseMetadata: [
       { name: "adocweave-dist-manifest.json" },
-      { name: "adocweave.spdx.json" },
       { name: "sha256.sum" },
     ],
   };
@@ -152,19 +151,11 @@ test("candidateとpublication planへ他製品assetを混在させません", ()
   writeFileSync(
     join(candidate, "adocweave-dist-manifest.json"),
     `${JSON.stringify({
-      schemaVersion: 4,
+      schemaVersion: 5,
       product: "cli",
       productVersion: "1.2.3",
       sourceCommit: "a".repeat(40),
-      assets: assets.map((name) => ({
-        archive: "zip",
-        byteSize: 1,
-        executable: "adocweave",
-        kind: "cli",
-        name,
-        sha256: "0".repeat(64),
-        target: name.includes("a-target") ? "a-target" : "b-target",
-      })),
+      assets: assets.map((name) => ({ name })),
     })}\n`,
   );
   const cargoDistPlan = {

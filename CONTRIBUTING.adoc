@@ -156,7 +156,7 @@ Rustの許可licenseと取得元は``deny.toml``、VS Code拡張の配布runtime
 
 . 対象のmanifestとlockfileだけを更新し、無関係な依存関係の変更を分離します。
 . ``cargo make security-audit``を実行します。
-. license、取得元、生成されるnotice、SBOMおよびbrowser sizeの差分を確認します。
+. license、取得元、生成されるnoticeおよびbrowser sizeの差分を確認します。
 . 通常の品質検査を通してからpull requestを統合します。
 
 同じcrateの複数バージョンが依存関係へ入ることは禁止しません。上流のバージョン制約で決まる値であり、
@@ -187,7 +187,7 @@ DependabotのPull Requestは更新範囲にかかわらず自動mergeせず、�
 リポジトリにはDependabotのauto-mergeを登録するworkflowとwrite権限を置きません。
 
 reviewでは、manifestとlockfileの差分、直接・間接依存関係、SemVerの更新範囲、security advisory、
-license、取得元および生成されるnoticeとSBOMを確認します。GitHub Actions更新では完全なcommit SHAへの
+license、取得元および生成されるnoticeを確認します。GitHub Actions更新では完全なcommit SHAへの
 固定と上流Release Notesも確認します。必須検査、競合確認および最新の``main``への追従を省略しません。
 
 自動mergeを再検討する場合は、同じ管理者が作成した通常のPull Requestを統合できるreview体制、
@@ -195,7 +195,7 @@ Dependabot alertを完全に取得できるActions権限、strictなrulesetお�
 新しいIssueで扱います。設定やworkflowを直接追加して開始しません。
 
 Nix入力はDependabotの対象外であり、``flake.lock``を手動で更新します。Frontendへruntime dependencyを追加する
-場合は、lockfileに基づくSBOM生成を先に実装します。
+場合は、lockfileへ固定し、標準依存監査と第三者依存の通知へ含めます。
 
 == 文書を増やさない規則
 

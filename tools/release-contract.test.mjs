@@ -99,9 +99,9 @@ test("expected assets contain only the selected product", () => {
 test("distribution manifest fixture satisfies the LSP product contract", () => {
   assert.doesNotThrow(() => validateDistributionManifest(fixture, plan));
   assert.equal(fixture.product, "lsp");
-  assert.equal(fixture.schemaVersion, 4);
+  assert.equal(fixture.schemaVersion, 5);
   assert.equal("lspApiVersion" in fixture, false);
-  assert.ok(fixture.assets.every(({ kind }) => kind === "lsp"));
+  assert.ok(fixture.assets.every((asset) => !("kind" in asset)));
   assert.equal(canonicalJson(fixture), `${JSON.stringify(fixture, null, 2)}\n`);
 });
 
