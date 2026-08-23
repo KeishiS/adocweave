@@ -12,7 +12,7 @@ import { parseReleaseVersionArguments } from "./sync-release-version.mjs";
 const ROOT = new URL("../", import.meta.url);
 const read = (path) => readFileSync(new URL(path, ROOT), "utf8");
 const PUBLIC_TASKS = [
-  "acceptance", "default", "fmt", "fmt-check", "main-gate", "main-integrations", "release-check",
+  "acceptance", "default", "fmt", "fmt-check", "fuzz-smoke", "main-gate", "main-integrations", "release-check",
   "security-audit", "test-browser-release-candidate", "test-global-product-candidate",
   "test-vscode-release-determinism", "test-zed-release-candidate",
   "textlint-plugin-post-release-npx-smoke", "textlint-plugin-release-consumer-e2e", "verify",
@@ -524,7 +524,6 @@ const SOURCE_GATE_DEPENDENCIES = [
 const MAIN_INTEGRATION_DEPENDENCIES = [
   "check-zed-wasm",
   "cross-native-check",
-  "fuzz-smoke",
   "protocol-wasm-corpus-check",
   "test-cross-runtime",
   "test-vscode-extension-host",
@@ -533,6 +532,7 @@ const MAIN_INTEGRATION_DEPENDENCIES = [
 ].sort();
 
 const MAIN_GATE_DEPENDENCIES = [
+  "fuzz-smoke",
   "main-integrations",
   "nix-package-check",
 ].sort();
@@ -772,6 +772,7 @@ export function validateStandardSourceAndCandidateGates(workflows, sources = {})
   }
 
   const mainIntegrations = jobs["main-integrations"];
+  const fuzzSmoke = jobs["fuzz-smoke"];
   const nixPackageCheck = jobs["nix-package-check"];
   const security = jobs.security;
   if (!security || security.name !== "security-audit" || !hasMainGateCondition(security) ||
@@ -788,6 +789,15 @@ export function validateStandardSourceAndCandidateGates(workflows, sources = {})
       !hasOnlyRun(mainIntegrations, "nix develop .#ci-fuzz -c cargo make main-integrations")) {
     fail("main-integrationsはsourceとsecurityの成功後にmainの統合検査を実行してください");
   }
+  const fuzzSmokeNeeds = new Set(needs(fuzzSmoke));
+  if (!fuzzSmoke || fuzzSmoke.name !== "fuzz-smoke" ||
+      !hasMainGateCondition(fuzzSmoke) ||
+      fuzzSmokeNeeds.size !== 2 || !fuzzSmokeNeeds.has("source") ||
+      !fuzzSmokeNeeds.has("security") ||
+      occurrences(workflowRuns, "cargo make fuzz-smoke") !== 1 ||
+      !hasOnlyRun(fuzzSmoke, "nix develop .#ci-fuzz -c cargo make fuzz-smoke")) {
+    fail("fuzz-smokeはsourceとsecurityの成功後にmainの既知corpusを検査してください");
+  }
   const nixPackageCheckNeeds = new Set(needs(nixPackageCheck));
   if (!nixPackageCheck || nixPackageCheck.name !== "nix-package-check" ||
       !hasMainGateCondition(nixPackageCheck) ||
@@ -801,13 +811,14 @@ export function validateStandardSourceAndCandidateGates(workflows, sources = {})
   const candidatePlanNeeds = new Set(needs(candidatePlan));
   if (!candidatePlan ||
       !hasDispatchMainCondition(candidatePlan) ||
-      candidatePlanNeeds.size !== 3 ||
+      candidatePlanNeeds.size !== 4 ||
       !candidatePlanNeeds.has("source") ||
       !candidatePlanNeeds.has("main-integrations") ||
+      !candidatePlanNeeds.has("fuzz-smoke") ||
       !candidatePlanNeeds.has("nix-package-check") ||
       !hasOnlyRun(candidatePlan, 'node tools/product-candidate-plan.mjs "$GITHUB_OUTPUT" "${{ inputs.product }}"') ||
       !isMainOnly(jobs, "candidate-plan")) {
-    fail("candidate-planは手動公開時にsourceと二つのmain検査へ依存し、選択製品のcandidate planを1回生成してください");
+    fail("candidate-planは手動公開時にsourceと三つのmain検査へ依存し、選択製品のcandidate planを1回生成してください");
   }
 
   const candidateJobs = [
@@ -826,7 +837,7 @@ export function validateStandardSourceAndCandidateGates(workflows, sources = {})
     }
   }
   for (const jobName of Object.keys(jobs)) {
-    if (jobName === "candidate-plan" || candidateJobs.includes(jobName) ||
+    if (jobName === "candidate-plan" || jobName === "fuzz-smoke" || candidateJobs.includes(jobName) ||
         !/(?:^|-)(?:build|smoke|installation|candidate)(?:-|$)/.test(jobName)) continue;
     if (!isMainOnly(jobs, jobName)) {
       fail(`成果物job ${jobName}はmain candidate経路だけで実行してください`);

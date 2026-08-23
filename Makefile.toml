@@ -526,7 +526,7 @@ echo "$(wc -c < "$archive") $archive"
 '''
 
 [tasks.fuzz-smoke]
-private = true
+category = "CI entry points"
 description = "Confirm each fuzz target survives its known corpus (set FUZZ_SECONDS to override)"
 script_runner = "@shell"
 script = '''
@@ -713,7 +713,7 @@ dependencies = [
 
 [tasks.main-integrations]
 category = "CI entry points"
-description = "Run the main-only integration checks except the independent Nix package check"
+description = "Run the main-only integration checks except the independent fuzz and Nix checks"
 dependencies = [
   "cross-native-check",
   "check-zed-wasm",
@@ -722,13 +722,13 @@ dependencies = [
   "test-vscode-extension-host",
   "textlint-plugin-wasm-contract",
   "textlint-plugin-browser-isolation",
-  "fuzz-smoke",
 ]
 
 [tasks.main-gate]
 category = "CI entry points"
 description = "Run the expensive main-only integrations in addition to a separately completed source gate"
 dependencies = [
+  "fuzz-smoke",
   "main-integrations",
   "nix-package-check",
 ]

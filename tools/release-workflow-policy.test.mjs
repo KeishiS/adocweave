@@ -681,6 +681,12 @@ function sourceAndCandidateWorkflow() {
         needs: ["source", "security"],
         steps: [{ run: "nix develop .#ci-fuzz -c cargo make main-integrations" }],
       },
+      "fuzz-smoke": {
+        name: "fuzz-smoke",
+        if: "(github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'",
+        needs: ["source", "security"],
+        steps: [{ run: "nix develop .#ci-fuzz -c cargo make fuzz-smoke" }],
+      },
       "nix-package-check": {
         name: "nix-package-check",
         if: "(github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'",
@@ -689,7 +695,7 @@ function sourceAndCandidateWorkflow() {
       },
       "candidate-plan": {
         if: "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'",
-        needs: ["source", "main-integrations", "nix-package-check"],
+        needs: ["source", "main-integrations", "fuzz-smoke", "nix-package-check"],
         steps: [{ run: 'node tools/product-candidate-plan.mjs "$GITHUB_OUTPUT" "${{ inputs.product }}"' }],
       },
       "build-native": {
@@ -799,7 +805,7 @@ test("削除したpath分類と手動aggregateをworkflowへ戻さない", () =>
 
 test("手動公開のcandidate planはsourceとmain検査の成功後に選択製品の計画を1回だけ生成する", () => {
   for (const mutate of [
-    (workflow) => { workflow.jobs["candidate-plan"].needs = ["source", "main-integrations"]; },
+    (workflow) => { workflow.jobs["candidate-plan"].needs = ["source", "main-integrations", "nix-package-check"]; },
     (workflow) => { workflow.jobs["candidate-plan"].steps = [{ run: "node custom-plan.mjs" }]; },
     (workflow) => { workflow.jobs["candidate-plan"].steps.push({ run: "node tools/product-candidate-plan.mjs" }); },
     (workflow) => { delete workflow.jobs["main-integrations"].if; },
@@ -808,6 +814,11 @@ test("手動公開のcandidate planはsourceとmain検査の成功後に選択�
     (workflow) => { workflow.jobs["main-integrations"].steps = []; },
     (workflow) => { workflow.jobs["main-integrations"].steps[0].run += " || true"; },
     (workflow) => { workflow.jobs["main-integrations"].needs = ["source"]; },
+    (workflow) => { delete workflow.jobs["fuzz-smoke"]; },
+    (workflow) => { workflow.jobs["fuzz-smoke"].if += " || github.event_name == 'pull_request'"; },
+    (workflow) => { workflow.jobs["fuzz-smoke"].needs = ["source"]; },
+    (workflow) => { workflow.jobs["fuzz-smoke"].steps[0].run += " || true"; },
+    (workflow) => { workflow.jobs["main-integrations"].steps.push({ run: "cargo make fuzz-smoke" }); },
     (workflow) => { delete workflow.jobs["nix-package-check"]; },
     (workflow) => { workflow.jobs["nix-package-check"].if += " || github.event_name == 'pull_request'"; },
     (workflow) => { workflow.jobs["nix-package-check"].needs = ["source"]; },
@@ -822,7 +833,7 @@ test("手動公開のcandidate planはsourceとmain検査の成功後に選択�
     mutate(workflow);
     assert.throws(
       () => validateSourceAndCandidateWorkflow(workflow),
-      /source|candidate-plan|main-integrations|nix-package-check/,
+      /source|candidate-plan|main-integrations|fuzz-smoke|nix-package-check/,
     );
   }
 
@@ -861,11 +872,13 @@ test("sourceとmainの標準task境界をMakefileで固定する", () => {
 
   for (const [name, mutate] of [
     ["source dependency", (source) => mutateTask(source, "verify", (body) => body.replace('  "fmt-check",\n', ""))],
-    ["integration dependency", (source) => mutateTask(source, "main-integrations", (body) => body.replace('  "fuzz-smoke",\n', ""))],
-    ["integration extra dependency", (source) => mutateTask(source, "main-integrations", (body) => body.replace('  "fuzz-smoke",\n]', '  "fuzz-smoke",\n  "test-grammar",\n]'))],
+    ["integration dependency", (source) => mutateTask(source, "main-integrations", (body) => body.replace('  "cross-native-check",\n', ""))],
+    ["integration extra dependency", (source) => mutateTask(source, "main-integrations", (body) => body.replace('  "textlint-plugin-browser-isolation",\n]', '  "textlint-plugin-browser-isolation",\n  "test-grammar",\n]'))],
+    ["integration fuzz", (source) => mutateTask(source, "main-integrations", (body) => body.replace('  "textlint-plugin-browser-isolation",\n]', '  "textlint-plugin-browser-isolation",\n  "fuzz-smoke",\n]'))],
+    ["main fuzz", (source) => mutateTask(source, "main-gate", (body) => body.replace('  "fuzz-smoke",\n', ""))],
     ["main integration", (source) => mutateTask(source, "main-gate", (body) => body.replace('  "main-integrations",\n', ""))],
     ["main nix", (source) => mutateTask(source, "main-gate", (body) => body.replace('  "nix-package-check",\n', ""))],
-    ["main candidate", (source) => mutateTask(source, "main-integrations", (body) => body.replace('  "fuzz-smoke",\n]', '  "fuzz-smoke",\n  "release-global-candidate",\n]'))],
+    ["main candidate", (source) => mutateTask(source, "main-integrations", (body) => body.replace('  "textlint-plugin-browser-isolation",\n]', '  "textlint-plugin-browser-isolation",\n  "release-global-candidate",\n]'))],
     ["verify alias", (source) => mutateTask(source, "verify", (body) => `${body}\nalias = "main-gate"\n`)],
     ["acceptance", (source) => mutateTask(source, "acceptance", (body) => body.replace('  "main-gate",\n', ""))],
     ["release-check", (source) => mutateTask(source, "release-check", (body) => body.replace('  "security-audit",\n', ""))],
