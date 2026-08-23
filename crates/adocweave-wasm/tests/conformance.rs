@@ -29,7 +29,7 @@ fn native_adapter_accepts_every_shared_conformance_case() {
             .expect("conformance manifest"),
     )
     .expect("valid conformance manifest");
-    assert_eq!(manifest["schemaVersion"], 1, "manifest schema version");
+    assert_eq!(manifest["schemaVersion"], 2, "manifest schema version");
     assert_eq!(
         manifest["outputContractVersion"], 1,
         "public output contract version"
@@ -43,9 +43,13 @@ fn native_adapter_accepts_every_shared_conformance_case() {
     );
     let mut public_case_count = 0;
     let mut public_features = BTreeSet::new();
+    let mut case_names = BTreeSet::new();
+    let mut public_source_ids = BTreeSet::new();
 
     for entry in manifest["cases"].as_array().expect("cases") {
         let name = entry["name"].as_str().expect("case name");
+        assert!(!name.is_empty(), "case name must not be empty");
+        assert!(case_names.insert(name), "duplicate case name: {name}");
         assert!(entry["compatibility"].is_string(), "{name}: compatibility");
         assert!(entry["rationale"].is_string(), "{name}: rationale");
         assert!(
@@ -64,6 +68,22 @@ fn native_adapter_accepts_every_shared_conformance_case() {
         assert!(!response.ast.is_empty(), "{name}: AST");
         if let Some(public_contract) = entry.get("publicContract") {
             public_case_count += 1;
+            let source_id = entry["sourceId"].as_str().expect("public sourceId");
+            assert!(!source_id.is_empty(), "{name}: public sourceId");
+            assert!(
+                public_source_ids.insert(source_id),
+                "duplicate public sourceId: {source_id}"
+            );
+            assert_eq!(
+                entry["analysisOptions"],
+                json!({}),
+                "{name}: analysis options"
+            );
+            assert_eq!(
+                entry["renderPolicy"],
+                json!({ "documentMode": "fragment" }),
+                "{name}: render policy"
+            );
             assert_public_contract(
                 name,
                 public_contract,
@@ -259,7 +279,14 @@ fn assert_public_contract<'a>(
     render_diagnostics: &Value,
     features: &mut BTreeSet<&'a str>,
 ) {
-    for feature in contract["features"].as_array().expect("public features") {
+    assert_object_keys(
+        contract,
+        &["features", "implementationDetails", "stableContract"],
+        &format!("{name}: publicContract"),
+    );
+    let case_features = contract["features"].as_array().expect("public features");
+    assert!(!case_features.is_empty(), "{name}: public features");
+    for feature in case_features {
         features.insert(feature.as_str().expect("public feature name"));
     }
     assert!(
@@ -269,10 +296,29 @@ fn assert_public_contract<'a>(
         "{name}: implementation details"
     );
     let stable = &contract["stableContract"];
-    for assertion in stable["projectionAssertions"]
+    assert_object_keys(
+        stable,
+        &[
+            "diagnosticCodes",
+            "htmlContains",
+            "projectionAssertions",
+            "renderDiagnosticCodes",
+        ],
+        &format!("{name}: stableContract"),
+    );
+    let projection_assertions = stable["projectionAssertions"]
         .as_array()
-        .expect("projection assertions")
-    {
+        .expect("projection assertions");
+    assert!(
+        !projection_assertions.is_empty(),
+        "{name}: projection assertions"
+    );
+    for assertion in projection_assertions {
+        assert_object_keys(
+            assertion,
+            &["pointer", "value"],
+            &format!("{name}: projection assertion"),
+        );
         let pointer = assertion["pointer"].as_str().expect("JSON pointer");
         assert_eq!(
             projection.pointer(pointer),
@@ -280,7 +326,9 @@ fn assert_public_contract<'a>(
             "{name}: projection pointer {pointer}"
         );
     }
-    for fragment in stable["htmlContains"].as_array().expect("HTML assertions") {
+    let html_assertions = stable["htmlContains"].as_array().expect("HTML assertions");
+    assert!(!html_assertions.is_empty(), "{name}: HTML assertions");
+    for fragment in html_assertions {
         let fragment = fragment.as_str().expect("HTML fragment");
         assert!(
             html.contains(fragment),
@@ -297,6 +345,17 @@ fn assert_public_contract<'a>(
         expected_codes(&stable["renderDiagnosticCodes"]),
         "{name}: render diagnostic codes"
     );
+}
+
+fn assert_object_keys(value: &Value, expected: &[&str], context: &str) {
+    let actual = value
+        .as_object()
+        .unwrap_or_else(|| panic!("{context} must be an object"))
+        .keys()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let expected = expected.iter().copied().collect::<BTreeSet<_>>();
+    assert_eq!(actual, expected, "{context}: fields");
 }
 
 fn diagnostic_codes(value: &Value) -> Vec<&str> {

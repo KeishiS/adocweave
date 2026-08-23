@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "outputContractVersion": 1,
   "license": "MIT OR Apache-2.0",
   "cases": [
@@ -605,6 +605,10 @@
     {
       "name": "public-document-structure",
       "sourceId": "public-conformance:document-structure",
+      "analysisOptions": {},
+      "renderPolicy": {
+        "documentMode": "fragment"
+      },
       "compatibility": "approved-adocweave-output",
       "rationale": "公開fixtureの文書title、TOCおよび節番号をnativeとWASMで同じ出力契約へ固定する",
       "contractImpact": "conformance,wasm-api",
@@ -652,6 +656,10 @@
     {
       "name": "public-source-block",
       "sourceId": "public-conformance:source-block",
+      "analysisOptions": {},
+      "renderPolicy": {
+        "documentMode": "fragment"
+      },
       "compatibility": "approved-adocweave-output",
       "rationale": "公開fixtureのsource title、linenumsおよび開始行をnativeとWASMで同じ出力契約へ固定する",
       "contractImpact": "conformance,wasm-api",
@@ -703,6 +711,10 @@
     {
       "name": "public-formulas",
       "sourceId": "public-conformance:formulas",
+      "analysisOptions": {},
+      "renderPolicy": {
+        "documentMode": "fragment"
+      },
       "compatibility": "approved-adocweave-output",
       "rationale": "公開fixtureの数式language、表示形式およびsourceをnativeとWASMで同じ出力契約へ固定する",
       "contractImpact": "conformance,wasm-api",
@@ -755,6 +767,10 @@
     {
       "name": "public-blocks",
       "sourceId": "public-conformance:blocks",
+      "analysisOptions": {},
+      "renderPolicy": {
+        "documentMode": "fragment"
+      },
       "compatibility": "approved-adocweave-output",
       "rationale": "公開fixtureのtable、quoteおよびlistをnativeとWASMで同じ出力契約へ固定する",
       "contractImpact": "conformance,wasm-api",
@@ -806,6 +822,10 @@
     {
       "name": "public-diagnostics",
       "sourceId": "public-conformance:diagnostics",
+      "analysisOptions": {},
+      "renderPolicy": {
+        "documentMode": "fragment"
+      },
       "compatibility": "approved-adocweave-output",
       "rationale": "公開fixtureの安全でないURL診断とfallbackをnativeとWASMで同じ出力契約へ固定する",
       "contractImpact": "conformance,wasm-api",
@@ -841,6 +861,10 @@
     {
       "name": "public-unsupported-source-option",
       "sourceId": "public-conformance:unsupported-source-option",
+      "analysisOptions": {},
+      "renderPolicy": {
+        "documentMode": "fragment"
+      },
       "compatibility": "approved-adocweave-output",
       "rationale": "公開fixtureの未対応source option診断と安全なlisting回復をnativeとWASMで同じ出力契約へ固定する",
       "contractImpact": "conformance,wasm-api",

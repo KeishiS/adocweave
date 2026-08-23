@@ -24,12 +24,13 @@ readerのpathを再掲する台帳は置きません。
 
 利用側へ公開するcaseは、同じmanifestの任意項目`publicContract`で選択します。`publicContract`は、
 利用側が依存できる投影のJSON pointer、HTML断片および診断codeを意味上のassertionとして記録します。
-比較用file全体のbyte列と実装詳細はリポジトリ内の回帰検査に限定します。Manifest、参照するAsciiDocおよび
-期待出力を含む公開fixture一式は、リポジトリのrootのlink:../LICENSE-MIT[MIT License]または
+公開caseの入力AsciiDocもmanifestへ直接記録し、比較用file全体のbyte列と実装詳細はリポジトリ内の回帰検査に
+限定します。Manifest内の公開caseは、リポジトリのrootのlink:../LICENSE-MIT[MIT License]または
 link:../LICENSE-APACHE[Apache License 2.0]の条件で再利用できます。
 
 manifestの`schemaVersion`は形式の非互換変更、`outputContractVersion`は`publicContract`の非互換変更で
-更新します。公開仕様を変更するときは、manifest、参照する期待出力およびRelease Notesを同じ変更で更新します。
+更新します。公開仕様を変更するときは、manifest内の入力と`publicContract`およびRelease Notesを同じ変更で
+更新します。
 公開仕様に含まれない空白、属性順または未選択の投影fieldだけを変更する場合は`outputContractVersion`を
 更新しません。
 
