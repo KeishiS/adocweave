@@ -70,6 +70,7 @@ jobs:
         env:
           NIX_SYSTEM: ${{ matrix.nixSystem }}
         run: |
-          package="$(nix build ".#packages.${NIX_SYSTEM}.default" --no-link --print-out-paths)"
+          check="$(nix build ".#checks.${NIX_SYSTEM}.default" --no-link --print-out-paths)"
+          package="$(readlink -f "$check/package")"
           test -n "$package"
           cachix push keishis "$package"

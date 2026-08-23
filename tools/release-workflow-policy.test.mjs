@@ -274,13 +274,22 @@ function productRoutingWorkflows() {
       ] } },
     },
     "binary-cache-publish.yml": {
-      jobs: { publish: { steps: [
-        {
-          name: "Published CLI candidate verification",
-          run: "jq .draft\njq .prerelease\ngit rev-parse '$TAG^{commit}'\n--verify-candidate\nattestation verify",
-        },
-        { env: { TOKEN: "${{ secrets.CACHIX_AUTH_TOKEN }}" }, run: "publish" },
-      ] } },
+      jobs: { publish: {
+        strategy: { matrix: { include: [
+          { nixSystem: "x86_64-linux" },
+          { nixSystem: "aarch64-linux" },
+        ] } },
+        steps: [
+          {
+            name: "Published CLI candidate verification",
+            run: "jq .draft\njq .prerelease\ngit rev-parse '$TAG^{commit}'\n--verify-candidate\nattestation verify",
+          },
+          {
+            env: { TOKEN: "${{ secrets.CACHIX_AUTH_TOKEN }}" },
+            run: 'check="$(nix build ".#checks.${NIX_SYSTEM}.default" --no-link --print-out-paths)"\npackage="$(readlink -f "$check/package")"\ncachix push keishis "$package"',
+          },
+        ],
+      } },
     },
   };
 }
@@ -376,6 +385,33 @@ test("post-release publication waits for GitHub Release and verifies stable stat
     () => validateProductReleaseRouting(wrongOrder),
     /accept only a published stable release/,
   );
+});
+
+test("binary cache publication checks the default package on both Linux architectures", () => {
+  for (const system of ["x86_64-linux", "aarch64-linux"]) {
+    const workflows = productRoutingWorkflows();
+    const include = workflows["binary-cache-publish.yml"].jobs.publish.strategy.matrix.include;
+    workflows["binary-cache-publish.yml"].jobs.publish.strategy.matrix.include =
+      include.filter((entry) => entry.nixSystem !== system);
+    assert.throws(
+      () => validateProductReleaseRouting(workflows),
+      /check and publish the default package for both Linux architectures/,
+    );
+  }
+
+  for (const fragment of [
+    'nix build ".#checks.${NIX_SYSTEM}.default"',
+    'readlink -f "$check/package"',
+    'cachix push keishis "$package"',
+  ]) {
+    const workflows = productRoutingWorkflows();
+    const step = workflows["binary-cache-publish.yml"].jobs.publish.steps[1];
+    step.run = step.run.replace(fragment, "removed");
+    assert.throws(
+      () => validateProductReleaseRouting(workflows),
+      /check and publish the default package for both Linux architectures/,
+    );
+  }
 });
 
 function sourceAndCandidateWorkflow() {
