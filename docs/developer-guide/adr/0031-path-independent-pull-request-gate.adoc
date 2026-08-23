@@ -1,5 +1,5 @@
 = ADR 0031: 変更pathに依存しないPull Request検査
-:status: accepted; candidate flow amended by ADR 0032; task boundary amended by ADR 0033
+:status: accepted; amended by ADR 0032, ADR 0033, and ADR 0034
 
 == 文脈
 
@@ -16,7 +16,7 @@ Pull Requestの検査範囲を狭めるため、Gitが追跡するすべてのpa
 
 すべてのPull Requestに、変更pathに依存しない一つの標準source gateを適用します。このgateはローカルの
 ``cargo make verify``と同じ検査を実行し、表示するcheck名を``verify``とします。書式、lint、test、生成fileの差分、
-人が書いた文書および静的な依存関係境界の検査を省略しません。
+人が書いた文書および配布metadataの検査を省略しません。
 
 Pull Requestでは配布candidateを構築しません。cross targetの構築、実際のOSやBrowserを使う統合検査、fuzz、
 Nixパッケージ検査、未公開製品の配布成果物の構築および成果物を使うruntime受入検査は、``main``へ統合したcommitで実行します。

@@ -92,7 +92,11 @@ dependencies = [
 ]
 script_runner = "@shell"
 script = '''
-node --test tools/release-metadata.test.mjs tools/release-notes.test.mjs
+node --test \
+  tools/generate-third-party-notices.test.mjs \
+  tools/release-metadata.test.mjs \
+  tools/release-notes.test.mjs \
+  tools/verify-vscode-dependencies.test.mjs
 node tools/release-notes.mjs --check lsp
 args=""
 metadata="$(mktemp "${TMPDIR:-/tmp}/adocweave-release-metadata.XXXXXX.json")"
@@ -119,30 +123,9 @@ node --test tools/sync-release-version.test.mjs
 node tools/sync-release-version.mjs --check
 '''
 
-[tasks.dependency-contract]
-private = true
-description = "Verify locked dependency boundaries and generated notices"
-script_runner = "@shell"
-script = '''
-node --test \
-  tools/verify-dependency-boundaries.test.mjs \
-  tools/verify-textlint-dependencies.test.mjs \
-  tools/verify-textlint-plugin-dependencies.test.mjs \
-  tools/verify-vscode-dependencies.test.mjs \
-  tools/generate-third-party-notices.test.mjs
-node tools/verify-dependency-boundaries.mjs
-node tools/verify-vscode-dependencies.mjs
-node tools/verify-textlint-dependencies.mjs
-node tools/verify-textlint-plugin-dependencies.mjs
-notice="$(mktemp "${TMPDIR:-/tmp}/adocweave-third-party-notices.XXXXXX.adoc")"
-trap 'rm -f "$notice"' EXIT
-node tools/generate-third-party-notices.mjs "$notice"
-'''
-
 [tasks.security-audit]
 category = "Developer entry points"
-description = "Audit dependency licenses, sources, advisories, and exceptions"
-dependencies = ["dependency-contract"]
+description = "Audit distributed dependency licenses, sources, and current advisories"
 command = "bash"
 args = ["tools/security-audit.sh"]
 
@@ -156,7 +139,8 @@ node --test \
   tools/browser-release-budget.test.mjs \
   tools/product-candidate-plan.test.mjs \
   tools/product-release.test.mjs \
-  tools/release-workflow-policy.test.mjs
+  tools/release-workflow-policy.test.mjs \
+  tools/security-audit.test.mjs
 '''
 
 [tasks.workflow-lint]
@@ -730,7 +714,6 @@ dependencies = [
   "check-vscode",
   "test-vscode",
   "textlint-plugin-public-js-unit",
-  "dependency-contract",
 ]
 
 [tasks.main-gate]

@@ -3,12 +3,13 @@ import test from "node:test";
 
 import {
   cargoTreePackageKeys,
-  npmRuntimePackages,
   reachableThirdPartyPackages,
   renderTextlintPluginNotices,
   renderThirdPartyNotices,
+  renderVscodeThirdPartyNotices,
   thirdPartyPackages,
 } from "./generate-third-party-notices.mjs";
+import { vscodeRuntimePackages } from "./verify-vscode-dependencies.mjs";
 
 const workspace = { id: "adocweave 1.2.3 (path+file:///workspace)", name: "adocweave", version: "1.2.3" };
 const packageOf = (name, version, license) => ({ id: `${name} ${version} (registry+https://example.invalid)`, name, version, license });
@@ -76,15 +77,25 @@ test("textlint pluginの依存集合はwasm32向けnormal edgeと一致します
   assert.ok(!packages.has(key("const-oid", "0.10.2")));
 });
 
-test("VS Code noticeにはmanifestで宣言した実行時依存だけを含めます", () => {
-  const packages = npmRuntimePackages(
-    { dependencies: { alpha: "1.0.0" }, devDependencies: { beta: "2.0.0" } },
+test("VS Code noticeには推移依存を含む配布runtime treeだけを含めます", () => {
+  const packages = vscodeRuntimePackages(
+    { private: true, version: "1.2.3" },
     {
+      lockfileVersion: 3,
       packages: {
-        "node_modules/alpha": { version: "1.0.0", license: "MIT" },
-        "node_modules/beta": { version: "2.0.0", license: "Apache-2.0" },
+        "": { version: "1.2.3" },
+        "node_modules/alpha": { version: "1.0.0", license: "MIT", resolved: "https://registry.npmjs.org/alpha" },
+        "node_modules/alpha/node_modules/gamma": { version: "3.0.0", license: "ISC", resolved: "https://registry.npmjs.org/gamma" },
+        "node_modules/beta": { dev: true, version: "2.0.0", license: "Apache-2.0", resolved: "https://registry.npmjs.org/beta" },
       },
     },
   );
-  assert.deepEqual(packages, [{ name: "alpha", version: "1.0.0", license: "MIT" }]);
+  assert.deepEqual(packages.map(({ resolved: _resolved, ...pkg }) => pkg), [
+    { name: "alpha", version: "1.0.0", license: "MIT" },
+    { name: "gamma", version: "3.0.0", license: "ISC" },
+  ]);
+  const rendered = renderVscodeThirdPartyNotices(packages);
+  assert.match(rendered, /alpha 1\.0\.0/);
+  assert.match(rendered, /gamma 3\.0\.0/);
+  assert.doesNotMatch(rendered, /beta 2\.0\.0/);
 });

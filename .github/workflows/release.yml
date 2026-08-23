@@ -50,9 +50,23 @@ jobs:
       - name: Complete source gate
         run: nix develop .#ci -c cargo make verify
 
-  main-gate:
+  security:
+    name: security-audit
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     needs: [source]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+      - name: Audit distributed dependencies
+        run: nix develop .#ci -c cargo make security-audit
+
+  main-gate:
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    needs: [source, security]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:

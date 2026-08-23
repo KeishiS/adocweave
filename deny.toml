@@ -7,8 +7,8 @@ targets = [
   "x86_64-unknown-linux-musl",
 ]
 
-[advisories]
-ignore = []
+# Advisory exceptions belong here only while non-empty. Use a structured ignore
+# whose reason is `理由: ...; 期限: YYYY-MM-DD; Issue: https://github.com/KeishiS/adocweave/issues/N`.
 
 [licenses]
 allow = [
