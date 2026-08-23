@@ -178,8 +178,8 @@ GitHub Actionsから生成された来歴を示します。いずれも、成果
 [#textlint-plugin-installation]
 == textlint用AsciiDoc Processorの導入
 
-``@adocweave/textlint-plugin-asciidoc``はnpm registryへ公開しません。検証したGitHub Releaseのtarball URLと
-対応するtextlintを、利用するプロジェクトの開発用依存として固定します。
+``@adocweave/textlint-plugin-asciidoc``は現在npm registryへ公開していません。検証したGitHub Releaseの
+tarball URLと対応するtextlintを、利用するプロジェクトの開発用依存として固定します。
 
 [source,console]
 ----
