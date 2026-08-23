@@ -154,8 +154,7 @@ patternは1件あたり1024文字、全体で4096文字までです。Unix上で
 JSON Schemaはlink:../../config/adocweave.schema.json[`config/adocweave.schema.json`]です。
 このSchemaは、項目名、型、列挙値、未知の項目の拒否、既定値および項目単位の上限を表します。
 相対パスにはOSに依存しない``/``区切りを使います。``\``区切り、絶対パス、drive名および
-親ディレクトリへ移動する``..``は指定できません。従来の設定で``styles\manual.css``のように
-記述している場合は、``styles/manual.css``へ書き換えてください。
+親ディレクトリへ移動する``..``は指定できません。
 ただし``max-resource-bytes``が``max-total-bytes``を超えないという条件と、除外patternの合計が4096文字を
 超えないという条件は、複数の項目をまとめて計算するためJSON Schemaでは表現できません。これらの条件は
 実行時に検出します。

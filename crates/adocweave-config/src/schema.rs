@@ -49,21 +49,18 @@ fn remove_null_values(value: &mut Value) {
             for value in object.values_mut() {
                 remove_null_values(value);
             }
-            for keyword in ["enum", "type"] {
-                let sole_value = {
-                    let Some(values) = object.get_mut(keyword).and_then(Value::as_array_mut) else {
-                        continue;
-                    };
-                    values.retain(|value| match keyword {
-                        "enum" => !value.is_null(),
-                        "type" => value != "null",
-                        _ => unreachable!("fixed JSON Schema keyword"),
-                    });
+            if let Some(values) = object.get_mut("enum").and_then(Value::as_array_mut) {
+                values.retain(|value| !value.is_null());
+            }
+            let sole_type = object
+                .get_mut("type")
+                .and_then(Value::as_array_mut)
+                .and_then(|values| {
+                    values.retain(|value| value != "null");
                     (values.len() == 1).then(|| values[0].clone())
-                };
-                if let Some(value) = sole_value {
-                    object.insert(keyword.into(), value);
-                }
+                });
+            if let Some(value) = sole_type {
+                object.insert("type".into(), value);
             }
         }
         _ => {}
@@ -232,6 +229,18 @@ fn generated_schema_text() -> String {
 }
 
 #[test]
+fn removing_toml_null_keeps_json_schema_keyword_shapes() {
+    let mut schema = json!({
+        "enum": [null, "only"],
+        "type": ["null", "string"]
+    });
+
+    remove_null_values(&mut schema);
+
+    assert_eq!(schema, json!({ "enum": ["only"], "type": "string" }));
+}
+
+#[test]
 fn project_config_schema_is_current_and_valid() {
     let generated = generated_schema_text();
     let checked_in = fs::read_to_string(repository_root().join(SCHEMA_PATH))
@@ -315,6 +324,16 @@ fn generated_schema_covers_the_configuration_contract() {
             false,
         ),
         (
+            "resource root with drive name",
+            json!({ "schema-version": 1, "resources": { "roots": ["C:/docs"] } }),
+            false,
+        ),
+        (
+            "resource root with platform-specific separator",
+            json!({ "schema-version": 1, "resources": { "roots": ["docs\\api"] } }),
+            false,
+        ),
+        (
             "absolute project root",
             json!({ "schema-version": 1, "local-targets": { "project-root": "/abs" } }),
             false,
@@ -325,6 +344,16 @@ fn generated_schema_covers_the_configuration_contract() {
             false,
         ),
         (
+            "project root with drive name",
+            json!({ "schema-version": 1, "local-targets": { "project-root": "C:/docs" } }),
+            false,
+        ),
+        (
+            "project root with platform-specific separator",
+            json!({ "schema-version": 1, "local-targets": { "project-root": "docs\\api" } }),
+            false,
+        ),
+        (
             "absolute stylesheet file",
             json!({ "schema-version": 1, "html": { "stylesheet-files": ["/abs/style.css"] } }),
             false,
@@ -332,6 +361,16 @@ fn generated_schema_covers_the_configuration_contract() {
         (
             "parent stylesheet file",
             json!({ "schema-version": 1, "html": { "stylesheet-files": ["../style.css"] } }),
+            false,
+        ),
+        (
+            "stylesheet file with drive name",
+            json!({ "schema-version": 1, "html": { "stylesheet-files": ["C:/styles/manual.css"] } }),
+            false,
+        ),
+        (
+            "stylesheet file with platform-specific separator",
+            json!({ "schema-version": 1, "html": { "stylesheet-files": ["styles\\manual.css"] } }),
             false,
         ),
         (
