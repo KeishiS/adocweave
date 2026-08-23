@@ -31,7 +31,7 @@ private taskへ集約し、binding生成だけを分けます。workspace全体�
 
 == 検討した代替案
 
-**既存taskをすべて公開したまま分類名だけ付ける。** 一覧は短くならず、内部taskを外向き契約として保守する負担が
+**既存taskをすべて公開したまま分類名だけ付ける。** 一覧は短くならず、内部taskを公開taskとして維持する負担が
 残るため採用しません。
 
 **製品ごとのMake taskへarchive処理を残す。** 一つのfileで処理を読めますが、依存関係の記述とshell実装が混在し、
@@ -44,5 +44,5 @@ archive形式の検証を単独で試験しにくいため採用しません。
 
 ``acceptance``と``security-audit``はsource検査を含まないため、単独では変更全体の検査になりません。公開前は
 この3入口を合成する``release-check``を使い、
-Pull Requestでは``verify``を使います。この決定は、ADR 0023の外向きtask契約とADR 0031の標準source gateを
+Pull Requestでは``verify``を使います。この決定は、ADR 0023が定める公開taskの名前と用途、およびADR 0031の標準source gateを
 具体化し、従来の``source-gate``別名とhost用の疑似native archive経路を置き換えます。
