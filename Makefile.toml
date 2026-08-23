@@ -477,7 +477,7 @@ args = ["--test", "tools/textlint/browser-boundary.test.mjs"]
 
 [tasks.textlint-repository-prose-lint]
 private = true
-description = "Test repository-specific prose policy and lint authored AsciiDoc without modifying files"
+description = "Test repository-specific prose policy and lint authored AsciiDoc and published READMEs without modifying files"
 dependencies = ["build-textlint-wasm-node", "textlint-dependencies"]
 script_runner = "@shell"
 script = '''
@@ -487,10 +487,12 @@ node --test \
   tools/codex-github-prose-config.test.mjs \
   tools/github-prose-hook.test.mjs \
   tools/textlint/github-markdown-lint.test.mjs \
+  tools/textlint/package-readme-lint.test.mjs \
   tools/textlint/repository-files.test.mjs \
   tools/textlint/repository-lint-config.test.mjs \
   tools/textlint/terminology-rule.test.mjs
 npm run lint --prefix tools/textlint
+node tools/textlint/package-readme-lint.mjs
 '''
 
 [tasks.build-conformance-native]
@@ -655,7 +657,7 @@ private = true
 description = "Reject documentation .md files except repository metadata"
 script_runner = "@shell"
 script = '''
-unexpected="$(rg --files --hidden -g '*.md' -g '!.git/**' | rg -v '^(AGENTS\.md|\.claude/skills/[^/]+/SKILL\.md|\.github/pull_request_template\.md|\.github/SECURITY\.md|release/notes\.md|release/notes\.template\.md|editors/vscode/README\.md)$' || true)"
+unexpected="$(rg --files --hidden -g '*.md' -g '!.git/**' | rg -v '^(AGENTS\.md|\.claude/skills/[^/]+/SKILL\.md|\.github/pull_request_template\.md|\.github/SECURITY\.md|release/notes\.md|release/notes\.template\.md|editors/vscode/README\.md|packages/[^/]+/README\.md)$' || true)"
 if [ -n "$unexpected" ]; then
   echo "repository documentation must use .adoc except repository metadata:" >&2
   echo "$unexpected" >&2

@@ -3,4 +3,4 @@
 
 この判断はxref:0018-textlint-txtast-backend.adoc[ADR 0018: textlint専用TxtAST backendへの責務集約]に
 置き換えました。現在の公開interfaceは
-xref:../../../packages/textlint-plugin-asciidoc/README.adoc[packageのREADME]を参照してください。
+link:../../../packages/textlint-plugin-asciidoc/README.md[packageのREADME]を参照してください。

@@ -66,7 +66,7 @@ xref:adr/0028-editor-language-server-boundary.adoc[ADR 0028]を参照してく�
 textlint用ProcessorはProcessor、TxtAST変換、型定義、Node.js向けWebAssembly、licenseおよび第三者依存の通知を
 同じarchiveへ収録します。install時のscript、実行時npm依存、``node_modules``、source mapおよび機械固有pathを
 収録せず、実行時に追加downloadしません。includeと自動修正は公開範囲に含めません。公開interfaceと利用法は
-xref:../../packages/textlint-plugin-asciidoc/README.adoc[packageのREADME]を基準とします。
+link:../../packages/textlint-plugin-asciidoc/README.md[packageのREADME]を基準とします。
 
 第三者依存の通知はlockfileから生成し、成果物へ到達するpackageの名前、versionおよびSPDX licenseを記録します。
 license情報のないpackageは受理しません。SBOMを公開しない判断は

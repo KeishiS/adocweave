@@ -24,8 +24,12 @@ export function loadTextlintPluginManifest(path = TEXTLINT_PLUGIN_MANIFEST_URL) 
 
 export function validateTextlintPluginManifest(manifest) {
   if (manifest.name !== "@adocweave/textlint-plugin-asciidoc" ||
-      manifest.private !== true || !Array.isArray(manifest.files)) {
+      manifest.private !== undefined || !Array.isArray(manifest.files)) {
     throw new Error("textlint plugin package.jsonを解釈できません");
+  }
+  // scoped packageの既定はprivate公開のため、公開範囲をmanifestで明示する。
+  if (manifest.publishConfig?.access !== "public") {
+    throw new Error("textlint plugin package.jsonへpublishConfig.accessをpublicで指定してください");
   }
   const portable = new Set();
   for (const file of manifest.files) {
