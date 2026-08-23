@@ -13,7 +13,9 @@ description = "Versioned WebAssembly adapter for AdocWeave"
 adocweave = { path = "../adocweave" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-ts-rs = { version = "12.0.1", default-features = false, features = ["serde-compat"], optional = true }
+# Serdeの入力検証専用属性は、生成するTypeScriptの型を変えません。
+# Serde境界と生成宣言の両方は、protocol contract testで検証します。
+ts-rs = { version = "12.0.1", default-features = false, features = ["no-serde-warnings", "serde-compat"], optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 serde-wasm-bindgen = "0.6"
