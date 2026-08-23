@@ -57,7 +57,6 @@ export function expectedAssets(product, productVersion, targets) {
 
 export const EXPECTED_RELEASE_METADATA = [
   { name: "adocweave-dist-manifest.json", kind: "distribution-manifest", format: "canonical-json" },
-  { name: "adocweave.spdx.json", kind: "sbom", format: "spdx-json" },
   { name: "sha256.sum", kind: "checksums", format: "sha256" },
 ];
 

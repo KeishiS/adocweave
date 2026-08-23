@@ -119,11 +119,6 @@
       "format": "canonical-json"
     },
     {
-      "name": "adocweave.spdx.json",
-      "kind": "sbom",
-      "format": "spdx-json"
-    },
-    {
       "name": "sha256.sum",
       "kind": "checksums",
       "format": "sha256"

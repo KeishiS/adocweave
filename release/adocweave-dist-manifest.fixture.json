@@ -1,44 +1,20 @@
 {
   "assets": [
     {
-      "archive": "zip",
-      "byteSize": 101,
-      "executable": "adocweave-lsp",
-      "kind": "lsp",
-      "name": "adocweave-lsp-aarch64-apple-darwin.zip",
-      "sha256": "0101010101010101010101010101010101010101010101010101010101010101",
-      "target": "aarch64-apple-darwin"
+      "name": "adocweave-lsp-aarch64-apple-darwin.zip"
     },
     {
-      "archive": "zip",
-      "byteSize": 102,
-      "executable": "adocweave-lsp",
-      "kind": "lsp",
-      "name": "adocweave-lsp-aarch64-unknown-linux-musl.zip",
-      "sha256": "0202020202020202020202020202020202020202020202020202020202020202",
-      "target": "aarch64-unknown-linux-musl"
+      "name": "adocweave-lsp-aarch64-unknown-linux-musl.zip"
     },
     {
-      "archive": "zip",
-      "byteSize": 103,
-      "executable": "adocweave-lsp.exe",
-      "kind": "lsp",
-      "name": "adocweave-lsp-x86_64-pc-windows-msvc.zip",
-      "sha256": "0303030303030303030303030303030303030303030303030303030303030303",
-      "target": "x86_64-pc-windows-msvc"
+      "name": "adocweave-lsp-x86_64-pc-windows-msvc.zip"
     },
     {
-      "archive": "zip",
-      "byteSize": 104,
-      "executable": "adocweave-lsp",
-      "kind": "lsp",
-      "name": "adocweave-lsp-x86_64-unknown-linux-musl.zip",
-      "sha256": "0404040404040404040404040404040404040404040404040404040404040404",
-      "target": "x86_64-unknown-linux-musl"
+      "name": "adocweave-lsp-x86_64-unknown-linux-musl.zip"
     }
   ],
   "product": "lsp",
   "productVersion": "0.46.2",
-  "schemaVersion": 4,
+  "schemaVersion": 5,
   "sourceCommit": "0123456789abcdef0123456789abcdef01234567"
 }

@@ -171,17 +171,15 @@ Language Server protocolなどの変更と移行方法は人が本文へ記載�
 配布manifestおよびRelease Notesの形を検査します（xref:adr/0026-no-unverified-release-claims.adoc[ADR 0026]、
 xref:adr/0027-product-release-trains.adoc[ADR 0027]）。
 
-``tools/release-metadata.mjs``を配布manifest、SPDX SBOMおよびchecksumの生成器とします。target別の成果物を
+``tools/release-metadata.mjs``を配布manifestとchecksumの生成器とします。target別の成果物を
 一つのcandidateディレクトリへ集約した後、実際に公開するarchiveから次を決定的に生成します。
 
-* 配布manifestへの製品名、製品バージョン、source commit、archive名、種類、対象環境、byte数およびSHA-256の記録
-* SPDX SBOMへの選択製品のarchive内のfileと、到達するRustおよびnpm packageの記録
-* checksum一覧への公開archive、配布manifestおよびSBOMの名前順での記録
+* 配布manifestへの製品名、製品バージョン、source commitおよび公開archive名の記録
+* checksum一覧への公開archiveと配布manifestの名前順での記録
 
-Frontendまたはtextlint用パッケージへruntime dependencyを追加する場合、対応するlockfileからSBOMを生成できるように
-なるまで公開しません。textlint用パッケージのSBOMには、同梱WebAssemblyへ到達するCargo依存、npm package rootおよび
-archive内の各fileを関連付けます。
-推測したdownload URLはSBOMへ記録しません。
+``sha256.sum``自身のdigestは同じfileへ記録できません。公開archive、配布manifestおよび``sha256.sum``を含む
+すべての公開成果物にはArtifact Attestationを付け、checksum一覧自体の出所も検証できるようにします。
+SBOMを公開しない判断と再導入の条件はxref:adr/0036-no-unconsumed-sbom.adoc[ADR 0036]に記録します。
 
 生成器の検証機能はmetadataを同じ入力から再生成し、byte単位の一致とcandidateディレクトリ内の成果物集合を
 確認します。未知のfile、subdirectory、欠落、改変またはsource commitの不一致を受理しません。

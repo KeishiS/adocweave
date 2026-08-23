@@ -1,5 +1,5 @@
 = ADR 0027: 配布製品ごとのバージョンと公開単位
-:status: accepted; editor/LSP compatibility amended by ADR 0028; publication flow amended by ADR 0032
+:status: accepted; compatibility: ADR 0028; publication: ADR 0032; metadata: ADR 0036
 
 == 文脈
 
