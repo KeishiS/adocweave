@@ -19,7 +19,6 @@ mod support;
 use support::*;
 
 mod capabilities;
-mod conformance;
 mod diagnostics;
 mod editing;
 mod feature_integration;

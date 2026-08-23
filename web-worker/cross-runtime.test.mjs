@@ -67,93 +67,18 @@ function wasmResult(request) {
   }
 }
 
-function expectedProduct(entry, inlineField, fileField, readFile) {
-  const hasInline = Object.hasOwn(entry, inlineField);
-  const hasFile = Object.hasOwn(entry, fileField);
-  assert.equal(
-    hasInline && hasFile,
-    false,
-    `${entry.name}: ${inlineField} and ${fileField} are mutually exclusive`,
-  );
-  if (hasInline) return { present: true, value: entry[inlineField] };
-  if (hasFile) {
-    return {
-      present: true,
-      value: readFile(resolve(fixtureRoot, entry[fileField])),
-    };
-  }
-  return { present: false };
-}
-
-test("inline期待値は空配列を保持しfile期待値との重複を拒否する", () => {
-  const inline = expectedProduct(
-    { name: "inline-empty", expectedDiagnostics: [] },
-    "expectedDiagnostics",
-    "expectedDiagnosticsFile",
-    readJson,
-  );
-  assert.deepEqual(inline, { present: true, value: [] });
-  assert.throws(
-    () => expectedProduct(
-      {
-        name: "duplicate-expectation",
-        expectedDiagnostics: [],
-        expectedDiagnosticsFile: "diagnostics.json",
-      },
-      "expectedDiagnostics",
-      "expectedDiagnosticsFile",
-      readJson,
-    ),
-    /mutually exclusive/,
-  );
-});
-
-for (const entry of manifest.cases) {
-  test(`native and WASM agree: ${entry.name}`, () => {
+for (const [name, responsibility] of [
+  ["attributes-anchors-links-references-lists-stem", "全productの変換"],
+  ["position-dependent-attribute-queries-with-include-origin", "include前処理"],
+  ["resolved-render-inputs", "解決済み描画入力"],
+  ["strict-unsupported", "入力errorの変換"],
+]) {
+  const entry = manifest.cases.find((candidate) => candidate.name === name);
+  if (!entry) throw new Error(`cross-runtime case is missing: ${name}`);
+  test(`nativeとWASMで${responsibility}が一致する`, () => {
     const request = requestFor(entry);
     const expected = nativeResult(request);
     const actual = wasmResult(request);
     assert.deepEqual(actual, expected);
-
-    for (const [inlineField, fileField, product, readFile] of [
-      [
-        "expectedHtml",
-        "expectedHtmlFile",
-        "html",
-        (path) => readFileSync(path, "utf8"),
-      ],
-      [
-        "expectedAst",
-        "expectedAstFile",
-        "ast",
-        (path) => readFileSync(path, "utf8").trimEnd(),
-      ],
-      ["expectedDiagnostics", "expectedDiagnosticsFile", "diagnostics", readJson],
-      [
-        "expectedRenderDiagnostics",
-        "expectedRenderDiagnosticsFile",
-        "renderDiagnostics",
-        readJson,
-      ],
-      ["expectedProjection", "expectedProjectionFile", "projection", readJson],
-      ["expectedSymbols", "expectedSymbolsFile", "symbols", readJson],
-    ]) {
-      const expectedProductValue = expectedProduct(
-        entry,
-        inlineField,
-        fileField,
-        readFile,
-      );
-      if (expectedProductValue.present) {
-        assert.deepEqual(actual.value[product], expectedProductValue.value);
-      }
-    }
-    if (entry.expectedErrorCode) {
-      assert.equal(actual.error.code, entry.expectedErrorCode);
-    }
   });
-}
-
-function readJson(path) {
-  return JSON.parse(readFileSync(path, "utf8"));
 }

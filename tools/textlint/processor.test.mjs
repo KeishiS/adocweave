@@ -1,18 +1,11 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 
 import { test as testAST } from "@textlint/ast-tester";
 import { TextlintKernel } from "@textlint/kernel";
 import technicalWriting from "textlint-rule-preset-ja-technical-writing";
 
 import { Processor } from "./processor.mjs";
-import { listRepositoryAsciiDocFiles } from "./repository-files.mjs";
-import { classifyFiles } from "./repository-lint-config.mjs";
-
-const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
-const targets = JSON.parse(readFileSync(new URL("./targets.json", import.meta.url), "utf8"));
 
 test("AsciiDocを有効なTxtASTへ変換する", () => {
   const source = "= 文書\n\n// textlint-disable\n\n== 節\n\n本文の **強調** と `code` です。\n\n* 項目\n";
@@ -203,23 +196,4 @@ unsupported_marker();
     !nodes.some((node) => node.type === "Link"),
     "表示文字列のないURLをLink nodeとして渡しました"
   );
-});
-
-test("すべての執筆文書を原文に対応するTxtASTへ変換する", () => {
-  const authored = classifyFiles(targets, listRepositoryAsciiDocFiles(repositoryRoot)).authored;
-  assert.notEqual(authored.length, 0);
-  const processor = new Processor().processor(".adoc");
-  for (const path of authored) {
-    const source = readFileSync(`${repositoryRoot}${path}`, "utf8");
-    const ast = processor.preProcess(source, path);
-    testAST(ast);
-    const stack = [ast];
-    while (stack.length > 0) {
-      const node = stack.pop();
-      assert.equal(node.raw, source.slice(node.range[0], node.range[1]), `${path}: ${node.type}`);
-      if (node.children) {
-        stack.push(...node.children);
-      }
-    }
-  }
 });

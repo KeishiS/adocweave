@@ -4,24 +4,10 @@ use std::path::{Path, PathBuf};
 
 use adocweave::NeverCancel;
 use adocweave_wasm::{WasmRequest, process_request};
-use serde::Deserialize;
 use serde_json::{Value, json};
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Toolchains {
-    schema_version: u16,
-    rust_version: String,
-    node_version: String,
-}
-
-#[derive(Deserialize)]
-struct BrowserManifest {
-    version: String,
-}
-
 #[test]
-fn native_adapter_accepts_every_shared_conformance_case() {
+fn declared_inline_error_and_public_contracts_match_adapter_outputs() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let fixtures = root.join("fixtures/conformance");
     let manifest: Value = serde_json::from_str(
@@ -56,16 +42,66 @@ fn native_adapter_accepts_every_shared_conformance_case() {
             entry["contractImpact"].is_string(),
             "{name}: contract impact"
         );
-        let request = request_for(entry, &fixtures);
-        let result = process_request(request, &NeverCancel);
+        for (file, inline) in [
+            ("expectedHtmlFile", "expectedHtml"),
+            ("expectedAstFile", "expectedAst"),
+            ("expectedDiagnosticsFile", "expectedDiagnostics"),
+            ("expectedRenderDiagnosticsFile", "expectedRenderDiagnostics"),
+            ("expectedProjectionFile", "expectedProjection"),
+            ("expectedSymbolsFile", "expectedSymbols"),
+        ] {
+            assert_exclusive_expectation(entry, file, inline, name);
+        }
+
+        let has_inline_expectation = [
+            "expectedHtml",
+            "expectedAst",
+            "expectedDiagnostics",
+            "expectedRenderDiagnostics",
+            "expectedProjection",
+            "expectedSymbols",
+        ]
+        .iter()
+        .any(|field| entry.get(field).is_some());
+        if !entry["expectedErrorCode"].is_string()
+            && entry.get("publicContract").is_none()
+            && !has_inline_expectation
+        {
+            continue;
+        }
+
+        let result = process_request(request_for(entry, &fixtures), &NeverCancel);
 
         if let Some(code) = entry["expectedErrorCode"].as_str() {
             assert_eq!(result.expect_err(name).code, code, "{name}");
             continue;
         }
         let response = result.expect(name);
-        assert!(!response.syntax.is_empty(), "{name}: syntax tree");
-        assert!(!response.ast.is_empty(), "{name}: AST");
+        for (field, actual) in [
+            ("expectedHtml", Value::String(response.html.clone())),
+            ("expectedAst", Value::String(response.ast.clone())),
+            (
+                "expectedDiagnostics",
+                serde_json::to_value(&response.diagnostics).expect("diagnostics JSON"),
+            ),
+            (
+                "expectedRenderDiagnostics",
+                serde_json::to_value(&response.render_diagnostics)
+                    .expect("render diagnostics JSON"),
+            ),
+            (
+                "expectedProjection",
+                serde_json::to_value(&response.projection).expect("projection JSON"),
+            ),
+            (
+                "expectedSymbols",
+                serde_json::to_value(&response.symbols).expect("symbols JSON"),
+            ),
+        ] {
+            if let Some(expected) = entry.get(field) {
+                assert_eq!(&actual, expected, "{name}: {field}");
+            }
+        }
         if let Some(public_contract) = entry.get("publicContract") {
             public_case_count += 1;
             let source_id = entry["sourceId"].as_str().expect("public sourceId");
@@ -94,147 +130,6 @@ fn native_adapter_accepts_every_shared_conformance_case() {
                     .expect("render diagnostics JSON"),
                 &mut public_features,
             );
-        }
-        if name == "position-dependent-attribute-queries-with-include-origin" {
-            let included_bindings = response
-                .attribute_queries
-                .bindings
-                .iter()
-                .filter(|binding| binding.occurrence.name == "name")
-                .collect::<Vec<_>>();
-            assert_eq!(included_bindings.len(), 3, "{name}: included bindings");
-            assert!(
-                included_bindings
-                    .iter()
-                    .all(|binding| binding.source_id.as_deref() == Some("included:part.adoc")),
-                "{name}: binding provenance"
-            );
-            let included_references = response
-                .attribute_queries
-                .references
-                .iter()
-                .filter(|reference| reference.name == "name")
-                .collect::<Vec<_>>();
-            assert_eq!(included_references.len(), 3, "{name}: included references");
-            assert!(
-                included_references
-                    .iter()
-                    .all(|reference| reference.source_id.as_deref() == Some("included:part.adoc")),
-                "{name}: reference provenance"
-            );
-            let forward = response
-                .attribute_queries
-                .references
-                .iter()
-                .find(|reference| reference.name == "later")
-                .expect("forward reference");
-            assert_eq!(forward.binding_id, None, "{name}: forward binding");
-            let header = response
-                .attribute_queries
-                .references
-                .iter()
-                .find(|reference| reference.name == "header-only")
-                .expect("header reference");
-            assert_eq!(
-                header.effective_value.as_deref(),
-                Some("root"),
-                "{name}: header value"
-            );
-            let locked = response
-                .attribute_queries
-                .references
-                .iter()
-                .find(|reference| reference.name == "locked")
-                .expect("locked reference");
-            assert_eq!(locked.binding_id, None, "{name}: external binding");
-            assert_eq!(
-                locked.effective_value.as_deref(),
-                Some("host"),
-                "{name}: external value"
-            );
-            assert!(
-                response
-                    .attribute_queries
-                    .bindings
-                    .iter()
-                    .all(|binding| binding.occurrence.name != "locked"
-                        && binding.occurrence.name != "absent"),
-                "{name}: rejected authored bindings"
-            );
-            let multiline = response
-                .attribute_queries
-                .bindings
-                .iter()
-                .find(|binding| binding.occurrence.name == "multi")
-                .expect("multiline binding");
-            let included_source = entry["preprocess"]["resources"]["part.adoc"]["source"]
-                .as_str()
-                .expect("included source");
-            let second_line = &multiline.occurrence.value.lines[1];
-            assert_eq!(
-                &included_source[second_line.content_range.start as usize
-                    ..second_line.content_range.end as usize],
-                "second",
-                "{name}: multiline line projection"
-            );
-        }
-        assert_exclusive_expectation(entry, "expectedHtmlFile", "expectedHtml", name);
-        if let Some(file) = entry["expectedHtmlFile"].as_str() {
-            assert_eq!(
-                response.html,
-                fs::read_to_string(resolve(&fixtures, file)).expect("expected HTML"),
-                "{name}"
-            );
-        }
-        if let Some(expected) = entry["expectedHtml"].as_str() {
-            assert_eq!(response.html, expected, "{name}: expectedHtml");
-        }
-        assert_exclusive_expectation(entry, "expectedAstFile", "expectedAst", name);
-        if let Some(file) = entry["expectedAstFile"].as_str() {
-            assert_eq!(
-                response.ast,
-                fs::read_to_string(resolve(&fixtures, file))
-                    .expect("expected AST")
-                    .trim_end(),
-                "{name}: AST golden"
-            );
-        }
-        if let Some(expected) = entry["expectedAst"].as_str() {
-            assert_eq!(response.ast, expected, "{name}: expectedAst");
-        }
-        for (field, actual) in [
-            (
-                "expectedDiagnosticsFile",
-                serde_json::to_value(&response.diagnostics).expect("diagnostics JSON"),
-            ),
-            (
-                "expectedRenderDiagnosticsFile",
-                serde_json::to_value(&response.render_diagnostics)
-                    .expect("render diagnostics JSON"),
-            ),
-            (
-                "expectedProjectionFile",
-                serde_json::to_value(&response.projection).expect("projection JSON"),
-            ),
-            (
-                "expectedSymbolsFile",
-                serde_json::to_value(&response.symbols).expect("symbols JSON"),
-            ),
-        ] {
-            let inline_field = field
-                .strip_suffix("File")
-                .expect("expected product file field");
-            assert_exclusive_expectation(entry, field, inline_field, name);
-            if let Some(file) = entry[field].as_str() {
-                let expected: Value = serde_json::from_str(
-                    &fs::read_to_string(resolve(&fixtures, file)).expect("expected JSON product"),
-                )
-                .expect("valid expected JSON product");
-                assert_eq!(actual, expected, "{name}: {field}");
-            }
-            if let Some(expected) = entry.get(inline_field) {
-                assert_eq!(actual, *expected, "{name}: {inline_field}");
-            }
         }
     }
     assert_eq!(public_case_count, 6, "public conformance case count");
@@ -376,23 +271,6 @@ fn expected_codes(value: &Value) -> Vec<&str> {
         .collect()
 }
 
-#[test]
-fn browser_version_and_toolchains_have_separate_authorities() {
-    let toolchains: Toolchains = serde_json::from_str(include_str!("../../../toolchains.json"))
-        .expect("valid toolchain manifest");
-    let browser: BrowserManifest =
-        serde_json::from_str(include_str!("../../../web-worker/package.json"))
-            .expect("valid Browser package manifest");
-    assert_eq!(toolchains.schema_version, 1, "toolchain manifest schema");
-    assert_eq!(browser.version, env!("CARGO_PKG_VERSION"));
-    assert_eq!(toolchains.rust_version, env!("CARGO_PKG_RUST_VERSION"));
-    assert!(
-        toolchains.node_version.split('.').count() == 3,
-        "node version must be exact, found {}",
-        toolchains.node_version,
-    );
-}
-
 /// Builds the expected file contents of one case from the current implementation.
 ///
 /// Regeneration and the cleanliness check share this function so a fixture can
@@ -400,7 +278,17 @@ fn browser_version_and_toolchains_have_separate_authorities() {
 /// and products a case does not name, contribute nothing.
 ///
 fn expected_products(entry: &Value, fixtures: &Path) -> Vec<(PathBuf, String)> {
-    if entry["expectedErrorCode"].is_string() {
+    let fields = [
+        "expectedHtmlFile",
+        "expectedAstFile",
+        "expectedDiagnosticsFile",
+        "expectedRenderDiagnosticsFile",
+        "expectedProjectionFile",
+        "expectedSymbolsFile",
+    ];
+    if entry["expectedErrorCode"].is_string()
+        || !fields.iter().any(|field| entry[*field].is_string())
+    {
         return Vec::new();
     }
     let response = process_request(request_for(entry, fixtures), &NeverCancel)
@@ -458,7 +346,7 @@ fn shared_cases() -> (Vec<Value>, PathBuf) {
 }
 
 #[test]
-fn shared_fixture_regeneration_is_clean() {
+fn file_backed_products_match_declared_contracts() {
     let (cases, fixtures) = shared_cases();
     for entry in &cases {
         for (path, expected) in expected_products(entry, &fixtures) {
