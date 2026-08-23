@@ -128,13 +128,19 @@ in
     htmlValidator = true;
   };
 
-  # The main gate adds fuzzing and the VS Code extension host to the source gate.
-  # Electron needs a virtual display on Linux, while browser archive checks use
-  # the separate ci-browser shell below.
-  ci-fuzz = shell {
+  # The main integrations run the downloaded VS Code extension host. Electron
+  # needs its runtime libraries and a virtual display on Linux.
+  ci-integrations = shell {
     rust = ciRust pkgs;
     vscodeLibraries = true;
-    extra = [ adocweave-fuzz ] ++ lib.optionals stdenv.isLinux [ pkgs.xvfb ];
+    extra = lib.optionals stdenv.isLinux [ pkgs.xvfb ];
+  };
+
+  # The independent fuzz smoke keeps the large nightly toolchain out of every
+  # other CI shell.
+  ci-fuzz = shell {
+    rust = ciRust pkgs;
+    extra = [ adocweave-fuzz ];
   };
 
   # The browser acceptance gate must run against a browser this repository pins,

@@ -786,7 +786,7 @@ export function validateStandardSourceAndCandidateGates(workflows, sources = {})
       mainIntegrationsNeeds.size !== 2 || !mainIntegrationsNeeds.has("source") ||
       !mainIntegrationsNeeds.has("security") ||
       occurrences(workflowRuns, "cargo make main-integrations") !== 1 ||
-      !hasOnlyRun(mainIntegrations, "nix develop .#ci-fuzz -c cargo make main-integrations")) {
+      !hasOnlyRun(mainIntegrations, "nix develop .#ci-integrations -c cargo make main-integrations")) {
     fail("main-integrationsはsourceとsecurityの成功後にmainの統合検査を実行してください");
   }
   const fuzzSmokeNeeds = new Set(needs(fuzzSmoke));

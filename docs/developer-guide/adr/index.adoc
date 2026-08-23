@@ -41,3 +41,4 @@ ADRは、複数の機能に影響する長期的な設計判断と、その理�
 * xref:0036-no-unconsumed-sbom.adoc[ADR 0036: 利用要件のないSBOM公開を廃止]
 * xref:0037-rust-owned-project-schema.adoc[ADR 0037: プロジェクト設定Schemaの正本をRustへ集約]
 * xref:0038-additive-workspace-scan-excludes.adoc[ADR 0038: ワークスペース走査の除外patternを組込み値へ追加]
+* xref:0039-ci-shell-responsibility-boundary.adoc[ADR 0039: CI検査ごとのNix開発shell境界]

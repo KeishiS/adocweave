@@ -1,0 +1,47 @@
+= ADR 0039: CI検査ごとのNix開発shell境界
+
+:status: accepted
+
+== 文脈
+
+xref:0035-minimal-nix-flake-outputs.adoc[ADR 0035]では、容量の大きいnightly RustとChromiumを標準CIから
+分離し、開発用shellを四つに限定しました。その後、main専用検査を統合検査、fuzz検査およびNix package検査の
+独立したjobへ分けました。
+
+統合検査とfuzz検査は、分離後も同じ``ci-fuzz``を使用していました。このshellはfuzz用のnightly Rustと
+``cargo-fuzz``に加え、VS Codeのextension hostを動かすElectron用runtime libraryと``xvfb``を含みます。
+独立したrunnerで実行する二つのjobが同じshellを使うと、どちらも自身の検査には不要なtoolを取得します。また、
+shell名から、統合検査が必要とする実行環境を判断できません。
+
+== 決定
+
+main統合検査用の``ci-integrations``とfuzz検査用の``ci-fuzz``を分けます。
+
+``ci-integrations``は固定したstable Rust、共通CI tool、Electron用runtime libraryおよびLinuxの``xvfb``を
+含みます。``ci-fuzz``は固定したstable Rust、共通CI toolおよびnightly Rustと``cargo-fuzz``を呼び出す
+``adocweave-fuzz``だけを含みます。
+
+通常開発用の``default``、標準CI用の``ci``およびbrowser検査用の``ci-browser``の責務は変更しません。
+各main専用jobは対応するshellを直接選び、複数jobをまとめるためのshellを設けません。
+
+本ADRはADR 0035のうち、開発用shellを四つに限定する決定と``ci-fuzz``へ統合検査の環境を含める境界だけを
+置き換えます。package、app、checkおよび公開出力を最小化するほかの決定は維持します。
+
+== 検討した代替案
+
+**統合検査とfuzz検査で``ci-fuzz``を共有する。** shellの数は増えませんが、nightly RustとElectron用runtimeを
+両方のrunnerで取得します。jobの責務とshell名も一致しないため採用しません。
+
+**標準``ci``へ実行時に必要なpackageを追加する。** shellは増えませんが、workflowのcommandが環境構築の詳細を
+持ち、ローカルで同じ検査環境を選ぶ入口がなくなります。Nix定義を環境の正本とするため採用しません。
+
+**共通CI toolも検査ごとに分割する。** 各shellのclosureをさらに小さくできますが、同じtool集合を複数箇所で
+保守する必要があります。今回分離する二つの大きな専用環境と比べて効果が不明確なため採用しません。
+
+== 帰結
+
+開発用shellは``default``、``ci``、``ci-integrations``、``ci-fuzz``および``ci-browser``の五つになります。
+shellは一つ増えますが、main専用jobと必要な専用環境が一対一に対応します。
+
+統合検査はnightly Rustと``cargo-fuzz``を取得せず、fuzz検査はElectron用runtime libraryと``xvfb``を取得しません。
+VS Code extension hostまたはfuzzの実行要件を変更するときは、対応するshellだけを更新します。
