@@ -88,14 +88,13 @@ fn read_primary_in_session(
     path: &Path,
     filesystem: &mut adocweave_host::LocalFilesystemSession,
 ) -> Result<Vec<u8>, CliError> {
-    let loaded = filesystem
-        .read_utf8(
-            adocweave_host::LogicalSourceId::new(path.to_string_lossy())
-                .map_err(local_include::LocalIncludeError::Host)
-                .map_err(CliError::Include)?,
-            path,
-        )
-        .map_err(|error| match error {
+    let source = local_include::read_utf8_with_session(
+        filesystem,
+        path.to_string_lossy().into_owned(),
+        path,
+    )
+    .map_err(|error| match error {
+        local_include::LocalIncludeError::Host(error) => match error {
             adocweave_host::ResourceError::ResourceTooLarge(_) => CliError::ResourceLimit(
                 "analysis snapshot single-resource byte limit exceeded".to_owned(),
             ),
@@ -106,8 +105,9 @@ fn read_primary_in_session(
                 CliError::ResourceLimit("analysis snapshot total byte limit exceeded".to_owned())
             }
             error => CliError::Include(local_include::LocalIncludeError::Host(error)),
-        })?;
-    let (_, source) = loaded.into_parts();
+        },
+        error => CliError::Include(error),
+    })?;
     Ok(source.as_bytes().to_vec())
 }
 
@@ -346,10 +346,8 @@ struct IncludePreparation<'request> {
 fn prepare_includes(
     mut request: IncludePreparation<'_>,
 ) -> Result<local_include::PreparedInput, local_include::LocalIncludeError> {
-    if let (Some(project_root), Some(filesystem)) =
-        (request.project_root, request.filesystem.as_deref_mut())
-    {
-        local_include::prepare_local_with_session(
+    let preparation = if let Some(project_root) = request.project_root {
+        local_include::PrepareRequest::project(
             request.source,
             request.source_id,
             request.base_dir,
@@ -357,40 +355,23 @@ fn prepare_includes(
             project_root,
             request.preprocess,
             request.analysis,
-            filesystem,
-        )
-    } else if let Some(project_root) = request.project_root {
-        local_include::prepare_local(
-            request.source,
-            request.source_id,
-            request.base_dir,
-            request.source_base,
-            project_root,
-            request.limits,
-            request.preprocess,
-            request.analysis,
-        )
-    } else if let Some(filesystem) = request.filesystem.as_deref_mut() {
-        local_include::prepare_with_session(
-            request.source,
-            Some(request.source_id),
-            request.base_dir,
-            request.allowed_roots,
-            request.preprocess,
-            request.analysis,
-            filesystem,
         )
     } else {
-        local_include::prepare(
+        local_include::PrepareRequest::general(
             request.source,
-            Some(request.source_id),
+            request.source_id,
             request.base_dir,
             request.allowed_roots,
-            request.limits,
             request.preprocess,
             request.analysis,
         )
-    }
+    };
+    let result = if let Some(filesystem) = request.filesystem.as_deref_mut() {
+        local_include::prepare_with_session(preparation, filesystem)
+    } else {
+        local_include::prepare(preparation, request.limits)
+    };
+    result.map_err(local_include::PrepareFailure::into_error)
 }
 
 fn process_check(
@@ -977,14 +958,17 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                 if include {
                     let source = decode_input(&original)?;
                     let prepared = local_include::prepare_with_session(
-                        source,
-                        Some(path.to_string_lossy().into_owned()),
-                        base_dir,
-                        allowed_roots,
-                        &config.preprocess,
-                        &config.analysis,
+                        local_include::PrepareRequest::general(
+                            source,
+                            path.to_string_lossy().into_owned(),
+                            base_dir,
+                            allowed_roots,
+                            &config.preprocess,
+                            &config.analysis,
+                        ),
                         filesystem,
                     )
+                    .map_err(local_include::PrepareFailure::into_error)
                     .map_err(CliError::Include)?;
                     validate_resource_plan(prepared.resource_sizes(), config.resources.limit_plan)?;
                     let retained_limits = config.resources.limit_plan.retained_layers;

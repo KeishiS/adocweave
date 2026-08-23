@@ -120,20 +120,15 @@ impl PreviewAuthorities {
                         .as_mut()
                         .map_err(|error| error.to_string())
                         .and_then(|session| {
-                            session
-                                .read_utf8(
-                                    adocweave_host::LogicalSourceId::new(
-                                        dependency.path().to_string_lossy(),
-                                    )
-                                    .map_err(|error| error.to_string())?,
-                                    dependency.path(),
-                                )
-                                .map(|loaded| {
-                                    preview::Fingerprint::from_loaded_bytes(
-                                        loaded.source().as_bytes(),
-                                    )
-                                })
-                                .map_err(|error| error.to_string())
+                            local_include::read_utf8_with_session(
+                                session,
+                                dependency.path().to_string_lossy().into_owned(),
+                                dependency.path(),
+                            )
+                            .map(|source| {
+                                preview::Fingerprint::from_loaded_bytes(source.as_bytes())
+                            })
+                            .map_err(|error| error.to_string())
                         }),
                     preview::DependencyAuthority::Configuration => configuration
                         .read_candidate_bytes(dependency.path())
@@ -279,16 +274,12 @@ fn build_with_stage_hook(
         .session()
         .map_err(local_include::LocalIncludeError::Host)
         .map_err(Error::Include)?;
-    let loaded = filesystem
-        .read_utf8(
-            adocweave_host::LogicalSourceId::new(request.input_path.to_string_lossy())
-                .map_err(local_include::LocalIncludeError::Host)
-                .map_err(Error::Include)?,
-            request.input_path,
-        )
-        .map_err(local_include::LocalIncludeError::Host)
-        .map_err(Error::Include)?;
-    let (_, input) = loaded.into_parts();
+    let input = local_include::read_utf8_with_session(
+        &mut filesystem,
+        request.input_path.to_string_lossy().into_owned(),
+        request.input_path,
+    )
+    .map_err(Error::Include)?;
     let input_fingerprint = preview::Fingerprint::from_loaded_bytes(input.as_bytes());
     ensure_active(cancellation)?;
     let source = input.as_ref();
@@ -301,19 +292,23 @@ fn build_with_stage_hook(
 
     let (processed, include_diagnostics) = if request.include {
         ensure_active(cancellation)?;
-        let mut include_dependencies = local_include::DependencyJournal::default();
-        let prepared = local_include::prepare_local_tracking_with_existing_session(
-            source,
-            source_id,
-            request.base_dir,
-            request.base_dir,
-            request.project_root,
-            &request.project.preprocess,
-            &request.project.analysis,
-            &mut include_dependencies,
+        let prepared = local_include::prepare_with_session(
+            local_include::PrepareRequest::project(
+                source,
+                source_id,
+                request.base_dir,
+                request.base_dir,
+                request.project_root,
+                &request.project.preprocess,
+                &request.project.analysis,
+            ),
             &mut filesystem,
         );
-        for (path, loaded) in include_dependencies.entries() {
+        let observed = match &prepared {
+            Ok(prepared) => prepared.dependency_entries().collect::<Vec<_>>(),
+            Err(failure) => failure.dependency_entries().collect::<Vec<_>>(),
+        };
+        for (path, loaded) in observed {
             let dependency = preview::Dependency::workspace(path);
             let fingerprint = loaded.map_or_else(
                 || {
@@ -327,7 +322,9 @@ fn build_with_stage_hook(
             );
             dependencies.insert(dependency, fingerprint);
         }
-        let prepared = prepared.map_err(Error::Include)?;
+        let prepared = prepared
+            .map_err(local_include::PrepareFailure::into_error)
+            .map_err(Error::Include)?;
         crate::validate_resource_plan(prepared.resource_sizes(), plan)
             .map_err(|error| Error::Path(error.to_string()))?;
         stage_hook(BuildStage::IncludesPrepared);
