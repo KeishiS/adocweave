@@ -44,27 +44,6 @@
         {
           "id": "protocol",
           "outputs": [{ "path": "web-worker/protocol.d.mts" }]
-        },
-        {
-          "id": "public-conformance",
-          "outputs": [
-            { "path": "fixtures/public-conformance/document-structure.html" },
-            { "path": "fixtures/public-conformance/document-structure.projection.json" },
-            { "path": "fixtures/public-conformance/document-structure.diagnostics.json" },
-            { "path": "fixtures/public-conformance/document-structure.render-diagnostics.json" },
-            { "path": "fixtures/public-conformance/source-block.html" },
-            { "path": "fixtures/public-conformance/source-block.projection.json" },
-            { "path": "fixtures/public-conformance/source-block.diagnostics.json" },
-            { "path": "fixtures/public-conformance/source-block.render-diagnostics.json" },
-            { "path": "fixtures/public-conformance/formulas.html" },
-            { "path": "fixtures/public-conformance/formulas.projection.json" },
-            { "path": "fixtures/public-conformance/formulas.diagnostics.json" },
-            { "path": "fixtures/public-conformance/formulas.render-diagnostics.json" },
-            { "path": "fixtures/public-conformance/blocks.html" },
-            { "path": "fixtures/public-conformance/blocks.projection.json" },
-            { "path": "fixtures/public-conformance/blocks.diagnostics.json" },
-            { "path": "fixtures/public-conformance/blocks.render-diagnostics.json" }
-          ]
         }
       ]
     },
