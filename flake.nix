@@ -8,7 +8,12 @@
   };
 
   outputs =
-    { self, nixpkgs, rust-overlay, ... }:
+    {
+      self,
+      nixpkgs,
+      rust-overlay,
+      ...
+    }:
     let
       # The package is published for Linux only. Shells are also built on macOS
       # because development and part of CI happen there.
@@ -22,31 +27,31 @@
 
       toolchains = builtins.fromJSON (builtins.readFile ./toolchains.json);
       inherit (toolchains) rustVersion nodeVersion;
-      cliVersion = (builtins.fromTOML (builtins.readFile ./crates/adocweave-cli/Cargo.toml)).package.version;
-      lspVersion = (builtins.fromTOML (builtins.readFile ./crates/adocweave-lsp/Cargo.toml)).package.version;
+      cliVersion =
+        (builtins.fromTOML (builtins.readFile ./crates/adocweave-cli/Cargo.toml)).package.version;
+      lspVersion =
+        (builtins.fromTOML (builtins.readFile ./crates/adocweave-lsp/Cargo.toml)).package.version;
 
       toolchain = import ./nix/toolchain.nix { inherit nixpkgs rust-overlay; };
-      inherit (toolchain) mkPkgs stableRust developmentRust ciRust;
+      inherit (toolchain)
+        mkPkgs
+        stableRust
+        developmentRust
+        ciRust
+        ;
     in
     {
-      overlays.default = final: _previous: {
-        adocweave = import ./nix/package.nix {
-          pkgs = final;
-          src = self;
-          inherit cliVersion rustVersion stableRust;
-        };
-      };
-
       packages = forAllPackageSystems (
         system:
         let
-          package = ((mkPkgs system).extend self.overlays.default).adocweave;
+          pkgs = mkPkgs system;
         in
         {
-          default = package;
-          adocweave = package;
-          adocweave-cli = package;
-          adocweave-lsp = package;
+          default = import ./nix/package.nix {
+            inherit pkgs;
+            src = self;
+            inherit cliVersion rustVersion stableRust;
+          };
         }
       );
 
@@ -67,7 +72,8 @@
         system:
         import ./nix/checks.nix {
           pkgs = mkPkgs system;
-          inherit nixpkgs self system cliVersion lspVersion;
+          package = self.packages.${system}.default;
+          inherit cliVersion lspVersion;
         }
       );
 

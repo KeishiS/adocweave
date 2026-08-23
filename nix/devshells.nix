@@ -3,14 +3,21 @@
 # CI jobs run in the smallest shell that can finish their gate. A job downloads
 # and realizes every package its shell names, so a tool that only one gate needs
 # is kept out of the shared set rather than paid for by all of them.
-{ pkgs, nodeVersion, developmentRust, ciRust }:
+{
+  pkgs,
+  nodeVersion,
+  developmentRust,
+  ciRust,
+}:
 let
   inherit (pkgs) lib stdenv;
 
   # Runners without Nix read this version from the release manifest and hand it
   # to setup-node. A moving devShell nodejs would split the two, so the shell
   # refuses to build unless they agree.
-  checkedNodejs = assert pkgs.nodejs.version == nodeVersion; pkgs.nodejs;
+  checkedNodejs =
+    assert pkgs.nodejs.version == nodeVersion;
+    pkgs.nodejs;
 
   # cargo-fuzz needs a nightly toolchain of roughly 1.5 GiB. Wrapping it in a
   # script keeps that toolchain out of the shell's own PATH, so the rest of the
@@ -74,27 +81,51 @@ let
     libxcb
   ];
 
-  shell = { rust, extra ? [ ], rustSource ? false }: pkgs.mkShell ({
-    packages = commonPackages ++ [ rust ] ++ extra;
-    ADOCWEAVE_DIST_BIN = "${pkgs.cargo-dist}/bin/dist";
-  } // lib.optionalAttrs rustSource {
-    RUST_SRC_PATH = "${rust}/lib/rustlib/src/rust/library";
-  } // lib.optionalAttrs stdenv.isLinux {
-    LD_LIBRARY_PATH = lib.makeLibraryPath vscodeRuntime;
-  });
+  shell =
+    {
+      rust,
+      extra ? [ ],
+      htmlValidator ? false,
+      rustSource ? false,
+      vscodeLibraries ? false,
+    }:
+    pkgs.mkShell (
+      {
+        packages = commonPackages ++ [ rust ] ++ extra ++ lib.optionals htmlValidator [ pkgs.validator-nu ];
+        ADOCWEAVE_DIST_BIN = "${pkgs.cargo-dist}/bin/dist";
+      }
+      // lib.optionalAttrs htmlValidator {
+        ADOCWEAVE_HTML_VALIDATOR = "${pkgs.validator-nu}/bin/vnu";
+      }
+      // lib.optionalAttrs rustSource {
+        RUST_SRC_PATH = "${rust}/lib/rustlib/src/rust/library";
+      }
+      // lib.optionalAttrs (stdenv.isLinux && vscodeLibraries) {
+        LD_LIBRARY_PATH = lib.makeLibraryPath vscodeRuntime;
+      }
+    );
 in
 {
   # The interactive shell runs the pull request source gate and also keeps the
   # opt-in main, acceptance, and release checks available to contributors.
   default = shell {
     rust = developmentRust pkgs;
+    htmlValidator = true;
     rustSource = true;
-    extra = [ pkgs.rust-analyzer adocweave-fuzz ]
-      ++ lib.optionals stdenv.isLinux [ pkgs.chromium pkgs.xvfb ];
+    vscodeLibraries = true;
+    extra = [
+      pkgs.rust-analyzer
+      adocweave-fuzz
+    ]
+    ++ lib.optionals stdenv.isLinux [
+      pkgs.chromium
+      pkgs.xvfb
+    ];
   };
 
   ci = shell {
     rust = ciRust pkgs;
+    htmlValidator = true;
   };
 
   # The main gate adds fuzzing and the VS Code extension host to the source gate.
@@ -102,6 +133,7 @@ in
   # the separate ci-browser shell below.
   ci-fuzz = shell {
     rust = ciRust pkgs;
+    vscodeLibraries = true;
     extra = [ adocweave-fuzz ] ++ lib.optionals stdenv.isLinux [ pkgs.xvfb ];
   };
 
@@ -109,15 +141,10 @@ in
   # not whichever one the runner image happens to carry.
   ci-browser = shell {
     rust = ciRust pkgs;
-    extra = lib.optionals stdenv.isLinux [ pkgs.chromium pkgs.xvfb ];
+    extra = lib.optionals stdenv.isLinux [
+      pkgs.chromium
+      pkgs.xvfb
+    ];
   };
 
-  # HTML validation needs no compiler at all.
-  html5 = pkgs.mkShell {
-    packages = [
-      checkedNodejs
-      pkgs.validator-nu
-    ];
-    ADOCWEAVE_HTML_VALIDATOR = "${pkgs.validator-nu}/bin/vnu";
-  };
 }

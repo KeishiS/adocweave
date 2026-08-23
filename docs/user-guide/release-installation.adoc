@@ -57,8 +57,7 @@ nix profile remove AdocWeave
 
 継続的に利用する構成では、flake inputを利用側の``flake.lock``へ固定し、
 ``adocweave.packages.${system}.default``を使用します。同じパッケージに``adocweave``と
-``adocweave-lsp``が含まれます。``adocweave.overlays.default``から``pkgs.adocweave``として参照することもできます。
-専用のNixOS service moduleは提供しません。
+``adocweave-lsp``が含まれます。専用のNixpkgs overlayとNixOS service moduleは提供しません。
 
 Nixパッケージは``Cargo.lock``に固定したソースからbuildします。Rust compiler、Cargo、Node.js、Chromiumおよび
 fuzz toolは完成したパッケージのruntime closureへ含めません。

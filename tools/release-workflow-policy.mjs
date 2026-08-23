@@ -252,6 +252,16 @@ export function validateProductReleaseRouting(workflows) {
       fail(`${workflowName} must accept only a published stable release at the checked-out commit`);
     }
   }
+  const binaryCacheJob = workflows["binary-cache-publish.yml"]?.jobs?.publish;
+  const binaryCacheSystems = (binaryCacheJob?.strategy?.matrix?.include ?? [])
+    .map((entry) => entry.nixSystem);
+  const binaryCacheRuns = jobRuns(binaryCacheJob);
+  if (!["x86_64-linux", "aarch64-linux"].every((system) => binaryCacheSystems.includes(system)) ||
+      !binaryCacheRuns.includes('nix build ".#checks.${NIX_SYSTEM}.default"') ||
+      !binaryCacheRuns.includes('readlink -f "$check/package"') ||
+      !binaryCacheRuns.includes('cachix push keishis "$package"')) {
+    fail("binary-cache-publish.yml must check and publish the default package for both Linux architectures");
+  }
   const source = JSON.stringify(workflows);
   for (const forbidden of ["candidate_sha", "run-id", "github-token", "actions/workflows/"]) {
     if (source.includes(forbidden)) fail(`release workflows must not use cross-run input: ${forbidden}`);

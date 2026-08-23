@@ -366,7 +366,7 @@ clean環境で、公開assetだけを使って実行します。
 * [ ] textlint用Processor: 新しいプロジェクトへ導入し、``.adoc``の検査と``textlint --fix``で入力が変化しないことを
       確認する。
 * [ ] CLIとLSP: clean ``PATH``へ導入し、バージョンの選択、更新、rollbackおよび完全削除を確認する。
-* [ ] Nix: 利用側flakeへtagのコミットを固定し、``nix run``とNixOSパッケージ評価を確認する。
+* [ ] Nix: 利用側flakeへtagのコミットを固定し、CLIとLSPの``nix run``を確認する。
 
 公開assetの完全性は自動で確認します。asset集合と非0 byte、checksum、attestation、``--version --json``、
 binary cacheへの登録、Open VSXへ公開したfileがGitHub Release assetと同一であることは、公開workflowと

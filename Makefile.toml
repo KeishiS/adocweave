@@ -497,8 +497,8 @@ args = ["build", "-p", "adocweave-wasm", "--bin", "adocweave-conformance-native"
 private = true
 description = "Validate generated fragment and complete-document HTML with Nu Html Checker"
 dependencies = ["build-adoc-check", "build-conformance-native"]
-command = "nix"
-args = ["develop", ".#html5", "-c", "node", "tools/html5-check.mjs"]
+command = "node"
+args = ["tools/html5-check.mjs"]
 
 [tasks.test-cross-runtime]
 private = true
@@ -682,19 +682,9 @@ args = ["build", "-p", "adocweave-lsp", "--bin", "adocweave-lsp"]
 
 [tasks.nix-package-check]
 private = true
-description = "Build and run the native Nix package and NixOS installation check"
-script_runner = "@shell"
-script = '''
-set -euo pipefail
-system="$(nix eval --raw --impure --expr builtins.currentSystem)"
-version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' crates/adocweave-cli/Cargo.toml | head -n 1)"
-nix flake check --no-build
-nix build \
-  ".#checks.${system}.package-smoke" \
-  ".#checks.${system}.nixos-package-evaluation" \
-  --no-link
-nix run . -- --version --json | jq -e --arg version "$version" '.packageVersion == $version' >/dev/null
-'''
+description = "Build and run the native Nix package check"
+command = "nix"
+args = ["flake", "check"]
 
 [tasks.verify]
 category = "Developer entry points"
