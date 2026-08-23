@@ -7,7 +7,7 @@
 Nix flakeは、同じderivationを指す四つのpackage名、Nixpkgs overlay、CLIとLSPのapp、三つのcheckおよび
 五つの開発用shellを公開していました。専用のNixOS moduleを提供していないにもかかわらず、通常のpackageを
 ``environment.systemPackages``へ追加できることも独立したcheckで確認していました。これらは同じpackageの参照方法と
-検査経路を増やし、どの出力が利用者向けの契約なのかを分かりにくくしていました。
+検査経路を増やし、どの出力を利用者向けに維持するのかを分かりにくくしていました。
 
 == 決定
 
@@ -41,4 +41,4 @@ NixOS標準機能であり、このリポジトリ固有のmoduleや設定を検
 ``overlays.default``を使用する構成は、``packages.${system}.default``へ移行する必要があります。
 
 ``nix flake check``がpackage構築と実行確認の単一入口になります。新しい公開package名またはappを追加するときは、
-利用者向け契約を増やす必要性をこの判断と照合します。
+利用者が参照する公開出力を増やす必要性をこの判断と照合します。
