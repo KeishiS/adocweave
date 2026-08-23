@@ -13,3 +13,15 @@ test("同期PreToolUse hookが投稿前検査を要求する", () => {
   assert.equal(hook.timeout, 10);
   assert.match(hook.command, /tools\/codex-github-prose-hook\.mjs/);
 });
+
+test("repository rulesが直接投稿を禁止して検査付き投稿を許可する", () => {
+  const rules = readFileSync(new URL("../.codex/rules/commands.rules", import.meta.url), "utf8");
+  for (const required of [
+    'pattern = ["nix", "develop", ".#ci", "-c", ["cargo", "npm"]]',
+    'pattern = ["gh", "pr", ["create", "edit", "comment", "review"]]',
+    'pattern = ["gh", "issue", ["create", "edit", "comment"]]',
+    'pattern = ["node", "tools/checked-gh-prose.mjs"]'
+  ]) {
+    assert.ok(rules.includes(required), `rulesに必要なpatternがありません：${required}`);
+  }
+});
