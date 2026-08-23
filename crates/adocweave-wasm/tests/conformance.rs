@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -5,13 +6,6 @@ use adocweave::NeverCancel;
 use adocweave_wasm::{WasmRequest, process_request};
 use serde::Deserialize;
 use serde_json::{Value, json};
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ConformanceConsumers {
-    manifest: PathBuf,
-    fixture_root: PathBuf,
-}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -29,16 +23,26 @@ struct BrowserManifest {
 #[test]
 fn native_adapter_accepts_every_shared_conformance_case() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let consumers: ConformanceConsumers = serde_json::from_str(
-        &fs::read_to_string(root.join("fixtures/conformance/consumers.json"))
-            .expect("conformance consumers"),
+    let fixtures = root.join("fixtures/conformance");
+    let manifest: Value = serde_json::from_str(
+        &fs::read_to_string(root.join("crates/adocweave/conformance/cases.json"))
+            .expect("conformance manifest"),
     )
-    .expect("valid conformance consumers");
-    let fixtures = root.join(consumers.fixture_root);
-    let manifest_path = root.join(consumers.manifest);
-    let manifest: Value =
-        serde_json::from_str(&fs::read_to_string(manifest_path).expect("conformance manifest"))
-            .expect("valid conformance manifest");
+    .expect("valid conformance manifest");
+    assert_eq!(manifest["schemaVersion"], 1, "manifest schema version");
+    assert_eq!(
+        manifest["outputContractVersion"], 1,
+        "public output contract version"
+    );
+    assert_eq!(manifest["license"], "MIT OR Apache-2.0");
+    assert!(
+        manifest["globalImplementationDetails"]
+            .as_array()
+            .is_some_and(|details| !details.is_empty()),
+        "global implementation details"
+    );
+    let mut public_case_count = 0;
+    let mut public_features = BTreeSet::new();
 
     for entry in manifest["cases"].as_array().expect("cases") {
         let name = entry["name"].as_str().expect("case name");
@@ -58,6 +62,19 @@ fn native_adapter_accepts_every_shared_conformance_case() {
         let response = result.expect(name);
         assert!(!response.syntax.is_empty(), "{name}: syntax tree");
         assert!(!response.ast.is_empty(), "{name}: AST");
+        if let Some(public_contract) = entry.get("publicContract") {
+            public_case_count += 1;
+            assert_public_contract(
+                name,
+                public_contract,
+                &response.html,
+                &serde_json::to_value(&response.projection).expect("projection JSON"),
+                &serde_json::to_value(&response.diagnostics).expect("diagnostics JSON"),
+                &serde_json::to_value(&response.render_diagnostics)
+                    .expect("render diagnostics JSON"),
+                &mut public_features,
+            );
+        }
         if name == "position-dependent-attribute-queries-with-include-origin" {
             let included_bindings = response
                 .attribute_queries
@@ -141,6 +158,7 @@ fn native_adapter_accepts_every_shared_conformance_case() {
                 "{name}: multiline line projection"
             );
         }
+        assert_exclusive_expectation(entry, "expectedHtmlFile", "expectedHtml", name);
         if let Some(file) = entry["expectedHtmlFile"].as_str() {
             assert_eq!(
                 response.html,
@@ -148,6 +166,10 @@ fn native_adapter_accepts_every_shared_conformance_case() {
                 "{name}"
             );
         }
+        if let Some(expected) = entry["expectedHtml"].as_str() {
+            assert_eq!(response.html, expected, "{name}: expectedHtml");
+        }
+        assert_exclusive_expectation(entry, "expectedAstFile", "expectedAst", name);
         if let Some(file) = entry["expectedAstFile"].as_str() {
             assert_eq!(
                 response.ast,
@@ -156,6 +178,9 @@ fn native_adapter_accepts_every_shared_conformance_case() {
                     .trim_end(),
                 "{name}: AST golden"
             );
+        }
+        if let Some(expected) = entry["expectedAst"].as_str() {
+            assert_eq!(response.ast, expected, "{name}: expectedAst");
         }
         for (field, actual) in [
             (
@@ -176,6 +201,10 @@ fn native_adapter_accepts_every_shared_conformance_case() {
                 serde_json::to_value(&response.symbols).expect("symbols JSON"),
             ),
         ] {
+            let inline_field = field
+                .strip_suffix("File")
+                .expect("expected product file field");
+            assert_exclusive_expectation(entry, field, inline_field, name);
             if let Some(file) = entry[field].as_str() {
                 let expected: Value = serde_json::from_str(
                     &fs::read_to_string(resolve(&fixtures, file)).expect("expected JSON product"),
@@ -183,8 +212,109 @@ fn native_adapter_accepts_every_shared_conformance_case() {
                 .expect("valid expected JSON product");
                 assert_eq!(actual, expected, "{name}: {field}");
             }
+            if let Some(expected) = entry.get(inline_field) {
+                assert_eq!(actual, *expected, "{name}: {inline_field}");
+            }
         }
     }
+    assert_eq!(public_case_count, 6, "public conformance case count");
+    for required in [
+        "document-title",
+        "toc",
+        "section-numbers",
+        "source-block",
+        "block-title",
+        "source-language-option",
+        "source-line-numbers",
+        "source-start-line",
+        "unsupported-source-option",
+        "inline-formula",
+        "block-formula",
+        "table",
+        "quote",
+        "unordered-list",
+        "unsafe-url",
+        "diagnostic",
+    ] {
+        assert!(
+            public_features.contains(required),
+            "missing public feature: {required}"
+        );
+    }
+}
+
+fn assert_exclusive_expectation(entry: &Value, file: &str, inline: &str, name: &str) {
+    assert!(
+        entry.get(file).is_none() || entry.get(inline).is_none(),
+        "{name}: {file} and {inline} are mutually exclusive"
+    );
+}
+
+fn assert_public_contract<'a>(
+    name: &str,
+    contract: &'a Value,
+    html: &str,
+    projection: &Value,
+    diagnostics: &Value,
+    render_diagnostics: &Value,
+    features: &mut BTreeSet<&'a str>,
+) {
+    for feature in contract["features"].as_array().expect("public features") {
+        features.insert(feature.as_str().expect("public feature name"));
+    }
+    assert!(
+        contract["implementationDetails"]
+            .as_array()
+            .is_some_and(|details| !details.is_empty()),
+        "{name}: implementation details"
+    );
+    let stable = &contract["stableContract"];
+    for assertion in stable["projectionAssertions"]
+        .as_array()
+        .expect("projection assertions")
+    {
+        let pointer = assertion["pointer"].as_str().expect("JSON pointer");
+        assert_eq!(
+            projection.pointer(pointer),
+            Some(&assertion["value"]),
+            "{name}: projection pointer {pointer}"
+        );
+    }
+    for fragment in stable["htmlContains"].as_array().expect("HTML assertions") {
+        let fragment = fragment.as_str().expect("HTML fragment");
+        assert!(
+            html.contains(fragment),
+            "{name}: missing HTML fragment: {fragment}"
+        );
+    }
+    assert_eq!(
+        diagnostic_codes(diagnostics),
+        expected_codes(&stable["diagnosticCodes"]),
+        "{name}: diagnostic codes"
+    );
+    assert_eq!(
+        diagnostic_codes(render_diagnostics),
+        expected_codes(&stable["renderDiagnosticCodes"]),
+        "{name}: render diagnostic codes"
+    );
+}
+
+fn diagnostic_codes(value: &Value) -> Vec<&str> {
+    value
+        .as_array()
+        .expect("diagnostics array")
+        .iter()
+        .filter_map(|diagnostic| diagnostic["code"].as_str())
+        .collect()
+}
+
+fn expected_codes(value: &Value) -> Vec<&str> {
+    value
+        .as_array()
+        .expect("expected diagnostic codes")
+        .iter()
+        .map(|code| code.as_str().expect("diagnostic code"))
+        .collect()
 }
 
 #[test]
@@ -210,9 +340,6 @@ fn browser_version_and_toolchains_have_separate_authorities() {
 /// never disagree with the command that writes it. Cases that expect an error,
 /// and products a case does not name, contribute nothing.
 ///
-/// Some shared cases reuse files from the public conformance set. Projection
-/// files belong to this adapter because only it owns the public projection
-/// protocol. Other reused products remain owned by the core fixture command.
 fn expected_products(entry: &Value, fixtures: &Path) -> Vec<(PathBuf, String)> {
     if entry["expectedErrorCode"].is_string() {
         return Vec::new();
@@ -221,9 +348,7 @@ fn expected_products(entry: &Value, fixtures: &Path) -> Vec<(PathBuf, String)> {
         .unwrap_or_else(|error| panic!("{}: {}", entry["name"], error.code));
     let mut products = Vec::new();
     let mut text = |field: &str, content: String| {
-        if let Some(file) = entry[field].as_str()
-            && (!file.starts_with("../") || field == "expectedProjectionFile")
-        {
+        if let Some(file) = entry[field].as_str() {
             products.push((resolve(fixtures, file), content));
         }
     };
@@ -251,15 +376,7 @@ fn expected_products(entry: &Value, fixtures: &Path) -> Vec<(PathBuf, String)> {
         ),
     ] {
         let value = value.expect("product serializes as JSON");
-        let json = if field == "expectedProjectionFile"
-            && entry[field]
-                .as_str()
-                .is_some_and(|file| file.starts_with("../"))
-        {
-            serde_json::to_string(&value).expect("JSON product formats")
-        } else {
-            canonical_json(&value)
-        };
+        let json = canonical_json(&value);
         text(field, format!("{json}\n"));
     }
     products
@@ -272,17 +389,13 @@ fn canonical_json(value: &Value) -> String {
 
 fn shared_cases() -> (Vec<Value>, PathBuf) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let consumers: ConformanceConsumers = serde_json::from_str(
-        &fs::read_to_string(root.join("fixtures/conformance/consumers.json"))
-            .expect("conformance consumers"),
-    )
-    .expect("valid conformance consumers");
     let manifest: Value = serde_json::from_str(
-        &fs::read_to_string(root.join(consumers.manifest)).expect("conformance manifest"),
+        &fs::read_to_string(root.join("crates/adocweave/conformance/cases.json"))
+            .expect("conformance manifest"),
     )
     .expect("valid conformance manifest");
     let cases = manifest["cases"].as_array().expect("cases").clone();
-    (cases, root.join(consumers.fixture_root))
+    (cases, root.join("fixtures/conformance"))
 }
 
 #[test]
