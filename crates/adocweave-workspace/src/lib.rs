@@ -980,7 +980,7 @@ impl Workspace {
     }
 }
 
-/// One resource request that suspended workspace analysis.
+/// One resource request that suspended workspace preprocessing.
 #[derive(Clone, Debug)]
 pub struct WorkspaceResourceRequest {
     inner: ResourceRequest,
@@ -1013,7 +1013,8 @@ impl WorkspaceResourceRequest {
     }
 
     /// Supplies immutable UTF-8 text acquired for this request.
-    pub fn found(&self, text: impl Into<Arc<str>>) -> WorkspaceResourceResponse {
+    #[cfg(test)]
+    fn found(&self, text: impl Into<Arc<str>>) -> WorkspaceResourceResponse {
         self.found_as(self.target(), text)
     }
 
@@ -1021,7 +1022,7 @@ impl WorkspaceResourceRequest {
     ///
     /// The request target remains the workspace dependency identity. `source_id`
     /// identifies the loaded document in diagnostics and source projection.
-    pub fn found_as(
+    fn found_as(
         &self,
         source_id: impl Into<String>,
         text: impl Into<Arc<str>>,
@@ -1043,7 +1044,7 @@ impl WorkspaceResourceRequest {
     }
 
     /// Establishes that this requested resource does not exist.
-    pub fn not_found(&self) -> WorkspaceResourceResponse {
+    fn not_found(&self) -> WorkspaceResourceResponse {
         let id = ResourceId::new(self.target()).expect("preprocessor returned a valid target");
         WorkspaceResourceResponse {
             inner: self.inner.not_found(),
@@ -1052,7 +1053,7 @@ impl WorkspaceResourceRequest {
     }
 
     /// Reports a terminal host loading failure.
-    pub fn load_failed(&self, message: impl Into<String>) -> WorkspaceResourceResponse {
+    fn load_failed(&self, message: impl Into<String>) -> WorkspaceResourceResponse {
         let id = ResourceId::new(self.target()).expect("preprocessor returned a valid target");
         WorkspaceResourceResponse {
             inner: self.inner.load_failed(message),
@@ -1067,7 +1068,8 @@ impl WorkspaceResourceRequest {
     /// own typed loading diagnostic while continuing to analyze the remainder
     /// of the document. A host that cannot publish a partial result should use
     /// [`Self::load_failed`] instead.
-    pub fn failed_with_placeholder(&self) -> WorkspaceResourceResponse {
+    #[cfg(test)]
+    fn failed_with_placeholder(&self) -> WorkspaceResourceResponse {
         self.failed_with_placeholder_as(self.target())
     }
 
@@ -1075,7 +1077,7 @@ impl WorkspaceResourceRequest {
     ///
     /// As with [`Self::found_as`], the journal records the request target while
     /// diagnostics and source projection use `source_id`.
-    pub fn failed_with_placeholder_as(
+    fn failed_with_placeholder_as(
         &self,
         source_id: impl Into<String>,
     ) -> WorkspaceResourceResponse {
@@ -1098,7 +1100,7 @@ impl WorkspaceResourceRequest {
 
 /// Authoritative response used to resume workspace analysis.
 #[derive(Clone, Debug)]
-pub struct WorkspaceResourceResponse {
+struct WorkspaceResourceResponse {
     inner: ResourceResponse,
     evidence: WorkspaceResourceEvidence,
 }
@@ -1129,12 +1131,8 @@ impl WorkspaceResourceEvidence {
     }
 }
 
-/// Result of starting or resuming preprocessing for one workspace root.
-///
-/// This is the shared, I/O-independent include protocol used by native
-/// adapters. A synchronous caller may answer `NeedResource` in a loop, while
-/// an asynchronous caller may retain the single-use continuation.
-pub enum WorkspacePreprocessStep {
+/// Internal step consumed only by the shared resource-loading driver.
+enum WorkspacePreprocessStep {
     /// Preprocessing completed once without running analysis or projection.
     Complete(Box<WorkspacePreprocessDraft>),
     /// The host must answer one include request before processing can continue.
@@ -1143,6 +1141,128 @@ pub enum WorkspacePreprocessStep {
     Failed(WorkspacePreprocessFailure),
     /// Cooperative cancellation discarded all unpublished state.
     Cancelled,
+}
+
+/// Host resolution of one resource requested by workspace preprocessing.
+pub enum WorkspaceResourceResolution {
+    /// The requested resource was loaded under one logical source identity.
+    Found {
+        /// Logical source identity used by origin projection.
+        source_id: String,
+        /// Immutable UTF-8 source text.
+        source: Arc<str>,
+    },
+    /// The requested resource is authoritatively absent.
+    NotFound,
+    /// The loader produced a valid failure response for the include directive.
+    ///
+    /// Core preprocessing records this at the directive and stops according to
+    /// its normal include rules. A loader that cannot produce a response uses
+    /// [`WorkspaceResourceLoad::failed`] instead.
+    Failed(String),
+    /// Processing may continue with an empty source while retaining failure
+    /// evidence in the include journal.
+    FailedWithPlaceholder {
+        /// Logical source identity assigned to the empty placeholder.
+        source_id: String,
+    },
+}
+
+/// One host resource-loading attempt and the evidence it produced.
+pub struct WorkspaceResourceLoad<Evidence, LoaderError> {
+    resolution: Result<WorkspaceResourceResolution, LoaderError>,
+    evidence: Evidence,
+}
+
+impl<Evidence, LoaderError> WorkspaceResourceLoad<Evidence, LoaderError> {
+    /// Answers the request and returns the host evidence collected for it.
+    pub fn resolved(resolution: WorkspaceResourceResolution, evidence: Evidence) -> Self {
+        Self {
+            resolution: Ok(resolution),
+            evidence,
+        }
+    }
+
+    /// Stops the driver and returns evidence collected by the failed attempt.
+    pub fn failed(error: LoaderError, evidence: Evidence) -> Self {
+        Self {
+            resolution: Err(error),
+            evidence,
+        }
+    }
+}
+
+/// Supplies one resource requested by workspace preprocessing.
+///
+/// Implementations own host-specific I/O and its unpublished state. The
+/// driver owns request ordering, continuation resumption, and cancellation.
+pub trait WorkspaceResourceLoader {
+    /// Host-specific failure which prevents the resource request from being
+    /// answered.
+    type Error;
+
+    /// Host evidence produced by one resource-loading attempt.
+    type Evidence;
+
+    /// Attempts one suspended include request and always returns its host
+    /// evidence, whether or not it can produce an authoritative answer.
+    fn load(
+        &mut self,
+        request: &WorkspaceResourceRequest,
+    ) -> WorkspaceResourceLoad<Self::Evidence, Self::Error>;
+}
+
+/// Terminal result of the shared workspace preprocessing driver.
+pub enum WorkspacePreprocessOutcome<LoaderError> {
+    /// Preprocessing completed once without running analysis or projection.
+    Complete(Box<WorkspacePreprocessDraft>),
+    /// Processing failed without publishing a partial result.
+    CoreFailed(WorkspacePreprocessFailure),
+    /// Cooperative cancellation discarded all unpublished state.
+    Cancelled,
+    /// Resource loading stopped before an authoritative answer was available.
+    LoaderFailed(LoaderError),
+}
+
+/// One resource request and its host evidence, in execution order.
+pub struct WorkspaceResourceLoadEvent<Evidence> {
+    request: WorkspaceResourceRequest,
+    evidence: Evidence,
+}
+
+impl<Evidence> WorkspaceResourceLoadEvent<Evidence> {
+    /// Returns the resource request attempted by this event.
+    pub const fn request(&self) -> &WorkspaceResourceRequest {
+        &self.request
+    }
+
+    /// Returns the host evidence collected for this request.
+    pub const fn evidence(&self) -> &Evidence {
+        &self.evidence
+    }
+
+    /// Splits the event into its resource request and host evidence.
+    pub fn into_parts(self) -> (WorkspaceResourceRequest, Evidence) {
+        (self.request, self.evidence)
+    }
+}
+
+/// Shared-driver report with every attempted host load in execution order.
+pub struct WorkspacePreprocessReport<Evidence, LoaderError> {
+    outcome: WorkspacePreprocessOutcome<LoaderError>,
+    loads: Vec<WorkspaceResourceLoadEvent<Evidence>>,
+}
+
+impl<Evidence, LoaderError> WorkspacePreprocessReport<Evidence, LoaderError> {
+    /// Splits the terminal outcome from attempted loads in execution order.
+    pub fn into_parts(
+        self,
+    ) -> (
+        WorkspacePreprocessOutcome<LoaderError>,
+        Vec<WorkspaceResourceLoadEvent<Evidence>>,
+    ) {
+        (self.outcome, self.loads)
+    }
 }
 
 /// A preprocessing failure together with answered include requests.
@@ -1209,7 +1329,7 @@ pub enum WorkspaceAnalysisStep {
 }
 
 /// Opaque, single-use continuation for suspended workspace preprocessing.
-pub struct SuspendedWorkspacePreprocess {
+struct SuspendedWorkspacePreprocess {
     continuation: EffectiveSuspendedPreprocess,
     state: WorkspacePreprocessRun,
     request: WorkspaceResourceRequest,
@@ -1217,12 +1337,12 @@ pub struct SuspendedWorkspacePreprocess {
 
 impl SuspendedWorkspacePreprocess {
     /// Returns the one resource request that must be answered.
-    pub const fn request(&self) -> &WorkspaceResourceRequest {
+    const fn request(&self) -> &WorkspaceResourceRequest {
         &self.request
     }
 
     /// Consumes this continuation and resumes without rebuilding its snapshot.
-    pub fn resume(
+    fn resume(
         self,
         response: WorkspaceResourceResponse,
         cancellation: &impl Cancellation,
@@ -1766,11 +1886,83 @@ impl WorkspaceSnapshot {
         }
     }
 
+    /// Preprocesses one root through the shared resource-loading driver.
+    ///
+    /// The loader owns host-specific I/O and may retain an unpublished atomic
+    /// candidate. This method alone owns request ordering and continuation
+    /// resumption for CLI and Language Server adapters.
+    pub fn preprocess_with<L>(
+        &self,
+        root: &ResourceId,
+        options: &EffectiveProcessingOptions,
+        loader: &mut L,
+        cancellation: &impl Cancellation,
+    ) -> WorkspacePreprocessReport<L::Evidence, L::Error>
+    where
+        L: WorkspaceResourceLoader,
+    {
+        let mut loads = Vec::new();
+        let mut step = self.preprocess_resumable(root, options, cancellation);
+        loop {
+            step = match step {
+                WorkspacePreprocessStep::Complete(draft) => {
+                    return WorkspacePreprocessReport {
+                        outcome: WorkspacePreprocessOutcome::Complete(draft),
+                        loads,
+                    };
+                }
+                WorkspacePreprocessStep::NeedResource(suspended) => {
+                    let request = suspended.request().clone();
+                    let WorkspaceResourceLoad {
+                        resolution,
+                        evidence,
+                    } = loader.load(&request);
+                    loads.push(WorkspaceResourceLoadEvent { request, evidence });
+                    let resolution = match resolution {
+                        Ok(resolution) => resolution,
+                        Err(error) => {
+                            return WorkspacePreprocessReport {
+                                outcome: WorkspacePreprocessOutcome::LoaderFailed(error),
+                                loads,
+                            };
+                        }
+                    };
+                    let request = suspended.request();
+                    let response = match resolution {
+                        WorkspaceResourceResolution::Found { source_id, source } => {
+                            request.found_as(source_id, source)
+                        }
+                        WorkspaceResourceResolution::NotFound => request.not_found(),
+                        WorkspaceResourceResolution::Failed(message) => {
+                            request.load_failed(message)
+                        }
+                        WorkspaceResourceResolution::FailedWithPlaceholder { source_id } => {
+                            request.failed_with_placeholder_as(source_id)
+                        }
+                    };
+                    suspended.resume(response, cancellation)
+                }
+                WorkspacePreprocessStep::Failed(failure) => {
+                    return WorkspacePreprocessReport {
+                        outcome: WorkspacePreprocessOutcome::CoreFailed(failure),
+                        loads,
+                    };
+                }
+                WorkspacePreprocessStep::Cancelled => {
+                    return WorkspacePreprocessReport {
+                        outcome: WorkspacePreprocessOutcome::Cancelled,
+                        loads,
+                    };
+                }
+            };
+        }
+    }
+
     /// Starts preprocessing that suspends at the first resource absent from this snapshot.
     ///
     /// The returned continuation retains the immutable lookup and resumes from
     /// the exact include directive without rebuilding or rescanning the snapshot.
-    pub fn preprocess_resumable(
+    fn preprocess_resumable(
         &self,
         root: &ResourceId,
         options: &EffectiveProcessingOptions,
@@ -2123,7 +2315,7 @@ fn actual_dependencies(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     use super::*;
 
@@ -2781,7 +2973,7 @@ mod tests {
     }
 
     #[test]
-    fn resumable_preprocessing_then_analysis_uses_each_stage_once_and_finalizes_evidence() {
+    fn shared_preprocess_driver_uses_each_stage_once_and_finalizes_evidence() {
         RESUMABLE_STAGE_RUNS.with(|runs| runs.set([0; 4]));
         let mut workspace = Workspace::default();
         let root = id("file:///book/root.adoc");
@@ -2802,28 +2994,53 @@ mod tests {
         let snapshot = workspace.snapshot();
         let canonical_options = effective_options();
 
-        let WorkspacePreprocessStep::NeedResource(loaded_continuation) =
-            snapshot.preprocess_resumable(&root, &canonical_options, &NeverCancelled)
-        else {
-            panic!("missing loaded resource must suspend preprocessing");
-        };
-        assert_eq!(loaded_continuation.request().target(), loaded.as_str());
+        struct Loader {
+            loaded: ResourceId,
+            loaded_text: Arc<str>,
+            missing: ResourceId,
+        }
+
+        impl WorkspaceResourceLoader for Loader {
+            type Error = std::convert::Infallible;
+            type Evidence = ResourceId;
+
+            fn load(
+                &mut self,
+                request: &WorkspaceResourceRequest,
+            ) -> WorkspaceResourceLoad<Self::Evidence, Self::Error> {
+                let target = id(request.target());
+                let resolution = if target == self.loaded {
+                    WorkspaceResourceResolution::Found {
+                        source_id: target.to_string(),
+                        source: Arc::clone(&self.loaded_text),
+                    }
+                } else {
+                    assert_eq!(target, self.missing);
+                    WorkspaceResourceResolution::NotFound
+                };
+                WorkspaceResourceLoad::resolved(resolution, target)
+            }
+        }
+
         let loaded_text = Arc::<str>::from("loaded\n");
-        let loaded_response = loaded_continuation
-            .request()
-            .found(Arc::clone(&loaded_text));
-        let WorkspacePreprocessStep::NeedResource(missing_continuation) =
-            loaded_continuation.resume(loaded_response, &NeverCancelled)
-        else {
-            panic!("optional missing resource must suspend preprocessing");
+        let mut loader = Loader {
+            loaded: loaded.clone(),
+            loaded_text: Arc::clone(&loaded_text),
+            missing: missing.clone(),
         };
-        assert_eq!(missing_continuation.request().target(), missing.as_str());
-        let missing_response = missing_continuation.request().not_found();
-        let WorkspacePreprocessStep::Complete(preprocessed) =
-            missing_continuation.resume(missing_response, &NeverCancelled)
-        else {
-            panic!("authoritative absence must complete preprocessing");
+        let (outcome, loads) = snapshot
+            .preprocess_with(&root, &canonical_options, &mut loader, &NeverCancelled)
+            .into_parts();
+        let WorkspacePreprocessOutcome::Complete(preprocessed) = outcome else {
+            panic!("authoritative responses must complete preprocessing");
         };
+        assert_eq!(
+            loads
+                .into_iter()
+                .map(|event| event.into_parts().1)
+                .collect::<Vec<_>>(),
+            [loaded.clone(), missing.clone()]
+        );
         let WorkspaceAnalysisStep::Complete(draft) =
             preprocessed.analyze(ProjectionLimits::default(), &NeverCancelled)
         else {
@@ -2875,6 +3092,123 @@ mod tests {
         assert_eq!(analysis.generation(), workspace.generation());
         assert_eq!(analysis.resource_revisions[&loaded], Revision::new(3));
         workspace.accept(&analysis).expect("accepted analysis");
+    }
+
+    #[test]
+    fn shared_preprocess_driver_returns_all_evidence_after_loader_failure() {
+        struct FailingLoader;
+
+        impl WorkspaceResourceLoader for FailingLoader {
+            type Error = &'static str;
+            type Evidence = ResourceId;
+
+            fn load(
+                &mut self,
+                request: &WorkspaceResourceRequest,
+            ) -> WorkspaceResourceLoad<Self::Evidence, Self::Error> {
+                let target = id(request.target());
+                if request.target().ends_with("first.adoc") {
+                    WorkspaceResourceLoad::resolved(
+                        WorkspaceResourceResolution::Found {
+                            source_id: target.to_string(),
+                            source: Arc::from("first\n"),
+                        },
+                        target,
+                    )
+                } else {
+                    WorkspaceResourceLoad::failed("read failed", target)
+                }
+            }
+        }
+
+        let mut workspace = Workspace::default();
+        let root = id("file:///book/root.adoc");
+        workspace
+            .upsert_disk(
+                root.clone(),
+                Revision::new(1),
+                "include::first.adoc[]\ninclude::second.adoc[]\n",
+            )
+            .expect("root");
+        workspace.register_root(root.clone()).expect("root");
+
+        let (outcome, loads) = workspace
+            .snapshot()
+            .preprocess_with(
+                &root,
+                &effective_options(),
+                &mut FailingLoader,
+                &NeverCancelled,
+            )
+            .into_parts();
+        assert!(matches!(
+            outcome,
+            WorkspacePreprocessOutcome::LoaderFailed("read failed")
+        ));
+        assert_eq!(
+            loads
+                .into_iter()
+                .map(|event| event.into_parts().1)
+                .collect::<Vec<_>>(),
+            [
+                id("file:///book/first.adoc"),
+                id("file:///book/second.adoc")
+            ]
+        );
+    }
+
+    #[test]
+    fn shared_preprocess_driver_cancels_after_a_resource_answer() {
+        struct CancellingLoader(Arc<AtomicBool>);
+
+        impl WorkspaceResourceLoader for CancellingLoader {
+            type Error = std::convert::Infallible;
+            type Evidence = ResourceId;
+
+            fn load(
+                &mut self,
+                request: &WorkspaceResourceRequest,
+            ) -> WorkspaceResourceLoad<Self::Evidence, Self::Error> {
+                self.0.store(true, Ordering::Relaxed);
+                WorkspaceResourceLoad::resolved(
+                    WorkspaceResourceResolution::Found {
+                        source_id: request.target().to_owned(),
+                        source: Arc::from("part\n"),
+                    },
+                    id(request.target()),
+                )
+            }
+        }
+
+        struct Cancellation(Arc<AtomicBool>);
+
+        impl adocweave::CancellationCheck for Cancellation {
+            fn is_cancelled(&self) -> bool {
+                self.0.load(Ordering::Relaxed)
+            }
+        }
+
+        let mut workspace = Workspace::default();
+        let root = id("file:///book/root.adoc");
+        workspace
+            .upsert_disk(root.clone(), Revision::new(1), "include::part.adoc[]\n")
+            .expect("root");
+        workspace.register_root(root.clone()).expect("root");
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let (outcome, loads) = workspace
+            .snapshot()
+            .preprocess_with(
+                &root,
+                &effective_options(),
+                &mut CancellingLoader(Arc::clone(&cancelled)),
+                &Cancellation(cancelled),
+            )
+            .into_parts();
+
+        assert!(matches!(outcome, WorkspacePreprocessOutcome::Cancelled));
+        assert_eq!(loads.len(), 1);
+        assert_eq!(loads[0].request().target(), "file:///book/part.adoc");
+        assert_eq!(loads[0].evidence(), &id("file:///book/part.adoc"));
     }
 
     #[test]

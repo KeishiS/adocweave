@@ -627,6 +627,56 @@ fn a_result_from_an_older_generation_installs_nothing() {
 }
 
 #[test]
+fn semantic_adoption_failure_commits_no_include_session() {
+    let root = TestDirectory::new();
+    let generated = root.0.join("generated");
+    std::fs::create_dir_all(&generated).expect("generated directory");
+    std::fs::write(
+        root.0.join(adocweave_config::FILE_NAME),
+        concat!(
+            "schema-version = 2\n",
+            "[resources]\ninclude = true\nroots = [\".\"]\n",
+            "[workspace.scan]\nexclude = [\"generated\"]\n",
+        ),
+    )
+    .expect("project configuration");
+    let source = root.0.join("root.adoc");
+    let included = generated.join("part.adoc");
+    std::fs::write(&source, "include::generated/part.adoc[]\n").expect("source");
+    std::fs::write(&included, "included\n").expect("included source");
+    let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+    let source_uri = Url::from_file_path(&source).expect("source URI");
+    let included_uri = Url::from_file_path(&included).expect("included URI");
+    let source_id = uri_id(&source_uri).expect("source ID");
+    let mut resources = WorkspaceResources::default();
+    resources.load_roots(&[root_uri]).expect("load workspace");
+    let scope = resources.resource_projects[&source_id].clone();
+    let filesystem = Arc::clone(&resources.filesystems[&scope]);
+    let budget_before = filesystem.lock().expect("filesystem session").budget();
+
+    let (input, mut analyzed) =
+        analyze_root(&mut resources, &source_uri).expect("workspace analysis");
+    analyzed
+        .acquisition
+        .as_mut()
+        .expect("completed include acquisition")
+        .candidate
+        .inner
+        .unregister_root(&source_id);
+
+    let error = resources
+        .apply_analyzed_root(analyzed, &input, &adocweave::AnalysisOptions::default())
+        .expect_err("invalid candidate must fail semantic adoption");
+    assert!(error.contains("analysis root is not registered"), "{error}");
+    assert_eq!(
+        filesystem.lock().expect("filesystem session").budget(),
+        budget_before,
+        "semantic rejection must precede filesystem commit"
+    );
+    assert!(resources.get(&included_uri).is_none());
+}
+
+#[test]
 fn a_result_with_superseded_analysis_options_installs_nothing() {
     let root = TestDirectory::new();
     let source = root.0.join("root.adoc");

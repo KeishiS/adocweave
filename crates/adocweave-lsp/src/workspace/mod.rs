@@ -19,7 +19,9 @@ use adocweave_host::{
 use adocweave_workspace::{
     Generation, ResourceId, RetainedLayerCharge, RetainedResourceBudget, RetainedResourceLimits,
     Revision, Workspace, WorkspaceAnalysis, WorkspaceAnalysisDraft, WorkspaceAnalysisStep,
-    WorkspaceError, WorkspaceLimits, WorkspacePreprocessStep, WorkspaceSnapshot,
+    WorkspaceError, WorkspaceLimits, WorkspacePreprocessOutcome, WorkspaceResourceLoad,
+    WorkspaceResourceLoadEvent, WorkspaceResourceLoader, WorkspaceResourceRequest,
+    WorkspaceResourceResolution, WorkspaceSnapshot,
 };
 use async_lsp::lsp_types::Url;
 
@@ -322,25 +324,6 @@ impl CancellationCheck for SharedCancellation<'_> {
     }
 }
 
-/// How one include requested by a suspended analysis was answered.
-enum AcquiredInclude {
-    /// The resource was read and is now part of the candidate workspace.
-    Found(Arc<str>),
-    /// The resource is authoritatively absent, whether it was refused by the
-    /// configured authority or simply does not exist on disk.
-    ///
-    /// Both answers are the same to the preprocessor: no text is available and
-    /// the include cannot be executed. Keeping them apart here would only push a
-    /// distinction into the analysis that it cannot act on.
-    NotFound,
-    /// The resource exists but could not be read, so the analysis cannot go on.
-    ///
-    /// This is reported to the preprocessor rather than raised here, so the
-    /// resulting diagnostic points at the include directive that asked for it
-    /// instead of at the document as a whole.
-    Failed(String),
-}
-
 /// Reads the includes one suspended analysis asks for, into a workspace copy.
 ///
 /// The whole point of this type is that nothing it reads becomes visible until
@@ -351,21 +334,50 @@ struct IncludeAcquisition {
     transactions: BTreeMap<ProjectScopeId, IncludeFilesystemCandidate>,
     root_scope: ProjectScopeId,
     allowed_roots: Vec<PathBuf>,
-    admitted: BTreeSet<ResourceId>,
+    checked_targets: BTreeSet<ResourceId>,
     job: IncludeFilesystemJob,
 }
 
+#[derive(Clone, Copy)]
+struct IncludeAuthorityEvidence {
+    admitted: bool,
+}
+
 impl IncludeAcquisition {
-    fn acquire(&mut self, target: &ResourceId) -> Result<AcquiredInclude, String> {
+    fn resolve(
+        &mut self,
+        target: &ResourceId,
+    ) -> WorkspaceResourceLoad<IncludeAuthorityEvidence, String> {
         let admitted =
-            self.candidate
-                .admit_include_target(&self.root_scope, &self.allowed_roots, target)?;
+            match self
+                .candidate
+                .admit_include_target(&self.root_scope, &self.allowed_roots, target)
+            {
+                Ok(admitted) => admitted,
+                Err(error) => {
+                    return WorkspaceResourceLoad::failed(
+                        error,
+                        IncludeAuthorityEvidence { admitted: false },
+                    );
+                }
+            };
         let Some(admitted) = admitted else {
-            return Ok(AcquiredInclude::NotFound);
+            return WorkspaceResourceLoad::resolved(
+                WorkspaceResourceResolution::NotFound,
+                IncludeAuthorityEvidence { admitted: false },
+            );
         };
-        self.record_interest(target)?;
+        if let Err(error) = self.check_interest(target) {
+            return WorkspaceResourceLoad::failed(
+                error,
+                IncludeAuthorityEvidence { admitted: true },
+            );
+        }
         let AdmittedIncludeTarget::Existing(existing) = admitted else {
-            return Ok(AcquiredInclude::NotFound);
+            return WorkspaceResourceLoad::resolved(
+                WorkspaceResourceResolution::NotFound,
+                IncludeAuthorityEvidence { admitted: true },
+            );
         };
         let ExistingIncludeTarget {
             uri,
@@ -377,36 +389,75 @@ impl IncludeAcquisition {
         // point, so an identity already present in the copy means an earlier
         // include in this same run acquired it. Its text is reused rather than
         // read twice, which keeps repeated includes off the job's byte budget.
-        let id = uri_id(&uri)?;
+        let id = match uri_id(&uri) {
+            Ok(id) => id,
+            Err(error) => {
+                return WorkspaceResourceLoad::failed(
+                    error,
+                    IncludeAuthorityEvidence { admitted: true },
+                );
+            }
+        };
         if let Some(existing) = self.candidate.inner.get(&id) {
-            return Ok(AcquiredInclude::Found(Arc::clone(existing.text())));
+            return WorkspaceResourceLoad::resolved(
+                WorkspaceResourceResolution::Found {
+                    source_id: id.to_string(),
+                    source: Arc::clone(existing.text()),
+                },
+                IncludeAuthorityEvidence { admitted: true },
+            );
         }
         let read = self
             .transaction_for(&scope, plan)
             .and_then(|transaction| read_include_candidate(transaction, &path));
         let candidate = match read {
             Ok(Some(candidate)) => candidate,
-            Ok(None) => return Ok(AcquiredInclude::NotFound),
+            Ok(None) => {
+                return WorkspaceResourceLoad::resolved(
+                    WorkspaceResourceResolution::NotFound,
+                    IncludeAuthorityEvidence { admitted: true },
+                );
+            }
             Err(message) => {
-                return Ok(AcquiredInclude::Failed(message));
+                return WorkspaceResourceLoad::resolved(
+                    WorkspaceResourceResolution::Failed(message),
+                    IncludeAuthorityEvidence { admitted: true },
+                );
             }
         };
         let text = Arc::clone(&candidate.text);
-        self.candidate
-            .admit_include_text(id, candidate, scope, plan)?;
-        Ok(AcquiredInclude::Found(text))
+        if let Err(error) = self
+            .candidate
+            .admit_include_text(id, candidate, scope, plan)
+        {
+            return WorkspaceResourceLoad::failed(
+                error,
+                IncludeAuthorityEvidence { admitted: true },
+            );
+        }
+        WorkspaceResourceLoad::resolved(
+            WorkspaceResourceResolution::Found {
+                source_id: target.to_string(),
+                source: text,
+            },
+            IncludeAuthorityEvidence { admitted: true },
+        )
     }
 
-    fn record_interest(&mut self, target: &ResourceId) -> Result<(), String> {
-        if !self.candidate.include_interests.contains(target)
-            && self.candidate.include_interests.len() >= MAX_WATCHED_INCLUDE_RESOURCES
+    fn check_interest(&mut self, target: &ResourceId) -> Result<(), String> {
+        if self.candidate.include_interests.contains(target)
+            || self.checked_targets.contains(target)
+        {
+            return Ok(());
+        }
+        if self.candidate.include_interests.len() + self.checked_targets.len()
+            >= MAX_WATCHED_INCLUDE_RESOURCES
         {
             return Err(format!(
                 "workspace include dependency limit exceeded: {MAX_WATCHED_INCLUDE_RESOURCES}"
             ));
         }
-        Arc::make_mut(&mut self.candidate.include_interests).insert(target.clone());
-        self.admitted.insert(target.clone());
+        self.checked_targets.insert(target.clone());
         Ok(())
     }
 
@@ -415,10 +466,19 @@ impl IncludeAcquisition {
     /// Snapshot resources were validated before the run began. Deferred
     /// resources must have passed `admit_include_target`; refused targets are
     /// intentionally absent even though preprocessing records their request.
-    fn admitted_dependencies(&self, dependencies: BTreeSet<ResourceId>) -> BTreeSet<ResourceId> {
+    fn admitted_dependencies(
+        &self,
+        dependencies: BTreeSet<ResourceId>,
+        loads: &[WorkspaceResourceLoadEvent<IncludeAuthorityEvidence>],
+    ) -> BTreeSet<ResourceId> {
+        let admitted = loads
+            .iter()
+            .filter(|event| event.evidence().admitted)
+            .filter_map(|event| ResourceId::new(event.request().target()).ok())
+            .collect::<BTreeSet<_>>();
         dependencies
             .into_iter()
-            .filter(|id| self.candidate.inner.get(id).is_some() || self.admitted.contains(id))
+            .filter(|id| self.candidate.inner.get(id).is_some() || admitted.contains(id))
             .collect()
     }
 
@@ -451,20 +511,30 @@ impl IncludeAcquisition {
             .expect("include transaction is active"))
     }
 
-    /// Commits every draft this run opened and returns the workspace copy.
+    /// Adopts the analysis, commits every filesystem draft, and returns both.
     ///
-    /// Commits happen only when the analysis produced a result. A failed or
-    /// cancelled run drops its drafts instead, which leaves the live sessions
-    /// exactly as they were.
-    fn commit(self) -> Result<WorkspaceResources, String> {
+    /// All semantic validation happens on the unpublished workspace copy before
+    /// any shared filesystem session changes. A failed or cancelled run drops
+    /// its drafts and leaves the live sessions exactly as they were.
+    fn commit_analysis(
+        self,
+        draft: Box<WorkspaceAnalysisDraft>,
+        root: &ResourceId,
+        include_interests: BTreeSet<ResourceId>,
+    ) -> Result<(WorkspaceResources, WorkspaceAnalysis), String> {
         let Self {
             mut candidate,
             transactions,
             root_scope: _,
             allowed_roots: _,
-            admitted: _,
+            checked_targets: _,
             job,
         } = self;
+        let analysis = candidate
+            .inner
+            .finalize_draft(draft)
+            .map_err(|error| error.to_string())?;
+        candidate.prepare_analysis_for_root(root, &analysis)?;
         let mut transactions = transactions.into_iter().collect::<Vec<_>>();
         let sessions = transactions
             .iter()
@@ -500,7 +570,26 @@ impl IncludeAcquisition {
         for (scope, transaction) in transactions {
             Arc::make_mut(&mut candidate.filesystems).insert(scope, transaction.session);
         }
-        Ok(candidate)
+        candidate.record_analysis_dependencies(root, &analysis, include_interests);
+        Ok((candidate, analysis))
+    }
+}
+
+impl WorkspaceResourceLoader for IncludeAcquisition {
+    type Error = String;
+    type Evidence = IncludeAuthorityEvidence;
+
+    fn load(
+        &mut self,
+        request: &WorkspaceResourceRequest,
+    ) -> WorkspaceResourceLoad<Self::Evidence, Self::Error> {
+        match ResourceId::new(request.target()) {
+            Ok(target) => self.resolve(&target),
+            Err(error) => WorkspaceResourceLoad::failed(
+                error.to_string(),
+                IncludeAuthorityEvidence { admitted: false },
+            ),
+        }
     }
 }
 
@@ -1945,73 +2034,60 @@ impl WorkspaceResources {
             transactions: BTreeMap::new(),
             root_scope,
             allowed_roots,
-            admitted: BTreeSet::new(),
+            checked_targets: BTreeSet::new(),
             job,
         };
-        let mut step = input.snapshot.preprocess_resumable(
-            &input.root,
-            &options,
-            &SharedCancellation(cancellation),
-        );
-        loop {
-            match step {
-                WorkspacePreprocessStep::Complete(preprocessed) => {
-                    let include_interests =
-                        acquisition.admitted_dependencies(preprocessed.dependencies());
-                    let (candidate, outcome) = match preprocessed.analyze(
-                        ProjectionLimits::default(),
-                        &SharedCancellation(cancellation),
-                    ) {
-                        WorkspaceAnalysisStep::Complete(draft) => {
-                            (Some(acquisition), AnalyzedRootOutcome::Complete(draft))
-                        }
-                        WorkspaceAnalysisStep::Failed(error) => {
-                            (None, AnalyzedRootOutcome::Failed(error))
-                        }
-                        WorkspaceAnalysisStep::Cancelled => (None, AnalyzedRootOutcome::Cancelled),
-                    };
-                    return Ok(AnalyzedRoot {
-                        acquisition: candidate,
-                        root: input.root.clone(),
-                        canonical_options: options,
-                        outcome,
+        let (outcome, loads) = input
+            .snapshot
+            .preprocess_with(
+                &input.root,
+                &options,
+                &mut acquisition,
+                &SharedCancellation(cancellation),
+            )
+            .into_parts();
+        let (acquisition, outcome, include_interests) = match outcome {
+            WorkspacePreprocessOutcome::Complete(preprocessed) => {
+                let include_interests =
+                    acquisition.admitted_dependencies(preprocessed.dependencies(), &loads);
+                match preprocessed.analyze(
+                    ProjectionLimits::default(),
+                    &SharedCancellation(cancellation),
+                ) {
+                    WorkspaceAnalysisStep::Complete(draft) => (
+                        Some(acquisition),
+                        AnalyzedRootOutcome::Complete(draft),
                         include_interests,
-                    });
-                }
-                WorkspacePreprocessStep::Failed(failure) => {
-                    let include_interests =
-                        acquisition.admitted_dependencies(failure.dependencies());
-                    return Ok(AnalyzedRoot {
-                        acquisition: None,
-                        root: input.root.clone(),
-                        canonical_options: options,
-                        outcome: AnalyzedRootOutcome::Failed(failure.into_error()),
-                        include_interests,
-                    });
-                }
-                WorkspacePreprocessStep::Cancelled => {
-                    return Ok(AnalyzedRoot {
-                        acquisition: None,
-                        root: input.root.clone(),
-                        canonical_options: options,
-                        outcome: AnalyzedRootOutcome::Cancelled,
-                        include_interests: BTreeSet::new(),
-                    });
-                }
-                WorkspacePreprocessStep::NeedResource(suspended) => {
-                    let target = ResourceId::new(suspended.request().target())
-                        .map_err(|error| error.to_string())?;
-                    let response = match acquisition.acquire(&target)? {
-                        AcquiredInclude::Found(text) => suspended.request().found(text),
-                        AcquiredInclude::NotFound => suspended.request().not_found(),
-                        AcquiredInclude::Failed(message) => {
-                            suspended.request().load_failed(message)
-                        }
-                    };
-                    step = suspended.resume(response, &SharedCancellation(cancellation));
+                    ),
+                    WorkspaceAnalysisStep::Failed(error) => {
+                        (None, AnalyzedRootOutcome::Failed(error), include_interests)
+                    }
+                    WorkspaceAnalysisStep::Cancelled => {
+                        (None, AnalyzedRootOutcome::Cancelled, include_interests)
+                    }
                 }
             }
-        }
+            WorkspacePreprocessOutcome::CoreFailed(failure) => {
+                let include_interests =
+                    acquisition.admitted_dependencies(failure.dependencies(), &loads);
+                (
+                    None,
+                    AnalyzedRootOutcome::Failed(failure.into_error()),
+                    include_interests,
+                )
+            }
+            WorkspacePreprocessOutcome::Cancelled => {
+                (None, AnalyzedRootOutcome::Cancelled, BTreeSet::new())
+            }
+            WorkspacePreprocessOutcome::LoaderFailed(error) => return Err(error),
+        };
+        Ok(AnalyzedRoot {
+            acquisition,
+            root: input.root.clone(),
+            canonical_options: options,
+            outcome,
+            include_interests,
+        })
     }
 
     /// Installs one finished analysis and the resources it acquired.
@@ -2050,15 +2126,10 @@ impl WorkspaceResources {
         }
         let acquisition = acquisition
             .ok_or_else(|| "completed analysis is missing include acquisition state".to_owned())?;
-        // The generation decision precedes every filesystem commit. Transaction
-        // validation remains a final safety gate for a session superseded by a
-        // watch operation that did not publish a workspace generation.
-        let mut candidate = acquisition.commit()?;
-        let analysis = candidate
-            .inner
-            .finalize_draft(draft)
-            .map_err(|error| error.to_string())?;
-        candidate.accept_for_root(&root, &analysis, include_interests)?;
+        // Semantic adoption is prepared before any filesystem commit.
+        // Transaction validation remains the final gate for a session
+        // superseded without a workspace generation change.
+        let (candidate, analysis) = acquisition.commit_analysis(draft, &root, include_interests)?;
         *self = candidate;
         Ok(Some(analysis))
     }
@@ -2098,19 +2169,10 @@ impl WorkspaceResources {
         self.prune_unreferenced_include_resources();
     }
 
-    /// Publishes one analysis and records what its root depends on.
-    ///
-    /// The dependency set has two sources. The analysis reports the resources it
-    /// actually used, which covers includes the starting snapshot already held.
-    /// The run reports what it asked the host for, which covers includes it
-    /// acquired and, importantly, includes that turned out to be missing. A
-    /// missing target is still something the document is waiting for, so it has
-    /// to stay watched.
-    pub fn accept_for_root(
+    fn prepare_analysis_for_root(
         &mut self,
         root: &ResourceId,
         analysis: &WorkspaceAnalysis,
-        include_interests: BTreeSet<ResourceId>,
     ) -> Result<(), String> {
         if analysis.root() != root {
             return Err("workspace analysis root does not match the adoption root".to_owned());
@@ -2118,11 +2180,27 @@ impl WorkspaceResources {
         self.inner
             .accept(analysis)
             .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    fn record_analysis_dependencies(
+        &mut self,
+        root: &ResourceId,
+        analysis: &WorkspaceAnalysis,
+        include_interests: BTreeSet<ResourceId>,
+    ) {
+        for id in &include_interests {
+            if !self.include_interests.contains(id)
+                && self.include_interests.len() >= MAX_WATCHED_INCLUDE_RESOURCES
+            {
+                break;
+            }
+            Arc::make_mut(&mut self.include_interests).insert(id.clone());
+        }
         self.record_include_dependencies(
             root,
             analysis.dependencies().into_iter().chain(include_interests),
         );
-        Ok(())
     }
 
     pub fn forget_include_dependencies(&mut self, root: &Url) -> Result<BTreeSet<String>, String> {
