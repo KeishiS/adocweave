@@ -48,12 +48,11 @@ grammarおよびキャッシュの更新を走査し、一時的なsymlinkやino
 [source,console]
 ----
 cargo build -p adocweave-lsp
-cargo make check-zed
-cargo make test-zed
-cargo make check-zed-wasm
+cargo test --manifest-path editors/zed/Cargo.toml
+cargo check --manifest-path editors/zed/Cargo.toml --target wasm32-wasip2
 ----
 
-``test-zed``は絶対pathの判定と、起動commandの引数が空でZedのshell環境だけを使うことを検査します。
+``cargo test``は絶対pathの判定と、起動commandの引数が空でZedのshell環境だけを使うことを検査します。
 
 . 同じshellでLanguage Serverを``PATH``へ追加し、隔離したZedをforegroundで起動します。
 
@@ -197,7 +196,7 @@ grammar checkoutが固定コミットと一致することを確認します。
 
 AsciiDocとして認識されるが色付けされない::
 dev extensionを再導入して、Zed logに``asciidoc``と``asciidoc_inline``のgrammar build失敗がないことを確認します。
-``cargo make check-zed``は固定grammarとqueryのnode／capture仕様を、``cargo make test-zed-release-package``はqueryのarchive同梱を検査します。
+``cargo make verify``は固定grammarとqueryのnode／capture仕様を、``cargo make acceptance``はqueryのarchive同梱を検査します。
 Semantic Tokensを``off``にしても色付けされない場合はLSPではなくgrammarまたはquery側の問題です。
 
 ``wasi-sdk-temp``内のsymlinkまたはinotify watch errorが出る::

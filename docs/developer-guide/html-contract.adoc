@@ -111,7 +111,7 @@ URLとMIME typeを検査します。posterだけを利用できない場合は�
 
 == HTML5標準適合性検査
 
-生成HTMLの標準適合性は``cargo make html5-check``で検査します。検査対象は
+生成HTMLの標準適合性は``cargo make verify``で検査します。検査対象は
 ``fixtures/html/validation.json``で一意に管理し、断片出力は同ディレクトリの固定テンプレートで完全HTML文書へ
 変換します。完全文書出力は包まず、そのまま検査します。生成物は``target/html5/``だけへ書き込みます。
 

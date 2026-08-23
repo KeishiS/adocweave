@@ -9,7 +9,7 @@ const lock = JSON.parse(readFileSync(new URL("../editors/vscode/package-lock.jso
 const recorded = JSON.parse(
   readFileSync(new URL("../security/vscode-build-licenses.json", import.meta.url)),
 );
-const script = readFileSync(new URL("dependency-governance.sh", import.meta.url), "utf8");
+const script = readFileSync(new URL("security-audit.sh", import.meta.url), "utf8");
 const verifier = readFileSync(new URL("verify-vscode-dependencies.mjs", import.meta.url), "utf8");
 
 const entries = Object.entries(lock.packages).filter(([path]) => path !== "");

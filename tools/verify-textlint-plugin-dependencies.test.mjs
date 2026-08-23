@@ -20,7 +20,8 @@ const catalog = JSON.parse(readFileSync(
   new URL("../security/textlint-plugin-e2e-build-licenses.json", import.meta.url),
   "utf8",
 ));
-const governance = readFileSync(new URL("dependency-governance.sh", import.meta.url), "utf8");
+const governance = readFileSync(new URL("security-audit.sh", import.meta.url), "utf8");
+const makefile = readFileSync(new URL("../Makefile.toml", import.meta.url), "utf8");
 const fixedDependencies = {
   "@textlint/types": manifest.peerDependencies["@textlint/types"],
   textlint: manifest.peerDependencies.textlint,
@@ -51,5 +52,5 @@ test("固定consumerの依存は安全な取得元とライセンス情報を持
 
 test("公開textlint pluginの依存を監査する", () => {
   assert.match(governance, /^npm audit --include=dev --prefix tools\/textlint-plugin-e2e$/m);
-  assert.match(governance, /^node tools\/verify-textlint-plugin-dependencies\.mjs$/m);
+  assert.match(makefile, /^node tools\/verify-textlint-plugin-dependencies\.mjs$/m);
 });

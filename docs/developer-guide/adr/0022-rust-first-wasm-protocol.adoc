@@ -1,6 +1,6 @@
 = ADR 0022: WASM protocolの型をRust定義から導出する
 
-:status: accepted
+:status: accepted; task boundary amended by ADR 0033
 
 公開仕様の正本を生成TypeScript宣言へ移す決定は維持します。``release-claims``によるtag間比較の決定は、
 xref:0026-no-unverified-release-claims.adoc[ADR 0026]で改訂しました。Worker封筒を公開version付きの仕様とする決定は、
@@ -23,8 +23,8 @@ Browser向けWASMとJavaScriptがやり取りするJSONの形は、``protocol/pu
 失敗しました。第二に、Rustのserdeが属性として標準で表現できる意味(``#[serde(default)]``、
 ``deny_unknown_fields``、``#[serde(tag = "status")]``)を、JSONの語彙と生成器の分岐で再実装しています。
 
-リポジトリのほかのtoolは標準toolの薄いwrapperです(``html5-check``はvalidator.nu、``semver-gate``は
-cargo-semver-checks、``dependency-governance``はcargo-denyとnpm audit、``workflow-lint``はactionlint)。
+リポジトリのほかのtoolは標準toolの薄いwrapperです（HTML5検査はvalidator.nu、依存関係監査は
+cargo-denyとnpm audit、workflow構文検査はactionlint）。
 生成器だけが大きな自作物として残っています。
 
 == 決定
@@ -41,8 +41,8 @@ Rustの型定義を正本とし、ほかの成果物を既製のlibraryで導出
   封筒の中身(requestとresponse)はWebAssembly側のserdeが``deny_unknown_fields``付きで検査するため、
   JavaScript側で同じ検査を持ちません
 
-移行の安全網として、既存の``fixtures/protocol/request-corpus.json``を使う受理・拒否の検査
-(``protocol-corpus-check``と``protocol-wasm-corpus-check``)をそのまま使います。これらは同じ入力に対する
+移行の安全網として、既存の``fixtures/protocol/request-corpus.json``を使うworkspace testのnative corpus検査と
+実WebAssembly境界のcorpus検査をそのまま使います。これらは同じ入力に対する
 受理と拒否の結果を固定しているため、置き換えの前後で挙動が変わらないことを確認できます。
 
 == 検討した代替案

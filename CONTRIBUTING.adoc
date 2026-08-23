@@ -12,14 +12,6 @@ nix develop
 cargo make verify
 ----
 
-日本語文書だけを読み取り専用で校正する場合は、次を実行します。このtaskは必要なNode.js依存と専用の
-WebAssemblyを構築しますが、文書を自動修正しません。
-
-[source,console]
-----
-cargo make docs-prose-lint
-----
-
 ``cargo make verify``はPull Request用の標準検査であり、``cargo make``の既定taskです。書式、lint、test、
 生成fileの差分、browserおよびeditor adapter、HTML5標準適合性、人が書いた文書および静的な依存関係境界を
 まとめて検査します。
@@ -31,22 +23,22 @@ cargo make docs-prose-lint
 |===
 |task |意味
 
-|``fmt`` / ``fmt-check``
-|ソースの整形と、整形済みであることの検査
-
 |``verify``
-|Pull Request用の標準検査（既定task）
+|ソース、文書、adapterおよび静的な依存関係境界の検査（既定task）
 
 |``security-audit``
-|依存関係の出所、license、advisoryおよび例外の監査（``dependency-governance``と同じ）
+|依存関係の出所、license、advisoryおよび例外の監査
 
 |``acceptance``
-|``verify``に加え、CIが行う自動受入検証のうち現在のhostで実行できるもの
- （global成果物の実Chromium検査、native smoke、installation E2E）
+|現在のhostで実行できる統合検査と配布candidateの受入検査
 
 |``release-check``
-|公開前の完全な検査
+|``verify``、``security-audit``および``acceptance``を含む公開前の完全な検査
 |===
+
+``fmt``はソースを整形し、``fmt-check``は変更せずに書式を検査します。日常の入口とCI専用入口以外のtaskは
+Makefileの内部実装とし、個別の検査を切り分ける場合は対応する``cargo``、``npm``または``node``のcommandを
+直接実行します。
 
 == 作業の進め方
 
@@ -133,8 +125,8 @@ remote名、ブランチ名、mergeの方式および必須checkの構成は、M
 == 変更時の確認
 
 * 不具合修正には、可能な限り再発を防ぐテストを追加します。
-* 依存関係を更新する場合は、対象のlockfileだけを更新し、``cargo make dependency-governance``を実行します。
-* Nix flakeまたはパッケージを変更する場合は、``cargo make nix-package-check``を実行します。
+* 依存関係を更新する場合は、対象のlockfileだけを更新し、``cargo make security-audit``を実行します。
+* Nix flakeまたはパッケージを変更する場合は、``cargo make acceptance``を実行します。
 * ``.adoc``文書は既存の用語と書式に合わせます。
 * 比較用の期待出力は、実際の出力との差分を確認し、意図した変更である場合だけ更新します。
 * AsciiDoc構文を変更する場合は、`docs/user-guide/syntax-support.adoc`、`docs/user-guide/compatibility.adoc`、
@@ -163,7 +155,7 @@ remote名、ブランチ名、mergeの方式および必須checkの構成は、M
 
 . 対象のmanifestとlockfileだけを更新し、無関係な依存境界の変更を分離します。
 . RustSec Advisory Databaseの固定revisionを更新し、新しいadvisoryを確認します。
-. ``cargo make dependency-governance``を実行します。
+. ``cargo make security-audit``を実行します。
 . license、取得元、生成されるnotice、SBOMおよびbrowser sizeの差分を確認します。
 . 通常の品質検査を通してからpull requestを統合します。
 
@@ -242,9 +234,9 @@ cross targetの構築、実際のOSやBrowserを使う統合検査、fuzz、Nix�
 cargo make acceptance
 ----
 
-このtaskは標準source gateに加えて、現在のhostで実行できる配布成果物を構築し、native smokeと導入・削除、
-Browserの静的配信環境とbundler経由の実Chromium検査、およびtextlint用パッケージの完成archive検証と
-固定consumerへの導入E2Eを実行します。
+このtaskは``verify``済みのsourceを前提に、cross target、実WASM、editor、fuzzおよびNixの統合検査を行い、
+Browser、textlint、VS Code、Zedの配布candidateを構築して受入検査を実行します。``release-check``は
+``verify``と``acceptance``を一つの実行計画へ合成するため、同じtaskを重複して実行しません。
 
 手元とCIでは、``flake.lock``で固定した開発環境のChromiumを使用します。別のbrowserを確認する場合は
 ``ADOCWEAVE_BROWSER``で実行ファイルを指定できます。
@@ -275,7 +267,7 @@ node tools/sync-release-version.mjs --version X.Y.Z
 +
 このtoolはlink:release/version-sync.json[バージョン同期対象]に明示したmanifest、lockfile、公開仕様のfixtureおよび生成物だけを
 更新します。更新前に部分的なバージョン変更を検出した場合は、ファイルを書き換えず停止します。
-主要なmanifestのバージョンが揃っていることは``cargo make release-contract``が別に照合します。
+主要なmanifestのバージョンが揃っていることは``cargo make verify``内のrelease contractが別に照合します。
 . 差分を確認し、``release/notes.md``のRelease Notes、必要な仕様文書およびテスト用入力を更新してから、
   同期状態を検査します。
 +
@@ -303,7 +295,7 @@ Release Notesの本文は``release/notes.md``に人が書きます。題名は``
 ``## 主な変更``、``## 対応環境``、``## 公開契約と破壊的変更``、``## vX.Y.Zへの移行``、
 ``## 更新とロールバック``、``## 既知の制約``、``## 配布物の検証``の7見出しをこの順に一度ずつ置いて、
 各節に本文を書きます。選択した製品のversionと互換性判断に使うAPI世代は``tools/release-notes.mjs``が正本のfileから生成して
-各節の後ろへ追記するため、本文には書きません。``cargo make release-contract``（``verify``に含む）がこの形を
+各節の後ろへ追記するため、本文には書きません。``cargo make verify``に含まれるrelease contractがこの形を
 検査し、公開workflowが同じtoolでGitHub Releaseの本文を生成します。
 
 CLI引数、Language Server protocol、設定schemaなど、外部から利用する仕様を変更した場合は、変更内容と影響を
@@ -352,7 +344,7 @@ clean環境で、公開assetだけを使って実行します。
       Zed crateの``rust-version``が一致しています。
 * [ ] 公開する製品のmanifestと製品内の生成物が同じ製品バージョンを持ち、ほかの製品の版を変更していません。
 * [ ] ``release/notes.md``が公開する製品と版の内容になっており、題名と移行の見出しが
-      ``versionSource``の値と一致しています（``cargo make release-contract``で検査します）。
+      ``versionSource``の値と一致しています（``cargo make verify``で検査します）。
 * [ ] ``cargo make release-check``が成功しています。このtaskはClippy、文書、Zed、WASM、native／実WASM
       conformance、短時間fuzz、Web Worker、release fixture、WASM sizeおよび配布planを検査します。
 * [ ] ``github-release`` Environmentにrequired reviewerがあり、``main``だけを許可しています。workflowはこの外部設定を

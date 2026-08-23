@@ -8,7 +8,7 @@ readonly version="$(node --input-type=module -e "import manifest from './package
 readonly archive_name="adocweave-textlint-plugin-asciidoc-$version.tgz"
 readonly output_directory="${ADOCWEAVE_TEXTLINT_PLUGIN_OUTPUT_DIRECTORY:-target/distrib}"
 readonly archive="$output_directory/$archive_name"
-readonly cargo_target_directory="${ADOCWEAVE_TEXTLINT_PLUGIN_CARGO_TARGET_DIRECTORY:-target/textlint-plugin-wasm-build}"
+readonly cargo_target_directory="${ADOCWEAVE_TEXTLINT_PLUGIN_CARGO_TARGET_DIRECTORY:-target/textlint-wasm-build}"
 readonly npm_cache="${ADOCWEAVE_TEXTLINT_PLUGIN_NPM_CACHE:-target/npm-cache}"
 readonly scratch="$(mktemp -d "${TMPDIR:-/tmp}/adocweave-textlint-plugin.XXXXXX")"
 readonly stage="$scratch/package"

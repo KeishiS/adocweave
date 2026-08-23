@@ -271,7 +271,7 @@ WASMの``attributeQueries``は、各bindingの操作、有効値、決定binding
 
 fuzz targetは**回帰の確認**に使います。探索のために長時間動かす運用は行いません。
 
-``cargo make fuzz``は、``fuzz/corpus/``にある既知の入力を一時ディレクトリへ複写し、各targetを短時間
+``cargo make acceptance``に含まれるfuzz検査は、``fuzz/corpus/``にある既知の入力を一時ディレクトリへ複写し、各targetを短時間
 実行します。実行後に一時ディレクトリを削除するため、その回に生成された入力は残りません。定期実行の
 workflowも設けていません。
 

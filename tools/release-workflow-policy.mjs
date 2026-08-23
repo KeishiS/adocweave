@@ -9,6 +9,15 @@ import { join } from "node:path";
 
 const ROOT = new URL("../", import.meta.url);
 const read = (path) => readFileSync(new URL(path, ROOT), "utf8");
+const PUBLIC_TASKS = [
+  "acceptance", "default", "fmt", "fmt-check", "main-gate", "release-check",
+  "security-audit", "test-browser-release-candidate", "test-global-product-candidate",
+  "test-vscode-release-determinism", "test-zed-release-candidate",
+  "textlint-plugin-post-release-npx-smoke", "textlint-plugin-release-consumer-e2e", "verify",
+].sort();
+const DEVELOPER_TASKS = new Set([
+  "acceptance", "fmt", "fmt-check", "release-check", "security-audit", "verify",
+]);
 
 // The only places allowed to hold a write permission. Publication needs
 // `contents: write` for the GitHub Release and `id-token: write` for artifact
@@ -308,15 +317,12 @@ const SOURCE_GATE_DEPENDENCIES = [
   "check-vscode",
   "clippy",
   "clippy-zed",
-  "dependency-governance",
+  "dependency-contract",
   "doc-check",
   "docs-check",
-  "docs-lint",
-  "docs-prose-lint",
   "fmt-check",
   "html5-check",
   "platform-contract",
-  "protocol-generated-check",
   "release-ci-contract",
   "test",
   "test-browser-types",
@@ -324,17 +330,17 @@ const SOURCE_GATE_DEPENDENCIES = [
   "test-web-worker",
   "test-zed",
   "textlint-plugin-public-js-unit",
+  "textlint-repository-prose-lint",
   "zed-query-contract",
 ].sort();
 
 const MAIN_GATE_DEPENDENCIES = [
-  "check-wasm",
   "check-zed-wasm",
   "cross-native-check",
-  "fuzz",
+  "fuzz-smoke",
   "nix-package-check",
   "protocol-wasm-corpus-check",
-  "test-profile-release",
+  "test-cross-runtime",
   "test-vscode-extension-host",
   "textlint-plugin-browser-isolation",
   "textlint-plugin-wasm-contract",
@@ -356,7 +362,7 @@ function makeTaskDependencies(source, name) {
 
 export function validateGateTaskContract(makefile) {
   for (const [name, expected] of [
-    ["source-gate", SOURCE_GATE_DEPENDENCIES],
+    ["verify", SOURCE_GATE_DEPENDENCIES],
     ["main-gate", MAIN_GATE_DEPENDENCIES],
   ]) {
     const dependencies = new Set(makeTaskDependencies(makefile, name));
@@ -371,15 +377,93 @@ export function validateGateTaskContract(makefile) {
       fail(`main-gateへ配布成果物task ${candidate}を含めないでください`);
     }
   }
-  if (!/^\s*alias\s*=\s*"source-gate"\s*$/m.test(makeTaskBody(makefile, "verify"))) {
-    fail("verifyはsource-gateの別名にしてください");
+  if (/^\s*alias\s*=/m.test(makeTaskBody(makefile, "verify"))) {
+    fail("verifyは別名ではなくsource検査の実体にしてください");
   }
-  for (const name of ["acceptance", "release-check"]) {
-    const dependencies = new Set(makeTaskDependencies(makefile, name));
-    if (!dependencies.has("source-gate") || !dependencies.has("main-gate")) {
-      fail(`${name}はsource-gateとmain-gateの両方を含めてください`);
+  const acceptance = makeTaskDependencies(makefile, "acceptance");
+  if (JSON.stringify(acceptance) !== JSON.stringify(["main-gate", "release-global-candidate"])) {
+    fail("acceptanceはsource検査を繰り返さず、main検査と完成candidateだけを実行してください");
+  }
+  const release = makeTaskDependencies(makefile, "release-check");
+  if (JSON.stringify(release) !== JSON.stringify(["acceptance", "dist-plan", "security-audit", "verify", "wasm-size"])) {
+    fail("release-checkはverify、security-audit、acceptance、dist-plan、wasm-sizeを合成してください");
+  }
+
+  const publicTasks = [...makefile.matchAll(/^\[tasks\.([^\]]+)\]$/gm)]
+    .map(([, name]) => name)
+    .filter((name) => !/^\s*private\s*=\s*true\s*$/m.test(makeTaskBody(makefile, name)))
+    .sort();
+  if (JSON.stringify(publicTasks) !== JSON.stringify(PUBLIC_TASKS)) {
+    fail(`外向きtaskを日常入口とCI入口へ限定してください: ${publicTasks.join(", ")}`);
+  }
+  const aliases = [...makefile.matchAll(/^\s*alias\s*=\s*"([^"]+)"\s*$/gm)].map((match) => match[1]);
+  if (JSON.stringify(aliases) !== JSON.stringify(["verify"])) {
+    fail("互換aliasを残さず、既定taskからverifyへのaliasだけにしてください");
+  }
+  for (const removed of [
+    "source-gate", "dependency-governance", "verify-with-global-candidate", "release-global-artifacts",
+    "protocol-generated-check", "test-vscode-release-package",
+  ]) {
+    if (makefile.includes(`[tasks.${removed}]`)) fail(`削除済みの中間task ${removed}を戻さないでください`);
+  }
+  if (/(?:^|\n)\s*(?:tar|zip)\s/.test(makefile)) {
+    fail("archiveの構築・展開・一覧処理をMakefileへ記述しないでください");
+  }
+  if (occurrences(makefile, "cargo build -p adocweave-wasm --release --target wasm32-unknown-unknown") !== 1) {
+    fail("webとNode.js用の共通WebAssemblyを一度だけcompileしてください");
+  }
+  const testBody = makeTaskBody(makefile, "test");
+  if (occurrences(makefile, "cargo test --workspace --all-features") !== 1 ||
+      !testBody.includes("rm -f web-worker/protocol.d.mts") ||
+      !testBody.includes("git diff --exit-code -- web-worker/protocol.d.mts")) {
+    fail("workspace testの一回の実行でprotocol宣言を再生成して比較してください");
+  }
+  const vscodeCandidate = makeTaskBody(makefile, "test-vscode-release-determinism");
+  if (occurrences(makefile, "npm run package --prefix editors/vscode") !== 1 ||
+      !vscodeCandidate.includes("--verify-determinism") ||
+      !vscodeCandidate.includes("npm run test:vsix-installation --prefix editors/vscode")) {
+    fail("VSIX candidateは二回の再現性build後に同じ成果物を導入検査してください");
+  }
+}
+
+export function validateBuildReuseContract(sources) {
+  const textlintPackage = sources["tools/package-textlint-plugin-release.sh"];
+  if (textlintPackage &&
+      !/ADOCWEAVE_TEXTLINT_PLUGIN_CARGO_TARGET_DIRECTORY:-target\/textlint-wasm-build/.test(textlintPackage)) {
+    fail("textlint candidateはmain検査と同じCargo target directoryを再利用してください");
+  }
+}
+
+export function validateCargoMakeReferences(sources) {
+  for (const [path, source] of Object.entries(sources)) {
+    for (const match of source.matchAll(/\bcargo make(?:\s+([a-z0-9][a-z0-9_-]*))?/g)) {
+      const task = match[1];
+      if (task && !DEVELOPER_TASKS.has(task)) {
+        fail(`${path}が開発者向けではないcargo-make task ${task}を案内しています`);
+      }
     }
   }
+}
+
+function loadCargoMakeReferenceSources() {
+  const sources = {
+    "CONTRIBUTING.adoc": read("CONTRIBUTING.adoc"),
+    "README.adoc": read("README.adoc"),
+    ".github/pull_request_template.md": read(".github/pull_request_template.md"),
+  };
+  const visit = (directory) => {
+    for (const entry of readdirSync(new URL(directory, ROOT), { withFileTypes: true })) {
+      const path = `${directory}${entry.name}`;
+      if (entry.isDirectory()) {
+        if (!["node_modules", "target", ".vscode-test"].includes(entry.name)) visit(`${path}/`);
+      } else if (/\.(?:adoc|md|mjs|sh)$/.test(entry.name) &&
+                 !/\.test\./.test(entry.name) && path !== "tools/release-workflow-policy.mjs") {
+        sources[path] = read(path);
+      }
+    }
+  };
+  for (const directory of ["docs/", "fuzz/", "tools/"]) visit(directory);
+  return sources;
 }
 
 const REMOVED_RELEASE_ROUTING = [
@@ -417,10 +501,10 @@ export function validateStandardSourceAndCandidateGates(workflows, sources = {})
   const dispatchGuard = source.steps?.find(
     (step) => step.run?.trim() === 'test "$GITHUB_REF" = refs/heads/main',
   );
-  if (occurrences(workflowRuns, "cargo make source-gate") !== 1 ||
-      !jobRuns(source).split("\n").some((run) => run.trim() === "nix develop .#ci -c cargo make source-gate") ||
+  if (occurrences(workflowRuns, "cargo make verify") !== 1 ||
+      !jobRuns(source).split("\n").some((run) => run.trim() === "nix develop .#ci -c cargo make verify") ||
       normalizedCondition(dispatchGuard) !== "github.event_name == 'workflow_dispatch'") {
-    fail("source jobは標準source-gateを1回だけ直接実行してください");
+    fail("source jobは利用者と同じverifyを1回だけ直接実行してください");
   }
 
   const workflowSource = sources["release.yml"] ?? JSON.stringify(release);
@@ -491,6 +575,7 @@ export function loadWorkflowPolicyInputs() {
   }
   return {
     makefile: read("Makefile.toml"),
+    references: loadCargoMakeReferenceSources(),
     sources,
     workflows: Object.fromEntries(
       Object.entries(sources).map(([name, source]) => [name, parseWorkflow(name, source)]),
@@ -498,13 +583,15 @@ export function loadWorkflowPolicyInputs() {
   };
 }
 
-export function validateReleaseWorkflowPolicy({ makefile = read("Makefile.toml"), sources, workflows }) {
+export function validateReleaseWorkflowPolicy({ makefile = read("Makefile.toml"), references = {}, sources, workflows }) {
   validatePinnedActions(workflows);
   validateWritePermissionGrants(workflows);
   validateNoDirectSecretAccess(sources, workflows);
   validateProductReleaseRouting(workflows);
   validateStandardSourceAndCandidateGates(workflows, sources);
   validateGateTaskContract(makefile);
+  validateCargoMakeReferences(references);
+  validateBuildReuseContract(references);
 }
 
 export function main() {

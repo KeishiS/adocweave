@@ -77,7 +77,7 @@ function validateManifest() {
   }
   if (!validator) {
     fail(
-      "ADOCWEAVE_HTML_VALIDATOR is unset; run this check through `cargo make html5-check`",
+      "ADOCWEAVE_HTML_VALIDATOR is unset; run this check through `cargo make verify`",
     );
   }
   const names = new Set();
