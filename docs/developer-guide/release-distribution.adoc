@@ -33,9 +33,10 @@ attestationの確認はxref:../user-guide/release-installation.adoc[インスト
 成果物だけを公開します。変更していない製品の成果物を別のReleaseへコピーせず、同じ製品versionを再発行しません。
 GitHubが自動生成するsource archiveは検証対象の成果物に含めません。
 
-VS Code拡張だけは、GitHub Releaseへ添付したVSIXと同じbyte列をOpen VSX Registryへも公開します。
-Open VSX向けに構築し直しません。ほかのpackage registryへは公開しません。textlint用Processorはnpm互換の
-archiveですが、GitHub ReleaseのURLを明示した導入だけを対象とします。
+registryへも公開する製品では、GitHub Releaseへ添付した成果物と同じbyte列を送り、registry向けに
+構築し直しません。現在registryへ公開する製品はVS Code拡張だけで、公開先はOpen VSX Registryです。
+textlint用Processorはnpm互換のarchiveですが、GitHub ReleaseのURLを明示した導入だけを対象とします。
+Rust crateはcrates.ioへ公開しません。
 
 公開には配布計画の``tagPrefix``に従うstable tagを使用します。tag、source commit、versionの正本、
 配布manifestおよび成果物が一致しない場合は公開しません。
