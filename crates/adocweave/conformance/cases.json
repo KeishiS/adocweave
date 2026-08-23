@@ -1,4 +1,7 @@
 {
+  "schemaVersion": 1,
+  "outputContractVersion": 1,
+  "license": "MIT OR Apache-2.0",
   "cases": [
     {
       "name": "release-lf",
@@ -21,12 +24,12 @@
       "sourceFile": "full.adoc",
       "expectedHtmlFile": "full.html",
       "expectedAstFile": "full.ast.json",
-      "expectedDiagnosticsFile": "full.diagnostics.json",
       "expectedProjectionFile": "full.projection.json",
       "expectedSymbolsFile": "full.symbols.json",
       "compatibility": "approved-adocweave-output",
       "rationale": "未解決文書xrefはホストResolverを暗黙に呼ばず安全なテキストとして出力する",
-      "contractImpact": "none"
+      "contractImpact": "none",
+      "expectedDiagnostics": []
     },
     {
       "name": "asciidoctor-compatible-lists",
@@ -48,11 +51,11 @@
       "name": "math-public-contract",
       "sourceFile": "math-public-contract.adoc",
       "expectedHtmlFile": "math-public-contract.html",
-      "expectedDiagnosticsFile": "math-public-contract.diagnostics.json",
       "expectedProjectionFile": "math-public-contract.projection.json",
       "compatibility": "approved-adocweave-output",
       "rationale": "inlineとblockの数式は同じ言語・表示形式・source・range契約を共有し、hostileなsourceを実行しない",
-      "contractImpact": "core-api,html,conformance,wasm-api"
+      "contractImpact": "core-api,html,conformance,wasm-api",
+      "expectedDiagnostics": []
     },
     {
       "name": "general-backslash-escapes",
@@ -602,74 +605,276 @@
     {
       "name": "public-document-structure",
       "sourceId": "public-conformance:document-structure",
-      "sourceFile": "../public-conformance/document-structure.adoc",
-      "expectedHtmlFile": "../public-conformance/document-structure.html",
-      "expectedDiagnosticsFile": "../public-conformance/document-structure.diagnostics.json",
-      "expectedRenderDiagnosticsFile": "../public-conformance/document-structure.render-diagnostics.json",
-      "expectedProjectionFile": "../public-conformance/document-structure.projection.json",
       "compatibility": "approved-adocweave-output",
       "rationale": "公開fixtureの文書title、TOCおよび節番号をnativeとWASMで同じ出力契約へ固定する",
-      "contractImpact": "conformance,wasm-api"
+      "contractImpact": "conformance,wasm-api",
+      "source": "= Public Contract\n:toc:\n:toclevels: 2\n:sectnums:\n\n== First\n\n=== Child\n\n== Second\n",
+      "publicContract": {
+        "features": [
+          "document-title",
+          "toc",
+          "section-numbers"
+        ],
+        "stableContract": {
+          "projectionAssertions": [
+            {
+              "pointer": "/title/text",
+              "value": "Public Contract"
+            },
+            {
+              "pointer": "/structure/headings/1/number",
+              "value": [
+                1
+              ]
+            },
+            {
+              "pointer": "/structure/toc/0/children/0/number",
+              "value": [
+                1,
+                1
+              ]
+            }
+          ],
+          "htmlContains": [
+            "<h1 class=\"document-title\" id=\"_public_contract\">Public Contract</h1>",
+            "<div class=\"toc\">",
+            "<h2 id=\"_child\">1.1. Child</h2>"
+          ],
+          "diagnosticCodes": [],
+          "renderDiagnosticCodes": []
+        },
+        "implementationDetails": [
+          "generated heading IDs",
+          "HTML whitespace and attribute order"
+        ]
+      }
     },
     {
       "name": "public-source-block",
       "sourceId": "public-conformance:source-block",
-      "sourceFile": "../public-conformance/source-block.adoc",
-      "expectedHtmlFile": "../public-conformance/source-block.html",
-      "expectedDiagnosticsFile": "../public-conformance/source-block.diagnostics.json",
-      "expectedRenderDiagnosticsFile": "../public-conformance/source-block.render-diagnostics.json",
-      "expectedProjectionFile": "../public-conformance/source-block.projection.json",
       "compatibility": "approved-adocweave-output",
       "rationale": "公開fixtureのsource title、linenumsおよび開始行をnativeとWASMで同じ出力契約へ固定する",
-      "contractImpact": "conformance,wasm-api"
+      "contractImpact": "conformance,wasm-api",
+      "source": ".Example <source>\n[source,rust,linenums,start=7]\n----\nfn main() {}\n----\n",
+      "publicContract": {
+        "features": [
+          "source-block",
+          "block-title",
+          "source-language-option",
+          "source-line-numbers",
+          "source-start-line"
+        ],
+        "stableContract": {
+          "projectionAssertions": [
+            {
+              "pointer": "/sourceBlocks/0/title/text",
+              "value": "Example <source>"
+            },
+            {
+              "pointer": "/sourceBlocks/0/language",
+              "value": "rust"
+            },
+            {
+              "pointer": "/sourceBlocks/0/lineNumbers",
+              "value": true
+            },
+            {
+              "pointer": "/sourceBlocks/0/startLine",
+              "value": 7
+            },
+            {
+              "pointer": "/sourceBlocks/0/source",
+              "value": "fn main() {}\n"
+            }
+          ],
+          "htmlContains": [
+            "<figure class=\"source-block\">",
+            "<figcaption>Example &lt;source&gt;</figcaption>",
+            "<pre data-language=\"rust\" data-line-numbers=\"true\" data-line-start=\"7\"><code class=\"language-rust\">fn main() {}"
+          ],
+          "diagnosticCodes": [],
+          "renderDiagnosticCodes": []
+        },
+        "implementationDetails": [
+          "HTML whitespace and attribute order"
+        ]
+      }
     },
     {
       "name": "public-formulas",
       "sourceId": "public-conformance:formulas",
-      "sourceFile": "../public-conformance/formulas.adoc",
-      "expectedHtmlFile": "../public-conformance/formulas.html",
-      "expectedDiagnosticsFile": "../public-conformance/formulas.diagnostics.json",
-      "expectedRenderDiagnosticsFile": "../public-conformance/formulas.render-diagnostics.json",
-      "expectedProjectionFile": "../public-conformance/formulas.projection.json",
       "compatibility": "approved-adocweave-output",
       "rationale": "公開fixtureの数式language、表示形式およびsourceをnativeとWASMで同じ出力契約へ固定する",
-      "contractImpact": "conformance,wasm-api"
+      "contractImpact": "conformance,wasm-api",
+      "source": "= Formula Contract\n:stem: latexmath\n\nInline stem:[x < y].\n\n[stem]\n++++\nx^2 < y\n++++\n",
+      "publicContract": {
+        "features": [
+          "inline-formula",
+          "block-formula"
+        ],
+        "stableContract": {
+          "projectionAssertions": [
+            {
+              "pointer": "/formulas/0/kind",
+              "value": "inline"
+            },
+            {
+              "pointer": "/formulas/0/language",
+              "value": "latex"
+            },
+            {
+              "pointer": "/formulas/0/source",
+              "value": "x < y"
+            },
+            {
+              "pointer": "/formulas/1/kind",
+              "value": "block"
+            },
+            {
+              "pointer": "/formulas/1/language",
+              "value": "latex"
+            },
+            {
+              "pointer": "/formulas/1/source",
+              "value": "x^2 < y\n"
+            }
+          ],
+          "htmlContains": [
+            "<code class=\"math-latex\" data-math-language=\"latexmath\" data-math-display=\"inline\">x &lt; y</code>",
+            "<pre class=\"math-latex\" data-math-language=\"latexmath\" data-math-display=\"block\"><code>x^2 &lt; y"
+          ],
+          "diagnosticCodes": [],
+          "renderDiagnosticCodes": []
+        },
+        "implementationDetails": [
+          "math engine integration",
+          "HTML whitespace and attribute order"
+        ]
+      }
     },
     {
       "name": "public-blocks",
       "sourceId": "public-conformance:blocks",
-      "sourceFile": "../public-conformance/blocks.adoc",
-      "expectedHtmlFile": "../public-conformance/blocks.html",
-      "expectedDiagnosticsFile": "../public-conformance/blocks.diagnostics.json",
-      "expectedRenderDiagnosticsFile": "../public-conformance/blocks.render-diagnostics.json",
-      "expectedProjectionFile": "../public-conformance/blocks.projection.json",
       "compatibility": "approved-adocweave-output",
       "rationale": "公開fixtureのtable、quoteおよびlistをnativeとWASMで同じ出力契約へ固定する",
-      "contractImpact": "conformance,wasm-api"
+      "contractImpact": "conformance,wasm-api",
+      "source": ".Public table\n[cols=\"1,1\",options=\"header\"]\n|===\n|Name |Value\n\n|alpha |one\n|===\n\n[quote,Author,Work]\n____\nQuoted text.\n____\n\n* first\n** nested\n\n.Public example\n====\nExample body.\n====\n\n.Public details\n[%collapsible]\n====\nHidden body.\n====\n",
+      "publicContract": {
+        "features": [
+          "table",
+          "quote",
+          "unordered-list"
+        ],
+        "stableContract": {
+          "projectionAssertions": [
+            {
+              "pointer": "/blockPresentations/0/kind",
+              "value": "table"
+            },
+            {
+              "pointer": "/blockPresentations/0/caption",
+              "value": "Table 1"
+            },
+            {
+              "pointer": "/blockPresentations/1/kind",
+              "value": "quote"
+            },
+            {
+              "pointer": "/blockPresentations/1/attribution",
+              "value": "Author"
+            },
+            {
+              "pointer": "/blockPresentations/1/citation",
+              "value": "Work"
+            }
+          ],
+          "htmlContains": [
+            "<caption>Table 1. Public table</caption>",
+            "<div class=\"quote\">",
+            "<cite>Work</cite>",
+            "<ul>\n<li>first"
+          ],
+          "diagnosticCodes": [],
+          "renderDiagnosticCodes": []
+        },
+        "implementationDetails": [
+          "HTML whitespace and attribute order",
+          "projection fields not selected by stableContract"
+        ]
+      }
     },
     {
       "name": "public-diagnostics",
       "sourceId": "public-conformance:diagnostics",
-      "sourceFile": "../public-conformance/diagnostics.adoc",
-      "expectedHtmlFile": "../public-conformance/diagnostics.html",
-      "expectedDiagnosticsFile": "../public-conformance/diagnostics.diagnostics.json",
-      "expectedRenderDiagnosticsFile": "../public-conformance/diagnostics.render-diagnostics.json",
-      "expectedProjectionFile": "../public-conformance/diagnostics.projection.json",
       "compatibility": "approved-adocweave-output",
       "rationale": "公開fixtureの安全でないURL診断とfallbackをnativeとWASMで同じ出力契約へ固定する",
-      "contractImpact": "conformance,wasm-api"
+      "contractImpact": "conformance,wasm-api",
+      "source": "javascript:alert(1)[unsafe]\n",
+      "publicContract": {
+        "features": [
+          "unsafe-url",
+          "diagnostic"
+        ],
+        "stableContract": {
+          "projectionAssertions": [
+            {
+              "pointer": "/externalLinks/0/target",
+              "value": "javascript:alert(1)"
+            }
+          ],
+          "htmlContains": [
+            "<p>unsafe</p>"
+          ],
+          "diagnosticCodes": [
+            "invalid-url-scheme"
+          ],
+          "renderDiagnosticCodes": [
+            "invalid-url-scheme"
+          ]
+        },
+        "implementationDetails": [
+          "diagnostic message wording",
+          "diagnostic IDs and source ranges"
+        ]
+      }
     },
     {
       "name": "public-unsupported-source-option",
       "sourceId": "public-conformance:unsupported-source-option",
-      "sourceFile": "../public-conformance/unsupported-source-option.adoc",
-      "expectedHtmlFile": "../public-conformance/unsupported-source-option.html",
-      "expectedDiagnosticsFile": "../public-conformance/unsupported-source-option.diagnostics.json",
-      "expectedRenderDiagnosticsFile": "../public-conformance/unsupported-source-option.render-diagnostics.json",
-      "expectedProjectionFile": "../public-conformance/unsupported-source-option.projection.json",
       "compatibility": "approved-adocweave-output",
       "rationale": "公開fixtureの未対応source option診断と安全なlisting回復をnativeとWASMで同じ出力契約へ固定する",
-      "contractImpact": "conformance,wasm-api"
+      "contractImpact": "conformance,wasm-api",
+      "source": "[source,rust,options=unknown]\n----\nunsupported();\n----\n",
+      "publicContract": {
+        "features": [
+          "source-block",
+          "unsupported-source-option",
+          "diagnostic"
+        ],
+        "stableContract": {
+          "projectionAssertions": [
+            {
+              "pointer": "/sourceBlocks/0/language",
+              "value": "rust"
+            }
+          ],
+          "htmlContains": [
+            "<pre><code class=\"language-rust\">unsupported();"
+          ],
+          "diagnosticCodes": [
+            "invalid-attribute"
+          ],
+          "renderDiagnosticCodes": []
+        },
+        "implementationDetails": [
+          "diagnostic message wording",
+          "diagnostic IDs and source ranges"
+        ]
+      }
     }
+  ],
+  "globalImplementationDetails": [
+    "JSON object key order and whitespace",
+    "HTML byte-for-byte equality outside stableContract"
   ]
 }
