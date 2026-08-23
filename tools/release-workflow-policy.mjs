@@ -44,6 +44,13 @@ const ALLOWED_SECRET_REFERENCES = new Map([
 ]);
 const SECRET_REFERENCE = /secrets\.[A-Za-z_][A-Za-z0-9_]*/g;
 const RELEASE_PRODUCTS = ["cli", "lsp", "browser", "textlint", "vscode", "zed"];
+const RUST_CACHE_ACTION = "Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6";
+
+function isBuildCache(step) {
+  const action = (step?.uses ?? "").toLowerCase();
+  return action.startsWith("swatinem/rust-cache@") ||
+    action.startsWith("actions/cache@") || action.startsWith("actions/cache/");
+}
 
 function fail(message) {
   throw new Error(message);
@@ -514,6 +521,26 @@ export function validateStandardSourceAndCandidateGates(workflows, sources = {})
       !jobRuns(source).split("\n").some((run) => run.trim() === "nix develop .#ci -c cargo make verify") ||
       normalizedCondition(dispatchGuard) !== "github.event_name == 'workflow_dispatch'") {
     fail("source jobは利用者と同じverifyを1回だけ直接実行してください");
+  }
+
+  const sourceSteps = source.steps ?? [];
+  const sourceCaches = sourceSteps.filter(isBuildCache);
+  const sourceCache = sourceCaches[0];
+  const toolchainExposure = sourceSteps.find(
+    (step) => step.run?.trim() ===
+      'nix develop .#ci -c bash -c \'command -v cargo\' | xargs dirname >> "$GITHUB_PATH"',
+  );
+  if (sourceCaches.length !== 1 || sourceCache.uses !== RUST_CACHE_ACTION ||
+      toolchainExposure === undefined ||
+      sourceSteps.indexOf(toolchainExposure) + 1 !== sourceSteps.indexOf(sourceCache) ||
+      sourceSteps.indexOf(sourceCache) >= sourceSteps.findIndex((step) => step.run?.includes("cargo make verify")) ||
+      sourceCache.with["prefix-key"] !== "source" ||
+      sourceCache.with.key !== "${{ hashFiles('flake.lock', 'flake.nix', 'nix/**/*.nix') }}" ||
+      sourceCache.with.workspaces?.trim() !== ". -> target\neditors/zed -> target" ||
+      sourceCache.with["cache-bin"] !== "false" ||
+      sourceCache.with["cache-on-failure"] !== "false" ||
+      sourceCache.with["save-if"] !== "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}") {
+    fail("source jobのRust cacheは固定toolchainと2つのworkspaceを対象にし、main pushだけで保存してください");
   }
 
   const workflowSource = sources["release.yml"] ?? JSON.stringify(release);
