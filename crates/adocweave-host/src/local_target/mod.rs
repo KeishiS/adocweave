@@ -1814,7 +1814,7 @@ mod tests {
         let target_parent = TestDir::new();
         let target = target_parent.0.join("project.toml");
         let selected = selected_parent.0.join("selected.toml");
-        fs::write(&target, "schema-version = 1\n").expect("target file");
+        fs::write(&target, "schema-version = 2\n").expect("target file");
         symlink(&target, &selected).expect("selected symlink");
 
         let (policy, loaded) =
@@ -1822,7 +1822,7 @@ mod tests {
 
         assert_eq!(policy.root(), target_parent.0);
         assert_eq!(loaded.canonical_path(), target);
-        assert_eq!(loaded.source(), "schema-version = 1\n");
+        assert_eq!(loaded.source(), "schema-version = 2\n");
     }
 
     #[cfg(target_os = "linux")]
@@ -1833,7 +1833,7 @@ mod tests {
         let parent = TestDir::new();
         let outside = TestDir::new();
         let selected = parent.0.join("project.toml");
-        fs::write(&selected, "schema-version = 1\n").expect("trusted file");
+        fs::write(&selected, "schema-version = 2\n").expect("trusted file");
         fs::write(outside.0.join("project.toml"), "schema-version = 99\n").expect("outside file");
         let displaced = parent.0.with_extension("explicit-authority");
 
@@ -1844,7 +1844,7 @@ mod tests {
         .expect("stable explicit file");
 
         assert_eq!(policy.root(), displaced);
-        assert_eq!(loaded.source(), "schema-version = 1\n");
+        assert_eq!(loaded.source(), "schema-version = 2\n");
         assert_ne!(loaded.source(), "schema-version = 99\n");
         fs::remove_file(&parent.0).expect("remove replacement symlink");
         fs::rename(&displaced, &parent.0).expect("restore selected parent");

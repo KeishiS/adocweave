@@ -7,9 +7,9 @@ use schemars::generate::SchemaSettings;
 use serde_json::{Map, Value, json};
 
 use super::{
-    DEFAULT_WORKSPACE_SCAN_EXCLUDES, MAX_WORKSPACE_SCAN_EXCLUDES,
-    MAX_WORKSPACE_SCAN_PATTERN_CHARACTERS, ProjectConfigWire, ResolvedProjectConfig,
-    ResolvedResourceLimitPlan, SCHEMA_VERSION, SyntaxModeWire, default_blank_lines,
+    MAX_WORKSPACE_SCAN_EXCLUDES, MAX_WORKSPACE_SCAN_PATTERN_CHARACTERS, ProjectConfigWire,
+    ResolvedProjectConfig, ResolvedResourceLimitPlan, SCHEMA_VERSION, SyntaxModeWire,
+    default_blank_lines,
 };
 
 const SCHEMA_PATH: &str = "config/adocweave.schema.json";
@@ -168,8 +168,8 @@ fn generated_schema() -> Value {
             "type": "array",
             "items": { "$ref": "#/$defs/workspaceScanPattern" },
             "maxItems": MAX_WORKSPACE_SCAN_EXCLUDES,
-            "uniqueItems": true,
-            "default": DEFAULT_WORKSPACE_SCAN_EXCLUDES
+            "default": [],
+            "description": "初期ワークスペース走査で組込みの除外patternへ追加するpattern。組込みの**/.git、**/.venv、**/node_modulesおよび**/targetは常に適用し、同じpatternの重複は無視します。"
         }),
     );
 
@@ -267,150 +267,150 @@ fn generated_schema_covers_the_configuration_contract() {
     let exact_pattern_length = "😀".repeat(MAX_WORKSPACE_SCAN_PATTERN_CHARACTERS);
     let excessive_pattern_length = format!("{exact_pattern_length}😀");
     let shared_cases = vec![
-        ("minimal", json!({ "schema-version": 1 }), true),
+        ("minimal", json!({ "schema-version": SCHEMA_VERSION }), true),
         (
             "resource roots",
-            json!({ "schema-version": 1, "resources": { "roots": ["docs", "docs/api"] } }),
+            json!({ "schema-version": SCHEMA_VERSION, "resources": { "roots": ["docs", "docs/api"] } }),
             true,
         ),
         (
             "stylesheet file",
-            json!({ "schema-version": 1, "html": { "stylesheet-files": ["styles/manual.css"] } }),
+            json!({ "schema-version": SCHEMA_VERSION, "html": { "stylesheet-files": ["styles/manual.css"] } }),
             true,
         ),
         (
             "disabled local targets without root",
-            json!({ "schema-version": 1, "local-targets": { "enabled": false } }),
+            json!({ "schema-version": SCHEMA_VERSION, "local-targets": { "enabled": false } }),
             true,
         ),
         (
             "enabled local targets with root",
-            json!({ "schema-version": 1, "local-targets": { "enabled": true, "project-root": "docs" } }),
+            json!({ "schema-version": SCHEMA_VERSION, "local-targets": { "enabled": true, "project-root": "docs" } }),
             true,
         ),
         (
             "equal resource limits",
-            json!({ "schema-version": 1, "resources": { "max-total-bytes": 1000, "max-resource-bytes": 1000 } }),
+            json!({ "schema-version": SCHEMA_VERSION, "resources": { "max-total-bytes": 1000, "max-resource-bytes": 1000 } }),
             true,
         ),
         (
             "workspace pattern total at the limit",
-            json!({ "schema-version": 1, "workspace": { "scan": { "exclude": exact_pattern_total } } }),
+            json!({ "schema-version": SCHEMA_VERSION, "workspace": { "scan": { "exclude": exact_pattern_total } } }),
             true,
         ),
         (
             "workspace pattern length at the Unicode scalar limit",
-            json!({ "schema-version": 1, "workspace": { "scan": { "exclude": [exact_pattern_length] } } }),
+            json!({ "schema-version": SCHEMA_VERSION, "workspace": { "scan": { "exclude": [exact_pattern_length] } } }),
             true,
         ),
         (
             "workspace pattern exceeds the Unicode scalar limit",
-            json!({ "schema-version": 1, "workspace": { "scan": { "exclude": [excessive_pattern_length] } } }),
+            json!({ "schema-version": SCHEMA_VERSION, "workspace": { "scan": { "exclude": [excessive_pattern_length] } } }),
             false,
         ),
         (
             "workspace patterns",
-            json!({ "schema-version": 1, "workspace": { "scan": { "exclude": [".git", "**/.venv", "build-*", "tmp/?ache"] } } }),
+            json!({ "schema-version": SCHEMA_VERSION, "workspace": { "scan": { "exclude": [".git", "**/.venv", "build-*", "tmp/?ache"] } } }),
             true,
         ),
         (
             "parent resource root",
-            json!({ "schema-version": 1, "resources": { "roots": ["../escape"] } }),
+            json!({ "schema-version": SCHEMA_VERSION, "resources": { "roots": ["../escape"] } }),
             false,
         ),
         (
             "absolute resource root",
-            json!({ "schema-version": 1, "resources": { "roots": ["/abs"] } }),
+            json!({ "schema-version": SCHEMA_VERSION, "resources": { "roots": ["/abs"] } }),
             false,
         ),
         (
             "resource root with drive name",
-            json!({ "schema-version": 1, "resources": { "roots": ["C:/docs"] } }),
+            json!({ "schema-version": SCHEMA_VERSION, "resources": { "roots": ["C:/docs"] } }),
             false,
         ),
         (
             "resource root with platform-specific separator",
-            json!({ "schema-version": 1, "resources": { "roots": ["docs\\api"] } }),
+            json!({ "schema-version": SCHEMA_VERSION, "resources": { "roots": ["docs\\api"] } }),
             false,
         ),
         (
             "absolute project root",
-            json!({ "schema-version": 1, "local-targets": { "project-root": "/abs" } }),
+            json!({ "schema-version": SCHEMA_VERSION, "local-targets": { "project-root": "/abs" } }),
             false,
         ),
         (
             "parent project root",
-            json!({ "schema-version": 1, "local-targets": { "project-root": "../escape" } }),
+            json!({ "schema-version": SCHEMA_VERSION, "local-targets": { "project-root": "../escape" } }),
             false,
         ),
         (
             "project root with drive name",
-            json!({ "schema-version": 1, "local-targets": { "project-root": "C:/docs" } }),
+            json!({ "schema-version": SCHEMA_VERSION, "local-targets": { "project-root": "C:/docs" } }),
             false,
         ),
         (
             "project root with platform-specific separator",
-            json!({ "schema-version": 1, "local-targets": { "project-root": "docs\\api" } }),
+            json!({ "schema-version": SCHEMA_VERSION, "local-targets": { "project-root": "docs\\api" } }),
             false,
         ),
         (
             "absolute stylesheet file",
-            json!({ "schema-version": 1, "html": { "stylesheet-files": ["/abs/style.css"] } }),
+            json!({ "schema-version": SCHEMA_VERSION, "html": { "stylesheet-files": ["/abs/style.css"] } }),
             false,
         ),
         (
             "parent stylesheet file",
-            json!({ "schema-version": 1, "html": { "stylesheet-files": ["../style.css"] } }),
+            json!({ "schema-version": SCHEMA_VERSION, "html": { "stylesheet-files": ["../style.css"] } }),
             false,
         ),
         (
             "stylesheet file with drive name",
-            json!({ "schema-version": 1, "html": { "stylesheet-files": ["C:/styles/manual.css"] } }),
+            json!({ "schema-version": SCHEMA_VERSION, "html": { "stylesheet-files": ["C:/styles/manual.css"] } }),
             false,
         ),
         (
             "stylesheet file with platform-specific separator",
-            json!({ "schema-version": 1, "html": { "stylesheet-files": ["styles\\manual.css"] } }),
+            json!({ "schema-version": SCHEMA_VERSION, "html": { "stylesheet-files": ["styles\\manual.css"] } }),
             false,
         ),
         (
             "enabled local targets without root",
-            json!({ "schema-version": 1, "local-targets": { "enabled": true } }),
+            json!({ "schema-version": SCHEMA_VERSION, "local-targets": { "enabled": true } }),
             false,
         ),
         (
             "unknown field",
-            json!({ "schema-version": 1, "unknown-section": { "value": 1 } }),
+            json!({ "schema-version": SCHEMA_VERSION, "unknown-section": { "value": 1 } }),
             false,
         ),
         (
             "absolute workspace pattern",
-            json!({ "schema-version": 1, "workspace": { "scan": { "exclude": ["/target"] } } }),
+            json!({ "schema-version": SCHEMA_VERSION, "workspace": { "scan": { "exclude": ["/target"] } } }),
             false,
         ),
         (
             "parent workspace pattern",
-            json!({ "schema-version": 1, "workspace": { "scan": { "exclude": ["cache/../target"] } } }),
+            json!({ "schema-version": SCHEMA_VERSION, "workspace": { "scan": { "exclude": ["cache/../target"] } } }),
             false,
         ),
         (
             "platform-specific workspace separator",
-            json!({ "schema-version": 1, "workspace": { "scan": { "exclude": ["cache\\target"] } } }),
+            json!({ "schema-version": SCHEMA_VERSION, "workspace": { "scan": { "exclude": ["cache\\target"] } } }),
             false,
         ),
         (
             "recursive wildcard inside segment",
-            json!({ "schema-version": 1, "workspace": { "scan": { "exclude": ["cache/**target"] } } }),
+            json!({ "schema-version": SCHEMA_VERSION, "workspace": { "scan": { "exclude": ["cache/**target"] } } }),
             false,
         ),
         (
             "duplicate workspace pattern",
-            json!({ "schema-version": 1, "workspace": { "scan": { "exclude": ["target", "target"] } } }),
-            false,
+            json!({ "schema-version": SCHEMA_VERSION, "workspace": { "scan": { "exclude": ["target", "target"] } } }),
+            true,
         ),
         (
             "unsupported schema version",
-            json!({ "schema-version": 2 }),
+            json!({ "schema-version": 1 }),
             false,
         ),
     ];
@@ -428,11 +428,11 @@ fn generated_schema_covers_the_configuration_contract() {
     for (name, config) in [
         (
             "excessive workspace pattern total",
-            json!({ "schema-version": 1, "workspace": { "scan": { "exclude": excessive_patterns } } }),
+            json!({ "schema-version": SCHEMA_VERSION, "workspace": { "scan": { "exclude": excessive_patterns } } }),
         ),
         (
             "resource limit exceeds total",
-            json!({ "schema-version": 1, "resources": { "max-total-bytes": 1000, "max-resource-bytes": 1001 } }),
+            json!({ "schema-version": SCHEMA_VERSION, "resources": { "max-total-bytes": 1000, "max-resource-bytes": 1001 } }),
         ),
     ] {
         assert!(validator.is_valid(&config), "schema: {name}");
@@ -457,66 +457,66 @@ fn generated_schema_enforces_types_enums_and_single_field_limits() {
         .collect::<Vec<_>>();
     let invalid = vec![
         ("missing schema version", json!({})),
-        ("schema version type", json!({ "schema-version": "1" })),
+        ("schema version type", json!({ "schema-version": "2" })),
         (
             "TOML optional field cannot be null",
-            json!({ "schema-version": 1, "format": { "newline": null } }),
+            json!({ "schema-version": SCHEMA_VERSION, "format": { "newline": null } }),
         ),
         (
             "nested unknown field",
-            json!({ "schema-version": 1, "analysis": { "unknown": true } }),
+            json!({ "schema-version": SCHEMA_VERSION, "analysis": { "unknown": true } }),
         ),
         (
             "syntax enum",
-            json!({ "schema-version": 1, "analysis": { "syntax-mode": "lenient" } }),
+            json!({ "schema-version": SCHEMA_VERSION, "analysis": { "syntax-mode": "lenient" } }),
         ),
         (
             "severity enum",
-            json!({ "schema-version": 1, "lint": { "rules": { "line-too-long": { "severity": "fatal" } } } }),
+            json!({ "schema-version": SCHEMA_VERSION, "lint": { "rules": { "line-too-long": { "severity": "fatal" } } } }),
         ),
         (
             "newline enum",
-            json!({ "schema-version": 1, "format": { "newline": "native" } }),
+            json!({ "schema-version": SCHEMA_VERSION, "format": { "newline": "native" } }),
         ),
         (
             "unknown lint rule",
-            json!({ "schema-version": 1, "lint": { "rules": { "unknown": {} } } }),
+            json!({ "schema-version": SCHEMA_VERSION, "lint": { "rules": { "unknown": {} } } }),
         ),
         (
             "zero lint limit",
-            json!({ "schema-version": 1, "lint": { "max-line-length": 0 } }),
+            json!({ "schema-version": SCHEMA_VERSION, "lint": { "max-line-length": 0 } }),
         ),
         (
             "resource file ceiling",
-            json!({ "schema-version": 1, "resources": { "max-files": resource_limits.max_files + 1 } }),
+            json!({ "schema-version": SCHEMA_VERSION, "resources": { "max-files": resource_limits.max_files + 1 } }),
         ),
         (
             "resource total ceiling",
-            json!({ "schema-version": 1, "resources": { "max-total-bytes": resource_limits.max_total_bytes + 1 } }),
+            json!({ "schema-version": SCHEMA_VERSION, "resources": { "max-total-bytes": resource_limits.max_total_bytes + 1 } }),
         ),
         (
             "resource item ceiling",
-            json!({ "schema-version": 1, "resources": { "max-resource-bytes": resource_limits.max_resource_bytes + 1 } }),
+            json!({ "schema-version": SCHEMA_VERSION, "resources": { "max-resource-bytes": resource_limits.max_resource_bytes + 1 } }),
         ),
         (
             "workspace pattern count",
-            json!({ "schema-version": 1, "workspace": { "scan": { "exclude": too_many_patterns } } }),
+            json!({ "schema-version": SCHEMA_VERSION, "workspace": { "scan": { "exclude": too_many_patterns } } }),
         ),
         (
             "workspace pattern length",
-            json!({ "schema-version": 1, "workspace": { "scan": { "exclude": ["a".repeat(MAX_WORKSPACE_SCAN_PATTERN_CHARACTERS + 1)] } } }),
+            json!({ "schema-version": SCHEMA_VERSION, "workspace": { "scan": { "exclude": ["a".repeat(MAX_WORKSPACE_SCAN_PATTERN_CHARACTERS + 1)] } } }),
         ),
         (
             "zero format limit",
-            json!({ "schema-version": 1, "format": { "max-consecutive-blank-lines": 0 } }),
+            json!({ "schema-version": SCHEMA_VERSION, "format": { "max-consecutive-blank-lines": 0 } }),
         ),
         (
             "invalid HTML role",
-            json!({ "schema-version": 1, "html": { "roles": ["not valid"] } }),
+            json!({ "schema-version": SCHEMA_VERSION, "html": { "roles": ["not valid"] } }),
         ),
         (
             "ambiguous attribute",
-            json!({ "schema-version": 1, "analysis": { "attributes": { "release": { "value": "draft", "unset": true } } } }),
+            json!({ "schema-version": SCHEMA_VERSION, "analysis": { "attributes": { "release": { "value": "draft", "unset": true } } } }),
         ),
     ];
     for (name, config) in invalid {
@@ -526,15 +526,15 @@ fn generated_schema_enforces_types_enums_and_single_field_limits() {
     for (name, config) in [
         (
             "resource roots may repeat because the runtime preserves them",
-            json!({ "schema-version": 1, "resources": { "roots": ["docs", "docs"] } }),
+            json!({ "schema-version": SCHEMA_VERSION, "resources": { "roots": ["docs", "docs"] } }),
         ),
         (
             "empty stylesheet URL remains a runtime value",
-            json!({ "schema-version": 1, "html": { "stylesheet-urls": [""] } }),
+            json!({ "schema-version": SCHEMA_VERSION, "html": { "stylesheet-urls": [""] } }),
         ),
         (
             "single lint rule field",
-            json!({ "schema-version": 1, "lint": { "rules": { "line-too-long": { "enabled": false } } } }),
+            json!({ "schema-version": SCHEMA_VERSION, "lint": { "rules": { "line-too-long": { "enabled": false } } } }),
         ),
     ] {
         assert!(validator.is_valid(&config), "schema rejected {name}");

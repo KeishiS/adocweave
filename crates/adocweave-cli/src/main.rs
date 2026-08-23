@@ -2138,7 +2138,7 @@ mod tests {
         let config = directory.path().join(adocweave_config::FILE_NAME);
         std::fs::write(
             &config,
-            "schema-version = 1\n[resources]\nroots = [\".\"]\nmax-files = 2\nmax-total-bytes = 16\nmax-resource-bytes = 8\n",
+            "schema-version = 2\n[resources]\nroots = [\".\"]\nmax-files = 2\nmax-total-bytes = 16\nmax-resource-bytes = 8\n",
         )
         .expect("initial config");
         let Action::Run(arguments) = parse_arguments(arguments(&[
@@ -2160,7 +2160,7 @@ mod tests {
                 if index == 0 {
                     std::fs::write(
                         &config,
-                        "schema-version = 1\n[resources]\nroots = [\".\"]\nmax-files = 2\nmax-total-bytes = 1\nmax-resource-bytes = 1\n",
+                        "schema-version = 2\n[resources]\nroots = [\".\"]\nmax-files = 2\nmax-total-bytes = 1\nmax-resource-bytes = 1\n",
                     )
                     .expect("stricter config");
                 }
@@ -2186,7 +2186,7 @@ mod tests {
         std::fs::write(root.join("style.css"), "trusted-style").expect("trusted stylesheet");
         std::fs::write(
             root.join(adocweave_config::FILE_NAME),
-            "schema-version = 1\n[resources]\nroots = [\".\"]\n[html]\ncomplete = true\nstylesheet-files = [\"style.css\"]\n",
+            "schema-version = 2\n[resources]\nroots = [\".\"]\n[html]\ncomplete = true\nstylesheet-files = [\"style.css\"]\n",
         )
         .expect("trusted configuration");
         let Action::Run(arguments) = parse_arguments(
@@ -2250,7 +2250,7 @@ mod tests {
         let target = external.path().join("project.toml");
         std::fs::write(
             &target,
-            "schema-version = 1\n[html]\ncomplete = true\nstylesheet-files = [\"style.css\"]\n",
+            "schema-version = 2\n[html]\ncomplete = true\nstylesheet-files = [\"style.css\"]\n",
         )
         .expect("external configuration");
         std::fs::write(external.path().join("style.css"), "external-style")

@@ -612,7 +612,7 @@ async fn protocol_reports_an_incomplete_scan_once_without_document_diagnostics()
     let config_path = root.join(adocweave_config::FILE_NAME);
     fs::write(
         &config_path,
-        "schema-version = 1\n[resources]\nmax-files = 1\n",
+        "schema-version = 2\n[resources]\nmax-files = 1\n",
     )
     .expect("configuration");
     for name in ["a.adoc", "b.adoc", "c.adoc"] {

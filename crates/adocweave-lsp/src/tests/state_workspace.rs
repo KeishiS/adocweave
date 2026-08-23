@@ -13,7 +13,7 @@ fn scan_notice_episode_ends_after_a_complete_scan() {
     for name in ["a.adoc", "b.adoc", "c.adoc"] {
         fs::write(root.join(name), "text\n").expect("document");
     }
-    fs::write(&config, "schema-version = 1\n[resources]\nmax-files = 1\n")
+    fs::write(&config, "schema-version = 2\n[resources]\nmax-files = 1\n")
         .expect("limited configuration");
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
     let expected = WorkspaceScanNotice::ProjectResourceLimit {
@@ -39,12 +39,12 @@ fn scan_notice_episode_ends_after_a_complete_scan() {
     let failed = service.apply_workspace_scan(failed);
     assert!(!failed.installed);
     assert!(failed.notices.is_empty());
-    fs::write(&config, "schema-version = 1\n[resources]\nmax-files = 1\n")
+    fs::write(&config, "schema-version = 2\n[resources]\nmax-files = 1\n")
         .expect("recovered limited configuration");
     let recovered = service.plan_workspace_scan(&adocweave::NeverCancel);
     assert!(service.apply_workspace_scan(recovered).notices.is_empty());
 
-    fs::write(&config, "schema-version = 1\n[resources]\nmax-files = 8\n")
+    fs::write(&config, "schema-version = 2\n[resources]\nmax-files = 8\n")
         .expect("complete configuration");
     let complete = service.plan_workspace_scan(&adocweave::NeverCancel);
     let complete = service.apply_workspace_scan(complete);
@@ -52,7 +52,7 @@ fn scan_notice_episode_ends_after_a_complete_scan() {
     assert!(complete.notices.is_empty());
     assert_eq!(service.workspace_analysis_count(), 3);
 
-    fs::write(&config, "schema-version = 1\n[resources]\nmax-files = 1\n")
+    fs::write(&config, "schema-version = 2\n[resources]\nmax-files = 1\n")
         .expect("limited configuration");
     let recurrence = service.plan_workspace_scan(&adocweave::NeverCancel);
     assert_eq!(
@@ -75,7 +75,7 @@ fn workspace_folder_change_starts_a_new_scan_notice_episode() {
     fs::create_dir_all(&limited).expect("limited workspace");
     fs::create_dir_all(&added).expect("added workspace");
     let config = limited.join(adocweave_config::FILE_NAME);
-    fs::write(&config, "schema-version = 1\n[resources]\nmax-files = 1\n")
+    fs::write(&config, "schema-version = 2\n[resources]\nmax-files = 1\n")
         .expect("limited configuration");
     for name in ["a.adoc", "b.adoc"] {
         fs::write(limited.join(name), "text\n").expect("document");
@@ -113,33 +113,39 @@ fn workspace_folder_change_starts_a_new_scan_notice_episode() {
 }
 
 #[test]
-fn initial_workspace_scan_prunes_configured_directories() {
+fn initial_workspace_scan_prunes_builtin_and_additional_directories() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock")
         .as_nanos();
     let root = std::env::temp_dir().join(format!("adocweave-scan-exclude-{unique}"));
     let excluded = root.join("generated");
+    let builtin_excluded = root.join("nested/target");
     fs::create_dir_all(&excluded).expect("excluded directory");
+    fs::create_dir_all(&builtin_excluded).expect("built-in excluded directory");
     fs::write(
         root.join(adocweave_config::FILE_NAME),
-        "schema-version = 1\n[workspace.scan]\nexclude = [\"generated\"]\n",
+        "schema-version = 2\n[workspace.scan]\nexclude = [\"generated\"]\n",
     )
     .expect("configuration");
     fs::write(root.join("root.adoc"), "= Root\n").expect("root document");
     fs::write(excluded.join("unreadable.adoc"), [0xff]).expect("invalid UTF-8 document");
+    fs::write(builtin_excluded.join("unreadable.adoc"), [0xff])
+        .expect("built-in excluded document");
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
     let document_uri = lsp::Url::from_file_path(root.join("root.adoc")).expect("document URI");
 
     let mut service = LanguageService::default();
-    initialize_with_params(
-        &mut service,
-        typed(json!({
-            "processId": null,
-            "rootUri": root_uri,
-            "capabilities": {}
-        })),
-    );
+    service.initialize(&typed(json!({
+        "processId": null,
+        "rootUri": root_uri,
+        "capabilities": {}
+    })));
+    let scan = service.plan_workspace_scan(&adocweave::NeverCancel);
+    let applied = service.apply_workspace_scan(scan);
+    assert!(applied.installed);
+    assert!(applied.notices.is_empty());
+    assert_eq!(service.workspace_analysis_count(), 1);
     open(&mut service, document_uri.as_str(), 1, "= Root\n");
 
     assert!(
@@ -165,7 +171,7 @@ fn excluded_include_targets_are_loaded_without_becoming_analysis_roots() {
     fs::write(
         root.join(adocweave_config::FILE_NAME),
         concat!(
-            "schema-version = 1\n",
+            "schema-version = 2\n",
             "[resources]\ninclude = true\nroots = [\".\"]\n",
             "[workspace.scan]\nexclude = [\"generated\"]\n",
         ),
@@ -208,7 +214,7 @@ fn non_adoc_include_is_loaded_and_watched_without_becoming_an_analysis_root() {
     fs::create_dir_all(&root).expect("workspace");
     fs::write(
         root.join(adocweave_config::FILE_NAME),
-        "schema-version = 1\n[resources]\ninclude = true\nroots = [\".\"]\n",
+        "schema-version = 2\n[resources]\ninclude = true\nroots = [\".\"]\n",
     )
     .expect("configuration");
     let document_path = root.join("root.adoc");
@@ -331,7 +337,7 @@ fn initially_missing_non_adoc_include_recovers_when_created() {
     fs::write(
         root.join(adocweave_config::FILE_NAME),
         concat!(
-            "schema-version = 1\n",
+            "schema-version = 2\n",
             "[resources]\ninclude = true\nroots = [\".\"]\n",
             "[workspace.scan]\nexclude = [\"generated\"]\n",
         ),
@@ -452,7 +458,7 @@ fn pending_non_adoc_include_recovers_from_a_workspace_problem() {
     fs::create_dir_all(&root).expect("workspace");
     fs::write(
         root.join(adocweave_config::FILE_NAME),
-        "schema-version = 1\n[resources]\ninclude = true\nroots = [\".\"]\n",
+        "schema-version = 2\n[resources]\ninclude = true\nroots = [\".\"]\n",
     )
     .expect("configuration");
     let document_path = root.join("root.adoc");
@@ -641,7 +647,7 @@ fn include_added_after_initial_scan_loads_an_excluded_target() {
     fs::write(
         root.join(adocweave_config::FILE_NAME),
         concat!(
-            "schema-version = 1\n",
+            "schema-version = 2\n",
             "[resources]\ninclude = true\nroots = [\".\"]\n",
             "[workspace.scan]\nexclude = [\"generated\"]\n",
         ),
@@ -705,7 +711,7 @@ fn stale_analysis_cannot_load_a_new_include_resource() {
     fs::write(
         root.join(adocweave_config::FILE_NAME),
         concat!(
-            "schema-version = 1\n",
+            "schema-version = 2\n",
             "[resources]\ninclude = true\nroots = [\".\"]\n",
             "[workspace.scan]\nexclude = [\"generated\"]\n",
         ),
@@ -782,7 +788,7 @@ async fn different_project_scopes_sharing_an_include_converge_on_the_current_gen
         fs::write(
             project.join(adocweave_config::FILE_NAME),
             format!(
-                "schema-version = 1\n[resources]\ninclude = true\nroots = [\".\"]\nmax-files = {max_files}\n"
+                "schema-version = 2\n[resources]\ninclude = true\nroots = [\".\"]\nmax-files = {max_files}\n"
             ),
         )
         .expect("project configuration");
@@ -934,7 +940,7 @@ fn explicitly_opened_document_remains_available_below_an_excluded_directory() {
     fs::create_dir_all(&excluded).expect("excluded directory");
     fs::write(
         root.join(adocweave_config::FILE_NAME),
-        "schema-version = 1\n[workspace.scan]\nexclude = [\"generated\"]\n",
+        "schema-version = 2\n[workspace.scan]\nexclude = [\"generated\"]\n",
     )
     .expect("configuration");
     let document_path = excluded.join("opened.adoc");
@@ -1103,7 +1109,7 @@ fn oversized_did_open_preserves_every_committed_state_and_emits_no_job() {
     fs::create_dir_all(&root).expect("workspace");
     fs::write(
         root.join(adocweave_config::FILE_NAME),
-        "schema-version = 1\n[resources]\nmax-files = 8\nmax-total-bytes = 8\nmax-resource-bytes = 4\n",
+        "schema-version = 2\n[resources]\nmax-files = 8\nmax-total-bytes = 8\nmax-resource-bytes = 4\n",
     )
     .expect("configuration");
     let document_path = root.join("document.adoc");
@@ -1198,7 +1204,7 @@ fn did_open_outside_configured_roots_preserves_state_and_emits_no_job() {
     fs::create_dir_all(&other).expect("other");
     fs::write(
         root.join(adocweave_config::FILE_NAME),
-        "schema-version = 1\n[resources]\nroots = [\"docs\"]\n",
+        "schema-version = 2\n[resources]\nroots = [\"docs\"]\n",
     )
     .expect("configuration");
     let accepted_path = docs.join("accepted.adoc");
@@ -1519,7 +1525,7 @@ fn project_configuration_is_shared_with_lsp_and_reloaded_by_generation() {
     fs::write(&document_path, source).expect("document");
     fs::write(
         &config_path,
-        include_str!("../../../../fixtures/config/shared-v1/.adocweave.toml"),
+        include_str!("../../../../fixtures/config/shared-v2/.adocweave.toml"),
     )
     .expect("configuration");
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
@@ -1551,7 +1557,7 @@ fn project_configuration_is_shared_with_lsp_and_reloaded_by_generation() {
 
     fs::write(
         &config_path,
-        "schema-version = 1\n[lint.rules.macro-boundary]\nenabled = false\n",
+        "schema-version = 2\n[lint.rules.macro-boundary]\nenabled = false\n",
     )
     .expect("updated configuration");
     assert!(
@@ -1590,7 +1596,7 @@ fn configuration_watch_does_not_restore_open_overlay_outside_resource_roots() {
     fs::write(&document_path, "disk").expect("document");
     fs::write(
         &config_path,
-        "schema-version = 1\n[resources]\nroots = [\".\"]\nmax-files = 8\nmax-total-bytes = 64\nmax-resource-bytes = 64\n",
+        "schema-version = 2\n[resources]\nroots = [\".\"]\nmax-files = 8\nmax-total-bytes = 64\nmax-resource-bytes = 64\n",
     )
     .expect("configuration");
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
@@ -1609,7 +1615,7 @@ fn configuration_watch_does_not_restore_open_overlay_outside_resource_roots() {
 
     fs::write(
         &config_path,
-        "schema-version = 1\n[resources]\nroots = [\"docs\"]\nmax-files = 8\nmax-total-bytes = 64\nmax-resource-bytes = 64\n",
+        "schema-version = 2\n[resources]\nroots = [\"docs\"]\nmax-files = 8\nmax-total-bytes = 64\nmax-resource-bytes = 64\n",
     )
     .expect("narrowed configuration");
     assert!(
@@ -1657,7 +1663,7 @@ fn project_configuration_bounds_lsp_diagnostics_before_protocol_projection() {
     fs::write(&document_path, source).expect("document");
     fs::write(
         root.join(adocweave_config::FILE_NAME),
-        "schema-version = 1\n[lint]\nmax-line-length = 4\nmax-diagnostics = 1\n",
+        "schema-version = 2\n[lint]\nmax-line-length = 4\nmax-diagnostics = 1\n",
     )
     .expect("configuration");
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
@@ -1698,12 +1704,12 @@ fn each_workspace_folder_uses_its_own_project_configuration() {
     fs::create_dir_all(&disabled_root).expect("disabled workspace");
     fs::write(
         enabled_root.join(adocweave_config::FILE_NAME),
-        "schema-version = 1\n[lint.rules.macro-boundary]\nenabled = true\nseverity = \"error\"\n",
+        "schema-version = 2\n[lint.rules.macro-boundary]\nenabled = true\nseverity = \"error\"\n",
     )
     .expect("enabled configuration");
     fs::write(
         disabled_root.join(adocweave_config::FILE_NAME),
-        "schema-version = 1\n[lint.rules.macro-boundary]\nenabled = false\n",
+        "schema-version = 2\n[lint.rules.macro-boundary]\nenabled = false\n",
     )
     .expect("disabled configuration");
     let source = "日😀xref:guide.adoc[Guide]\n";
@@ -1760,9 +1766,9 @@ fn invalid_project_configuration_does_not_fall_back_to_default_analysis() {
     let document_path = root.join("root.adoc");
     fs::write(
         root.join(adocweave_config::FILE_NAME),
-        "schema-version = 99\n",
+        "schema-version = 1\n",
     )
-    .expect("configuration");
+    .expect("obsolete configuration");
     fs::write(&document_path, "trailing \n").expect("document");
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
     let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
@@ -1827,7 +1833,7 @@ fn invalidated_project_configuration_clears_old_feature_views() {
     let config_path = root.join(adocweave_config::FILE_NAME);
     let source = "xref:other.adoc[Other]\ntrailing  \n";
     fs::write(&document_path, source).expect("document");
-    fs::write(&config_path, "schema-version = 1\n").expect("configuration");
+    fs::write(&config_path, "schema-version = 2\n").expect("configuration");
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
     let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
     let config_uri = lsp::Url::from_file_path(&config_path).expect("config URI");
@@ -1886,7 +1892,7 @@ fn watched_resource_failure_is_published_and_cleared_after_recovery() {
     fs::create_dir_all(&root).expect("workspace");
     fs::write(
         root.join(adocweave_config::FILE_NAME),
-        "schema-version = 1\n[resources]\ninclude = true\nroots = [\".\"]\n",
+        "schema-version = 2\n[resources]\ninclude = true\nroots = [\".\"]\n",
     )
     .expect("configuration");
     let document_path = root.join("root.adoc");
@@ -2056,7 +2062,7 @@ fn stricter_resource_plan_invalidates_the_rejected_open_overlay() {
     fs::write(&document_path, "disk\n").expect("document");
     fs::write(
         &config_path,
-        "schema-version = 1\n[resources]\nmax-files = 2\nmax-total-bytes = 16\nmax-resource-bytes = 16\n",
+        "schema-version = 2\n[resources]\nmax-files = 2\nmax-total-bytes = 16\nmax-resource-bytes = 16\n",
     )
     .expect("configuration");
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
@@ -2072,7 +2078,7 @@ fn stricter_resource_plan_invalidates_the_rejected_open_overlay() {
     open(&mut service, document_uri.as_str(), 1, "`open`\n");
     fs::write(
         &config_path,
-        "schema-version = 1\n[resources]\nmax-files = 2\nmax-total-bytes = 8\nmax-resource-bytes = 8\n",
+        "schema-version = 2\n[resources]\nmax-files = 2\nmax-total-bytes = 8\nmax-resource-bytes = 8\n",
     )
     .expect("stricter configuration");
 
@@ -2530,7 +2536,7 @@ fn transient_scan_failure_is_published_and_cleared_after_recovery() {
     fs::create_dir_all(&root).expect("workspace");
     let config = root.join(adocweave_config::FILE_NAME);
     let document_path = root.join("root.adoc");
-    fs::write(&config, "schema-version = 1\n").expect("configuration");
+    fs::write(&config, "schema-version = 2\n").expect("configuration");
     fs::write(&document_path, "= Root\n").expect("document");
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
     let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
@@ -2581,7 +2587,7 @@ fn transient_scan_failure_is_published_and_cleared_after_recovery() {
     );
 
     fs::remove_dir(&config).expect("remove invalid configuration entry");
-    fs::write(&config, "schema-version = 1\n").expect("restored configuration");
+    fs::write(&config, "schema-version = 2\n").expect("restored configuration");
     let recovered = service.plan_workspace_scan(&adocweave::NeverCancel);
     let jobs = service.apply_workspace_scan(recovered).jobs;
     assert_eq!(jobs.len(), 1, "recovery must clear the published failure");

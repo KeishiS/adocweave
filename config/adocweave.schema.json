@@ -273,7 +273,7 @@
       "type": "object"
     },
     "schema-version": {
-      "const": 1,
+      "const": 2,
       "type": "integer"
     },
     "workspace": {
@@ -283,18 +283,13 @@
           "additionalProperties": false,
           "properties": {
             "exclude": {
-              "default": [
-                "**/.git",
-                "**/.venv",
-                "**/node_modules",
-                "**/target"
-              ],
+              "default": [],
+              "description": "初期ワークスペース走査で組込みの除外patternへ追加するpattern。組込みの**/.git、**/.venv、**/node_modulesおよび**/targetは常に適用し、同じpatternの重複は無視します。",
               "items": {
                 "$ref": "#/$defs/workspaceScanPattern"
               },
               "maxItems": 256,
-              "type": "array",
-              "uniqueItems": true
+              "type": "array"
             }
           },
           "type": "object"

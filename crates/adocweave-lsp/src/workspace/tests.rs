@@ -64,7 +64,7 @@ fn write_resource_config(
     std::fs::write(
         directory.join(adocweave_config::FILE_NAME),
         format!(
-            "schema-version = 1\n[resources]\ninclude = {include}\nroots = [\".\"]\nmax-files = {max_files}\nmax-total-bytes = {max_total_bytes}\nmax-resource-bytes = {max_resource_bytes}\n"
+            "schema-version = 2\n[resources]\ninclude = {include}\nroots = [\".\"]\nmax-files = {max_files}\nmax-total-bytes = {max_total_bytes}\nmax-resource-bytes = {max_resource_bytes}\n"
         ),
     )
     .expect("project configuration");
@@ -193,8 +193,8 @@ fn project_config_replaced_by_a_symlink_after_discovery_is_not_read() {
     let root = TestDirectory::new();
     let config = root.0.join(adocweave_config::FILE_NAME);
     let replacement = root.0.join("replacement.toml");
-    std::fs::write(&config, "schema-version = 1\n").expect("project configuration");
-    std::fs::write(&replacement, "schema-version = 1\n").expect("replacement");
+    std::fs::write(&config, "schema-version = 2\n").expect("project configuration");
+    std::fs::write(&replacement, "schema-version = 2\n").expect("replacement");
     let policy = LocalFilesystemPolicy::new([root.0.clone()], FilesystemReadLimits::DEFAULT)
         .expect("filesystem policy");
     let discovered = adocweave_config::discover_with_policy(
@@ -236,7 +236,7 @@ fn workspace_scan_accounts_for_discovery_and_multiple_project_scopes_in_one_job(
     std::fs::write(root.0.join("root.adoc"), "root\n").expect("root source");
     std::fs::write(
         nested.join(adocweave_config::FILE_NAME),
-        "schema-version = 1\n",
+        "schema-version = 2\n",
     )
     .expect("nested project configuration");
     std::fs::write(nested.join("nested.adoc"), "nested\n").expect("nested source");
@@ -263,7 +263,7 @@ fn workspace_scan_read_limit_is_shared_across_project_scopes() {
     std::fs::write(root.0.join("root.adoc"), "root\n").expect("root source");
     std::fs::write(
         nested.join(adocweave_config::FILE_NAME),
-        "schema-version = 1\n",
+        "schema-version = 2\n",
     )
     .expect("nested project configuration");
     std::fs::write(nested.join("nested.adoc"), "nested\n").expect("nested source");
@@ -311,7 +311,7 @@ fn a_projects_read_budget_skips_its_documents_without_voiding_the_workspace() {
     std::fs::create_dir(&limited).expect("limited project");
     std::fs::write(
         limited.join(adocweave_config::FILE_NAME),
-        "schema-version = 1\n[resources]\nmax-files = 1\n",
+        "schema-version = 2\n[resources]\nmax-files = 1\n",
     )
     .expect("limited project configuration");
     for name in ["a.adoc", "b.adoc", "c.adoc"] {
@@ -378,7 +378,7 @@ fn workspace_scan_retains_every_incomplete_reason() {
     std::fs::create_dir_all(&overflow).expect("overflow directory");
     std::fs::write(
         limited.join(adocweave_config::FILE_NAME),
-        "schema-version = 1\n[resources]\nmax-files = 1\n",
+        "schema-version = 2\n[resources]\nmax-files = 1\n",
     )
     .expect("limited project configuration");
     for name in ["a.adoc", "b.adoc", "c.adoc"] {
@@ -493,7 +493,7 @@ fn scan_exclusion_defers_include_loading_without_promoting_the_resource_to_a_roo
     std::fs::write(
         root.0.join(adocweave_config::FILE_NAME),
         concat!(
-            "schema-version = 1\n",
+            "schema-version = 2\n",
             "[resources]\ninclude = true\nroots = [\".\"]\n",
             "[workspace.scan]\nexclude = [\"**/generated\"]\n",
         ),
@@ -571,7 +571,7 @@ fn a_result_from_an_older_generation_installs_nothing() {
     std::fs::write(
         root.0.join(adocweave_config::FILE_NAME),
         concat!(
-            "schema-version = 1\n",
+            "schema-version = 2\n",
             "[resources]\ninclude = true\nroots = [\".\"]\n",
             "[workspace.scan]\nexclude = [\"generated\"]\n",
         ),
@@ -748,7 +748,7 @@ fn an_analysis_that_is_never_adopted_leaves_no_include_behind() {
     std::fs::write(
         root.0.join(adocweave_config::FILE_NAME),
         concat!(
-            "schema-version = 1\n",
+            "schema-version = 2\n",
             "[resources]\ninclude = true\nroots = [\".\"]\n",
             "[workspace.scan]\nexclude = [\"**/generated\"]\n",
         ),
@@ -783,7 +783,7 @@ fn closing_an_open_include_removes_only_its_open_root_role() {
     std::fs::write(
         root.0.join(adocweave_config::FILE_NAME),
         concat!(
-            "schema-version = 1\n",
+            "schema-version = 2\n",
             "[resources]\ninclude = true\nroots = [\".\"]\n",
             "[workspace.scan]\nexclude = [\"generated\"]\n",
         ),
@@ -857,7 +857,7 @@ fn failed_initial_include_read_keeps_a_bounded_watch_interest() {
     std::fs::write(
         root.0.join(adocweave_config::FILE_NAME),
         concat!(
-            "schema-version = 1\n",
+            "schema-version = 2\n",
             "[resources]\ninclude = true\nroots = [\".\"]\n",
             "[workspace.scan]\nexclude = [\"generated\"]\n",
         ),
@@ -916,7 +916,7 @@ fn created_excluded_adoc_include_recovers_without_a_scan_root_role() {
     std::fs::write(
         root.0.join(adocweave_config::FILE_NAME),
         concat!(
-            "schema-version = 1\n",
+            "schema-version = 2\n",
             "[resources]\ninclude = true\nroots = [\".\"]\n",
             "[workspace.scan]\nexclude = [\"generated\"]\n",
         ),
@@ -961,7 +961,7 @@ fn missing_include_interests_share_the_dependency_count_limit() {
     let root = TestDirectory::new();
     std::fs::write(
         root.0.join(adocweave_config::FILE_NAME),
-        "schema-version = 1\n[resources]\ninclude = true\nroots = [\".\"]\n",
+        "schema-version = 2\n[resources]\ninclude = true\nroots = [\".\"]\n",
     )
     .expect("project configuration");
     let source = root.0.join("root.adoc");
@@ -1003,7 +1003,7 @@ fn excluded_unknown_watch_candidate_is_ignored_before_nested_config_is_read() {
     std::fs::create_dir_all(&generated).expect("generated directory");
     std::fs::write(
         root.0.join(adocweave_config::FILE_NAME),
-        "schema-version = 1\n[workspace.scan]\nexclude = [\"generated\"]\n",
+        "schema-version = 2\n[workspace.scan]\nexclude = [\"generated\"]\n",
     )
     .expect("root configuration");
     std::fs::write(
@@ -1035,7 +1035,7 @@ fn recursive_scan_exclusion_prunes_a_non_utf8_subtree_before_reading_it() {
     let root = TestDirectory::new();
     std::fs::write(
         root.0.join(adocweave_config::FILE_NAME),
-        "schema-version = 1\n[workspace.scan]\nexclude = [\"**\"]\n",
+        "schema-version = 2\n[workspace.scan]\nexclude = [\"**\"]\n",
     )
     .expect("project configuration");
     let opaque = root.0.join(OsString::from_vec(vec![b'n', 0x80]));
@@ -1060,14 +1060,17 @@ fn each_directory_root_uses_only_its_own_scan_patterns() {
     ] {
         std::fs::write(
             root.0.join(adocweave_config::FILE_NAME),
-            format!("schema-version = 1\n[workspace.scan]\nexclude = [\"{excluded}\"]\n"),
+            format!("schema-version = 2\n[workspace.scan]\nexclude = [\"{excluded}\"]\n"),
         )
         .expect("project configuration");
         std::fs::create_dir(root.0.join(excluded)).expect("excluded directory");
         std::fs::create_dir(root.0.join(retained)).expect("retained directory");
+        std::fs::create_dir(root.0.join("target")).expect("built-in excluded directory");
         std::fs::write(root.0.join(excluded).join("hidden.adoc"), "hidden\n")
             .expect("excluded source");
         std::fs::write(root.0.join(retained).join("kept.adoc"), "kept\n").expect("retained source");
+        std::fs::write(root.0.join("target/generated.adoc"), "generated\n")
+            .expect("built-in excluded source");
     }
     let roots = [&first, &second].map(|root| Url::from_directory_path(&root.0).expect("root URI"));
     let expected = BTreeSet::from([
@@ -1096,7 +1099,7 @@ fn one_root_authority_covers_configuration_scan_and_document_read() {
     let document = root.0.join("root.adoc");
     std::fs::write(
         root.0.join(adocweave_config::FILE_NAME),
-        "schema-version = 1\n",
+        "schema-version = 2\n",
     )
     .expect("trusted configuration");
     std::fs::write(&document, "= Trusted\n").expect("trusted document");
@@ -1143,7 +1146,7 @@ fn retained_root_covers_reload_open_and_missing_include_after_replacement() {
     std::fs::write(
         root.0.join(adocweave_config::FILE_NAME),
         concat!(
-            "schema-version = 1\n",
+            "schema-version = 2\n",
             "[resources]\ninclude = true\nroots = [\".\"]\n",
             "[workspace.scan]\nexclude = [\"generated\"]\n",
         ),
@@ -1246,7 +1249,7 @@ fn nested_directory_root_applies_its_own_scan_patterns() {
     std::fs::create_dir_all(&excluded).expect("excluded directory");
     std::fs::write(
         inner.join(adocweave_config::FILE_NAME),
-        "schema-version = 1\n[workspace.scan]\nexclude = [\"generated\"]\n",
+        "schema-version = 2\n[workspace.scan]\nexclude = [\"generated\"]\n",
     )
     .expect("inner project configuration");
     std::fs::write(excluded.join("hidden.adoc"), "hidden\n").expect("excluded source");
@@ -1547,7 +1550,7 @@ fn configured_multi_root_without_explicit_roots_excludes_another_workspace_root(
     let second = TestDirectory::new();
     std::fs::write(
         first.0.join(adocweave_config::FILE_NAME),
-        "schema-version = 1\n[resources]\ninclude = true\nroots = []\n",
+        "schema-version = 2\n[resources]\ninclude = true\nroots = []\n",
     )
     .expect("first config");
     let first_path = first.0.join("document.adoc");
@@ -1580,7 +1583,7 @@ fn open_outside_configured_roots_preserves_workspace_and_budgets() {
     std::fs::create_dir(&other).expect("other");
     std::fs::write(
         root.0.join(adocweave_config::FILE_NAME),
-        "schema-version = 1\n[resources]\nroots = [\"docs\"]\n",
+        "schema-version = 2\n[resources]\nroots = [\"docs\"]\n",
     )
     .expect("config");
     let accepted = docs.join("accepted.adoc");
@@ -2208,7 +2211,7 @@ fn analysis_snapshot_does_not_charge_resources_outside_configured_roots() {
     std::fs::create_dir(root.0.join("other")).expect("other");
     std::fs::write(
         root.0.join(adocweave_config::FILE_NAME),
-        "schema-version = 1\n[resources]\ninclude = true\nroots = [\"docs\"]\nmax-files = 1\nmax-total-bytes = 8\nmax-resource-bytes = 8\n",
+        "schema-version = 2\n[resources]\ninclude = true\nroots = [\"docs\"]\nmax-files = 1\nmax-total-bytes = 8\nmax-resource-bytes = 8\n",
     )
     .expect("root config");
     std::fs::write(root.0.join("docs/root.adoc"), "root").expect("root source");
@@ -2234,7 +2237,7 @@ fn watched_resource_outside_configured_roots_is_not_ingested() {
     std::fs::create_dir(&other).expect("other");
     std::fs::write(
         root.0.join(adocweave_config::FILE_NAME),
-        "schema-version = 1\n[resources]\nroots = [\"docs\"]\nmax-files = 1\nmax-total-bytes = 8\nmax-resource-bytes = 8\n",
+        "schema-version = 2\n[resources]\nroots = [\"docs\"]\nmax-files = 1\nmax-total-bytes = 8\nmax-resource-bytes = 8\n",
     )
     .expect("project configuration");
     std::fs::write(docs.join("root.adoc"), "root").expect("root document");

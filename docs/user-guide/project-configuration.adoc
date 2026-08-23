@@ -17,7 +17,7 @@ workspace folder、CLIではコマンドを実行した作業ディレクトリ�
 
 [source,toml]
 ----
-schema-version = 1
+schema-version = 2
 ----
 
 不明な項目、未対応の``schema-version``、絶対パス、親ディレクトリへ移動するパスおよび上限を超える値は
@@ -32,7 +32,7 @@ schema-version = 1
 
 [source,toml]
 ----
-schema-version = 1
+schema-version = 2
 
 [analysis]
 syntax-mode = "strict"
@@ -60,7 +60,7 @@ max-total-bytes = 52428800
 max-resource-bytes = 10485760
 
 [workspace.scan]
-exclude = [".git", ".venv", "node_modules", "target", "**/generated"]
+exclude = ["**/generated"]
 
 [local-targets]
 enabled = true
@@ -102,7 +102,7 @@ roleのうち列挙していないものは出力しません。名前にはASCI
 ``workspace.scan.exclude``は、Language Serverがワークスペースを最初に走査するときに、内容を調べない
 ディレクトリを指定します。
 
-この項目を書かなかった場合は、次の四つを除外します。``.adocweave.toml``自体を置いていない場合も同じです。
+次の四つは組込みの除外patternとして常に適用します。``.adocweave.toml``自体を置いていない場合も同じです。
 
 [source,toml]
 ----
@@ -113,9 +113,10 @@ exclude = ["**/.git", "**/.venv", "**/node_modules", "**/target"]
 ありません。一方で件数は多く、これらだけで10万件の走査上限に達することがあります。パッケージやcrateごとに
 同名のディレクトリを持つ構成があるため、既定値はどの深さにも一致する``**/``付きにしています。
 
-既定値を使わない場合は、この項目を明示的に書きます。書いた内容は既定値へ追加するのではなく置き換えます。
-すべてのディレクトリを走査したい場合は``exclude = []``と空のリストを指定します。実際に適用されている
-patternは``adocweave config show``で確認できます。
+``workspace.scan.exclude``には、この四つへ追加するpatternだけを書きます。例えば生成した文書をどの深さでも
+除外する場合は``exclude = ["**/generated"]``と指定します。空のリストは追加patternがないことを表し、組込みの
+四つは解除しません。同じpatternを複数回書いた場合と組込みpatternを再び書いた場合は、一度だけ適用します。
+実際に適用されているpatternは``adocweave config show``で確認できます。
 
 各patternはワークスペースのルートからの相対位置に対して照合します。区切りには
 OSにかかわらず``/``を使います。``*``と``?``は一つのディレクトリ名の中だけに一致し、単独の``**``は

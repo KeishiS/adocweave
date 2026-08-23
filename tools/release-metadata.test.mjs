@@ -65,7 +65,7 @@ test("manifestは製品identityと公開archive名だけを記録する", () => 
     const manifest = JSON.parse(readFileSync(join(artifacts, "adocweave-dist-manifest.json"), "utf8"));
     assert.equal(manifest.schemaVersion, 5);
     assert.equal(manifest.product, "lsp");
-    assert.equal(manifest.productVersion, "0.46.2");
+    assert.equal(manifest.productVersion, "0.47.0");
     assert.deepEqual(manifest.assets.map(({ name }) => name), assets.map(({ name }) => name));
     assert.ok(manifest.assets.every((asset) =>
       JSON.stringify(Object.keys(asset)) === JSON.stringify(["name"])));
