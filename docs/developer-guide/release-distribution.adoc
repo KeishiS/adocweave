@@ -94,6 +94,11 @@ commit SHAへ固定します。
 Open VSXへ公開する場合だけ、専用workflowが最小権限のtokenを使用します。このworkflowはGitHub Releaseから
 取得したVSIXのchecksumとattestationを確認し、別の成果物を公開しません。
 
+npmへ公開する場合だけ、専用workflowが``id-token``の書込みを受け取ります。npmのTrusted Publishingは
+長期tokenの代わりにOIDCで公開元を確認するため、このworkflowはregistry用のsecretを参照しません。
+repositoryに対する権限はread-onlyで、GitHub Releaseから取得したarchiveのchecksumとattestationを確認して
+から送信します。送信後は、registryが記録したintegrityがReleaseの成果物と一致することを確かめます。
+
 CLIのstable Releaseを公開した場合だけ、専用workflowが``CACHIX_AUTH_TOKEN``を使用します。workflowは公開済みの
 tagとcommit、成果物のchecksumおよびattestationを再検査し、同じcommitから構築したNix package closureだけを
 Cachixへ送信します。repositoryに対する権限はread-onlyで、ほかのjobはこのtokenを参照しません。
@@ -111,6 +116,12 @@ attestationおよび公開へ渡します。tagより前の失敗ではtagとRel
 
 一度公開したstable Releaseは自動で差し戻しません。公開後の確認で問題が見つかった場合は新しいversionで修正します。
 同一runで公開する理由と状態の所有方法はxref:adr/0032-same-run-release-publication.adoc[ADR 0032]を参照してください。
+
+registryへの送信だけが失敗した場合、GitHub Releaseは公開済みのため作り直しません。同じtagを指定して該当の
+公開workflowを実行し、同じ成果物の送信だけをやり直します。npmは公開済みversionの上書きを拒否するため、
+再実行しても公開済みの版は変わりません。npmで問題が見つかった場合は``deprecate``で警告を表示し、修正は
+新しいversionで行います。``unpublish``は安全上必要な場合に限ります。一度``unpublish``したversion番号は
+再利用できません。
 
 [#distribution-verification]
 == 検証境界

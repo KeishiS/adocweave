@@ -35,6 +35,15 @@ const ALLOWED_WRITE_GRANTS = new Set([
   "release-publish.yml job publish",
 ]);
 
+// npmのTrusted Publishingはtokenの代わりにOIDCで公開元を確認する。GitHub Releaseの
+// 公開jobとは違い、repositoryへの書込みは持たず、id-tokenだけを受け取る。
+const REGISTRY_OIDC_PERMISSIONS = {
+  "id-token": "write",
+};
+const ALLOWED_REGISTRY_OIDC_GRANTS = new Set([
+  "npm-publish.yml job publish",
+]);
+
 // Workflows use the ambient job token only. The exceptions are the two
 // publications after a stable release that no OIDC federation covers: the
 // binary cache push reads the Cachix write token, and the Open VSX publication
@@ -97,7 +106,7 @@ export function validateWritePermissionGrants(workflows) {
   const grants = (permissions, location) => {
     for (const [scope, level] of Object.entries(permissions ?? {})) {
       if (level !== "read" && level !== "none") {
-        if (!ALLOWED_WRITE_GRANTS.has(location)) {
+        if (!ALLOWED_WRITE_GRANTS.has(location) && !ALLOWED_REGISTRY_OIDC_GRANTS.has(location)) {
           fail(`${location} grants ${scope}: ${level}; write permissions are reserved for publication`);
         }
       }
@@ -114,6 +123,10 @@ export function validateWritePermissionGrants(workflows) {
       if (ALLOWED_WRITE_GRANTS.has(location) &&
           canonicalPermissions(job.permissions) !== canonicalPermissions(PUBLISH_PERMISSIONS)) {
         fail(`${location} must grant exactly the publication permissions`);
+      }
+      if (ALLOWED_REGISTRY_OIDC_GRANTS.has(location) &&
+          canonicalPermissions(job.permissions) !== canonicalPermissions(REGISTRY_OIDC_PERMISSIONS)) {
+        fail(`${location} must grant exactly the registry publication permissions`);
       }
     }
   }
@@ -248,15 +261,19 @@ export function validateProductReleaseRouting(workflows) {
       !tagCleanupRun.includes("git/refs/tags/$RELEASE_TAG")) {
     fail("release cleanup must remove only this run's draft and unchanged unpublished tag");
   }
-  for (const workflowName of ["open-vsx-publish.yml", "binary-cache-publish.yml"]) {
+  // 公開後のregistryとcacheへ送るworkflowは、Releaseの成果物を検証してから送信する。
+  // npmはTrusted Publishingで資格情報を持たないため、secretの順序だけを条件にしない。
+  const downstreamPublications = new Map([
+    ["open-vsx-publish.yml", "Published VSIX download and verification"],
+    ["binary-cache-publish.yml", "Published CLI candidate verification"],
+    ["npm-publish.yml", "Published package download and verification"],
+  ]);
+  for (const [workflowName, verificationName] of downstreamPublications) {
     const downstreamSteps = workflows[workflowName]?.jobs?.publish?.steps ?? [];
-    const verificationName = workflowName === "open-vsx-publish.yml"
-      ? "Published VSIX download and verification"
-      : "Published CLI candidate verification";
     const verificationIndex = downstreamSteps.findIndex((step) => step.name === verificationName);
     const secretIndex = downstreamSteps.findIndex((step) => JSON.stringify(step).includes("secrets."));
     const runs = downstreamSteps[verificationIndex]?.run ?? "";
-    if (verificationIndex < 0 || secretIndex <= verificationIndex ||
+    if (verificationIndex < 0 || (secretIndex >= 0 && secretIndex <= verificationIndex) ||
         !runs.includes(".draft") || !runs.includes(".prerelease") || !runs.includes('^{commit}') ||
         !runs.includes("--verify-candidate") || !runs.includes("attestation verify")) {
       fail(`${workflowName} must accept only a published stable release at the checked-out commit`);

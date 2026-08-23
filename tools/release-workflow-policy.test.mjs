@@ -131,6 +131,34 @@ test("publication以外は明示したread権限だけを持つ", () => {
   );
 });
 
+test("npm公開jobはOIDCのid-tokenだけを持つ", () => {
+  validateWritePermissionGrants({
+    "npm-publish.yml": {
+      permissions: { contents: "read" },
+      jobs: { publish: { permissions: { "id-token": "write" } } },
+    },
+  });
+  // registryへの公開はrepositoryへ書き込まない。
+  assert.throws(
+    () => validateWritePermissionGrants({
+      "npm-publish.yml": {
+        permissions: { contents: "read" },
+        jobs: { publish: { permissions: { contents: "write", "id-token": "write" } } },
+      },
+    }),
+    /exactly the registry publication permissions/,
+  );
+  assert.throws(
+    () => validateWritePermissionGrants({
+      "release.yml": {
+        permissions: { contents: "read" },
+        jobs: { publish: { permissions: { "id-token": "write" } } },
+      },
+    }),
+    /write permissions are reserved for publication/,
+  );
+});
+
 test("the binary cache job may read the Cachix write token", () => {
   const { sources, workflows } = policyInput(
     "binary-cache-publish.yml",
@@ -321,6 +349,16 @@ function productRoutingWorkflows() {
           },
         ],
       } },
+    },
+    // npmはTrusted Publishingで公開元をOIDCで確認するため、secretを読むstepを持たない。
+    "npm-publish.yml": {
+      jobs: { publish: { steps: [
+        {
+          name: "Published package download and verification",
+          run: "jq .draft\njq .prerelease\ngit rev-parse '$TAG^{commit}'\n--verify-candidate\nattestation verify",
+        },
+        { run: "npm publish" },
+      ] } },
     },
   };
 }

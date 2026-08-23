@@ -316,6 +316,37 @@ xref:docs/developer-guide/release-distribution.adoc[GitHub Releases配布仕様]
 公開後に問題が見つかった場合は、既存のtagやassetを置換せず、修正をpull requestで``main``へ統合して
 新しいバージョンで最初から実行します。
 
+[#npm-publication]
+=== npm Registryへの公開
+
+npmのscope``@adocweave``はリポジトリの保守者が所有します。所有者を失った場合の回復はnpmのsupportへ
+申請する以外になく、自助手段はありません。organizationでは2要素認証を必須にします。
+
+公開するのは、GitHub Releaseへ添付したarchiveと同じbyte列だけです。作業ツリーから``npm publish``すると
+別のbyte列が載るため、公開済みReleaseからdownloadしたfileを指定します。
+
+npmのTrusted Publisherはpackage単位の設定で、packageが実在しないと登録できません。したがってpackageごとに
+一度だけ、手元から初回公開を行います。
+
+[source,console]
+----
+gh release download adocweave-PRODUCT/vX.Y.Z --pattern '*.tgz' --pattern 'sha256.sum'
+sha256sum --check --strict sha256.sum
+npm publish PACKAGE-X.Y.Z.tgz
+----
+
+初回公開の後、npmjs.comのpackage設定でTrusted Publisherへリポジトリ、workflow file名および許可する操作を
+登録します。登録後は``npm-publish.yml``がOIDCで公開できるため、初回公開に使った資格情報を失効させます。
+Trusted Publishing経由の公開にはprovenanceが自動で付きます。
+
+再利用workflowから公開したときにnpmがどのworkflow file名で照合するかは、最初の自動公開で確認します。
+``npm-publish.yml``で通らない場合は、呼び出し元のworkflow file名で登録し直します。
+
+npmへの送信だけが失敗した場合は、同じtagと製品を指定して``npm-publish.yml``を実行します。公開済みversionの
+上書きはnpmが拒否するため、再実行しても公開済みの版は変わりません。公開後に問題が見つかった場合は
+``npm deprecate``で警告を表示し、修正は新しいversionで行います。``unpublish``は安全上必要な場合に限ります。
+一度``unpublish``したversion番号は再利用できません。
+
 [#release-checklist]
 == Release checklist
 
