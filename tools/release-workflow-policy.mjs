@@ -12,7 +12,7 @@ import { parseReleaseVersionArguments } from "./sync-release-version.mjs";
 const ROOT = new URL("../", import.meta.url);
 const read = (path) => readFileSync(new URL(path, ROOT), "utf8");
 const PUBLIC_TASKS = [
-  "acceptance", "default", "fmt", "fmt-check", "main-gate", "release-check",
+  "acceptance", "default", "fmt", "fmt-check", "main-gate", "main-integrations", "release-check",
   "security-audit", "test-browser-release-candidate", "test-global-product-candidate",
   "test-vscode-release-determinism", "test-zed-release-candidate",
   "textlint-plugin-post-release-npx-smoke", "textlint-plugin-release-consumer-e2e", "verify",
@@ -521,16 +521,20 @@ const SOURCE_GATE_DEPENDENCIES = [
   "zed-query-contract",
 ].sort();
 
-const MAIN_GATE_DEPENDENCIES = [
+const MAIN_INTEGRATION_DEPENDENCIES = [
   "check-zed-wasm",
   "cross-native-check",
   "fuzz-smoke",
-  "nix-package-check",
   "protocol-wasm-corpus-check",
   "test-cross-runtime",
   "test-vscode-extension-host",
   "textlint-plugin-browser-isolation",
   "textlint-plugin-wasm-contract",
+].sort();
+
+const MAIN_GATE_DEPENDENCIES = [
+  "main-integrations",
+  "nix-package-check",
 ].sort();
 
 function makeTaskBody(source, name) {
@@ -550,6 +554,7 @@ function makeTaskDependencies(source, name) {
 export function validateGateTaskContract(makefile) {
   for (const [name, expected] of [
     ["verify", SOURCE_GATE_DEPENDENCIES],
+    ["main-integrations", MAIN_INTEGRATION_DEPENDENCIES],
     ["main-gate", MAIN_GATE_DEPENDENCIES],
   ]) {
     const dependencies = new Set(makeTaskDependencies(makefile, name));
@@ -558,10 +563,21 @@ export function validateGateTaskContract(makefile) {
       fail(`${name}に必須の検査依存がありません: ${missing.join(", ")}`);
     }
   }
-  const mainDependencies = new Set(makeTaskDependencies(makefile, "main-gate"));
-  for (const candidate of ["release-global-candidate", "release-global-artifacts", "wasm-size"]) {
-    if (mainDependencies.has(candidate)) {
-      fail(`main-gateへ配布成果物task ${candidate}を含めないでください`);
+  for (const [name, expected] of [
+    ["main-integrations", MAIN_INTEGRATION_DEPENDENCIES],
+    ["main-gate", MAIN_GATE_DEPENDENCIES],
+  ]) {
+    const dependencies = makeTaskDependencies(makefile, name);
+    if (JSON.stringify(dependencies) !== JSON.stringify(expected)) {
+      fail(`${name}の検査依存は定義済みの境界と一致させてください`);
+    }
+  }
+  for (const task of ["main-integrations", "main-gate"]) {
+    const dependencies = new Set(makeTaskDependencies(makefile, task));
+    for (const candidate of ["release-global-candidate", "release-global-artifacts", "wasm-size"]) {
+      if (dependencies.has(candidate)) {
+        fail(`${task}へ配布成果物task ${candidate}を含めないでください`);
+      }
     }
   }
   if (/^\s*alias\s*=/m.test(makeTaskBody(makefile, "verify"))) {
@@ -755,30 +771,43 @@ export function validateStandardSourceAndCandidateGates(workflows, sources = {})
     }
   }
 
-  const mainGate = jobs["main-gate"];
+  const mainIntegrations = jobs["main-integrations"];
+  const nixPackageCheck = jobs["nix-package-check"];
   const security = jobs.security;
   if (!security || security.name !== "security-audit" || !hasMainGateCondition(security) ||
       JSON.stringify(needs(security)) !== JSON.stringify(["source"]) ||
       !hasOnlyRun(security, "nix develop .#ci -c cargo make security-audit")) {
     fail("security jobはsource成功後のmainで最新の依存監査を1回実行してください");
   }
-  const mainGateNeeds = new Set(needs(mainGate));
-  if (!mainGate || !hasMainGateCondition(mainGate) ||
-      mainGateNeeds.size !== 2 || !mainGateNeeds.has("source") || !mainGateNeeds.has("security") ||
-      occurrences(workflowRuns, "cargo make main-gate") !== 1 ||
-      !hasOnlyRun(mainGate, "nix develop .#ci-fuzz -c cargo make main-gate")) {
-    fail("main-gateはsourceとsecurityの成功後にmainで実行してください");
+  const mainIntegrationsNeeds = new Set(needs(mainIntegrations));
+  if (!mainIntegrations || mainIntegrations.name !== "main-integrations" ||
+      !hasMainGateCondition(mainIntegrations) ||
+      mainIntegrationsNeeds.size !== 2 || !mainIntegrationsNeeds.has("source") ||
+      !mainIntegrationsNeeds.has("security") ||
+      occurrences(workflowRuns, "cargo make main-integrations") !== 1 ||
+      !hasOnlyRun(mainIntegrations, "nix develop .#ci-fuzz -c cargo make main-integrations")) {
+    fail("main-integrationsはsourceとsecurityの成功後にmainの統合検査を実行してください");
+  }
+  const nixPackageCheckNeeds = new Set(needs(nixPackageCheck));
+  if (!nixPackageCheck || nixPackageCheck.name !== "nix-package-check" ||
+      !hasMainGateCondition(nixPackageCheck) ||
+      nixPackageCheckNeeds.size !== 2 || !nixPackageCheckNeeds.has("source") ||
+      !nixPackageCheckNeeds.has("security") ||
+      occurrences(workflowRuns, "nix flake check") !== 1 ||
+      !hasOnlyRun(nixPackageCheck, "nix flake check")) {
+    fail("nix-package-checkはsourceとsecurityの成功後にmainのNix packageを検査してください");
   }
   const candidatePlan = jobs["candidate-plan"];
   const candidatePlanNeeds = new Set(needs(candidatePlan));
   if (!candidatePlan ||
       !hasDispatchMainCondition(candidatePlan) ||
-      candidatePlanNeeds.size !== 2 ||
+      candidatePlanNeeds.size !== 3 ||
       !candidatePlanNeeds.has("source") ||
-      !candidatePlanNeeds.has("main-gate") ||
+      !candidatePlanNeeds.has("main-integrations") ||
+      !candidatePlanNeeds.has("nix-package-check") ||
       !hasOnlyRun(candidatePlan, 'node tools/product-candidate-plan.mjs "$GITHUB_OUTPUT" "${{ inputs.product }}"') ||
       !isMainOnly(jobs, "candidate-plan")) {
-    fail("candidate-planは手動公開時にsourceとmain-gateへ依存し、選択製品のcandidate planを1回生成してください");
+    fail("candidate-planは手動公開時にsourceと二つのmain検査へ依存し、選択製品のcandidate planを1回生成してください");
   }
 
   const candidateJobs = [

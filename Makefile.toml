@@ -711,9 +711,9 @@ dependencies = [
   "textlint-plugin-public-js-unit",
 ]
 
-[tasks.main-gate]
+[tasks.main-integrations]
 category = "CI entry points"
-description = "Run the expensive main-only integrations in addition to a separately completed source gate"
+description = "Run the main-only integration checks except the independent Nix package check"
 dependencies = [
   "cross-native-check",
   "check-zed-wasm",
@@ -723,6 +723,13 @@ dependencies = [
   "textlint-plugin-wasm-contract",
   "textlint-plugin-browser-isolation",
   "fuzz-smoke",
+]
+
+[tasks.main-gate]
+category = "CI entry points"
+description = "Run the expensive main-only integrations in addition to a separately completed source gate"
+dependencies = [
+  "main-integrations",
   "nix-package-check",
 ]
 
