@@ -8,3 +8,4 @@
 /tools/textlint/node_modules/
 
 .codex/config.toml
+.claude/settings.local.json

@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$(git rev-parse --show-toplevel)/tools/codex-github-prose-hook.mjs\"",
+            "command": "node \"$(git rev-parse --show-toplevel)/tools/github-prose-hook.mjs\"",
             "timeout": 10,
             "statusMessage": "GitHubへの投稿内容を確認しています"
           }

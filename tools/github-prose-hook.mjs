@@ -11,7 +11,7 @@ const apiCommand = new RegExp(`${gh}\\s+api\\b`, "u");
 const apiEndpoint = /(?:\/issues|\/pulls)(?:\/|\s|$)/u;
 const apiProse = /(?:-f|--field|-F|--raw-field)\s+(?:title|body)=|--input(?:=|\s)/u;
 
-export function inspectCodexGitHubProse(input) {
+export function inspectGitHubProse(input) {
   if (input?.hook_event_name !== "PreToolUse" || input?.tool_name !== "Bash") return undefined;
   const command = input.tool_input?.command;
   if (typeof command !== "string") return undefined;
@@ -33,7 +33,7 @@ export function inspectCodexGitHubProse(input) {
 async function main() {
   const chunks = [];
   for await (const chunk of process.stdin) chunks.push(chunk);
-  const result = inspectCodexGitHubProse(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+  const result = inspectGitHubProse(JSON.parse(Buffer.concat(chunks).toString("utf8")));
   if (result !== undefined) process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 

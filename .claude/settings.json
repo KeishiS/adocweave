@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^Bash$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/tools/github-prose-hook.mjs\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "deny": [
+      "Bash(gh issue create:*)",
+      "Bash(gh issue new:*)",
+      "Bash(gh issue comment:*)",
+      "Bash(gh pr create:*)",
+      "Bash(gh pr new:*)",
+      "Bash(gh pr comment:*)"
+    ],
+    "allow": [
+      "Bash(node tools/checked-gh-prose.mjs:*)",
+      "Bash(node tools/textlint/github-markdown-lint.mjs:*)"
+    ]
+  }
+}

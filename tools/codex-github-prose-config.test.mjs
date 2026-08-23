@@ -11,7 +11,7 @@ test("同期PreToolUse hookが投稿前検査を要求する", () => {
   assert.equal(hook.type, "command");
   assert.equal(hook.async, undefined);
   assert.equal(hook.timeout, 10);
-  assert.match(hook.command, /tools\/codex-github-prose-hook\.mjs/);
+  assert.match(hook.command, /tools\/github-prose-hook\.mjs/);
 });
 
 test("repository rulesが直接投稿を禁止して検査付き投稿を許可する", () => {
