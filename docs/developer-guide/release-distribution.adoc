@@ -34,9 +34,13 @@ attestationの確認はxref:../user-guide/release-installation.adoc[インスト
 GitHubが自動生成するsource archiveは検証対象の成果物に含めません。
 
 registryへも公開する製品では、GitHub Releaseへ添付した成果物と同じbyte列を送り、registry向けに
-構築し直しません。現在registryへ公開する製品はVS Code拡張だけで、公開先はOpen VSX Registryです。
-textlint用Processorはnpm互換のarchiveですが、GitHub ReleaseのURLを明示した導入だけを対象とします。
+構築し直しません。現在registryへ公開する製品はVS Code拡張とtextlint用Processorで、公開先はそれぞれ
+Open VSX Registryとnpm Registryです。Browser packageとCLIはGitHub Releaseからの導入だけを対象とします。
 Rust crateはcrates.ioへ公開しません。
+
+npmへの公開はGitHub Releaseの公開後に別のworkflowで行い、送信後にregistryが記録したintegrityが
+Releaseの成果物と一致することを確認します。続けて、公開したpackageをregistryから導入し直し、
+clean installと``npx``の経路を観測します。
 
 公開には配布計画の``tagPrefix``に従うstable tagを使用します。tag、source commit、versionの正本、
 配布manifestおよび成果物が一致しない場合は公開しません。
@@ -135,4 +139,5 @@ taskの現在の入口とreleaseの操作手順はxref:../../CONTRIBUTING.adoc[�
 task間の責務はxref:adr/0033-make-task-boundary.adoc[ADR 0033]を参照してください。
 
 textlint用Processorは公開後に実際のRelease URLから取得し、公開checksumとの一致と``npx``による単発実行を
-確認します。この確認は公開済みの成果物に対してだけ行い、公開前の検査と重複させません。
+確認します。npmへの公開後は、registryのversion解決を経た導入も同じように確認します。これらの確認は
+公開済みの成果物に対してだけ行い、公開前の検査と重複させません。
