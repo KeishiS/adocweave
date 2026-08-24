@@ -30,8 +30,8 @@
       "versionSource": "web-worker/package.json#version",
       "tagPrefix": "adocweave-browser/v",
       "assetKind": "browser",
-      "assetName": "adocweave-browser-{version}.tar.xz",
-      "archive": "tar.xz",
+      "assetName": "adocweave-browser-{version}.tgz",
+      "archive": "tgz",
       "executable": null,
       "build": "script",
       "buildScript": "tools/package-browser-release.sh"

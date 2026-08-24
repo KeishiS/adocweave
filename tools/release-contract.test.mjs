@@ -67,10 +67,10 @@ test("expected assets contain only the selected product", () => {
   assert.ok(lsp.every(({ kind, name }) => kind === "lsp" && name.startsWith("adocweave-lsp-")));
 
   assert.deepEqual(expectedAssets("browser", "3.4.5", plan.targets), [{
-    name: "adocweave-browser-3.4.5.tar.xz",
+    name: "adocweave-browser-3.4.5.tgz",
     kind: "browser",
     target: null,
-    archive: "tar.xz",
+    archive: "tgz",
     executable: null,
   }]);
   assert.deepEqual(expectedAssets("textlint", "4.5.6", plan.targets), [{

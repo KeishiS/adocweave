@@ -98,7 +98,7 @@ NixOS以外では、system全体の``nix.conf``へ同じ``extra-substituters``�
 |`adocweave-lsp-x86_64-pc-windows-msvc.zip`
 
 |browser library
-3+|`adocweave-browser-<version>.tar.xz`
+3+|`adocweave-browser-<version>.tgz`
 
 |Zed開発拡張
 3+|`adocweave-zed-<version>.tar.xz`
@@ -159,8 +159,8 @@ sha256sum --check --ignore-missing sha256.sum
 ----
 
 GitHub CLIを使わない場合は、Release画面から各assetを個別に保存します。HTMLをarchive名で保存する事故を避けるため、
-download後にnative archiveでは``unzip -t <archive>``、browserとZedのarchiveでは
-``tar -tJf <archive>``、textlint用パッケージでは``tar -tzf <archive>``も成功することを確認します。
+download後にnative archiveでは``unzip -t <archive>``、Zedのarchiveでは``tar -tJf <archive>``、
+browserとtextlint用パッケージでは``tar -tzf <archive>``も成功することを確認します。
 ``curl | sh``形式のinstallerは提供しません。
 
 checksumとは別に、必要なassetのGitHub Artifact Attestationを検証します。
@@ -294,8 +294,8 @@ unzip "adocweave-cli-$TARGET.zip" -d "cli-$VERSION"
 unzip "adocweave-lsp-$TARGET.zip" -d "lsp-$VERSION"
 install -m 0755 "cli-$VERSION/adocweave" "$ROOT/bin/adocweave"
 install -m 0755 "lsp-$VERSION/adocweave-lsp" "$ROOT/bin/adocweave-lsp"
-tar -xJf "adocweave-browser-$VERSION.tar.xz" -C "$PREFIX/share/adocweave/$VERSION"
-mv "$PREFIX/share/adocweave/$VERSION/adocweave-browser-$VERSION" \
+tar -xzf "adocweave-browser-$VERSION.tgz" -C "$PREFIX/share/adocweave/$VERSION"
+mv "$PREFIX/share/adocweave/$VERSION/package" \
   "$PREFIX/share/adocweave/$VERSION/browser"
 tar -xJf "adocweave-zed-$VERSION.tar.xz" -C "$PREFIX/share/adocweave/$VERSION"
 mv "$PREFIX/share/adocweave/$VERSION/adocweave-zed-$VERSION" \

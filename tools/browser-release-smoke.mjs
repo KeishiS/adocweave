@@ -42,7 +42,8 @@ async function main() {
 }
 
 async function runArchiveSmoke(archive, chromium, root) {
-  const { stdout: archiveList } = await run("tar", ["-tJf", resolve(archive)]);
+  // npm packが作るtarballのrootは、versionを含まない``package``に正規化される。
+  const { stdout: archiveList } = await run("tar", ["-tzf", resolve(archive)]);
   const members = archiveList.trimEnd().split("\n");
   const roots = new Set();
   for (const member of members) {
@@ -51,12 +52,12 @@ async function runArchiveSmoke(archive, chromium, root) {
     }
     roots.add(member.split("/")[0]);
   }
-  if (roots.size !== 1 || ![...roots][0].startsWith("adocweave-browser-")) {
+  if (roots.size !== 1 || [...roots][0] !== "package") {
     throw new Error(`unexpected archive roots: ${[...roots].join(", ")}`);
   }
-  await run("tar", ["-xJf", resolve(archive), "-C", root]);
+  await run("tar", ["-xzf", resolve(archive), "-C", root]);
   const entries = await import("node:fs/promises").then(({ readdir }) => readdir(root));
-  if (entries.length !== 1 || !entries[0].startsWith("adocweave-browser-")) {
+  if (entries.length !== 1 || entries[0] !== "package") {
     throw new Error(`unexpected archive root: ${entries.join(", ")}`);
   }
   const packageRoot = join(root, entries[0]);

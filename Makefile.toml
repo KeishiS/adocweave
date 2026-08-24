@@ -334,7 +334,7 @@ script_runner = "@shell"
 script = '''
 node --test tools/process-lifecycle.test.mjs tools/host-executable.test.mjs
 version="$(node --input-type=module -e "import manifest from './web-worker/package.json' with { type: 'json' }; process.stdout.write(manifest.version)")"
-node tools/browser-release-smoke.mjs "target/distrib/adocweave-browser-$version.tar.xz" "${ADOCWEAVE_BROWSER:-chromium}"
+node tools/browser-release-smoke.mjs "target/distrib/adocweave-browser-$version.tgz" "${ADOCWEAVE_BROWSER:-chromium}"
 '''
 
 [tasks.test-browser-bundler]
@@ -535,7 +535,7 @@ for artifact in target/adocweave-wasm/*; do
   echo "$bytes $artifact"
 done
 version="$(node --input-type=module -e "import manifest from './web-worker/package.json' with { type: 'json' }; process.stdout.write(manifest.version)")"
-archive="target/distrib/adocweave-browser-$version.tar.xz"
+archive="target/distrib/adocweave-browser-$version.tgz"
 echo "$(wc -c < "$archive") $archive"
 '''
 
@@ -664,7 +664,7 @@ private = true
 description = "Reject documentation .md files except repository metadata"
 script_runner = "@shell"
 script = '''
-unexpected="$(rg --files --hidden -g '*.md' -g '!.git/**' | rg -v '^(AGENTS\.md|\.claude/skills/[^/]+/SKILL\.md|\.github/pull_request_template\.md|\.github/SECURITY\.md|release/notes\.md|release/notes\.template\.md|editors/vscode/README\.md|packages/[^/]+/README\.md)$' || true)"
+unexpected="$(rg --files --hidden -g '*.md' -g '!.git/**' | rg -v '^(AGENTS\.md|\.claude/skills/[^/]+/SKILL\.md|\.github/pull_request_template\.md|\.github/SECURITY\.md|release/notes\.md|release/notes\.template\.md|editors/vscode/README\.md|packages/[^/]+/README\.md|web-worker/README\.md)$' || true)"
 if [ -n "$unexpected" ]; then
   echo "repository documentation must use .adoc except repository metadata:" >&2
   echo "$unexpected" >&2

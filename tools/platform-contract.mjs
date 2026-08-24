@@ -44,7 +44,7 @@ export function executableNames(executableSuffix) {
 
 export function requiredProductInstallationAssets(product, target, version, archiveType) {
   const names = {
-    browser: `adocweave-browser-${version}.tar.xz`,
+    browser: `adocweave-browser-${version}.tgz`,
     cli: `adocweave-cli-${target}.${archiveType}`,
     lsp: `adocweave-lsp-${target}.${archiveType}`,
     textlint: `adocweave-textlint-plugin-asciidoc-${version}.tgz`,

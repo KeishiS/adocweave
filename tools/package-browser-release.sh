@@ -2,9 +2,13 @@
 set -euo pipefail
 
 version="$(node --input-type=module -e "import manifest from './web-worker/package.json' with { type: 'json' }; process.stdout.write(manifest.version)")"
-package="adocweave-browser-$version"
-stage="target/distrib/$package"
-archive="target/distrib/$package.tar.xz"
+archive_name="adocweave-browser-$version.tgz"
+archive="target/distrib/$archive_name"
+npm_cache="${ADOCWEAVE_BROWSER_NPM_CACHE:-target/npm-cache}"
+# npm packはtarballのrootを``package/``へ正規化する。stageもその名前で作る。
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/adocweave-browser.XXXXXX")"
+stage="$scratch/package"
+trap 'rm -rf "$scratch"' EXIT
 
 export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$(pwd)=. --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=cargo-home"
 
@@ -22,7 +26,6 @@ fi
   --out-dir target/adocweave-wasm \
   target/wasm32-unknown-unknown/browser/adocweave_wasm.wasm
 
-rm -rf "$stage"
 mkdir -p "$stage/wasm" "$stage/worker" "$stage/example"
 cp target/adocweave-wasm/adocweave_wasm.js "$stage/wasm/"
 cp target/adocweave-wasm/adocweave_wasm_bg.wasm "$stage/wasm/"
@@ -33,14 +36,23 @@ cp web-worker/client.mjs web-worker/contracts.mjs web-worker/index.mjs \
   web-worker/index.d.mts web-worker/protocol.d.mts web-worker/worker-protocol.mjs \
   web-worker/worker.mjs "$stage/worker/"
 cp web-worker/example/index.html web-worker/example/app.mjs "$stage/example/"
-cp web-worker/package.json web-worker/README.adoc LICENSE-MIT LICENSE-APACHE "$stage/"
+cp web-worker/package.json web-worker/README.md LICENSE-MIT LICENSE-APACHE "$stage/"
 node tools/generate-third-party-notices.mjs "$stage/THIRD_PARTY_NOTICES.adoc"
 
-tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
-  -cJf "$archive" -C target/distrib "$package"
-if tar -xOf "$archive" | LC_ALL=C grep -a -E '(/workspace/|/home/|/tmp/)' >/dev/null; then
+mkdir -p target/distrib
+pack_result="$(npm --cache "$npm_cache" pack --ignore-scripts --json --pack-destination "$scratch" "$stage")"
+packed_name="$(node --input-type=module -e '
+  const result = JSON.parse(process.argv[1]);
+  if (!Array.isArray(result) || result.length !== 1) throw new Error("npm pack produced an unexpected result");
+  process.stdout.write(result[0].filename);
+' "$pack_result")"
+if [[ "$packed_name" != "$archive_name" ]]; then
+  echo "unexpected browser archive name: $packed_name" >&2
+  exit 1
+fi
+cp "$scratch/$packed_name" "$archive"
+if tar -xOzf "$archive" | LC_ALL=C grep -a -E '(/workspace/|/home/|/tmp/)' >/dev/null; then
   echo "browser release artifact contains a machine-local absolute path" >&2
   exit 1
 fi
-rm -rf "$stage"
 echo "browser release artifact: $archive"
