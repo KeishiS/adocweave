@@ -12,7 +12,7 @@ const version = "0.46.2";
 for (const [product, expected] of [
   ["cli", `adocweave-cli-${target}.zip`],
   ["lsp", `adocweave-lsp-${target}.zip`],
-  ["browser", `adocweave-browser-${version}.tar.xz`],
+  ["browser", `adocweave-browser-${version}.tgz`],
   ["textlint", `adocweave-textlint-plugin-asciidoc-${version}.tgz`],
   ["vscode", `adocweave-vscode-${version}.vsix`],
   ["zed", `adocweave-zed-${version}.tar.xz`],

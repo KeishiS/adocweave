@@ -139,10 +139,13 @@ function archive(name) {
   return path;
 }
 
+const TAR_LIST_FLAGS = { "tar.xz": "-tJf", tgz: "-tzf" };
+const TAR_EXTRACT_FLAGS = { "tar.xz": "-xJf", tgz: "-xzf" };
+
 function extract(path, destination, expectedRoot, archiveType = "tar.xz") {
   const listing = archiveType === "zip"
     ? execFileSync("unzip", ["-Z1", path], { encoding: "utf8" })
-    : execFileSync("tar", ["-tJf", path], { encoding: "utf8" });
+    : execFileSync("tar", [TAR_LIST_FLAGS[archiveType], path], { encoding: "utf8" });
   const entries = archiveEntries(listing);
   if (entries.length === 0) throw new Error(`empty release archive: ${basename(path)}`);
   if (
@@ -154,7 +157,7 @@ function extract(path, destination, expectedRoot, archiveType = "tar.xz") {
   if (archiveType === "zip") {
     execFileSync("unzip", ["-q", path, "-d", destination]);
   } else {
-    execFileSync("tar", ["-xJf", path, "-C", destination]);
+    execFileSync("tar", [TAR_EXTRACT_FLAGS[archiveType], path, "-C", destination]);
   }
   const root = expectedRoot ? join(destination, expectedRoot) : destination;
   assertInside(destination, root);
@@ -233,11 +236,12 @@ function installNative(packageName, executable) {
 }
 
 function installBrowser() {
-  const archiveRoot = `adocweave-browser-${version}`;
+  // npm packが作るtarballのrootは、versionを含まない``package``に正規化される。
   const extracted = extract(
-    archive(`${archiveRoot}.tar.xz`),
+    archive(`adocweave-browser-${version}.tgz`),
     join(scratch, "extract", "browser"),
-    archiveRoot,
+    "package",
+    "tgz",
   );
   mkdirSync(dirname(browserRoot), { recursive: true });
   renameSync(extracted, browserRoot);

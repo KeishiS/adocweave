@@ -51,7 +51,7 @@ function fixture() {
         versionSource: "web/package.json#version",
         tagPrefix: "adocweave-browser/v",
         assetKind: "browser",
-        assetName: "adocweave-browser-{version}.tar.xz",
+        assetName: "adocweave-browser-{version}.tgz",
         build: "script",
         buildScript: "tools/package-browser.sh",
       },
@@ -109,7 +109,7 @@ test("JSONとTOMLのversionSourceから製品tagとcandidate名を一意に解�
     const browser = productIdentity("browser", { root });
     assert.equal(browser.version, "4.5.6");
     assert.equal(browser.tag, "adocweave-browser/v4.5.6");
-    assert.deepEqual(browser.assetNames, ["adocweave-browser-4.5.6.tar.xz"]);
+    assert.deepEqual(browser.assetNames, ["adocweave-browser-4.5.6.tgz"]);
     const plan = loadDistributionPlan(root);
     const entry = selectProduct(plan, "cli");
     assert.equal(productVersion(entry, root), "1.2.3");
