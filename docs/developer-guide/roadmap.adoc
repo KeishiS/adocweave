@@ -31,27 +31,15 @@ https://github.com/KeishiS/adocweave/releases[GitHub Releases]のRelease Notes�
 単体CLIのlocal resource profileは、相対resourceを解決する需要が確認された場合に再評価します。
 RenovateによるNix依存更新は、手動更新が継続的な負担となった場合に再評価します。
 
-== 進行中の公開経路
-
-textlint用Processor、WebAssembly packageおよびCLIをnpm Registryへ段階的に公開する準備を進めています。
-公開はGitHub Releaseの公開後に専用jobだけが行い、Releaseで検証した成果物と同じbyte列を送ります。
-npm向けに構築し直しません。
-
-* https://github.com/KeishiS/adocweave/issues/83[npm Registryへの段階的な公開]
-
-公開はpackageごとに段階を分けます。npmはpackageが実在しないと公開元の登録を設定できないため、
-最初のpackageで公開、復旧および公開後検査の手順を確認してから残りへ広げます。
-
-* https://github.com/KeishiS/adocweave/issues/714[公開方針の文書への反映]
-* https://github.com/KeishiS/adocweave/issues/715[公開基盤と復旧手順]
-* https://github.com/KeishiS/adocweave/issues/716[textlint用Processorの公開]
-* https://github.com/KeishiS/adocweave/issues/717[WebAssembly packageの公開]
-* https://github.com/KeishiS/adocweave/issues/718[CLIの公開]
-
 == 実施しない公開経路
 
-Visual Studio Marketplace、Zed Extension Gallery、crates.ioおよびOSのpackage managerへの
-登録・公開は行いません。次のIssueは実装候補ではなく、この判断と過去の検討内容を残す記録として保留します。
+Visual Studio Marketplace、Zed Extension Gallery、crates.io、npm RegistryへのCLI公開および
+OSのpackage managerへの登録・公開は行いません。次のIssueは実装候補ではなく、この判断と
+過去の検討内容を残す記録として保留します。
 
 * https://github.com/KeishiS/adocweave/issues/82[公式extension registry（Open VSX以外）]
 * https://github.com/KeishiS/adocweave/issues/86[Homebrew・WinGet・Scoopの評価]
+
+CLIのnpm公開は、効果が利用側1リポジトリのCIに限られる一方で、標準的な構成では公開packageが
+5つに増えて継続的な負担となるため中止しました。``npx``による単発実行を対外的な入口として
+提供する必要が生じた場合に再評価します。
