@@ -165,6 +165,7 @@ description = "Verify Windows and macOS release contracts without requiring the 
 command = "node"
 args = [
   "--test",
+  "tools/browser-npm-smoke.test.mjs",
   "tools/platform-contract.test.mjs",
   "tools/release-installation-e2e.test.mjs",
   "tools/textlint-plugin-npm-smoke.test.mjs",
@@ -305,6 +306,12 @@ category = "CI entry points"
 description = "Observe the clean install and one-shot npx paths from the npm Registry after publication"
 command = "node"
 args = ["tools/textlint-plugin-npm-smoke.mjs"]
+
+[tasks.browser-post-publication-npm-smoke]
+category = "CI entry points"
+description = "Observe the clean install and public entry resolution from the npm Registry after publication"
+command = "node"
+args = ["tools/browser-npm-smoke.mjs"]
 
 [tasks.test-zed-release-package]
 private = true

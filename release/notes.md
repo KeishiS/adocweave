@@ -1,34 +1,35 @@
-# AdocWeave textlint v0.47.0
+# AdocWeave browser v0.47.0
 
 ## 主な変更
 
-- **`engines`と`peerDependencies`を範囲指定へ緩めました。** 従来はNode.js 24.19.0とtextlint 15.8.0へ完全一致で固定しており、動作する組合せでも導入時に警告や失敗が起きていました。今後はNode.js 24.19.0以上と、textlint 15.8系を受け入れます。CIで確認する組合せは変えていません。
-- **READMEをMarkdownへ変更しました。** package registryのpackageページで描画できる形式にします。記載内容は変えていません。
+- **配布物の形式をnpmのtarballへ変更しました。** 成果物の名前が `adocweave-browser-<version>.tar.xz` から `adocweave-browser-<version>.tgz` になり、展開後のrootが `adocweave-browser-<version>/` から `package/` になります。npm Registryへ公開する準備として、GitHub Releaseへ添付する成果物そのものをnpmの形式に揃えました。registry向けに構築し直さないため、どちらの経路でも同じbyte列を取得できます。
+- **packageのREADMEをMarkdownへ変更しました。** package registryのpackageページで描画できる形式にします。記載内容は変えていません。
 
-Processorの公開interface、TxtASTへの変換結果および診断の位置は変えていません。
+公開API、WebAssemblyとの通信内容および解析結果は変えていません。
 
 ## 対応環境
 
-Node.js 24.19.0以上と、textlint 15.8系で動作します。WebAssemblyはパッケージへ同梱するため、Rust、Cargoまたは実行時の追加ダウンロードを必要としません。
+WebAssemblyとWeb Workerに対応したブラウザーで動作します。公開entry、WorkerおよびWASMは同一originから配信します。
 
 ## 対応関係
 
-textlintのProcessor Pluginとして動作します。AdocWeaveのほかの製品を同じ環境へ導入する必要はありません。
+WebAssemblyとの通信はschema handshakeで検査します。Browser packageのバージョンを、AdocWeaveのほかの製品との互換性判断には使用しません。
 
 ## v0.47.0への移行
 
-- 利用者の作業は不要です。依存の指定方法と設定は変わりません。
-- Node.jsまたはtextlintのversionが合わず導入できなかった場合は、範囲指定へ緩めたことで導入できるようになります。
+- GitHub Releaseのarchiveから導入している場合は、展開コマンドを `tar -xzf` へ変更してください。
+- 展開後のディレクトリ名が `package` になります。`adocweave-browser-<version>` を前提にした移動やコピーの指定を変更してください。
+- bundlerからの利用方法、公開API、`defaultAssetUrls` の使い方は変わりません。
 
 ## 更新とロールバック
 
-依存として記録したversionを新しい版へ変更し、`npm install`を実行してから`package-lock.json`の差分と検査結果を確認してください。以前の版へ戻す場合は、同じ手順で戻したいversionを指定します。受入確認が終わるまで以前の`package-lock.json`を保持すると、問題がある場合に元へ戻せます。
+新しいarchiveを別のディレクトリへ展開し、`worker/index.mjs` と `wasm` の相対関係を保ったまま配備先を切り替えてください。受入確認が終わるまで以前のディレクトリを保持すると、問題がある場合に元へ戻せます。
 
 ## 既知の制約
 
-- includeを展開せず、入力された一つの物理ファイルだけを解析します。
-- 自動修正に対応しません。規則が修正情報を返した場合も削除するため、`textlint --fix`でAsciiDoc文書を書き換えません。
-- 一つの入力は10 MiB、TxtAST planは50 MiB、planのnodeは1,000,000件、`sourceId`は4 KiBを上限とします。同梱WebAssemblyのlinear memoryは256 MiBを上限とします。
+- 一つのclientは同時に一つの解析だけを実行します。並行して解析する場合はclientを分けます。
+- 取消しまたはWebAssemblyのtrapが発生した場合、clientはそのWorkerを終了します。同じWorkerとWASM instanceを次の解析へ再利用しません。
+- HTMLの信頼方針は利用側が決めます。packageは出力を文字列として返します。
 
 ## 配布物の検証
 
