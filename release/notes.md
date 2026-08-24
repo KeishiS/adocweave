@@ -1,45 +1,36 @@
-# AdocWeave wasm v0.48.0
+# AdocWeave lib v0.47.0
 
 ## 主な変更
 
-- **package名を `@adocweave/browser` から `@adocweave/wasm` へ変更しました。** WebAssemblyは静的サイト生成のようにNodeのビルド時でも動きます。動作環境を名前で限定しないよう、Rust crateと同じ `wasm` へ揃えました。`@adocweave/browser` は非推奨とし、移動先を示します。
-- **成果物とtagの名前を変更しました。** 成果物は `adocweave-wasm-<version>.tgz`、tagは `adocweave-wasm/v<version>` になります。
-- **公開定数 `BROWSER_PACKAGE_VERSION` を `WASM_PACKAGE_VERSION` へ改名しました。**
-- **Nodeからビルド時に使う入口 `@adocweave/wasm/direct` を追加しました。** 静的サイト生成のようにNodeで解析と変換を行う場合、これまではpackageの内部layoutへ直接触れる必要がありました。同梱WebAssemblyを自分で初期化するため、pathを渡さずに使えます。要求と応答はブラウザー向けの入口と同じです。Web Workerを使わないため、取消しには対応せず、WebAssemblyがtrapした場合の分離もありません。処理を1つずつ順に実行する用途に限ります。
+- **Rustライブラリを版付きの製品として公開します。** これまでworkspace versionはどの製品にも属さず、公開APIを削除しても版が変わりませんでした。今後は`adocweave-lib/v<version>`のtagとGitHub Releaseを持ちます。利用側はcommit SHAではなくtagで固定できます。
+- **`output::projection`から`DocumentProjection`と`project`を削除しました。** 用途別のquery関数へ分割しています。`block_presentations`、`document_title`、`external_links`、`formulas`、`ordered_lists`、`reference_edges`、`rendering_features`および`source_blocks`が代わりです。
+- **`output::conformance`から`DocumentProducts`、`ProductSet`および`products`を削除しました。** 適合性検査の内部構造であり、公開範囲から外します。
+- **`output::canonical`を追加しました。** `canonical_ast`と`canonical_syntax`を公開します。
 
-  ```javascript
-  import { analyze } from "@adocweave/wasm/direct";
-
-  const result = await analyze({ sourceId, source, products: { html: true } });
-  ```
-
-`AdocWeaveClient`、`defaultAssetUrls`、`analyze` の要求と応答、WebAssemblyとの通信内容および解析結果は変えていません。
+この版に含まれるcrateは`adocweave`、`adocweave-config`、`adocweave-host`、`adocweave-textlint`および`adocweave-workspace`です。crates.ioへは公開しません。
 
 ## 対応環境
 
-WebAssemblyとWeb Workerに対応したブラウザーで動作します。公開entry、WorkerおよびWASMは同一originから配信します。
+Rust 1.97.1で構築します。対応環境はRustのtoolchainに従います。
 
 ## 対応関係
 
-WebAssemblyとの通信はschema handshakeで検査します。packageのバージョンを、AdocWeaveのほかの製品との互換性判断には使用しません。
+CLI、Language Server、WebAssemblyおよびtextlint用Processorは、それぞれ独立した製品バージョンを持ちます。ライブラリの版をこれらとの互換性判断には使用しません。
 
-## v0.48.0への移行
+## v0.47.0への移行
 
-- 依存の指定を `@adocweave/wasm` へ変更してください。`@adocweave/browser` へは新しい版を公開しません。
-- `BROWSER_PACKAGE_VERSION` を参照している場合は `WASM_PACKAGE_VERSION` へ変更してください。
-- GitHub Releaseのarchiveから導入している場合は、成果物名を `adocweave-wasm-<version>.tgz` へ変更してください。展開後のrootは `package` のままです。
-- `AdocWeaveClient` の使い方は変わりません。
-- packageの内部layoutを直接参照してNodeから使っていた場合は、`@adocweave/wasm/direct` へ切り替えられます。
+- gitの依存を`tag = "adocweave-lib/v0.47.0"`で固定できます。commit SHAでの固定も引き続き使えます。
+- `DocumentProjection`と`project`を使っていた場合は、必要な情報に対応するquery関数へ置き換えてください。文書全体を一度に組み立てる代わりに、使う値だけを取り出します。
+- `DocumentProducts`、`ProductSet`および`products`を使っていた場合は、適合性検査の外では`output::canonical`の関数を使ってください。
 
 ## 更新とロールバック
 
-npmから導入している場合は、指定するバージョンを変更して `npm install` を実行し、`package-lock.json` の差分を確認してください。archiveから導入している場合は、新しいarchiveを別のディレクトリへ展開し、`worker/index.mjs` と `wasm` の相対関係を保ったまま配備先を切り替えます。受入確認が終わるまで以前の状態を保持すると、問題がある場合に元へ戻せます。
+利用側の`Cargo.toml`で固定するtagを変更し、`cargo update -p adocweave`で解決し直してください。以前の版へ戻す場合は同じ手順でtagを戻します。`Cargo.lock`の差分で、解決したcommitを確認できます。
 
 ## 既知の制約
 
-- 一つのclientは同時に一つの解析だけを実行します。並行して解析する場合はclientを分けます。
-- 取消しまたはWebAssemblyのtrapが発生した場合、clientはそのWorkerを終了します。同じWorkerとWASM instanceを次の解析へ再利用しません。
-- HTMLの信頼方針は利用側が決めます。packageは出力を文字列として返します。
+- crates.ioへ公開しません。gitの依存として取得します。
+- 5つのcrateが同じ版を共有します。いずれかの変更で全体の版が上がります。
 
 ## 配布物の検証
 

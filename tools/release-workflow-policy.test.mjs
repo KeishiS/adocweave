@@ -253,7 +253,7 @@ function productRoutingWorkflows() {
         workflow_dispatch: {
           inputs: {
             product: {
-              options: ["cli", "lsp", "wasm", "textlint", "vscode", "zed"],
+              options: ["lib", "cli", "lsp", "wasm", "textlint", "vscode", "zed"],
               required: true,
               type: "choice",
             },

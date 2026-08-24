@@ -313,6 +313,19 @@ description = "Observe the clean install and public entry resolution from the np
 command = "node"
 args = ["tools/wasm-npm-smoke.mjs"]
 
+[tasks.package-lib-release]
+private = true
+description = "Build the deterministic library source archive consumed by dist"
+command = "bash"
+args = ["tools/package-lib-release.sh"]
+
+[tasks.test-lib-release-package]
+category = "CI entry points"
+description = "Verify the library release archive layout and deterministic bytes"
+dependencies = ["package-lib-release"]
+command = "bash"
+args = ["tools/verify-lib-release-package.sh"]
+
 [tasks.test-zed-release-package]
 private = true
 description = "Verify the Zed release archive layout and deterministic bytes"

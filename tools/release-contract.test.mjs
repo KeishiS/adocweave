@@ -15,7 +15,7 @@ import plan from "../release/distribution-plan.json" with { type: "json" };
 import fixture from "../release/adocweave-dist-manifest.fixture.json" with { type: "json" };
 
 test("stable tags identify one product and one version", () => {
-  for (const product of ["cli", "lsp", "wasm", "textlint", "vscode", "zed"]) {
+  for (const product of ["lib", "cli", "lsp", "wasm", "textlint", "vscode", "zed"]) {
     const tag = `adocweave-${product}/v1.2.3`;
     assert.deepEqual(releaseFromTag(tag), { product, productVersion: "1.2.3" });
     assert.doesNotThrow(() => validateReleaseIdentity(product, "1.2.3", tag, plan));
@@ -35,11 +35,12 @@ test("stable tags identify one product and one version", () => {
   );
 });
 
-test("distribution plan routes six products without storing their versions", () => {
+test("distribution plan routes every product without storing their versions", () => {
   assert.equal(plan.schemaVersion, 3);
   assert.equal("packageVersion" in plan, false);
   assert.equal("assets" in plan, false);
   assert.deepEqual(plan.products.map(({ product }) => product), [
+    "lib",
     "cli",
     "lsp",
     "wasm",

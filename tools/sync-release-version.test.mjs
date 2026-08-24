@@ -92,17 +92,20 @@ function generatedRunner({ mode, root, current, version, generator }) {
   }
 }
 
-test("六つの製品と製品内のroutingだけを受理する", () => {
+test("登録した製品と製品内のroutingだけを受理する", () => {
   assert.doesNotThrow(() => validateRegistry(registry()));
+  // targetと生成物を持つ製品は限られるため、位置ではなく内容で選ぶ。
+  const withTargets = (value) => value.products.find((entry) => entry.targets.length > 0);
+  const withGenerators = (value) => value.products.find((entry) => entry.generators.length > 0);
   const cases = [
     (value) => value.products.pop(),
     (value) => value.products.push(structuredClone(value.products[0])),
     (value) => { value.products[0].id = "unknown"; },
     (value) => { delete value.products[0].authority.count; },
-    (value) => { value.products[0].targets[0].unknown = true; },
-    (value) => { value.products[0].generators[0].id = "unknown"; },
-    (value) => { value.products[0].generators[0].id = "public-conformance"; },
-    (value) => { value.products[0].generators[0].outputs[0].path = "../outside"; },
+    (value) => { withTargets(value).targets[0].unknown = true; },
+    (value) => { withGenerators(value).generators[0].id = "unknown"; },
+    (value) => { withGenerators(value).generators[0].id = "public-conformance"; },
+    (value) => { withGenerators(value).generators[0].outputs[0].path = "../outside"; },
   ];
   for (const mutate of cases) {
     const value = registry();

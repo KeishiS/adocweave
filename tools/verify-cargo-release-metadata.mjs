@@ -24,15 +24,14 @@ try {
   ];
   const packages = metadata.packages.filter((pkg) => expectedNames.includes(pkg.name));
   if (packages.length !== expectedNames.length) throw new Error("cargo metadata is missing a workspace package");
-  const workspaceSource = readFileSync(new URL("../Cargo.toml", import.meta.url), "utf8");
-  const workspaceVersion = /^\[workspace\.package\][\s\S]*?^version\s*=\s*"([^"]+)"/m.exec(workspaceSource)?.[1];
-  if (!workspaceVersion) throw new Error("workspace package version is missing");
+  // workspace versionはlib製品の版そのものなので、製品の正本から照合する。
+  const libraryVersion = productRelease("lib").version;
   const versions = {
-    adocweave: workspaceVersion,
+    adocweave: libraryVersion,
     "adocweave-cli": productRelease("cli").version,
-    "adocweave-host": workspaceVersion,
+    "adocweave-host": libraryVersion,
     "adocweave-lsp": productRelease("lsp").version,
-    "adocweave-textlint": workspaceVersion,
+    "adocweave-textlint": libraryVersion,
     "adocweave-textlint-wasm": productRelease("textlint").version,
     "adocweave-wasm": productRelease("wasm").version,
   };

@@ -49,7 +49,7 @@ test("Release Notesの題名と見出しを雛形から構成する", () => {
 });
 
 test("distribution planのversionSourceから六製品の版を取得する", () => {
-  assert.deepEqual(PRODUCT_IDS, ["cli", "lsp", "wasm", "textlint", "vscode", "zed"]);
+  assert.deepEqual(PRODUCT_IDS, ["lib", "cli", "lsp", "wasm", "textlint", "vscode", "zed"]);
   for (const product of PRODUCT_IDS) {
     assert.match(productRelease(product).version, /^\d+\.\d+\.\d+$/);
   }
