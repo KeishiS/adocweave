@@ -15,7 +15,8 @@ const PUBLIC_TASKS = [
   "acceptance", "default", "fmt", "fmt-check", "fuzz-smoke", "main-gate", "main-integrations", "release-check",
   "security-audit", "test-browser-release-candidate", "test-global-product-candidate",
   "test-vscode-release-determinism", "test-zed-release-candidate",
-  "textlint-plugin-post-release-npx-smoke", "textlint-plugin-release-consumer-e2e", "verify",
+  "textlint-plugin-post-publication-npm-smoke", "textlint-plugin-post-release-npx-smoke",
+  "textlint-plugin-release-consumer-e2e", "verify",
 ].sort();
 const DEVELOPER_TASKS = new Set([
   "acceptance", "fmt", "fmt-check", "release-check", "security-audit", "verify",

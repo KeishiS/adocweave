@@ -33,7 +33,7 @@ export async function runTextlintPluginNpxSmoke(
   } = {},
 ) {
   manifest ??= await loadPackageManifest();
-  const normalizedPackageSpec = await normalizePackageSpec(packageSpec);
+  const normalizedPackageSpec = await normalizePackageSpec(packageSpec, manifest.name);
   const settings = npxSettings(manifest, oneShot);
   const root = await mkdtemp(join(tmpdir(), "adocweave-textlint-npx-smoke-"));
   try {
@@ -126,7 +126,11 @@ export function assertExpectedDiagnostic(stdout) {
   }
 }
 
-async function normalizePackageSpec(packageSpec) {
+async function normalizePackageSpec(packageSpec, packageName) {
+  // 公開後はregistryの``name@version``を、公開前はarchiveのURLかpathを受け取る。
+  if (packageName !== undefined && packageSpec.startsWith(`${packageName}@`)) {
+    return packageSpec;
+  }
   let url;
   try {
     url = new URL(packageSpec);
