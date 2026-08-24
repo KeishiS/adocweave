@@ -2,6 +2,29 @@
   "schemaVersion": 2,
   "products": [
     {
+      "id": "lib",
+      "authority": {
+        "type": "literal",
+        "path": "Cargo.toml",
+        "template": "\nversion = \"{version}\"\n",
+        "count": 1
+      },
+      "targets": [
+        {
+          "type": "cargo-lock",
+          "path": "Cargo.lock",
+          "packages": [
+            "adocweave",
+            "adocweave-config",
+            "adocweave-host",
+            "adocweave-textlint",
+            "adocweave-workspace"
+          ]
+        }
+      ],
+      "generators": []
+    },
+    {
       "id": "cli",
       "authority": {
         "type": "literal",

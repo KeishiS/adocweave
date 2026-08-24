@@ -27,6 +27,15 @@ function fixture() {
     schemaVersion: 3,
     products: [
       {
+        product: "lib",
+        versionSource: "crates/tool/Cargo.toml#package.version",
+        tagPrefix: "adocweave-lib/v",
+        assetKind: "lib",
+        assetName: "adocweave-lib-{version}.tar.xz",
+        build: "script",
+        buildScript: "tools/package-lib.sh",
+      },
+      {
         product: "cli",
         versionSource: "crates/tool/Cargo.toml#package.version",
         tagPrefix: "adocweave-cli/v",
@@ -197,7 +206,7 @@ test("candidateとpublication planへ他製品assetを混在させません", ()
 test("全製品を同じ最小publication planへ正規化します", () => {
   const { cleanup, plan, root } = fixture();
   try {
-    for (const product of ["cli", "lsp", "wasm", "textlint", "vscode", "zed"]) {
+    for (const product of ["lib", "cli", "lsp", "wasm", "textlint", "vscode", "zed"]) {
       const identity = productIdentity(product, { plan, root });
       const cargoDistPlan = identity.entry.build === "cargo-dist"
         ? {

@@ -14,7 +14,8 @@ const read = (path) => readFileSync(new URL(path, ROOT), "utf8");
 const PUBLIC_TASKS = [
   "acceptance", "default", "fmt", "fmt-check", "fuzz-smoke",
   "main-gate", "main-integrations", "release-check",
-  "security-audit", "test-global-product-candidate", "test-vscode-release-determinism",
+  "security-audit", "test-global-product-candidate", "test-lib-release-package",
+  "test-vscode-release-determinism",
   "test-wasm-release-candidate", "test-zed-release-candidate",
   "textlint-plugin-post-publication-npm-smoke", "textlint-plugin-post-release-npx-smoke",
   "textlint-plugin-release-consumer-e2e", "verify",
@@ -57,7 +58,7 @@ const ALLOWED_SECRET_REFERENCES = new Map([
   ["open-vsx-publish.yml job publish", new Set(["secrets.OPEN_VSX_TOKEN"])],
 ]);
 const SECRET_REFERENCE = /secrets\.[A-Za-z_][A-Za-z0-9_]*/g;
-const RELEASE_PRODUCTS = ["cli", "lsp", "wasm", "textlint", "vscode", "zed"];
+const RELEASE_PRODUCTS = ["lib", "cli", "lsp", "wasm", "textlint", "vscode", "zed"];
 const RUST_CACHE_ACTION = "Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6";
 
 function isBuildCache(step) {

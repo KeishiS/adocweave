@@ -4,6 +4,17 @@
   "repository": "https://github.com/KeishiS/adocweave",
   "products": [
     {
+      "product": "lib",
+      "versionSource": "Cargo.toml#workspace.package.version",
+      "tagPrefix": "adocweave-lib/v",
+      "assetKind": "lib",
+      "assetName": "adocweave-lib-{version}.tar.xz",
+      "archive": "tar.xz",
+      "executable": null,
+      "build": "script",
+      "buildScript": "tools/package-lib-release.sh"
+    },
+    {
       "product": "cli",
       "versionSource": "crates/adocweave-cli/Cargo.toml#package.version",
       "tagPrefix": "adocweave-cli/v",
