@@ -380,6 +380,7 @@ description = "Build and completely verify PRODUCT as one global release candida
 script_runner = "@shell"
 script = '''
 case "${PRODUCT:-}" in
+  lib) task=test-lib-release-package ;;
   wasm) task=test-wasm-release-candidate ;;
   textlint) task=textlint-plugin-release-consumer-e2e ;;
   vscode) task=test-vscode-release-determinism ;;
