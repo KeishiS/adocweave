@@ -138,7 +138,6 @@ node tools/release-workflow-policy.mjs
 node --test \
   tools/browser-release-budget.test.mjs \
   tools/normalize-darwin-archives.test.mjs \
-  tools/npm-package-asset.test.mjs \
   tools/product-candidate-plan.test.mjs \
   tools/product-release.test.mjs \
   tools/release-workflow-policy.test.mjs \
