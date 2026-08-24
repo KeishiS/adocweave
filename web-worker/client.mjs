@@ -1,3 +1,4 @@
+import { analysisPayload } from "./analysis.mjs";
 import { WORKER_PROTOCOL_VERSION, validateWorkerMessage } from "./worker-protocol.mjs";
 
 export class AdocWeaveClient {
@@ -24,16 +25,7 @@ export class AdocWeaveClient {
     };
   }
 
-  analyze({
-    sourceId = null,
-    source,
-    preprocess,
-    products,
-    renderInputs,
-    analysisOptions = {},
-    renderPolicy = {},
-    outputLimits = {},
-  }, { signal } = {}) {
+  analyze(request, { signal } = {}) {
     if (this.#disposed) {
       return Promise.reject(new AdocWeaveClientError({
         code: "disposed",
@@ -49,16 +41,7 @@ export class AdocWeaveClient {
     if (signal?.aborted) return Promise.reject(abortError());
 
     const requestId = this.#allocateRequestId();
-    const payload = {
-      sourceId,
-      source,
-      analysisOptions,
-      renderPolicy,
-      outputLimits,
-    };
-    if (products !== undefined) payload.products = products;
-    if (preprocess !== undefined) payload.preprocess = preprocess;
-    if (renderInputs !== undefined) payload.renderInputs = renderInputs;
+    const payload = analysisPayload(request);
 
     return new Promise((resolve, reject) => {
       const active = {

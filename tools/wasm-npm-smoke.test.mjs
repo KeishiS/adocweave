@@ -8,18 +8,25 @@ import { runWasmNpmSmoke } from "./wasm-npm-smoke.mjs";
 const manifest = {
   name: "@adocweave/wasm",
   version: "0.47.0",
-  exports: { ".": { types: "./worker/index.d.mts", import: "./worker/index.mjs" } }
+  exports: {
+    ".": { types: "./worker/index.d.mts", import: "./worker/index.mjs" },
+    "./direct": { types: "./worker/direct.d.mts", import: "./worker/direct.mjs" }
+  }
 };
 
 const PACKAGE_FILES = [
   "worker/index.mjs",
   "worker/index.d.mts",
+  "worker/direct.d.mts",
   "worker/worker.mjs",
   "wasm/adocweave_wasm.js",
   "wasm/adocweave_wasm_bg.wasm",
   "README.md",
   "THIRD_PARTY_NOTICES.adoc"
 ];
+
+// 実際の解析は公開後smokeが本物のpackageで確かめる。ここでは手順の組み立てだけを見る。
+const DIRECT_STUB = 'export const analyze = async () => ({ html: "<h1>題名</h1>" });\n';
 
 async function fakeInstall({ cwd }, overrides = {}) {
   const packageRoot = join(cwd, "node_modules", "@adocweave", "wasm");
@@ -30,6 +37,7 @@ async function fakeInstall({ cwd }, overrides = {}) {
     JSON.stringify({ ...manifest, type: "module", ...overrides })
   );
   for (const path of PACKAGE_FILES) await writeFile(join(packageRoot, path), "\n");
+  await writeFile(join(packageRoot, "worker", "direct.mjs"), DIRECT_STUB);
 }
 
 test("registryのversionを解決してから導入した内容を確かめる", async () => {

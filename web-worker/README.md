@@ -10,6 +10,58 @@ npm install @adocweave/wasm@X.Y.Z
 
 GitHub Releaseへ添付したarchiveと同じbyte列をnpmへ公開します。checksumとattestationを自分で検証してから導入する場合は、AdocWeaveのGitHub Releaseに添付した `.tgz` を指定することもできます。
 
+## 入口の選び方
+
+用途によって2つの入口があります。要求と応答の形式はどちらも同じです。
+
+| 入口 | 実行環境 | 取消し | WASM trapの分離 |
+|---|---|---|---|
+| `@adocweave/wasm` | ブラウザー | あり（`AbortSignal`） | あり（Workerを終了） |
+| `@adocweave/wasm/direct` | Node | なし | なし |
+
+ブラウザーで文書を編集しながら結果を更新する場合は、既定の入口を使います。Web Workerで実行するため、入力の続く間もUIが止まらず、前の解析を取り消せます。
+
+静的サイト生成のようにビルド時へ組み込む場合は `direct` を使います。同じprocessで同期的に実行し、Web Workerを必要としません。処理を1つずつ順に実行する用途に限ります。
+
+## ビルド時の利用
+
+```javascript
+import { analyze } from "@adocweave/wasm/direct";
+
+const result = await analyze({
+  sourceId: "docs/example.adoc",
+  source,
+  products: { html: true },
+});
+```
+
+同梱WebAssemblyの位置はpackage内部から求めるため、pathを渡す必要はありません。初期化は最初の呼び出しで一度だけ行います。明示的に持ちたい場合は `createDirectAnalyzer()` を使います。
+
+利用側で画像やリンク先を解決する場合は、2回に分けて実行します。1回目で問い合わせを受け取り、解決した結果を2回目へ渡します。
+
+```javascript
+import { analyze } from "@adocweave/wasm/direct";
+
+// 1. 問い合わせと診断を受け取る
+const queried = await analyze({
+  sourceId, source,
+  products: { resourceQueries: true, diagnostics: true, projection: true },
+});
+
+// 2. 利用側が解決する。存在確認、配置先の決定、公開URLの組み立ては利用側の責務
+const resources = queried.resourceQueries.map((query) => resolve(query));
+
+// 3. 解決済みresourceでHTMLへ変換する
+const rendered = await analyze({
+  sourceId, source,
+  products: { html: true },
+  renderInputs: { resources },
+  renderPolicy: { activeUrls: { allowedSchemes: ["http", "https"] } },
+});
+```
+
+WASMがtrapした場合、`direct` は同じprocessで実行しているため以降の結果を保証しません。`createDirectAnalyzer()` で新しいanalyzerを作り直してください。
+
 ## 内容
 
 - `wasm/adocweave_wasm.js` と `wasm/adocweave_wasm_bg.wasm` — `wasm-bindgen` のweb向け成果物

@@ -51,6 +51,8 @@ async function assertInstalledPackage(root, expected) {
   for (const path of [
     "worker/index.mjs",
     "worker/index.d.mts",
+    "worker/direct.mjs",
+    "worker/direct.d.mts",
     "worker/worker.mjs",
     "wasm/adocweave_wasm.js",
     "wasm/adocweave_wasm_bg.wasm",
@@ -61,15 +63,30 @@ async function assertInstalledPackage(root, expected) {
   }
 
   // exports mapを経た解決が公開entryへ届くことを、利用側と同じ経路で確かめる。
-  const resolved = await runNode(
-    ["--input-type=module", "-e", `process.stdout.write(import.meta.resolve(${JSON.stringify(expected.name)}))`],
-    root
-  );
-  assert.equal(
-    resolved.trim(),
-    pathToFileURL(join(packageRoot, "worker", "index.mjs")).href,
-    "exports mapが公開entryへ解決しません"
-  );
+  for (const [specifier, entry] of [
+    [expected.name, "index.mjs"],
+    [`${expected.name}/direct`, "direct.mjs"]
+  ]) {
+    const resolved = await runNode(
+      ["--input-type=module", "-e", `process.stdout.write(import.meta.resolve(${JSON.stringify(specifier)}))`],
+      root
+    );
+    assert.equal(
+      resolved.trim(),
+      pathToFileURL(join(packageRoot, "worker", entry)).href,
+      `exports mapが${specifier}を公開entryへ解決しません`
+    );
+  }
+
+  // ビルド時の入口が、導入したpackageの同梱WebAssemblyで実際に動くことを確かめる。
+  const html = await runNode([
+    "--input-type=module",
+    "-e",
+    `const { analyze } = await import(${JSON.stringify(`${expected.name}/direct`)});
+     const result = await analyze({ source: "= 題名\\n" });
+     process.stdout.write(String(result.html));`
+  ], root);
+  assert.match(html, /題名/u, "ビルド時の入口が解析結果を返しません");
 }
 
 async function installFromRegistry({ spec, cwd }) {

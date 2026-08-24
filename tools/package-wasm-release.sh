@@ -32,7 +32,8 @@ cp target/adocweave-wasm/adocweave_wasm_bg.wasm "$stage/wasm/"
 if [[ -f target/adocweave-wasm/adocweave_wasm.d.ts ]]; then
   cp target/adocweave-wasm/adocweave_wasm.d.ts "$stage/wasm/"
 fi
-cp web-worker/client.mjs web-worker/contracts.mjs web-worker/index.mjs \
+cp web-worker/analysis.mjs web-worker/client.mjs web-worker/contracts.mjs \
+  web-worker/direct.mjs web-worker/direct.d.mts web-worker/index.mjs \
   web-worker/index.d.mts web-worker/protocol.d.mts web-worker/worker-protocol.mjs \
   web-worker/worker.mjs "$stage/worker/"
 cp web-worker/example/index.html web-worker/example/app.mjs "$stage/example/"
