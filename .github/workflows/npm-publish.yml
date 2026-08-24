@@ -84,18 +84,37 @@ jobs:
           gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir npm-candidate
           node tools/product-release.mjs --verify-candidate "$RELEASE_PRODUCT" npm-candidate
           node tools/release-metadata.mjs verify "$RELEASE_PRODUCT" npm-candidate "$(git rev-parse HEAD)"
-          tarball="$(node tools/npm-package-asset.mjs resolve "$RELEASE_PRODUCT" npm-candidate)"
+          # 復旧では過去のtagを指定するため、checkoutしたtoolはこのworkflowより古い
+          # ことがある。公開そのものの手順はtoolのversionに依存させない。npmは
+          # ``foo/bar.tgz``をGitHubの``owner/repo``短縮記法として解釈するため、
+          # 成果物は絶対pathで渡す。
+          set -- npm-candidate/*.tgz
+          test "$#" -eq 1
+          tarball="$(realpath "$1")"
           (cd npm-candidate && grep -F "$(basename "$tarball")" sha256.sum | sha256sum --check --strict -)
           for file in npm-candidate/*; do
             gh attestation verify "$file" --repo "$GITHUB_REPOSITORY"
           done
           echo "tarball=$tarball" >> "$GITHUB_ENV"
       - name: npm publication
-        env:
-          RELEASE_PRODUCT: ${{ inputs.product }}
         run: |
-          # Trusted Publishingはid-token以外の資格情報を使わない代わりに、
-          # 対応するnpmを必要とする。満たさない場合はここで止める。
-          node tools/npm-package-asset.mjs --require-trusted-publishing "$(npm --version)"
+          # Trusted Publishingはid-token以外の資格情報を使わない代わりに、対応する
+          # npmを必要とする。満たさない場合は分かりにくい認証失敗として現れるため、
+          # 原因を示してここで止める。
+          minimum=11.5.1
+          actual="$(npm --version)"
+          if [ "$(printf '%s\n%s\n' "$minimum" "$actual" | sort -V | head -n1)" != "$minimum" ]; then
+            echo "Trusted Publishingにはnpm $minimum以上が必要です: $actual" >&2
+            exit 1
+          fi
           npm publish "$tarball"
-          node tools/npm-package-asset.mjs verify-published "$RELEASE_PRODUCT" npm-candidate
+          # 公開したbyte列がGitHub Releaseの成果物と同じであることを、registryが
+          # 記録したintegrityと突き合わせて確かめる。
+          manifest="$(tar -xzOf "$tarball" package/package.json)"
+          name="$(jq -er .name <<<"$manifest")"
+          version="$(jq -er .version <<<"$manifest")"
+          integrity="sha512-$(openssl dgst -sha512 -binary "$tarball" | base64 -w0)"
+          published="$(curl --silent --show-error --fail-with-body --max-time 120 \
+            "https://registry.npmjs.org/$name/$version")"
+          test "$(jq -er .dist.integrity <<<"$published")" = "$integrity"
+          echo "Published $name $version to npm"

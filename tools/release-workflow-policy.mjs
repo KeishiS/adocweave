@@ -279,6 +279,14 @@ export function validateProductReleaseRouting(workflows) {
       fail(`${workflowName} must accept only a published stable release at the checked-out commit`);
     }
   }
+  // 復旧では過去のtagを指定して再実行するため、checkoutしたtoolはこのworkflowより
+  // 古いことがある。送信そのものはrepositoryのtoolへ依存させない。
+  const npmPublication = (workflows["npm-publish.yml"]?.jobs?.publish?.steps ?? [])
+    .find((step) => step.name === "npm publication");
+  const npmPublicationRun = npmPublication?.run ?? "";
+  if (!npmPublicationRun.includes("npm publish") || npmPublicationRun.includes("node tools/")) {
+    fail("npm-publish.yml must publish without repository tools that the release tag may predate");
+  }
   const binaryCacheJob = workflows["binary-cache-publish.yml"]?.jobs?.publish;
   const binaryCacheSystems = (binaryCacheJob?.strategy?.matrix?.include ?? [])
     .map((entry) => entry.nixSystem);

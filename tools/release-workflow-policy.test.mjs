@@ -357,7 +357,7 @@ function productRoutingWorkflows() {
           name: "Published package download and verification",
           run: "jq .draft\njq .prerelease\ngit rev-parse '$TAG^{commit}'\n--verify-candidate\nattestation verify",
         },
-        { run: "npm publish" },
+        { name: "npm publication", run: 'npm publish "$tarball"' },
       ] } },
     },
   };
@@ -365,6 +365,22 @@ function productRoutingWorkflows() {
 
 test("product release routing accepts the separated product contracts", () => {
   validateProductReleaseRouting(productRoutingWorkflows());
+});
+
+test("npm公開stepがrepositoryのtoolへ依存することを拒否する", () => {
+  // 復旧では過去のtagを指定するため、checkoutしたtoolはworkflowより古いことがある。
+  const workflows = productRoutingWorkflows();
+  const steps = workflows["npm-publish.yml"].jobs.publish.steps;
+  steps[1].run = 'node tools/npm-package-asset.mjs resolve textlint dir\nnpm publish "$tarball"';
+  assert.throws(
+    () => validateProductReleaseRouting(workflows),
+    /must publish without repository tools/,
+  );
+  steps[1].run = "echo skipped";
+  assert.throws(
+    () => validateProductReleaseRouting(workflows),
+    /must publish without repository tools/,
+  );
 });
 
 test("product release routing rejects a post-release job shared by every product", () => {
