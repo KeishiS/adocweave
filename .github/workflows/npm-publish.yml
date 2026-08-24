@@ -118,3 +118,16 @@ jobs:
             "https://registry.npmjs.org/$name/$version")"
           test "$(jq -er .dist.integrity <<<"$published")" = "$integrity"
           echo "Published $name $version to npm"
+      # 公開そのものは終わっているため、ここから先の失敗はRelease、tagおよびnpm上の
+      # packageを変えない。公開後の観測は、そのversionを定義したtag時点のtoolで行う。
+      - name: Published package smoke from the npm Registry
+        env:
+          RELEASE_PRODUCT: ${{ inputs.product }}
+        run: |
+          case "$RELEASE_PRODUCT" in
+            textlint) node tools/textlint-plugin-npm-smoke.mjs ;;
+            *)
+              echo "$RELEASE_PRODUCTの公開後smokeがありません" >&2
+              exit 1
+              ;;
+          esac

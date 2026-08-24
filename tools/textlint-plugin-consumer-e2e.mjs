@@ -86,13 +86,17 @@ export async function runTextlintPluginConsumerE2E(
     invokeTextlint = invokeTextlintCli,
   } = {},
 ) {
-  const archivePath = await realpath(resolve(archive));
-  const archiveMetadata = await stat(archivePath);
-  if (!archiveMetadata.isFile()) throw new Error(`package archive is not a file: ${archivePath}`);
+  // 公開前は手元のarchiveを、公開後はregistryの``name@version``を検査する。
+  const registrySpec = archive.startsWith(`${manifest.name}@`);
+  let target = archive;
+  if (!registrySpec) {
+    target = await realpath(resolve(archive));
+    if (!(await stat(target)).isFile()) throw new Error(`package archive is not a file: ${target}`);
+  }
 
   const root = await mkdtemp(join(tmpdir(), "adocweave-textlint-plugin-smoke-"));
   try {
-    await installPackage({ archive: archivePath, cwd: root, manifest });
+    await installPackage({ archive: target, cwd: root, manifest, offline: !registrySpec });
     await assertInstalledPackage(root, manifest);
 
     const rulesDirectory = join(root, "rules");
@@ -210,7 +214,7 @@ async function assertInstalledPackage(root, manifestContract) {
   );
 }
 
-export async function installFixedConsumerAndPlugin({ archive, cwd }) {
+export async function installFixedConsumerAndPlugin({ archive, cwd, offline = true }) {
   await copyFile(join(CONSUMER_FIXTURE, "package.json"), join(cwd, "package.json"));
   await copyFile(join(CONSUMER_FIXTURE, "package-lock.json"), join(cwd, "package-lock.json"));
   const npm = npmInvocation();
@@ -239,7 +243,8 @@ export async function installFixedConsumerAndPlugin({ archive, cwd }) {
     "--no-fund",
     "--no-save",
     "--legacy-peer-deps",
-    "--offline",
+    // 手元のarchiveはnetworkなしで導入する。registryから取る場合だけ通信を許す。
+    offline ? "--offline" : "--prefer-online",
     archive,
   ], { cwd, env: environment });
   if (result.code !== 0) throw new Error(diagnosticForUnexpectedExit("fixed consumer plugin install", result));
