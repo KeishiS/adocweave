@@ -944,6 +944,7 @@ test("sourceとmainの標準task境界をMakefileで固定する", () => {
     ["duplicated wasm compile", (source) => mutateTask(source, "build-wasm", (body) => `${body}\n# cargo build -p adocweave-wasm --release --target wasm32-unknown-unknown\n`)],
     ["duplicated workspace test", (source) => mutateTask(source, "test", (body) => `${body}\n# cargo test --workspace --all-features\n`)],
     ["three VSIX builds", (source) => mutateTask(source, "test-vscode-release-determinism", (body) => `${body}\nnpm run package --prefix editors/vscode\n`)],
+    ["missing global candidate route", (source) => mutateTask(source, "test-global-product-candidate", (body) => body.replace(/^\s*lib\).*\n/m, ""))],
   ]) {
     assert.throws(
       () => validateGateTaskContract(mutate(makefile)),

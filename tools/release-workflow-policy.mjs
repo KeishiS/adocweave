@@ -59,6 +59,8 @@ const ALLOWED_SECRET_REFERENCES = new Map([
 ]);
 const SECRET_REFERENCE = /secrets\.[A-Za-z_][A-Za-z0-9_]*/g;
 const RELEASE_PRODUCTS = ["lib", "cli", "lsp", "wasm", "textlint", "vscode", "zed"];
+// cargo-distで構築する製品。ほかは自前のscriptで完成candidateを作る。
+const CARGO_DIST_PRODUCTS = ["cli", "lsp"];
 const RUST_CACHE_ACTION = "Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6";
 
 function isBuildCache(step) {
@@ -611,6 +613,15 @@ export function validateGateTaskContract(makefile) {
   }
   if (/^\s*alias\s*=/m.test(makeTaskBody(makefile, "verify"))) {
     fail("verifyは別名ではなくsource検査の実体にしてください");
+  }
+  // cargo-distで作らない製品は、完成candidateの検査taskを自分で持つ。製品を足したときに
+  // 分岐を書き忘れると、公開workflowのcandidate構築まで進んでから失敗する。
+  const globalCandidate = makeTaskBody(makefile, "test-global-product-candidate");
+  const missingRoutes = RELEASE_PRODUCTS
+    .filter((product) => !CARGO_DIST_PRODUCTS.includes(product))
+    .filter((product) => !new RegExp(`^\\s*${product}\\)`, "m").test(globalCandidate));
+  if (missingRoutes.length > 0) {
+    fail(`test-global-product-candidateに製品の分岐がありません: ${missingRoutes.join(", ")}`);
   }
   const acceptance = makeTaskDependencies(makefile, "acceptance");
   if (JSON.stringify(acceptance) !== JSON.stringify(["main-gate", "release-global-candidate"])) {
