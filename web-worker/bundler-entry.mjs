@@ -1,4 +1,4 @@
-import { AdocWeaveClient, defaultAssetUrls } from "@adocweave/browser";
+import { AdocWeaveClient, defaultAssetUrls } from "@adocweave/wasm";
 
 const source = document.querySelector("#source");
 const preview = document.querySelector("#preview");

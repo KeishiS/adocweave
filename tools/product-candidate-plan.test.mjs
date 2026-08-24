@@ -21,10 +21,10 @@ test("選択していない未公開製品を含めない", () => {
 });
 
 test("選択したscript製品ではnative matrixを空にする", () => {
-  const result = candidatePlan("browser", () => false, plan);
+  const result = candidatePlan("wasm", () => false, plan);
   assert.deepEqual(result.nativeCandidates.include, []);
   assert.deepEqual(result.native.include, []);
-  assert.deepEqual(result.scripts.include, [{ artifact_key: "browser", product: "browser" }]);
+  assert.deepEqual(result.scripts.include, [{ artifact_key: "wasm", product: "wasm" }]);
 });
 
 test("未知の製品を拒否する", () => {

@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 import {
   AdocWeaveClient,
   AdocWeaveClientError,
-  BROWSER_PACKAGE_VERSION,
+  WASM_PACKAGE_VERSION,
   PROTOCOL_SCHEMA_VERSION,
   defaultAssetUrls,
   isAdocWeaveClientLifecycleError,
@@ -89,7 +89,7 @@ test("public entry resolves assets without eager work", () => {
     assert.equal(urls.wasmUrl.href, new URL("wasm/adocweave_wasm_bg.wasm", root).href);
   }
   assert.equal(FakeWorker.created.length, 0);
-  assert.match(BROWSER_PACKAGE_VERSION, /^\d+\.\d+\.\d+(?:-rc\.[1-9]\d*)?$/);
+  assert.match(WASM_PACKAGE_VERSION, /^\d+\.\d+\.\d+(?:-rc\.[1-9]\d*)?$/);
   assert.ok(Number.isSafeInteger(PROTOCOL_SCHEMA_VERSION));
 });
 

@@ -35,7 +35,7 @@ GitHubが自動生成するsource archiveは検証対象の成果物に含めま
 
 registryへも公開する製品では、GitHub Releaseへ添付した成果物と同じbyte列を送り、registry向けに
 構築し直しません。現在registryへ公開する製品はVS Code拡張とtextlint用Processorで、公開先はそれぞれ
-Open VSX Registryとnpm Registryです。Browser packageとCLIはGitHub Releaseからの導入だけを対象とします。
+Open VSX Registryとnpm Registryです。WebAssembly packageとCLIはGitHub Releaseからの導入だけを対象とします。
 Rust crateはcrates.ioへ公開しません。
 
 npmへの公開はGitHub Releaseの公開後に別のworkflowで行い、送信後にregistryが記録したintegrityが
@@ -58,7 +58,7 @@ link方式、最小OS版、実行権限およびstdio lifecycleを実際の成�
 Native binaryへOS code signingは行いません。Artifact Attestationは構築元を示しますが、OS code signingの
 代替ではありません。利用者に表示されるOS警告と確認方法は利用者向け文書に記載します。
 
-Browser packageは公開client、Web WorkerおよびWebAssemblyを一組として配布します。公開APIと内容は
+WebAssembly packageは公開client、Web WorkerおよびWebAssemblyを一組として配布します。公開APIと内容は
 xref:core-profile.adoc#wasm-api[WebAssembly API]を基準とし、Worker内部のmessage形式は公開互換仕様に
 含めません。完成archiveをcross-origin isolationのない静的配信とbundlerの両方で実行し、size上限も
 成果物検査で確認します。

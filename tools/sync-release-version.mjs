@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = new URL("../", import.meta.url);
 const STABLE_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
-export const PRODUCT_IDS = ["cli", "lsp", "browser", "textlint", "vscode", "zed"];
+export const PRODUCT_IDS = ["cli", "lsp", "wasm", "textlint", "vscode", "zed"];
 const IGNORED_DIRECTORIES = new Set([
   ".agents",
   ".git",

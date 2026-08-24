@@ -34,7 +34,7 @@ try {
     "adocweave-lsp": productRelease("lsp").version,
     "adocweave-textlint": workspaceVersion,
     "adocweave-textlint-wasm": productRelease("textlint").version,
-    "adocweave-wasm": productRelease("browser").version,
+    "adocweave-wasm": productRelease("wasm").version,
   };
   for (const pkg of packages) {
     if (pkg.version !== versions[pkg.name]) throw new Error(`${pkg.name}: cargo metadata version mismatch`);

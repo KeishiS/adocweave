@@ -136,7 +136,7 @@ script_runner = "@shell"
 script = '''
 node tools/release-workflow-policy.mjs
 node --test \
-  tools/browser-release-budget.test.mjs \
+  tools/wasm-release-budget.test.mjs \
   tools/normalize-darwin-archives.test.mjs \
   tools/product-candidate-plan.test.mjs \
   tools/product-release.test.mjs \
@@ -165,7 +165,7 @@ description = "Verify Windows and macOS release contracts without requiring the 
 command = "node"
 args = [
   "--test",
-  "tools/browser-npm-smoke.test.mjs",
+  "tools/wasm-npm-smoke.test.mjs",
   "tools/platform-contract.test.mjs",
   "tools/release-installation-e2e.test.mjs",
   "tools/textlint-plugin-npm-smoke.test.mjs",
@@ -241,11 +241,11 @@ wasm-bindgen \
   target/wasm32-unknown-unknown/release/adocweave_wasm.wasm
 '''
 
-[tasks.package-browser-release]
+[tasks.package-wasm-release]
 private = true
-description = "Build the deterministic browser extra artifact consumed by dist"
+description = "Build the deterministic WebAssembly extra artifact consumed by dist"
 command = "bash"
-args = ["tools/package-browser-release.sh"]
+args = ["tools/package-wasm-release.sh"]
 
 [tasks.package-zed-release]
 private = true
@@ -307,11 +307,11 @@ description = "Observe the clean install and one-shot npx paths from the npm Reg
 command = "node"
 args = ["tools/textlint-plugin-npm-smoke.mjs"]
 
-[tasks.browser-post-publication-npm-smoke]
+[tasks.wasm-post-publication-npm-smoke]
 category = "CI entry points"
 description = "Observe the clean install and public entry resolution from the npm Registry after publication"
 command = "node"
-args = ["tools/browser-npm-smoke.mjs"]
+args = ["tools/wasm-npm-smoke.mjs"]
 
 [tasks.test-zed-release-package]
 private = true
@@ -320,42 +320,42 @@ dependencies = ["package-zed-release"]
 command = "bash"
 args = ["tools/verify-zed-release-package.sh"]
 
-[tasks.test-browser-release-package]
+[tasks.test-wasm-release-package]
 private = true
-description = "Verify browser release archive layout and deterministic bytes"
-dependencies = ["package-browser-release"]
+description = "Verify WebAssembly release archive layout and deterministic bytes"
+dependencies = ["package-wasm-release"]
 command = "bash"
-args = ["tools/verify-browser-release-package.sh"]
+args = ["tools/verify-wasm-release-package.sh"]
 
-[tasks.test-browser-types]
+[tasks.test-wasm-types]
 private = true
-description = "Compile-check the public browser TypeScript declarations"
+description = "Compile-check the public TypeScript declarations"
 command = "tsc"
 args = ["--project", "web-worker/tsconfig.json"]
 
-[tasks.test-browser-smoke]
+[tasks.test-wasm-smoke]
 private = true
-description = "Run the extracted browser archive in a non-isolated Chromium context"
-dependencies = ["package-browser-release", "test-browser-types"]
+description = "Run the extracted WebAssembly archive in a non-isolated Chromium context"
+dependencies = ["package-wasm-release", "test-wasm-types"]
 script_runner = "@shell"
 script = '''
 node --test tools/process-lifecycle.test.mjs tools/host-executable.test.mjs
 version="$(node --input-type=module -e "import manifest from './web-worker/package.json' with { type: 'json' }; process.stdout.write(manifest.version)")"
-node tools/browser-release-smoke.mjs "target/distrib/adocweave-browser-$version.tgz" "${ADOCWEAVE_BROWSER:-chromium}"
+node tools/wasm-release-smoke.mjs "target/distrib/adocweave-wasm-$version.tgz" "${ADOCWEAVE_BROWSER:-chromium}"
 '''
 
-[tasks.test-browser-bundler]
+[tasks.test-wasm-bundler]
 private = true
-description = "Bundle the public browser API with esbuild and smoke test its asset URL resolution"
-dependencies = ["package-browser-release", "test-browser-types"]
+description = "Bundle the public API with esbuild and smoke test its asset URL resolution"
+dependencies = ["package-wasm-release", "test-wasm-types"]
 command = "bash"
-args = ["tools/browser-bundler-smoke.sh"]
+args = ["tools/wasm-bundler-smoke.sh"]
 
 [tasks.release-global-candidate]
 private = true
 description = "Build and completely verify each global release candidate"
 dependencies = [
-  "test-browser-release-candidate",
+  "test-wasm-release-candidate",
   "textlint-plugin-release-consumer-e2e",
   "test-vscode-release-determinism",
   "test-zed-release-candidate",
@@ -367,7 +367,7 @@ description = "Build and completely verify PRODUCT as one global release candida
 script_runner = "@shell"
 script = '''
 case "${PRODUCT:-}" in
-  browser) task=test-browser-release-candidate ;;
+  wasm) task=test-wasm-release-candidate ;;
   textlint) task=textlint-plugin-release-consumer-e2e ;;
   vscode) task=test-vscode-release-determinism ;;
   zed) task=test-zed-release-candidate ;;
@@ -376,23 +376,23 @@ esac
 cargo make "$task"
 '''
 
-[tasks.browser-runtime-check]
+[tasks.wasm-runtime-check]
 private = true
-description = "Run the release browser archive through static hosting and a package-name bundler import"
+description = "Run the release WebAssembly archive through static hosting and a package-name bundler import"
 dependencies = [
-  "test-browser-release-package",
-  "test-browser-smoke",
-  "test-browser-bundler",
+  "test-wasm-release-package",
+  "test-wasm-smoke",
+  "test-wasm-bundler",
 ]
 
-[tasks.test-browser-release-candidate]
+[tasks.test-wasm-release-candidate]
 category = "CI entry points"
-description = "Build, verify, run, install, and remove the Browser release candidate"
-dependencies = ["browser-runtime-check"]
+description = "Build, verify, run, install, and remove the WebAssembly release candidate"
+dependencies = ["wasm-runtime-check"]
 command = "node"
 args = [
   "tools/release-installation-e2e.mjs",
-  "browser",
+  "wasm",
   "target/distrib",
   "x86_64-unknown-linux-musl",
 ]
@@ -531,18 +531,18 @@ args = ["run", "test:cross-runtime", "--prefix", "web-worker"]
 
 [tasks.wasm-size]
 private = true
-description = "Report the byte sizes of the browser artifacts that ship"
-dependencies = ["package-browser-release"]
+description = "Report the byte sizes of the WebAssembly artifacts that ship"
+dependencies = ["package-wasm-release"]
 script_runner = "@shell"
 script = '''
-# package-browser-release leaves the browser profile wasm-bindgen output here and
+# package-wasm-release leaves the wasm profile wasm-bindgen output here and
 # copies it into the archive, so these are the bytes consumers download.
 for artifact in target/adocweave-wasm/*; do
   bytes="$(wc -c < "$artifact")"
   echo "$bytes $artifact"
 done
 version="$(node --input-type=module -e "import manifest from './web-worker/package.json' with { type: 'json' }; process.stdout.write(manifest.version)")"
-archive="target/distrib/adocweave-browser-$version.tgz"
+archive="target/distrib/adocweave-wasm-$version.tgz"
 echo "$(wc -c < "$archive") $archive"
 '''
 
@@ -723,7 +723,7 @@ dependencies = [
   "textlint-repository-prose-lint",
   "html5-check",
   "test-web-worker",
-  "test-browser-types",
+  "test-wasm-types",
   "zed-query-contract",
   "clippy-zed",
   "test-zed",

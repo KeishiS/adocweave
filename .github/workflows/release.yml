@@ -14,7 +14,7 @@ on:
         options:
           - cli
           - lsp
-          - browser
+          - wasm
           - textlint
           - vscode
           - zed

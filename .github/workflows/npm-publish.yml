@@ -37,7 +37,7 @@ on:
         type: choice
         options:
           - textlint
-          - browser
+          - wasm
 
 permissions:
   contents: read
@@ -127,7 +127,7 @@ jobs:
         run: |
           case "$RELEASE_PRODUCT" in
             textlint) node tools/textlint-plugin-npm-smoke.mjs ;;
-            browser) node tools/browser-npm-smoke.mjs ;;
+            wasm) node tools/wasm-npm-smoke.mjs ;;
             *)
               echo "$RELEASE_PRODUCTの公開後smokeがありません" >&2
               exit 1

@@ -6,13 +6,13 @@ import { tmpdir } from "node:os";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { assertBrowserArtifactSizes } from "./browser-release-budget.mjs";
+import { assertWasmArtifactSizes } from "./wasm-release-budget.mjs";
 import {
   BROWSER_STARTUP_ATTEMPTS,
   BROWSER_STARTUP_ATTEMPT_TIMEOUT_MS,
   BROWSER_STARTUP_TOTAL_TIMEOUT_MS,
   retryBrowserStartup,
-} from "./browser-startup.mjs";
+} from "./wasm-startup.mjs";
 import {
   hostExecutableEnvironment,
   resolveHostExecutable,
@@ -31,7 +31,7 @@ if (
 
 async function main() {
   const [archive, chromiumCommand = "chromium"] = process.argv.slice(2);
-  if (!archive) throw new Error("usage: browser-release-smoke.mjs ARCHIVE [CHROMIUM]");
+  if (!archive) throw new Error("usage: wasm-release-smoke.mjs ARCHIVE [CHROMIUM]");
   const chromium = await resolveHostExecutable(chromiumCommand);
   const root = await mkdtemp(join(tmpdir(), "adocweave-browser-smoke-"));
   try {
@@ -63,7 +63,7 @@ async function runArchiveSmoke(archive, chromium, root) {
   const packageRoot = join(root, entries[0]);
   const archiveBytes = (await stat(archive)).size;
   const wasmBytes = (await stat(join(packageRoot, "wasm/adocweave_wasm_bg.wasm"))).size;
-  assertBrowserArtifactSizes(archiveBytes, wasmBytes);
+  assertWasmArtifactSizes(archiveBytes, wasmBytes);
 
   const requests = [];
   const server = createServer(async (request, response) => {

@@ -28,17 +28,17 @@
       "generators": []
     },
     {
-      "id": "browser",
+      "id": "wasm",
       "authority": {
         "type": "literal",
         "path": "web-worker/package.json",
-        "template": "\"name\": \"@adocweave/browser\",\n  \"version\": \"{version}\"",
+        "template": "\"name\": \"@adocweave/wasm\",\n  \"version\": \"{version}\"",
         "count": 1
       },
       "targets": [
         { "type": "literal", "path": "crates/adocweave-wasm/Cargo.toml", "template": "name = \"adocweave-wasm\"\nversion = \"{version}\"", "count": 1 },
         { "type": "cargo-lock", "path": "Cargo.lock", "packages": ["adocweave-wasm"] },
-        { "type": "literal", "path": "web-worker/contracts.mjs", "template": "export const BROWSER_PACKAGE_VERSION = \"{version}\";", "count": 1 }
+        { "type": "literal", "path": "web-worker/contracts.mjs", "template": "export const WASM_PACKAGE_VERSION = \"{version}\";", "count": 1 }
       ],
       "generators": [
         {

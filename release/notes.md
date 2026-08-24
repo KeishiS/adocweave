@@ -1,11 +1,12 @@
-# AdocWeave browser v0.47.0
+# AdocWeave wasm v0.48.0
 
 ## 主な変更
 
-- **配布物の形式をnpmのtarballへ変更しました。** 成果物の名前が `adocweave-browser-<version>.tar.xz` から `adocweave-browser-<version>.tgz` になり、展開後のrootが `adocweave-browser-<version>/` から `package/` になります。npm Registryへ公開する準備として、GitHub Releaseへ添付する成果物そのものをnpmの形式に揃えました。registry向けに構築し直さないため、どちらの経路でも同じbyte列を取得できます。
-- **packageのREADMEをMarkdownへ変更しました。** package registryのpackageページで描画できる形式にします。記載内容は変えていません。
+- **package名を `@adocweave/browser` から `@adocweave/wasm` へ変更しました。** WebAssemblyは静的サイト生成のようにNodeのビルド時でも動きます。動作環境を名前で限定しないよう、Rust crateと同じ `wasm` へ揃えました。`@adocweave/browser` は非推奨とし、移動先を示します。
+- **成果物とtagの名前を変更しました。** 成果物は `adocweave-wasm-<version>.tgz`、tagは `adocweave-wasm/v<version>` になります。
+- **公開定数 `BROWSER_PACKAGE_VERSION` を `WASM_PACKAGE_VERSION` へ改名しました。**
 
-公開API、WebAssemblyとの通信内容および解析結果は変えていません。
+`AdocWeaveClient`、`defaultAssetUrls`、`analyze` の要求と応答、WebAssemblyとの通信内容および解析結果は変えていません。
 
 ## 対応環境
 
@@ -13,17 +14,18 @@ WebAssemblyとWeb Workerに対応したブラウザーで動作します。公�
 
 ## 対応関係
 
-WebAssemblyとの通信はschema handshakeで検査します。Browser packageのバージョンを、AdocWeaveのほかの製品との互換性判断には使用しません。
+WebAssemblyとの通信はschema handshakeで検査します。packageのバージョンを、AdocWeaveのほかの製品との互換性判断には使用しません。
 
-## v0.47.0への移行
+## v0.48.0への移行
 
-- GitHub Releaseのarchiveから導入している場合は、展開コマンドを `tar -xzf` へ変更してください。
-- 展開後のディレクトリ名が `package` になります。`adocweave-browser-<version>` を前提にした移動やコピーの指定を変更してください。
-- bundlerからの利用方法、公開API、`defaultAssetUrls` の使い方は変わりません。
+- 依存の指定を `@adocweave/wasm` へ変更してください。`@adocweave/browser` へは新しい版を公開しません。
+- `BROWSER_PACKAGE_VERSION` を参照している場合は `WASM_PACKAGE_VERSION` へ変更してください。
+- GitHub Releaseのarchiveから導入している場合は、成果物名を `adocweave-wasm-<version>.tgz` へ変更してください。展開後のrootは `package` のままです。
+- `AdocWeaveClient` の使い方は変わりません。
 
 ## 更新とロールバック
 
-新しいarchiveを別のディレクトリへ展開し、`worker/index.mjs` と `wasm` の相対関係を保ったまま配備先を切り替えてください。受入確認が終わるまで以前のディレクトリを保持すると、問題がある場合に元へ戻せます。
+npmから導入している場合は、指定するバージョンを変更して `npm install` を実行し、`package-lock.json` の差分を確認してください。archiveから導入している場合は、新しいarchiveを別のディレクトリへ展開し、`worker/index.mjs` と `wasm` の相対関係を保ったまま配備先を切り替えます。受入確認が終わるまで以前の状態を保持すると、問題がある場合に元へ戻せます。
 
 ## 既知の制約
 

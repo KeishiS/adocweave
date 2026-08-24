@@ -15,7 +15,7 @@ import plan from "../release/distribution-plan.json" with { type: "json" };
 import fixture from "../release/adocweave-dist-manifest.fixture.json" with { type: "json" };
 
 test("stable tags identify one product and one version", () => {
-  for (const product of ["cli", "lsp", "browser", "textlint", "vscode", "zed"]) {
+  for (const product of ["cli", "lsp", "wasm", "textlint", "vscode", "zed"]) {
     const tag = `adocweave-${product}/v1.2.3`;
     assert.deepEqual(releaseFromTag(tag), { product, productVersion: "1.2.3" });
     assert.doesNotThrow(() => validateReleaseIdentity(product, "1.2.3", tag, plan));
@@ -42,7 +42,7 @@ test("distribution plan routes six products without storing their versions", () 
   assert.deepEqual(plan.products.map(({ product }) => product), [
     "cli",
     "lsp",
-    "browser",
+    "wasm",
     "textlint",
     "vscode",
     "zed",
@@ -66,9 +66,9 @@ test("expected assets contain only the selected product", () => {
   assert.equal(lsp.length, plan.targets.length);
   assert.ok(lsp.every(({ kind, name }) => kind === "lsp" && name.startsWith("adocweave-lsp-")));
 
-  assert.deepEqual(expectedAssets("browser", "3.4.5", plan.targets), [{
-    name: "adocweave-browser-3.4.5.tgz",
-    kind: "browser",
+  assert.deepEqual(expectedAssets("wasm", "3.4.5", plan.targets), [{
+    name: "adocweave-wasm-3.4.5.tgz",
+    kind: "wasm",
     target: null,
     archive: "tgz",
     executable: null,

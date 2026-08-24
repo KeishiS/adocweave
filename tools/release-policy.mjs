@@ -42,7 +42,7 @@ export function productRelease(product) {
 
 export function relatedApiVersions(product) {
   if (product === "lsp") return [];
-  if (product === "browser") {
+  if (product === "wasm") {
     return [{ name: "WASM protocol schema", version: PROTOCOL_SCHEMA_VERSION }];
   }
   return [];

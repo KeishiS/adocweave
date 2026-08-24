@@ -3,10 +3,10 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
-import { runBrowserNpmSmoke } from "./browser-npm-smoke.mjs";
+import { runWasmNpmSmoke } from "./wasm-npm-smoke.mjs";
 
 const manifest = {
-  name: "@adocweave/browser",
+  name: "@adocweave/wasm",
   version: "0.47.0",
   exports: { ".": { types: "./worker/index.d.mts", import: "./worker/index.mjs" } }
 };
@@ -22,7 +22,7 @@ const PACKAGE_FILES = [
 ];
 
 async function fakeInstall({ cwd }, overrides = {}) {
-  const packageRoot = join(cwd, "node_modules", "@adocweave", "browser");
+  const packageRoot = join(cwd, "node_modules", "@adocweave", "wasm");
   await mkdir(join(packageRoot, "worker"), { recursive: true });
   await mkdir(join(packageRoot, "wasm"), { recursive: true });
   await writeFile(
@@ -34,7 +34,7 @@ async function fakeInstall({ cwd }, overrides = {}) {
 
 test("registryのversionを解決してから導入した内容を確かめる", async () => {
   const requested = [];
-  const published = await runBrowserNpmSmoke({
+  const published = await runWasmNpmSmoke({
     manifest,
     fetchJson: async (url) => {
       requested.push(url);
@@ -43,13 +43,13 @@ test("registryのversionを解決してから導入した内容を確かめる",
     install: fakeInstall
   });
   assert.deepEqual(published, { name: manifest.name, version: manifest.version });
-  assert.deepEqual(requested, ["https://registry.npmjs.org/@adocweave/browser/0.47.0"]);
+  assert.deepEqual(requested, ["https://registry.npmjs.org/@adocweave/wasm/0.47.0"]);
 });
 
 test("公開前に実行した場合は導入を試さず止める", async () => {
   let installed = false;
   await assert.rejects(
-    runBrowserNpmSmoke({
+    runWasmNpmSmoke({
       manifest,
       fetchJson: async () => ({ error: "Not found" }),
       install: async () => { installed = true; }
@@ -61,7 +61,7 @@ test("公開前に実行した場合は導入を試さず止める", async () =>
 
 test("公開entryの宣言が違う導入を拒否する", async () => {
   await assert.rejects(
-    runBrowserNpmSmoke({
+    runWasmNpmSmoke({
       manifest,
       fetchJson: async () => ({ name: manifest.name, version: manifest.version }),
       install: async (options) => fakeInstall(options, { exports: { ".": "./index.mjs" } })
@@ -72,7 +72,7 @@ test("公開entryの宣言が違う導入を拒否する", async () => {
 
 test("実行時npm依存を持つ導入を拒否する", async () => {
   await assert.rejects(
-    runBrowserNpmSmoke({
+    runWasmNpmSmoke({
       manifest,
       fetchJson: async () => ({ name: manifest.name, version: manifest.version }),
       install: async (options) => fakeInstall(options, { dependencies: { left: "1.0.0" } })

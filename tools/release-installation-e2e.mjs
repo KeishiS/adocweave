@@ -60,7 +60,7 @@ if (!product || !candidateArgument || !target) {
   process.exit(2);
 }
 
-const installationProducts = new Set(["cli", "lsp", "browser", "vscode", "zed"]);
+const installationProducts = new Set(["cli", "lsp", "wasm", "vscode", "zed"]);
 if (!installationProducts.has(product)) {
   throw new Error(`unsupported installation E2E product: ${product}`);
 }
@@ -107,7 +107,7 @@ const prefix = join(home, ".local");
 const {
   activeMarker,
   binDirectory,
-  browserRoot,
+  wasmRoot,
   currentLink,
   versionRoot,
   vscodeRoot,
@@ -235,16 +235,16 @@ function installNative(packageName, executable) {
   if (runtime.platform.os !== "win32") execFileSync("chmod", ["755", destination]);
 }
 
-function installBrowser() {
+function installWasm() {
   // npm packが作るtarballのrootは、versionを含まない``package``に正規化される。
   const extracted = extract(
-    archive(`adocweave-browser-${version}.tgz`),
-    join(scratch, "extract", "browser"),
+    archive(`adocweave-wasm-${version}.tgz`),
+    join(scratch, "extract", "wasm"),
     "package",
     "tgz",
   );
-  mkdirSync(dirname(browserRoot), { recursive: true });
-  renameSync(extracted, browserRoot);
+  mkdirSync(dirname(wasmRoot), { recursive: true });
+  renameSync(extracted, wasmRoot);
 }
 
 function installZed() {
@@ -272,9 +272,9 @@ function installVSCode() {
   renameSync(extension, vscodeRoot);
 }
 
-async function verifyBrowserContract() {
-  const modulePath = join(browserRoot, "wasm", "adocweave_wasm.js");
-  const wasmPath = join(browserRoot, "wasm", "adocweave_wasm_bg.wasm");
+async function verifyWasmContract() {
+  const modulePath = join(wasmRoot, "wasm", "adocweave_wasm.js");
+  const wasmPath = join(wasmRoot, "wasm", "adocweave_wasm_bg.wasm");
   const wasm = await import(pathToFileURL(modulePath));
   await wasm.default({ module_or_path: readFileSync(wasmPath) });
 
@@ -323,10 +323,10 @@ async function verifyBrowserContract() {
     '<p><a href="/records/item">&lt;Public &amp; *plain*&gt;</a></p>\n' +
     '<p><a href="/records/explicit">Authored <strong>label</strong></a></p>\n' +
     "<p></p>\n";
-  if (response.html !== expected) throw new Error(`browser resolved text mismatch: ${response.html}`);
+  if (response.html !== expected) throw new Error(`resolved text mismatch: ${response.html}`);
   const edges = response.projection.referenceEdges;
   if (edges[0].resolution.displayText !== "<Public & *plain*>") {
-    throw new Error("browser projection omitted resolved display text");
+    throw new Error("projection omitted resolved display text");
   }
   const failure = edges[2].resolution;
   if (
@@ -334,7 +334,7 @@ async function verifyBrowserContract() {
     failure.kind !== "missing-reference-target" ||
     Object.keys(failure).sort().join(",") !== "kind,status"
   ) {
-    throw new Error(`browser failure projection is not kind-only: ${JSON.stringify(failure)}`);
+    throw new Error(`failure projection is not kind-only: ${JSON.stringify(failure)}`);
   }
 }
 
@@ -347,7 +347,7 @@ try {
     ? `adocweave${platform.executableSuffix}`
     : product === "lsp" ? `adocweave-lsp${platform.executableSuffix}` : null;
   if (native) installNative(`adocweave-${product}`, executable);
-  else if (product === "browser") installBrowser();
+  else if (product === "wasm") installWasm();
   else if (product === "zed") installZed();
   else if (product === "vscode") installVSCode();
   const executables = native ? [executable] : [];
@@ -379,10 +379,10 @@ try {
       throw new Error("failed native update changed the active version");
     }
   }
-  if (product === "browser") {
-    if (!existsSync(join(browserRoot, "worker", "index.mjs"))) throw new Error("browser public entry point is missing");
-    if (!existsSync(join(browserRoot, "wasm", "adocweave_wasm_bg.wasm"))) throw new Error("browser WASM is missing");
-    await verifyBrowserContract();
+  if (product === "wasm") {
+    if (!existsSync(join(wasmRoot, "worker", "index.mjs"))) throw new Error("public entry point is missing");
+    if (!existsSync(join(wasmRoot, "wasm", "adocweave_wasm_bg.wasm"))) throw new Error("WASM is missing");
+    await verifyWasmContract();
   }
   if (product === "zed") {
     if (!existsSync(join(zedRoot, "extension.toml"))) throw new Error("Zed extension manifest is missing");
@@ -401,7 +401,7 @@ try {
     rmSync(versionRoot, { recursive: true });
     rmSync(previousRoot, { recursive: true });
   }
-  if (["browser", "zed", "vscode"].includes(product)) {
+  if (["wasm", "zed", "vscode"].includes(product)) {
     rmSync(join(prefix, "share", "adocweave", version), { recursive: true });
   }
   for (const directory of [

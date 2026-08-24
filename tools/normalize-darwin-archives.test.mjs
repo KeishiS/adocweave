@@ -105,7 +105,7 @@ test("選択した製品のarchive欠落を拒否する", () => {
 test("Darwin実行fileを持たない製品を拒否する", () => {
   const { root, artifacts, mockBin, otoolLog } = fixture();
   try {
-    const result = normalize(artifacts, mockBin, otoolLog, "browser");
+    const result = normalize(artifacts, mockBin, otoolLog, "wasm");
     assert.equal(result.status, 2);
     assert.match(result.stderr, /Darwin実行fileを持つ製品ではありません/);
   } finally {
