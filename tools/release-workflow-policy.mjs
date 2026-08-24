@@ -12,7 +12,8 @@ import { parseReleaseVersionArguments } from "./sync-release-version.mjs";
 const ROOT = new URL("../", import.meta.url);
 const read = (path) => readFileSync(new URL(path, ROOT), "utf8");
 const PUBLIC_TASKS = [
-  "acceptance", "default", "fmt", "fmt-check", "fuzz-smoke", "main-gate", "main-integrations", "release-check",
+  "acceptance", "browser-post-publication-npm-smoke", "default", "fmt", "fmt-check", "fuzz-smoke",
+  "main-gate", "main-integrations", "release-check",
   "security-audit", "test-browser-release-candidate", "test-global-product-candidate",
   "test-vscode-release-determinism", "test-zed-release-candidate",
   "textlint-plugin-post-publication-npm-smoke", "textlint-plugin-post-release-npx-smoke",
