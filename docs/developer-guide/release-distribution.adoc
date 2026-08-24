@@ -63,6 +63,10 @@ xref:core-profile.adoc#wasm-api[WebAssembly API]を基準とし、Worker内部�
 含めません。完成archiveをcross-origin isolationのない静的配信とbundlerの両方で実行し、size上限も
 成果物検査で確認します。
 
+入口は二つあります。ブラウザー向けの入口はWeb Workerで実行し、取消しとWASM trapの分離を提供します。
+ビルド時向けの入口は同じprocessで同期的に実行し、どちらも提供しません。要求と応答の形式は共通です。
+静的サイト生成のようにNodeで実行する利用側が、packageの内部layoutへ直接触れずに済むよう用意します。
+
 VS Code拡張とZed拡張はLanguage Serverを同梱せず、download、cacheまたは更新を実装しません。現在の導入方法と
 実行fileの選択規則は利用者向け文書を基準とします。この境界の理由は
 xref:adr/0028-editor-language-server-boundary.adoc[ADR 0028]を参照してください。

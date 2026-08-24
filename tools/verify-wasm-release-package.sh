@@ -29,8 +29,11 @@ printf '%s\n' \
   "$package/wasm/adocweave_wasm.d.ts" \
   "$package/wasm/adocweave_wasm.js" \
   "$package/wasm/adocweave_wasm_bg.wasm" \
+  "$package/worker/analysis.mjs" \
   "$package/worker/client.mjs" \
   "$package/worker/contracts.mjs" \
+  "$package/worker/direct.d.mts" \
+  "$package/worker/direct.mjs" \
   "$package/worker/index.d.mts" \
   "$package/worker/index.mjs" \
   "$package/worker/protocol.d.mts" \

@@ -1,3 +1,4 @@
+import { parseWasmError } from "./analysis.mjs";
 import {
   PROTOCOL_SCHEMA_VERSION,
   WORKER_PROTOCOL_VERSION,
@@ -119,18 +120,6 @@ function publish(message) {
   self.postMessage(message);
 }
 
-function parseWasmError(cause) {
-  if (typeof cause !== "string") return null;
-  try {
-    const value = JSON.parse(cause);
-    return typeof value === "object" && value !== null &&
-      typeof value.code === "string" && typeof value.message === "string"
-      ? { code: value.code, message: value.message }
-      : null;
-  } catch {
-    return null;
-  }
-}
 
 function normalizeFatal(cause) {
   if (

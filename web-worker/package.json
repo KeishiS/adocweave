@@ -10,6 +10,10 @@
     ".": {
       "types": "./worker/index.d.mts",
       "import": "./worker/index.mjs"
+    },
+    "./direct": {
+      "types": "./worker/direct.d.mts",
+      "import": "./worker/direct.mjs"
     }
   },
   "types": "./worker/index.d.mts",
@@ -37,7 +41,7 @@
     "directory": "web-worker"
   },
   "scripts": {
-    "test": "node --test worker.test.mjs release-manifest.test.mjs package-api.test.mjs",
+    "test": "node --test worker.test.mjs release-manifest.test.mjs package-api.test.mjs direct.test.mjs",
     "test:cross-runtime": "node --test cross-runtime.test.mjs"
   }
 }
