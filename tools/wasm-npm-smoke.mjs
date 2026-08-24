@@ -10,10 +10,10 @@ import { npmInvocation } from "./textlint-plugin-consumer-e2e.mjs";
 
 const MANIFEST = new URL("../web-worker/package.json", import.meta.url);
 
-// 公開したBrowser packageをnpm Registryから導入し直し、registryのversion解決を
+// 公開したWebAssembly packageをnpm Registryから導入し直し、registryのversion解決を
 // 経た取得と、公開entryおよび型定義の解決を観測する。実browserでのWorkerとWASMの
 // URL解決は、同じbyte列に対して公開前のgateで確認済み。
-export async function runBrowserNpmSmoke({
+export async function runWasmNpmSmoke({
   manifest,
   fetchJson = defaultFetchJson,
   install = installFromRegistry
@@ -21,7 +21,7 @@ export async function runBrowserNpmSmoke({
   manifest ??= JSON.parse(await readFile(MANIFEST, "utf8"));
   const { name, version } = manifest;
   if (typeof version !== "string") {
-    throw new Error("Browser packageのversionを解釈できません");
+    throw new Error("WebAssembly packageのversionを解釈できません");
   }
   const metadata = await fetchJson(`https://registry.npmjs.org/${name}/${version}`);
   if (metadata?.name !== name || metadata?.version !== version) {
@@ -29,7 +29,7 @@ export async function runBrowserNpmSmoke({
       `npmに${name}@${version}が見つかりません。公開後smokeは公開のあとに実行してください。`
     );
   }
-  const root = await mkdtemp(join(tmpdir(), "adocweave-browser-npm-smoke-"));
+  const root = await mkdtemp(join(tmpdir(), "adocweave-wasm-npm-smoke-"));
   try {
     await install({ spec: `${name}@${version}`, cwd: root });
     await assertInstalledPackage(root, manifest);
@@ -45,7 +45,7 @@ async function assertInstalledPackage(root, expected) {
   assert.equal(manifest.name, expected.name);
   assert.equal(manifest.version, expected.version);
   assert.deepEqual(manifest.exports, expected.exports, "公開entryの宣言が一致しません");
-  assert.equal(manifest.dependencies, undefined, "Browser packageは実行時npm依存を持ちません");
+  assert.equal(manifest.dependencies, undefined, "WebAssembly packageは実行時npm依存を持ちません");
 
   // filesへ挙げたentryが実際に届いていることを、公開後の導入で確かめる。
   for (const path of [
@@ -75,7 +75,7 @@ async function assertInstalledPackage(root, expected) {
 async function installFromRegistry({ spec, cwd }) {
   await writeFile(
     join(cwd, "package.json"),
-    `${JSON.stringify({ name: "adocweave-browser-npm-smoke", private: true, type: "module" }, null, 2)}\n`
+    `${JSON.stringify({ name: "adocweave-wasm-npm-smoke", private: true, type: "module" }, null, 2)}\n`
   );
   const npm = npmInvocation();
   const result = await runProcess(npm.command, [
@@ -121,6 +121,6 @@ async function defaultFetchJson(url) {
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
-  const published = await runBrowserNpmSmoke();
-  process.stdout.write(`browser npm smoke passed: ${published.name}@${published.version}\n`);
+  const published = await runWasmNpmSmoke();
+  process.stdout.write(`wasm npm smoke passed: ${published.name}@${published.version}\n`);
 }

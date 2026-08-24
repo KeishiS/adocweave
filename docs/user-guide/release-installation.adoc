@@ -22,7 +22,7 @@ GitHub Release archiveとNixパッケージは別の配布経路であり、Nix�
 | 「配布物の選択」「取得と完全性の検証」「システム全体への導入」
 
 | Webアプリへ組み込む
-| <<browser-library-deployment>>
+| <<wasm-library-deployment>>
 
 | エディターで使う
 | <<zed-installation>>、<<vscode-installation>>
@@ -97,8 +97,8 @@ NixOS以外では、system全体の``nix.conf``へ同じ``extra-substituters``�
 |`adocweave-lsp-<target>.zip`
 |`adocweave-lsp-x86_64-pc-windows-msvc.zip`
 
-|browser library
-3+|`adocweave-browser-<version>.tgz`
+|WebAssembly library
+3+|`adocweave-wasm-<version>.tgz`
 
 |Zed開発拡張
 3+|`adocweave-zed-<version>.tar.xz`
@@ -294,9 +294,9 @@ unzip "adocweave-cli-$TARGET.zip" -d "cli-$VERSION"
 unzip "adocweave-lsp-$TARGET.zip" -d "lsp-$VERSION"
 install -m 0755 "cli-$VERSION/adocweave" "$ROOT/bin/adocweave"
 install -m 0755 "lsp-$VERSION/adocweave-lsp" "$ROOT/bin/adocweave-lsp"
-tar -xzf "adocweave-browser-$VERSION.tgz" -C "$PREFIX/share/adocweave/$VERSION"
+tar -xzf "adocweave-wasm-$VERSION.tgz" -C "$PREFIX/share/adocweave/$VERSION"
 mv "$PREFIX/share/adocweave/$VERSION/package" \
-  "$PREFIX/share/adocweave/$VERSION/browser"
+  "$PREFIX/share/adocweave/$VERSION/wasm"
 tar -xJf "adocweave-zed-$VERSION.tar.xz" -C "$PREFIX/share/adocweave/$VERSION"
 mv "$PREFIX/share/adocweave/$VERSION/adocweave-zed-$VERSION" \
   "$PREFIX/share/adocweave/$VERSION/zed"
@@ -326,7 +326,7 @@ xref:command-line.adoc[コマンドライン]の``adocweave completion``で生�
 読み替えます。archiveの検証と展開は通常利用者で行い、検証済みのファイルの配置だけを管理者権限で実行します。
 既存のファイルを上書きする前に、symlinkの参照先がAdocWeave管理下であることを確認します。
 
-browser library、Zed拡張およびVS Code拡張は利用者ごとの設定を伴うため、原則としてuser-local配置を使用します。
+WebAssembly library、Zed拡張およびVS Code拡張は利用者ごとの設定を伴うため、原則としてuser-local配置を使用します。
 
 === Windowsへの導入
 
@@ -373,15 +373,15 @@ Remove-Item -Recurse (Join-Path $env:LOCALAPPDATA "AdocWeave\$Version")
 
 新しいバージョンは既存ディレクトリへ上書きせず、別のディレクトリへ展開・検証します。``current``を切り替えた後に
 ``--version --json``を確認します。rollbackは``current``を以前のバージョン別のディレクトリへ戻すだけであり、動作確認が終わるまで
-旧ディレクトリを削除しません。CLI、Language Server、Browser、Zed拡張、VS Code拡張およびtextlint用
-Processorは、それぞれ独立した製品バージョンを持ちます。Browserとtextlint用Processorは、同じ製品archiveに
+旧ディレクトリを削除しません。CLI、Language Server、WebAssembly、Zed拡張、VS Code拡張およびtextlint用
+Processorは、それぞれ独立した製品バージョンを持ちます。WebAssemblyとtextlint用Processorは、同じ製品archiveに
 JavaScriptとWebAssemblyを同梱するため、別々に組み合わせません。エディター拡張とLanguage Serverの
 製品バージョンを一致させる必要はありません。利用できる機能は、接続時に交換する標準LSP capabilityから決まります。
 
-[#browser-library-deployment]
+[#wasm-library-deployment]
 == ブラウザーライブラリーの配備
 
-``$HOME/.local/share/adocweave/<version>/browser``をそのまま静的hostingへ配置します。公開入口は
+``$HOME/.local/share/adocweave/<version>/wasm``をそのまま静的hostingへ配置します。公開入口は
 ``worker/index.mjs``だけです。``worker/worker.mjs``とWASM補助ファイルは内部用であり、直接importしません。
 TypeScriptの型定義は``worker/index.d.mts``にあります。
 

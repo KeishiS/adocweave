@@ -19,7 +19,7 @@ const fail = (message) => {
   throw new Error(message);
 };
 
-export const PRODUCT_TAG = /^adocweave-(cli|lsp|browser|textlint|vscode|zed)\/v(\d+\.\d+\.\d+)$/;
+export const PRODUCT_TAG = /^adocweave-(cli|lsp|wasm|textlint|vscode|zed)\/v(\d+\.\d+\.\d+)$/;
 export function releaseFromTag(tag) {
   const match = PRODUCT_TAG.exec(tag);
   if (!match) {
@@ -147,7 +147,7 @@ function verifyRepository() {
     fail("distribution plan schema mismatch");
   }
   const products = plan.products.map((route) => route.product);
-  if (JSON.stringify(products) !== JSON.stringify(["cli", "lsp", "browser", "textlint", "vscode", "zed"])) {
+  if (JSON.stringify(products) !== JSON.stringify(["cli", "lsp", "wasm", "textlint", "vscode", "zed"])) {
     fail("distribution plan must declare each product exactly once");
   }
   for (const route of plan.products) {

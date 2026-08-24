@@ -4,18 +4,18 @@ set -euo pipefail
 version="$(node --input-type=module -e "import manifest from './web-worker/package.json' with { type: 'json' }; process.stdout.write(manifest.version)")"
 # npm packが作るtarballのrootは、versionを含まない``package``に正規化される。
 package="package"
-archive="target/distrib/adocweave-browser-$version.tgz"
+archive="target/distrib/adocweave-wasm-$version.tgz"
 first="$(sha256sum "$archive" | cut -d ' ' -f 1)"
-bash tools/package-browser-release.sh >/dev/null
+bash tools/package-wasm-release.sh >/dev/null
 second="$(sha256sum "$archive" | cut -d ' ' -f 1)"
 if [[ "$first" != "$second" ]]; then
-  echo "browser release archive is not deterministic" >&2
+  echo "WebAssembly release archive is not deterministic" >&2
   exit 1
 fi
 
-actual="$(mktemp "${TMPDIR:-/tmp}/adocweave-browser-archive.XXXXXX.list")"
-expected="$(mktemp "${TMPDIR:-/tmp}/adocweave-browser-archive-expected.XXXXXX.list")"
-root="$(mktemp -d "${TMPDIR:-/tmp}/adocweave-browser-import.XXXXXX")"
+actual="$(mktemp "${TMPDIR:-/tmp}/adocweave-wasm-archive.XXXXXX.list")"
+expected="$(mktemp "${TMPDIR:-/tmp}/adocweave-wasm-archive-expected.XXXXXX.list")"
+root="$(mktemp -d "${TMPDIR:-/tmp}/adocweave-wasm-import.XXXXXX")"
 trap 'rm -f "$actual" "$expected"; rm -rf "$root"' EXIT
 tar -tzf "$archive" | LC_ALL=C sort > "$actual"
 printf '%s\n' \
@@ -42,7 +42,7 @@ node --input-type=module -e '
   const publicApi = await import(process.argv[1]);
   const protocol = await import(process.argv[2]);
   if (publicApi.PROTOCOL_SCHEMA_VERSION !== protocol.PROTOCOL_SCHEMA_VERSION) {
-    throw new Error("browser archive protocol schema version mismatch");
+    throw new Error("WebAssembly archive protocol schema version mismatch");
   }
 ' "$root/$package/worker/index.mjs" "$root/$package/worker/worker-protocol.mjs"
-echo "browser release package verified: $second"
+echo "WebAssembly release package verified: $second"

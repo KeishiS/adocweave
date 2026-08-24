@@ -2,17 +2,17 @@
 set -euo pipefail
 
 version="$(node --input-type=module -e "import manifest from './web-worker/package.json' with { type: 'json' }; process.stdout.write(manifest.version)")"
-archive_name="adocweave-browser-$version.tgz"
+archive_name="adocweave-wasm-$version.tgz"
 archive="target/distrib/$archive_name"
-npm_cache="${ADOCWEAVE_BROWSER_NPM_CACHE:-target/npm-cache}"
+npm_cache="${ADOCWEAVE_WASM_NPM_CACHE:-target/npm-cache}"
 # npm packはtarballのrootを``package/``へ正規化する。stageもその名前で作る。
-scratch="$(mktemp -d "${TMPDIR:-/tmp}/adocweave-browser.XXXXXX")"
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/adocweave-wasm.XXXXXX")"
 stage="$scratch/package"
 trap 'rm -rf "$scratch"' EXIT
 
 export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$(pwd)=. --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=cargo-home"
 
-cargo build -p adocweave-wasm --profile browser --target wasm32-unknown-unknown
+cargo build -p adocweave-wasm --profile wasm --target wasm32-unknown-unknown
 
 if command -v wasm-bindgen >/dev/null 2>&1; then
   wasm_bindgen="$(command -v wasm-bindgen)"
@@ -24,7 +24,7 @@ fi
 "$wasm_bindgen" \
   --target web \
   --out-dir target/adocweave-wasm \
-  target/wasm32-unknown-unknown/browser/adocweave_wasm.wasm
+  target/wasm32-unknown-unknown/wasm/adocweave_wasm.wasm
 
 mkdir -p "$stage/wasm" "$stage/worker" "$stage/example"
 cp target/adocweave-wasm/adocweave_wasm.js "$stage/wasm/"
@@ -47,12 +47,12 @@ packed_name="$(node --input-type=module -e '
   process.stdout.write(result[0].filename);
 ' "$pack_result")"
 if [[ "$packed_name" != "$archive_name" ]]; then
-  echo "unexpected browser archive name: $packed_name" >&2
+  echo "unexpected WebAssembly archive name: $packed_name" >&2
   exit 1
 fi
 cp "$scratch/$packed_name" "$archive"
 if tar -xOzf "$archive" | LC_ALL=C grep -a -E '(/workspace/|/home/|/tmp/)' >/dev/null; then
-  echo "browser release artifact contains a machine-local absolute path" >&2
+  echo "WebAssembly release artifact contains a machine-local absolute path" >&2
   exit 1
 fi
-echo "browser release artifact: $archive"
+echo "WebAssembly release artifact: $archive"

@@ -33,7 +33,7 @@ RenovateによるNix依存更新は、手動更新が継続的な負担となっ
 
 == 進行中の公開経路
 
-textlint用Processor、Browser packageおよびCLIをnpm Registryへ段階的に公開する準備を進めています。
+textlint用Processor、WebAssembly packageおよびCLIをnpm Registryへ段階的に公開する準備を進めています。
 公開はGitHub Releaseの公開後に専用jobだけが行い、Releaseで検証した成果物と同じbyte列を送ります。
 npm向けに構築し直しません。
 
@@ -45,7 +45,7 @@ npm向けに構築し直しません。
 * https://github.com/KeishiS/adocweave/issues/714[公開方針の文書への反映]
 * https://github.com/KeishiS/adocweave/issues/715[公開基盤と復旧手順]
 * https://github.com/KeishiS/adocweave/issues/716[textlint用Processorの公開]
-* https://github.com/KeishiS/adocweave/issues/717[Browser packageの公開]
+* https://github.com/KeishiS/adocweave/issues/717[WebAssembly packageの公開]
 * https://github.com/KeishiS/adocweave/issues/718[CLIの公開]
 
 == 実施しない公開経路

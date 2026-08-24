@@ -1,11 +1,11 @@
-# AdocWeave browser package
+# AdocWeave WebAssembly package
 
-`@adocweave/browser` は、AdocWeaveのWebAssembly moduleとWeb Worker clientを同じBrowser製品として提供します。
+`@adocweave/wasm` は、AdocWeaveのWebAssembly moduleとWeb Worker clientを一組として提供します。
 
 ## 導入
 
 ```console
-npm install @adocweave/browser@X.Y.Z
+npm install @adocweave/wasm@X.Y.Z
 ```
 
 GitHub Releaseへ添付したarchiveと同じbyte列をnpmへ公開します。checksumとattestationを自分で検証してから導入する場合は、AdocWeaveのGitHub Releaseに添付した `.tgz` を指定することもできます。
@@ -16,7 +16,7 @@ GitHub Releaseへ添付したarchiveと同じbyte列をnpmへ公開します。c
 - `wasm/adocweave_wasm.d.ts` — 生成された場合のTypeScript declaration
 - `worker/index.mjs` と `worker/index.d.mts` — frontend向けの公開ES module入口と型定義
 - `worker/client.mjs` と `worker/worker.mjs` — 一つの要求をWeb Workerで実行する内部実装
-- `worker/contracts.mjs` — Browser製品のpackage情報
+- `worker/contracts.mjs` — packageの版情報
 - `worker/protocol.d.mts` — WebAssemblyとやり取りするJSONの型。Rustのwire定義から生成します
 - `worker/worker-protocol.mjs` — clientとWorkerが交換する内部封筒
 - `THIRD_PARTY_NOTICES.adoc` — rootとZedのlockfileから生成したthird-party package一覧
@@ -24,7 +24,7 @@ GitHub Releaseへ添付したarchiveと同じbyte列をnpmへ公開します。c
 ## 最小例
 
 ```javascript
-import { AdocWeaveClient, defaultAssetUrls } from "@adocweave/browser";
+import { AdocWeaveClient, defaultAssetUrls } from "@adocweave/wasm";
 
 const entryUrl = new URL("./worker/index.mjs", import.meta.url);
 const client = new AdocWeaveClient(defaultAssetUrls(entryUrl));
@@ -42,7 +42,7 @@ preview.textContent = result.html;
 
 入力欄などの連続更新をまとめる待ち時間、文書の版および古い結果を採用するかどうかは、入力を持つ利用側アプリが管理します。利用側は処理ごとに `AbortController` を作り、前の処理が不要になったときは `abort()` を呼びます。取消しまたはWASMのtrapが発生するとclientはそのWorkerを終了し、対応するPromiseをrejectします。同じWorkerとWASM instanceを次の解析に再利用しません。
 
-clientとWorkerの要求番号は内部実装であり、結果へ公開しません。JavaScriptとWASMの組合せはWASM protocolのschema handshakeで検査します。Worker内部の封筒やBrowser packageのバージョンを、利用側の互換性判定には使用しません。
+clientとWorkerの要求番号は内部実装であり、結果へ公開しません。JavaScriptとWASMの組合せはWASM protocolのschema handshakeで検査します。Worker内部の封筒やpackageのバージョンを、利用側の互換性判定には使用しません。
 
 ## 配備
 

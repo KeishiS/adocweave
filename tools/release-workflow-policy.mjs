@@ -12,12 +12,13 @@ import { parseReleaseVersionArguments } from "./sync-release-version.mjs";
 const ROOT = new URL("../", import.meta.url);
 const read = (path) => readFileSync(new URL(path, ROOT), "utf8");
 const PUBLIC_TASKS = [
-  "acceptance", "browser-post-publication-npm-smoke", "default", "fmt", "fmt-check", "fuzz-smoke",
+  "acceptance", "default", "fmt", "fmt-check", "fuzz-smoke",
   "main-gate", "main-integrations", "release-check",
-  "security-audit", "test-browser-release-candidate", "test-global-product-candidate",
-  "test-vscode-release-determinism", "test-zed-release-candidate",
+  "security-audit", "test-global-product-candidate", "test-vscode-release-determinism",
+  "test-wasm-release-candidate", "test-zed-release-candidate",
   "textlint-plugin-post-publication-npm-smoke", "textlint-plugin-post-release-npx-smoke",
   "textlint-plugin-release-consumer-e2e", "verify",
+  "wasm-post-publication-npm-smoke",
 ].sort();
 const DEVELOPER_TASKS = new Set([
   "acceptance", "fmt", "fmt-check", "release-check", "security-audit", "verify",
@@ -56,7 +57,7 @@ const ALLOWED_SECRET_REFERENCES = new Map([
   ["open-vsx-publish.yml job publish", new Set(["secrets.OPEN_VSX_TOKEN"])],
 ]);
 const SECRET_REFERENCE = /secrets\.[A-Za-z_][A-Za-z0-9_]*/g;
-const RELEASE_PRODUCTS = ["cli", "lsp", "browser", "textlint", "vscode", "zed"];
+const RELEASE_PRODUCTS = ["cli", "lsp", "wasm", "textlint", "vscode", "zed"];
 const RUST_CACHE_ACTION = "Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6";
 
 function isBuildCache(step) {
@@ -539,7 +540,7 @@ const SOURCE_GATE_DEPENDENCIES = [
   "platform-contract",
   "release-ci-contract",
   "test",
-  "test-browser-types",
+  "test-wasm-types",
   "test-vscode",
   "test-web-worker",
   "test-zed",

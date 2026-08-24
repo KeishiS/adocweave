@@ -26,15 +26,15 @@
       "package": "adocweave-lsp"
     },
     {
-      "product": "browser",
+      "product": "wasm",
       "versionSource": "web-worker/package.json#version",
-      "tagPrefix": "adocweave-browser/v",
-      "assetKind": "browser",
-      "assetName": "adocweave-browser-{version}.tgz",
+      "tagPrefix": "adocweave-wasm/v",
+      "assetKind": "wasm",
+      "assetName": "adocweave-wasm-{version}.tgz",
       "archive": "tgz",
       "executable": null,
       "build": "script",
-      "buildScript": "tools/package-browser-release.sh"
+      "buildScript": "tools/package-wasm-release.sh"
     },
     {
       "product": "textlint",

@@ -47,13 +47,13 @@ function fixture() {
         package: "tool-lsp",
       },
       {
-        product: "browser",
+        product: "wasm",
         versionSource: "web/package.json#version",
-        tagPrefix: "adocweave-browser/v",
-        assetKind: "browser",
-        assetName: "adocweave-browser-{version}.tgz",
+        tagPrefix: "adocweave-wasm/v",
+        assetKind: "wasm",
+        assetName: "adocweave-wasm-{version}.tgz",
         build: "script",
-        buildScript: "tools/package-browser.sh",
+        buildScript: "tools/package-wasm.sh",
       },
       {
         product: "textlint",
@@ -106,10 +106,10 @@ test("JSONとTOMLのversionSourceから製品tagとcandidate名を一意に解�
       "adocweave-cli-a-target.zip",
       "adocweave-cli-b-target.zip",
     ]);
-    const browser = productIdentity("browser", { root });
-    assert.equal(browser.version, "4.5.6");
-    assert.equal(browser.tag, "adocweave-browser/v4.5.6");
-    assert.deepEqual(browser.assetNames, ["adocweave-browser-4.5.6.tgz"]);
+    const wasm = productIdentity("wasm", { root });
+    assert.equal(wasm.version, "4.5.6");
+    assert.equal(wasm.tag, "adocweave-wasm/v4.5.6");
+    assert.deepEqual(wasm.assetNames, ["adocweave-wasm-4.5.6.tgz"]);
     const plan = loadDistributionPlan(root);
     const entry = selectProduct(plan, "cli");
     assert.equal(productVersion(entry, root), "1.2.3");
@@ -130,7 +130,7 @@ test("repository外path、不正version、重複productとtagPrefixを拒否し�
     assert.throws(() => readVersionSource("../outside.json#version", root), /repository外|不正/);
     assert.throws(() => readVersionSource("web/outside.json#version", root), /repository外/);
     writeFileSync(join(root, "web/package.json"), '{"version":"1.2"}\n');
-    assert.throws(() => productIdentity("browser", { root }), /stable SemVer/);
+    assert.throws(() => productIdentity("wasm", { root }), /stable SemVer/);
     plan.products.push({ ...plan.products[0] });
     writeFileSync(join(root, "release/distribution-plan.json"), `${JSON.stringify(plan)}\n`);
     assert.throws(() => loadDistributionPlan(root), /productが重複/);
@@ -197,7 +197,7 @@ test("candidateとpublication planへ他製品assetを混在させません", ()
 test("全製品を同じ最小publication planへ正規化します", () => {
   const { cleanup, plan, root } = fixture();
   try {
-    for (const product of ["cli", "lsp", "browser", "textlint", "vscode", "zed"]) {
+    for (const product of ["cli", "lsp", "wasm", "textlint", "vscode", "zed"]) {
       const identity = productIdentity(product, { plan, root });
       const cargoDistPlan = identity.entry.build === "cargo-dist"
         ? {

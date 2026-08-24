@@ -44,7 +44,7 @@ export function executableNames(executableSuffix) {
 
 export function requiredProductInstallationAssets(product, target, version, archiveType) {
   const names = {
-    browser: `adocweave-browser-${version}.tgz`,
+    wasm: `adocweave-wasm-${version}.tgz`,
     cli: `adocweave-cli-${target}.${archiveType}`,
     lsp: `adocweave-lsp-${target}.${archiveType}`,
     textlint: `adocweave-textlint-plugin-asciidoc-${version}.tgz`,
@@ -68,7 +68,7 @@ export function installationLayout(prefix, version, pathApi) {
     versionRoot: pathApi.join(productRoot, version),
     currentLink: pathApi.join(productRoot, "current"),
     activeMarker: pathApi.join(productRoot, "active-version"),
-    browserRoot: pathApi.join(shareRoot, "browser"),
+    wasmRoot: pathApi.join(shareRoot, "wasm"),
     zedRoot: pathApi.join(shareRoot, "zed"),
     vscodeRoot: pathApi.join(shareRoot, "vscode"),
   };

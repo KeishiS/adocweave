@@ -34,10 +34,10 @@ const plan = {
       build: "cargo-dist",
     },
     {
-      product: "browser",
+      product: "wasm",
       versionSource: "web-worker/package.json#version",
-      assetKind: "browser",
-      assetName: "adocweave-browser-{version}.tgz",
+      assetKind: "wasm",
+      assetName: "adocweave-wasm-{version}.tgz",
       archive: "tgz",
       executable: null,
       build: "script",
@@ -92,18 +92,18 @@ test("checksumはSBOMを作らず全archiveとmanifestを名前順に記録す�
 
 test("空、欠落、余分または改変された成果物を拒否する", () => {
   for (const mutation of ["empty", "missing", "extra", "changed"]) {
-    const { assets, artifacts, root } = fixture("browser");
+    const { assets, artifacts, root } = fixture("wasm");
     try {
       if (mutation === "empty") writeFileSync(join(artifacts, assets[0].name), "");
       if (mutation === "missing") rmSync(join(artifacts, assets[0].name));
       if (mutation === "extra") writeFileSync(join(artifacts, "unplanned.txt"), "unplanned\n");
       if (mutation !== "empty" && mutation !== "missing") {
-        writeMetadata(artifacts, commit(), "browser", plan);
+        writeMetadata(artifacts, commit(), "wasm", plan);
       }
       if (mutation === "changed") writeFileSync(join(artifacts, assets[0].name), "changed\n");
       const action = mutation === "empty" || mutation === "missing"
-        ? () => writeMetadata(artifacts, commit(), "browser", plan)
-        : () => verifyMetadata(artifacts, commit(), "browser", plan);
+        ? () => writeMetadata(artifacts, commit(), "wasm", plan)
+        : () => verifyMetadata(artifacts, commit(), "wasm", plan);
       assert.throws(action, /empty|missing|unplanned|mismatch/);
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -112,14 +112,14 @@ test("空、欠落、余分または改変された成果物を拒否する", ()
 });
 
 test("manifestのsource commit改変を拒否する", () => {
-  const { artifacts, root } = fixture("browser");
+  const { artifacts, root } = fixture("wasm");
   try {
-    writeMetadata(artifacts, commit(), "browser", plan);
+    writeMetadata(artifacts, commit(), "wasm", plan);
     const path = join(artifacts, "adocweave-dist-manifest.json");
     const manifest = JSON.parse(readFileSync(path, "utf8"));
     manifest.sourceCommit = "0".repeat(40);
     writeFileSync(path, `${JSON.stringify(manifest, null, 2)}\n`);
-    assert.throws(() => verifyMetadata(artifacts, commit(), "browser", plan), /metadata mismatch/);
+    assert.throws(() => verifyMetadata(artifacts, commit(), "wasm", plan), /metadata mismatch/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

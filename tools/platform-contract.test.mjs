@@ -27,7 +27,7 @@ test("Windowsの実行ファイル名とインストール先を計算する", (
     versionRoot: "C:\\Users\\tester\\.local\\lib\\adocweave\\0.16.0",
     currentLink: "C:\\Users\\tester\\.local\\lib\\adocweave\\current",
     activeMarker: "C:\\Users\\tester\\.local\\lib\\adocweave\\active-version",
-    browserRoot: "C:\\Users\\tester\\.local\\share\\adocweave\\0.16.0\\browser",
+    wasmRoot: "C:\\Users\\tester\\.local\\share\\adocweave\\0.16.0\\wasm",
     zedRoot: "C:\\Users\\tester\\.local\\share\\adocweave\\0.16.0\\zed",
     vscodeRoot: "C:\\Users\\tester\\.local\\share\\adocweave\\0.16.0\\vscode",
   });

@@ -31,9 +31,9 @@ debug = 0
 panic = "abort"
 strip = "symbols"
 
-# Size-oriented profile for the browser WASM artifact. Native release assets use
+# Size-oriented profile for the WASM artifact. Native release assets use
 # `dist`, which remains tuned independently.
-[profile.browser]
+[profile.wasm]
 inherits = "release"
 opt-level = "z"
 lto = "fat"
