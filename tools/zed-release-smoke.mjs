@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import process from "node:process";
@@ -12,7 +12,14 @@ const version = /^version\s*=\s*"([^"]+)"$/m.exec(extension)?.[1];
 if (!version) throw new Error("Zed extension version is missing");
 const packageName = `adocweave-zed-${version}`;
 if (basename(archive) !== `${packageName}.tar.xz`) throw new Error("unexpected Zed archive name");
+// packaging scriptはsrc直下の.rsだけを複写する。source側を数え上げて、moduleの
+// 追加で公開が止まらないようにしつつ、複写漏れと余分なfileは引き続き検出する。
+const sources = readdirSync(new URL("../editors/zed/src", import.meta.url), { withFileTypes: true });
+if (sources.some((entry) => !entry.isFile() || !entry.name.endsWith(".rs"))) {
+  throw new Error("Zed extension sources must be .rs files directly under src");
+}
 const expected = [
+  ...sources.map((entry) => `${packageName}/src/${entry.name}`),
   `${packageName}/`,
   `${packageName}/Cargo.lock`,
   `${packageName}/Cargo.toml`,
@@ -31,7 +38,6 @@ const expected = [
   `${packageName}/languages/asciidoc_inline/highlights.scm`,
   `${packageName}/languages/asciidoc_inline/injections.scm`,
   `${packageName}/src/`,
-  `${packageName}/src/lib.rs`,
 ].sort();
 const actual = execFileSync("tar", ["-tJf", archive], { encoding: "utf8" }).trim().split("\n").sort();
 if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error("unexpected Zed archive layout");
