@@ -48,6 +48,8 @@ const REGISTRY_OIDC_PERMISSIONS = {
 const ALLOWED_REGISTRY_OIDC_GRANTS = new Set([
   "npm-publish.yml job publish",
   "marketplace-publish.yml job publish",
+  // 呼び出したworkflowは呼び出し元の権限を超えられないため、呼び出すjobにも同じ許可がいる。
+  "release.yml job marketplace",
 ]);
 
 // Workflows use the ambient job token only. The exceptions are the two

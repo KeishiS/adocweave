@@ -376,6 +376,10 @@ jobs:
   marketplace:
     if: needs.candidate-plan.outputs.product == 'vscode'
     needs: [candidate-plan, publish-global]
+    # 呼び出したworkflowは呼び出し元の権限を超えられない。federationのid-tokenは
+    # このjobを通してだけ渡し、release.ymlのtop-levelへは足さない。
+    permissions:
+      id-token: write
     uses: ./.github/workflows/marketplace-publish.yml
     with:
       tag: ${{ needs.candidate-plan.outputs.tag }}
