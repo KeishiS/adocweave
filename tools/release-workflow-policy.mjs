@@ -48,7 +48,15 @@ const REGISTRY_OIDC_PERMISSIONS = {
 const ALLOWED_REGISTRY_OIDC_GRANTS = new Set([
   "npm-publish.yml job publish",
   "marketplace-publish.yml job publish",
-  // 呼び出したworkflowは呼び出し元の権限を超えられないため、呼び出すjobにも同じ許可がいる。
+]);
+
+// 呼び出したworkflowは、top-levelもjobも呼び出し元の権限を超えられない。公開workflowを
+// 呼び出すjobは、呼び出し先が宣言するcontents: readとid-token: writeの両方を渡す。
+const REGISTRY_OIDC_CALLER_PERMISSIONS = {
+  contents: "read",
+  "id-token": "write",
+};
+const ALLOWED_REGISTRY_OIDC_CALLERS = new Set([
   "release.yml job marketplace",
 ]);
 
@@ -116,7 +124,8 @@ export function validateWritePermissionGrants(workflows) {
   const grants = (permissions, location) => {
     for (const [scope, level] of Object.entries(permissions ?? {})) {
       if (level !== "read" && level !== "none") {
-        if (!ALLOWED_WRITE_GRANTS.has(location) && !ALLOWED_REGISTRY_OIDC_GRANTS.has(location)) {
+        if (!ALLOWED_WRITE_GRANTS.has(location) && !ALLOWED_REGISTRY_OIDC_GRANTS.has(location) &&
+            !ALLOWED_REGISTRY_OIDC_CALLERS.has(location)) {
           fail(`${location} grants ${scope}: ${level}; write permissions are reserved for publication`);
         }
       }
@@ -133,6 +142,10 @@ export function validateWritePermissionGrants(workflows) {
       if (ALLOWED_WRITE_GRANTS.has(location) &&
           canonicalPermissions(job.permissions) !== canonicalPermissions(PUBLISH_PERMISSIONS)) {
         fail(`${location} must grant exactly the publication permissions`);
+      }
+      if (ALLOWED_REGISTRY_OIDC_CALLERS.has(location) &&
+          canonicalPermissions(job.permissions) !== canonicalPermissions(REGISTRY_OIDC_CALLER_PERMISSIONS)) {
+        fail(`${location} must pass exactly the permissions the called publication workflow declares`);
       }
       if (ALLOWED_REGISTRY_OIDC_GRANTS.has(location) &&
           canonicalPermissions(job.permissions) !== canonicalPermissions(REGISTRY_OIDC_PERMISSIONS)) {
