@@ -435,20 +435,23 @@ deploy記録へ残します。展開物の``example/index.html``と``example/app
 [#editor-language-server]
 == エディターからLanguage Serverを使う
 
-VS Code拡張とZed拡張はLanguage Serverを同梱せず、download、導入、更新および削除を行いません。
-先にこの文書の「配布物の選択」「取得と完全性の検証」と、利用環境に応じた導入手順に従って
-``adocweave-lsp``を導入してください。エディター拡張とLanguage Serverは独立した製品であり、
-更新とrollbackも別々に行います。
+VS Code拡張とZed拡張はLanguage Serverを同梱しません。エディター拡張とLanguage Serverは独立した製品であり、
+更新とrollbackも別々に行います。checksumとattestationを検証したうえで導入する場合は、先にこの文書の
+「配布物の選択」「取得と完全性の検証」と、利用環境に応じた導入手順に従って``adocweave-lsp``を導入してください。
 
 拡張は次の順序でLanguage Serverを探します。
 
 . エディターで有効な設定に明示した絶対path
 . エディターprocessから見える``PATH``上の``adocweave-lsp``
-. この文書を参照する導入案内
+. 拡張ごとに定める三つ目の手段
 
-三つ目は実行ファイルを自動取得する処理ではありません。見つからない場合は導入案内を表示し、Language Serverを
-起動しません。エディターをGUIから起動すると、shellの起動ファイルで設定した``PATH``が反映されない場合があります。
-その場合はエディターを起動する環境へ``PATH``を設定するか、導入した実行ファイルの絶対pathを利用者設定へ記載します。
+三つ目はVS Code拡張とZed拡張で異なります。VS Code拡張はこの文書を参照する導入案内を表示し、Language Serverを
+起動しません。Zed拡張はGitHub Releaseから最新のLanguage Serverを取得します。取得の詳細と、その経路に
+検証がない理由は<<zed-language-server-selection>>で説明します。
+
+いずれの拡張でも、導入済みの実行ファイルが見つかればそちらが優先されます。エディターをGUIから起動すると、
+shellの起動ファイルで設定した``PATH``が反映されない場合があります。その場合はエディターを起動する環境へ
+``PATH``を設定するか、導入した実行ファイルの絶対pathを利用者設定へ記載します。
 
 VS Codeでは設定をmachine scopeに限定し、未信頼ワークスペースに対して拡張自体を起動しません。Zedでは本体の
 Worktree Trustに従います。未信頼worktreeではZedがproject設定を適用せず、Language Serverを起動しません。
@@ -474,7 +477,12 @@ Language Serverを探します。導入済みの実行ファイルがあれば�
 どちらにも見つからない場合、拡張はGitHub Releaseから最新のLanguage Serverを取得します。この経路には
 checksumとattestationの検証がありません。Zedの拡張APIに検証手段がないためです。検証したうえで導入する場合は、
 このページのほかの手順、Nixまたはpackage registryで導入し、``lsp.adocweave.binary.path``または``PATH``で
-その実行ファイルを指定してください。
+その実行ファイルを指定してください。指定した実行ファイルは自動取得より先に選ばれるため、取得は行われません。
+
+自動取得した実行ファイルは、Zedが拡張へ割り当てるworking ディレクトリの``adocweave-lsp-<version>``へ置きます。
+拡張は取得した版だけを残し、以前の版のディレクトリを削除します。GitHubへ到達できない場合は、取得済みの版が
+あればそれで起動します。取得したLanguage Serverの更新とrollbackを利用者が制御する必要がある場合は、
+``lsp.adocweave.binary.path``または``PATH``で版を指定してください。
 
 ``binary.arguments``と``binary.env``は使用せず、引数なしで起動し、環境変数はZedがworktreeへ提供する
 shell環境を使用します。
