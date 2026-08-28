@@ -17,13 +17,22 @@ Language Serverを配布・更新する責務と、独自の互換性判定を�
 === 製品と導入の境界
 
 Language Server、VS Code拡張およびZed拡張は、引き続き異なる製品バージョン、tagおよびGitHub Releaseを持ちます。
-拡張へLanguage Serverを同梱せず、拡張はLanguage Serverのdownload、配布manifestとhashの検証、archive展開、
-cache、導入、更新および削除を行いません。Language Serverの導入、検証、更新、rollbackおよび削除は利用者が
-共通の導入手順で行います。
+拡張へLanguage Serverを同梱しません。
 
-拡張はエディターで有効な設定の絶対path、editor processから見える``PATH``の順で``adocweave-lsp``を探します。
-見つからない場合は自動取得せず、共通の導入文書を案内します。未信頼のprojectまたはworktreeの設定から
-任意の実行ファイルを起動しません。VS Codeは未信頼ワークスペースで拡張を無効にし、ZedはWorktree Trustに従います。
+拡張はエディターで有効な設定の絶対path、editor processから見える``PATH``、自動取得の順で
+``adocweave-lsp``を探します。利用者が導入した実行ファイルを常に優先し、自動取得は最後の手段とします。
+自動取得した実行ファイルの導入先は拡張が所有し、利用者が導入したものへ影響しません。
+
+自動取得は、公開済みGitHub Releaseのうちtagが``adocweave-lsp/v``で始まるものから最新版を選びます。
+拡張はLanguage Serverの版を固定せず、``managedLspVersion``のような対応版の宣言を持ちません。取得済みの版は
+残し、同じ版を取得し直しません。対応するplatformの成果物がない場合は自動取得へ進まず、対応するOSと
+architectureを示して失敗します。
+
+未信頼のprojectまたはworktreeの設定から任意の実行ファイルを起動しません。VS Codeは未信頼ワークスペースで
+拡張を無効にし、ZedはWorktree Trustに従います。
+
+Language Serverの導入、検証、更新、rollbackおよび削除を利用者が自分で行う経路は維持します。共通の導入手順、
+Nixおよびpackage registryは引き続き利用でき、そこではchecksumとattestationを検証できます。
 
 Language Server processの起動、標準入出力による通信、初期化、停止、再起動および異常終了の処理は、
 VS CodeとZedが提供する標準LSP client APIへ委ねます。拡張独自のprocess監視と終了手順を設けません。
@@ -40,21 +49,31 @@ AdocWeave固有のrequest、responseまたは通知を将来追加する場合�
 
 == 検討した代替案
 
-**両拡張でmanaged downloadを維持する。** Language Serverを一度の操作で導入できますが、同じ配布client、
-archive検証、cacheおよび復旧処理を二つのeditor API向けに保守し続ける必要があります。利用者向けの共通導入手順へ
-集約する方が、拡張と配布工程の責務を小さくできます。
+**自動取得を持たず、共通の導入手順だけを案内する。** 拡張と配布工程の責務は小さくなりますが、拡張を導入した
+利用者が別の手順を踏むまで解析を使えません。実際にZedでこの状態が報告されました。Zedの言語拡張は自動取得と
+``PATH``探索のどちらも一般的で、``PATH``のみとしているものはLanguage Serverが言語のtoolchainへ同梱される
+場合が中心です。``adocweave-lsp``は単体配布のbinaryであり、この条件に当てはまりません。
 
 **Language Serverを拡張へ同梱して同時に公開する。** 組み合わせは固定できますが、Language Serverだけの修正でも
 両拡張の再公開が必要になり、ADR 0027で分けたrelease trainを再び結合します。
+
+**拡張が対応するLanguage Serverの版を宣言する。** 取得先は決まりますが、Language Serverを更新するたびに拡張の
+再公開が必要になり、release trainを分けた意味が薄れます。公開済みreleaseから最新版を選びます。
 
 **製品バージョンまたは``lspApiVersion``を事前に検査する。** 実際に利用できるLSP機能を間接的な番号から推測する
 検査処理が増えます。標準の初期化処理で交換するcapabilityを直接確認します。
 
 == 帰結
 
-エディター拡張はLanguage Server clientとeditor固有の表示に集中します。拡張の導入だけでは文書解析機能を
-利用できないため、Language Serverがない場合は共通の導入手順を明示する必要があります。Language Serverの更新時期は
-利用者が選べます。標準capabilityの範囲内では、製品バージョンが異なる組み合わせを利用できます。
+エディター拡張を導入すれば、追加の手順なしで文書解析を利用できます。Language Serverをすでに導入している
+利用者は、設定または``PATH``によってこれまでどおりその実行ファイルが使われます。
+
+自動取得の経路にはchecksumとattestationの検証がありません。Zedの拡張APIにはこれらを検証する手段がなく、
+取得の完全性はTLSだけに依存します。導入の手間を減らすことを優先した判断です。検証が必要な利用者は、共通の
+導入手順、Nixまたはpackage registryから導入し、その実行ファイルを設定または``PATH``で指定します。
+
+Language Serverの更新時期を利用者が選ぶ場合は、自動取得ではなく明示的な導入を使います。自動取得は、拡張が
+公開済みreleaseの最新版を選びます。
 
 managed downloadを提供していた旧拡張のcacheは更新だけでは削除されません。旧版の削除機能または共通導入文書の
 手動手順で一度だけ削除します。

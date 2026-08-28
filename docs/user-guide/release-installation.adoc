@@ -468,9 +468,16 @@ Zed Extension Galleryへ公開しないため、展開済み``$HOME/.local/share
 [#zed-language-server-selection]
 === ZedのLanguage Server選択
 
-Zedでは``lsp.adocweave.binary.path``へ導入済み実行ファイルの絶対pathを指定できます。指定しない場合は、
-Zed processから見える``PATH``を使用します。``binary.arguments``と``binary.env``は使用せず、引数なしで起動し、
-環境変数はZedがworktreeへ提供するshell環境を使用します。
+Zed拡張は``lsp.adocweave.binary.path``の絶対path、Zed processから見える``PATH``、自動取得の順で
+Language Serverを探します。導入済みの実行ファイルがあれば、そちらが常に優先されます。
+
+どちらにも見つからない場合、拡張はGitHub Releaseから最新のLanguage Serverを取得します。この経路には
+checksumとattestationの検証がありません。Zedの拡張APIに検証手段がないためです。検証したうえで導入する場合は、
+このページのほかの手順、Nixまたはpackage registryで導入し、``lsp.adocweave.binary.path``または``PATH``で
+その実行ファイルを指定してください。
+
+``binary.arguments``と``binary.env``は使用せず、引数なしで起動し、環境変数はZedがworktreeへ提供する
+shell環境を使用します。
 
 更新時は新しいバージョンのZed ディレクトリを別に展開し、dev extensionをそのディレクトリへ再設定します。旧ディレクトリは、新しいバージョンの
 拡張と、別に更新したLanguage Serverでeditor機能を確認するまで保持します。
