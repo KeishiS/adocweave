@@ -28,7 +28,8 @@ artifactの再アップロードは行いません。
 書き込み権限とOIDCは、``github-release`` Environmentを使う公開jobだけに付与します。Environmentにはrequired reviewerを
 設定し、deployment branchを``main``へ限定します。承認待ちのrunを新しいpushで取り消しません。
 
-Open VSXとCachixへの後続公開はGitHub Releaseを入力とする独立workflowにします。通常は同じrunから呼び出しますが、
+Open VSX、Visual Studio Marketplace、npmおよびCachixへの後続公開はGitHub Releaseを入力とする
+独立workflowにします。通常は同じrunから呼び出しますが、
 送信だけが失敗した場合は公開済みtagを指定して単独で再実行できます。後続workflowは、GitHub Releaseがdraftでも
 prereleaseでもないことと、tagがcheckoutしたcommitを指すことを送信前に検査します。
 

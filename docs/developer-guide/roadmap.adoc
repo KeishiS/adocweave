@@ -33,12 +33,15 @@ RenovateによるNix依存更新は、手動更新が継続的な負担となっ
 
 == 実施しない公開経路
 
-Visual Studio Marketplace、Zed Extension Gallery、crates.io、npm RegistryへのCLI公開および
-OSのpackage managerへの登録・公開は行いません。次のIssueは実装候補ではなく、この判断と
-過去の検討内容を残す記録として保留します。
+Zed Extension Gallery、crates.io、npm RegistryへのCLI公開およびOSのpackage managerへの
+登録・公開は行いません。次のIssueは実装候補ではなく、この判断と過去の検討内容を残す記録として
+保留します。
 
-* https://github.com/KeishiS/adocweave/issues/82[公式extension registry（Open VSX以外）]
 * https://github.com/KeishiS/adocweave/issues/86[Homebrew・WinGet・Scoopの評価]
+
+Visual Studio Marketplaceは2026-08-28に方針を改め、公開する対象としました。Open VSX Registryを
+利用しないVisual Studio Codeでは、拡張の発見と自動更新を利用できなかったためです。作業は
+https://github.com/KeishiS/adocweave/issues/82[公式extension registryへの公開]で管理します。
 
 CLIのnpm公開は、効果が利用側1リポジトリのCIに限られる一方で、標準的な構成では公開packageが
 5つに増えて継続的な負担となるため中止しました。``npx``による単発実行を対外的な入口として

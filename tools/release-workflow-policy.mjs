@@ -39,13 +39,15 @@ const ALLOWED_WRITE_GRANTS = new Set([
   "release-publish.yml job publish",
 ]);
 
-// npmのTrusted Publishingはtokenの代わりにOIDCで公開元を確認する。GitHub Releaseの
-// 公開jobとは違い、repositoryへの書込みは持たず、id-tokenだけを受け取る。
+// npmのTrusted PublishingとMarketplaceのworkload identity federationは、tokenの代わりに
+// OIDCで公開元を確認する。GitHub Releaseの公開jobとは違い、repositoryへの書込みは持たず、
+// id-tokenだけを受け取る。
 const REGISTRY_OIDC_PERMISSIONS = {
   "id-token": "write",
 };
 const ALLOWED_REGISTRY_OIDC_GRANTS = new Set([
   "npm-publish.yml job publish",
+  "marketplace-publish.yml job publish",
 ]);
 
 // Workflows use the ambient job token only. The exceptions are the two
@@ -273,6 +275,7 @@ export function validateProductReleaseRouting(workflows) {
     ["open-vsx-publish.yml", "Published VSIX download and verification"],
     ["binary-cache-publish.yml", "Published CLI candidate verification"],
     ["npm-publish.yml", "Published package download and verification"],
+    ["marketplace-publish.yml", "Published VSIX download and verification"],
   ]);
   for (const [workflowName, verificationName] of downstreamPublications) {
     const downstreamSteps = workflows[workflowName]?.jobs?.publish?.steps ?? [];
