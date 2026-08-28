@@ -371,6 +371,21 @@ jobs:
       tag: ${{ needs.candidate-plan.outputs.tag }}
     secrets: inherit
 
+  # 一方のregistryへの送信が失敗しても、もう一方を止めない。どちらも公開済みGitHub Releaseを
+  # 入力とし、同じtagで単独に再実行できる。
+  marketplace:
+    if: needs.candidate-plan.outputs.product == 'vscode'
+    needs: [candidate-plan, publish-global]
+    # 呼び出したworkflowは、top-levelもjobも呼び出し元の権限を超えられない。呼び出し先が
+    # 宣言する両方をこのjobから渡す。federationのid-tokenはこの経路だけで、
+    # release.ymlのtop-levelへは足さない。
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/marketplace-publish.yml
+    with:
+      tag: ${{ needs.candidate-plan.outputs.tag }}
+
   binary-cache:
     if: needs.candidate-plan.outputs.product == 'cli'
     needs: [candidate-plan, publish-native]

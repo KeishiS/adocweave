@@ -360,6 +360,17 @@ function productRoutingWorkflows() {
         { name: "npm publication", run: 'npm publish "$tarball"' },
       ] } },
     },
+    // Marketplaceはworkload identity federationで公開元をOIDCで確認するため、
+    // secretを読むstepを持たない。
+    "marketplace-publish.yml": {
+      jobs: { publish: { steps: [
+        {
+          name: "Published VSIX download and verification",
+          run: "jq .draft\njq .prerelease\ngit rev-parse '$TAG^{commit}'\n--verify-candidate\nattestation verify",
+        },
+        { name: "Visual Studio Marketplace publication", run: "vsce publish --azure-credential" },
+      ] } },
+    },
   };
 }
 

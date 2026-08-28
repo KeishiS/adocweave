@@ -503,8 +503,17 @@ Open VSXへ公開するfileは、同じReleaseへ添付したVSIXと同一です
 codium --install-extension adocweave.adocweave-vscode
 ----
 
-Visual Studio Marketplaceへは公開しないため、Visual Studio Code本体では同じReleaseの
-``adocweave-vscode-<version>.vsix``を検証して手動で導入します。
+Visual Studio Code本体では、Visual Studio Marketplaceの拡張画面から同じ識別子で導入できます。
+公式の発行者はpublisher``adocweave``です。Marketplaceへ公開するfileも、同じReleaseへ添付した
+VSIXと同一です。
+
+[source,console]
+----
+code --install-extension adocweave.adocweave-vscode
+----
+
+registryを利用しない場合は、同じReleaseの``adocweave-vscode-<version>.vsix``を検証して
+手動で導入します。特定のバージョンへ固定する場合もこの方法を使います。
 
 [source,console]
 ----

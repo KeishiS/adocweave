@@ -34,9 +34,14 @@ attestationの確認はxref:../user-guide/release-installation.adoc[インスト
 GitHubが自動生成するsource archiveは検証対象の成果物に含めません。
 
 registryへも公開する製品では、GitHub Releaseへ添付した成果物と同じbyte列を送り、registry向けに
-構築し直しません。現在registryへ公開する製品はVS Code拡張とtextlint用Processorで、公開先はそれぞれ
-Open VSX Registryとnpm Registryです。WebAssembly packageとCLIはGitHub Releaseからの導入だけを対象とします。
+構築し直しません。現在registryへ公開する製品はVS Code拡張、WebAssembly packageおよびtextlint用
+Processorです。VS Code拡張はOpen VSX RegistryとVisual Studio Marketplaceの両方へ、残る2つは
+npm Registryへ公開します。CLIとZed拡張はGitHub Releaseからの導入だけを対象とします。
 Rust crateはcrates.ioへ公開しません。
+
+VS Code拡張は2つのregistryへ同じVSIXを送ります。どちらか一方の送信が失敗しても、もう一方を
+止めません。両方ともGitHub Releaseの公開後に独立したworkflowで行い、同じtagを指定して単独で
+再実行できます。
 
 npmへの公開はGitHub Releaseの公開後に別のworkflowで行い、送信後にregistryが記録したintegrityが
 Releaseの成果物と一致することを確認します。続けて、公開したpackageをregistryから導入し直し、
