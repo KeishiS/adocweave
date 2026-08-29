@@ -224,6 +224,30 @@ export function validateExternalPublicationIsolation(workflows) {
   }
 }
 
+export function validateNpmPublication(workflows) {
+  const workflow = workflows["npm-publish.yml"];
+  if (!workflow) fail("npm-publish.yml is required");
+  for (const trigger of ["workflow_call", "workflow_dispatch"]) {
+    const inputs = workflow.on?.[trigger]?.inputs ?? {};
+    if (inputs.package !== undefined || canonical(Object.keys(inputs)) !== canonical(["tag"])) {
+      fail(`npm-publish.yml ${trigger} must accept only the release tag`);
+    }
+  }
+  const job = workflow.jobs?.publish;
+  if (job?.strategy?.["fail-fast"] !== false ||
+      canonical(job?.strategy?.matrix?.package) !== canonical(["textlint", "wasm"])) {
+    fail("npm-publish.yml must process both fixed packages independently");
+  }
+  if (job.environment !== "npm-publish") {
+    fail("npm-publish.yml must use the npm-publish environment");
+  }
+  const source = jobRuns(job);
+  if (!source.includes("tools/npm-publication.mjs") ||
+      !JSON.stringify(job).includes("matrix.package")) {
+    fail("npm-publish.yml must verify each fixed package before and after publication");
+  }
+}
+
 export function validateReleaseVersionCommands(source) {
   const invocations = [...source.matchAll(/node tools\/sync-release-version\.mjs ([^\n]+)/g)]
     .map((match) => match[1].trim().split(/\s+/));
@@ -255,6 +279,7 @@ export function validateReleaseWorkflowPolicy({ workflows, distConfiguration, re
   validateReleaseFlow(workflows, distConfiguration);
   validateCiGates(workflows);
   validateExternalPublicationIsolation(workflows);
+  validateNpmPublication(workflows);
   validateReleaseVersionCommands(releaseGuide);
 }
 
