@@ -13,6 +13,10 @@ description = "Owned request and result contracts for one AdocWeave project run"
 adocweave = { path = "../adocweave" }
 adocweave-config = { path = "../adocweave-config" }
 adocweave-host = { path = "../adocweave-host" }
+glob = "0.3"
+
+[dev-dependencies]
+tempfile = "3"
 
 [lib]
 path = "src/lib.rs"

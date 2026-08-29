@@ -11,19 +11,38 @@
 //! results may still contain [`ProjectWarning`] values when a bounded scan
 //! returns the targets it found before reaching its limit.
 //!
-//! This crate defines no long-lived service or shared state. It does not retain
-//! a request or result after the caller drops it, and currently exposes no
-//! filesystem processing entry point.
+//! This crate defines no long-lived service or shared state. [`process`]
+//! consumes one request, fixes each observed file result for that call and
+//! returns all owned results before it finishes.
+
+mod process;
+mod selection;
 
 use std::fmt;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use adocweave::OutputLimits;
 use adocweave::preprocess::{PreprocessedAnalysis, PreprocessedAnalysisError};
-use adocweave_config::{ConfigError, ConfigSnapshot};
+use adocweave_config::{ConfigError, ConfigSnapshot, ResolvedProjectConfig};
 use adocweave_host::{
     FilesystemJobUsage, FilesystemReadLimits, LocalFilesystemPolicy, LogicalSourceId, ResourceError,
 };
+
+pub use process::process;
+
+/// Fixed request ceiling applied before compiling or scanning glob selectors.
+///
+/// This is not part of [`ProjectLimits`]: accepting a request must itself stay
+/// bounded before request-controlled filesystem and processing limits can be
+/// applied.
+pub const MAX_DISTINCT_GLOB_SELECTORS: usize = 256;
+
+/// Fixed ceiling for the UTF-8 bytes in distinct authored glob patterns.
+///
+/// Duplicate patterns are counted once. Exceeding this ceiling is a target
+/// selection error known before any glob is compiled or any directory is read.
+pub const MAX_TOTAL_GLOB_PATTERN_BYTES: usize = 64 * 1024;
 
 /// One owned request covering every target selected for a single run.
 ///
@@ -51,6 +70,9 @@ pub enum ProjectTarget {
     Directory(PathBuf),
     /// Files selected by one authored glob pattern.
     Glob(String),
+    /// Supported documents found below the project root by workspace discovery
+    /// with configured excludes.
+    Workspace(PathBuf),
 }
 
 /// How a request selects its project configuration.
@@ -75,15 +97,20 @@ pub struct ProjectOverrides {
     pub include: Option<bool>,
 }
 
-/// Hard ceilings shared by every target in one request.
+/// Hard ceilings shared by every target and physical acquisition in one request.
 ///
 /// Include depth, include count and parser limits remain part of the resolved
-/// project configuration. They are deliberately not duplicated here.
+/// project configuration. Configured resource limits are narrower budgets
+/// shared by targets which resolve the same configuration snapshot; they do
+/// not replace these request-wide ceilings.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProjectLimits {
     pub filesystem_reads: FilesystemReadLimits,
     pub max_directory_entries: u64,
     pub max_processing_iterations: u32,
+    /// Maximum UTF-8 bytes retained in returned expanded documents and loaded
+    /// resource bodies. Rendered products added by later stages have their own
+    /// output accounting and are not charged here.
     pub output: OutputLimits,
 }
 
@@ -110,9 +137,65 @@ pub struct ProjectResult {
 pub struct ProjectTargetResult {
     pub source_id: LogicalSourceId,
     pub path: PathBuf,
-    /// Exact configuration used for this target, or `None` for defaults.
-    pub config: Option<ConfigSnapshot>,
+    /// Exact configuration used for this target, shared by every target in its scope.
+    pub config: Option<Arc<ConfigSnapshot>>,
+    /// Configuration after applying request-local overrides, shared by scope.
+    pub resolved_config: Arc<ResolvedProjectConfig>,
+    /// Files read or inspected on behalf of this target.
+    pub resources: Vec<ProjectResourceResult>,
     pub outcome: Result<PreprocessedAnalysis, ProjectTargetError>,
+}
+
+/// Why one filesystem resource was acquired.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProjectResourceKind {
+    Config,
+    Primary,
+    Include,
+    Stylesheet,
+    LocalTarget,
+}
+
+/// One fixed filesystem observation made during a request.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectResourceResult {
+    pub source_id: LogicalSourceId,
+    pub path: PathBuf,
+    pub kind: ProjectResourceKind,
+    pub requested_by: Option<LogicalSourceId>,
+    pub outcome: ProjectResourceOutcome,
+}
+
+/// Content or failure retained for one logical resource until the request ends.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProjectResourceOutcome {
+    Loaded {
+        source: Arc<str>,
+    },
+    /// Acquisition succeeded, but returning the body would exceed the result limit.
+    LoadedOmitted {
+        limit: ProjectLimit,
+    },
+    Present,
+    Missing,
+    Failed(ProjectResourceFailure),
+}
+
+/// A resource failure which callers can classify without parsing text.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProjectResourceFailure {
+    Unreadable(ResourceError),
+    Rejected(ResourceError),
+    Limit(ProjectLimit),
+}
+
+impl fmt::Display for ProjectResourceFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unreadable(error) | Self::Rejected(error) => error.fmt(formatter),
+            Self::Limit(limit) => limit.fmt(formatter),
+        }
+    }
 }
 
 /// Resource use accumulated over one request.
@@ -120,6 +203,7 @@ pub struct ProjectTargetResult {
 pub struct ProjectUsage {
     pub filesystem: FilesystemJobUsage,
     pub processing_iterations: u32,
+    /// Expanded document and loaded resource bytes retained in this result.
     pub output_bytes: u64,
 }
 
@@ -163,18 +247,42 @@ impl std::error::Error for ProjectLimit {}
 pub enum ProjectWarning {
     /// Directory scanning stopped at its shared entry limit.
     ScanTruncated { limit: u64 },
+    /// A related resource could not be represented or acquired safely.
+    Resource {
+        path: PathBuf,
+        kind: ProjectResourceKind,
+        failure: ProjectResourceFailure,
+    },
+    /// Local-reference projection could not produce verifiable candidates.
+    LocalTargetProjection { message: String },
 }
 
-/// A malformed target selector known before reading a selected document.
+/// A target selection failure known before reading a selected document.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TargetSelectionError {
-    InvalidGlob { pattern: String },
+    InvalidGlob {
+        pattern: String,
+    },
+    /// Too many distinct patterns were supplied for one bounded request.
+    TooManyGlobs {
+        limit: usize,
+    },
+    /// Distinct authored patterns exceeded their fixed aggregate size.
+    GlobPatternBytes {
+        limit: usize,
+    },
 }
 
 impl fmt::Display for TargetSelectionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidGlob { pattern } => write!(formatter, "invalid target glob: {pattern}"),
+            Self::TooManyGlobs { limit } => {
+                write!(formatter, "distinct glob selector limit exceeded: {limit}")
+            }
+            Self::GlobPatternBytes { limit } => {
+                write!(formatter, "glob pattern byte limit exceeded: {limit}")
+            }
         }
     }
 }

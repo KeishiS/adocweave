@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use adocweave::OutputLimits;
 use adocweave_config::ResolvedProjectConfig;
@@ -34,17 +35,20 @@ fn one_owned_request_accepts_every_target_form() {
     let path = PathBuf::from("README.adoc");
     let directory = PathBuf::from("docs");
     let glob = String::from("docs/**/*.adoc");
+    let workspace = PathBuf::from("docs");
     let request = request_with(vec![
         ProjectTarget::Path(path.clone()),
         ProjectTarget::Directory(directory.clone()),
         ProjectTarget::Glob(glob.clone()),
+        ProjectTarget::Workspace(workspace.clone()),
     ]);
-    drop((path, directory, glob));
+    drop((path, directory, glob, workspace));
 
-    assert_eq!(request.targets.len(), 3);
+    assert_eq!(request.targets.len(), 4);
     assert!(matches!(request.targets[0], ProjectTarget::Path(_)));
     assert!(matches!(request.targets[1], ProjectTarget::Directory(_)));
     assert!(matches!(request.targets[2], ProjectTarget::Glob(_)));
+    assert!(matches!(request.targets[3], ProjectTarget::Workspace(_)));
 }
 
 #[test]
@@ -65,6 +69,8 @@ fn partial_scan_warning_preserves_collected_targets() {
         source_id: LogicalSourceId::new("guide.adoc").expect("valid logical source ID"),
         path: PathBuf::from("guide.adoc"),
         config: None,
+        resolved_config: Arc::new(ResolvedProjectConfig::default()),
+        resources: Vec::new(),
         outcome: Err(ProjectTargetError::Incomplete(
             ProjectLimit::ProcessingIterations { limit: 8 },
         )),

@@ -9,11 +9,11 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::local_resource::FilesystemInspectOutcome;
+use crate::local_resource::{FilesystemInspectOutcome, FilesystemLimitedReadOutcome};
 use crate::{
     FilesystemDraftError, FilesystemJobCoordinator, FilesystemJobError, FilesystemJobLimits,
-    FilesystemJobUsage, FilesystemReadOutcome, FilesystemResourceBinding, LocalFilesystemDraft,
-    LocalFilesystemSession, LogicalSourceId, ResourceError,
+    FilesystemJobUsage, FilesystemReadLimits, FilesystemReadOutcome, FilesystemResourceBinding,
+    LocalFilesystemDraft, LocalFilesystemSession, LogicalSourceId, ResourceError,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -204,7 +204,30 @@ pub enum IncludeFilesystemOutcome {
 pub enum IncludeFilesystemBudgetedOutcome {
     Found(IncludeFilesystemSource),
     NotFound(MissingIncludeFilesystemSource),
-    BudgetExhausted { source_id: LogicalSourceId },
+    BudgetExhausted {
+        source_id: LogicalSourceId,
+        error: FilesystemDraftError,
+    },
+    Failed(FailedIncludeFilesystemSource),
+}
+
+/// The limit which refused a read with an additional operation ceiling.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum IncludeFilesystemReadLimit {
+    /// The additional ceiling supplied for this operation was narrower.
+    Additional,
+    /// A pre-existing session or shared-job ceiling was narrower.
+    Established(FilesystemDraftError),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum IncludeFilesystemLimitedOutcome {
+    Found(IncludeFilesystemSource),
+    NotFound(MissingIncludeFilesystemSource),
+    Limit {
+        source_id: LogicalSourceId,
+        cause: IncludeFilesystemReadLimit,
+    },
     Failed(FailedIncludeFilesystemSource),
 }
 
@@ -373,6 +396,16 @@ pub struct IncludeFilesystemTransaction {
 }
 
 impl IncludeFilesystemTransaction {
+    /// Lists safely discovered AsciiDoc paths and reports whether the bounded
+    /// walk reached its end.
+    pub fn discover_adoc_paths_within_budget(
+        &self,
+        exclude_directory: impl FnMut(&Path, &Path) -> bool,
+    ) -> Result<(Vec<PathBuf>, bool), FilesystemDraftError> {
+        self.draft_ref()
+            .discover_adoc_paths_within_budget(exclude_directory, || false)
+    }
+
     pub fn read(&mut self, request: IncludeFilesystemRequest) -> IncludeFilesystemOutcome {
         let IncludeFilesystemRequest {
             source_id,
@@ -392,9 +425,9 @@ impl IncludeFilesystemTransaction {
         let IncludeFilesystemPathRequest { source_id, path } = request;
         match self
             .draft_mut()
-            .read_utf8_within_budget(source_id.clone(), &path)
+            .read_utf8_with_limit_outcome(source_id.clone(), &path)
         {
-            Ok(Some(outcome)) => match map_read(outcome) {
+            Ok(FilesystemLimitedReadOutcome::Read(outcome)) => match map_read(outcome) {
                 IncludeFilesystemOutcome::Found(found) => {
                     IncludeFilesystemBudgetedOutcome::Found(found)
                 }
@@ -403,7 +436,87 @@ impl IncludeFilesystemTransaction {
                 }
                 IncludeFilesystemOutcome::Failed(_) => unreachable!("successful read mapping"),
             },
-            Ok(None) => IncludeFilesystemBudgetedOutcome::BudgetExhausted { source_id },
+            Ok(FilesystemLimitedReadOutcome::EstablishedLimit(error)) => {
+                IncludeFilesystemBudgetedOutcome::BudgetExhausted { source_id, error }
+            }
+            Ok(FilesystemLimitedReadOutcome::AdditionalLimit) => {
+                unreachable!("a read without an additional limit cannot exhaust one")
+            }
+            Err(error) => IncludeFilesystemBudgetedOutcome::Failed(FailedIncludeFilesystemSource {
+                source_id,
+                error,
+            }),
+        }
+    }
+
+    /// Reads one UTF-8 file under an additional ceiling for this operation.
+    ///
+    /// The additional ceiling cannot widen the session or shared job limits.
+    /// It is applied by the bounded reader before the complete body is
+    /// materialized.
+    pub fn read_utf8_within_limits(
+        &mut self,
+        request: IncludeFilesystemPathRequest,
+        limits: FilesystemReadLimits,
+    ) -> IncludeFilesystemLimitedOutcome {
+        let IncludeFilesystemPathRequest { source_id, path } = request;
+        match self
+            .draft_mut()
+            .read_utf8_within_limits(source_id.clone(), &path, limits)
+        {
+            Ok(FilesystemLimitedReadOutcome::Read(outcome)) => match map_read(outcome) {
+                IncludeFilesystemOutcome::Found(found) => {
+                    IncludeFilesystemLimitedOutcome::Found(found)
+                }
+                IncludeFilesystemOutcome::NotFound(missing) => {
+                    IncludeFilesystemLimitedOutcome::NotFound(missing)
+                }
+                IncludeFilesystemOutcome::Failed(_) => unreachable!("successful read mapping"),
+            },
+            Ok(FilesystemLimitedReadOutcome::AdditionalLimit) => {
+                IncludeFilesystemLimitedOutcome::Limit {
+                    source_id,
+                    cause: IncludeFilesystemReadLimit::Additional,
+                }
+            }
+            Ok(FilesystemLimitedReadOutcome::EstablishedLimit(error)) => {
+                IncludeFilesystemLimitedOutcome::Limit {
+                    source_id,
+                    cause: IncludeFilesystemReadLimit::Established(error),
+                }
+            }
+            Err(error) => IncludeFilesystemLimitedOutcome::Failed(FailedIncludeFilesystemSource {
+                source_id,
+                error,
+            }),
+        }
+    }
+
+    /// Reads a policy-bearing UTF-8 file while rejecting every symbolic link.
+    pub fn read_utf8_no_symlinks_within_budget(
+        &mut self,
+        request: IncludeFilesystemPathRequest,
+    ) -> IncludeFilesystemBudgetedOutcome {
+        let IncludeFilesystemPathRequest { source_id, path } = request;
+        match self
+            .draft_mut()
+            .read_utf8_no_symlinks_with_limit_outcome(source_id.clone(), &path)
+        {
+            Ok(FilesystemLimitedReadOutcome::Read(outcome)) => match map_read(outcome) {
+                IncludeFilesystemOutcome::Found(found) => {
+                    IncludeFilesystemBudgetedOutcome::Found(found)
+                }
+                IncludeFilesystemOutcome::NotFound(missing) => {
+                    IncludeFilesystemBudgetedOutcome::NotFound(missing)
+                }
+                IncludeFilesystemOutcome::Failed(_) => unreachable!("successful read mapping"),
+            },
+            Ok(FilesystemLimitedReadOutcome::EstablishedLimit(error)) => {
+                IncludeFilesystemBudgetedOutcome::BudgetExhausted { source_id, error }
+            }
+            Ok(FilesystemLimitedReadOutcome::AdditionalLimit) => {
+                unreachable!("a read without an additional limit cannot exhaust one")
+            }
             Err(error) => IncludeFilesystemBudgetedOutcome::Failed(FailedIncludeFilesystemSource {
                 source_id,
                 error,
@@ -423,6 +536,26 @@ impl IncludeFilesystemTransaction {
         let outcome = self
             .draft_mut()
             .inspect_target_outcome(source_id.clone(), &base, &target);
+        map_inspection(source_id, outcome)
+    }
+
+    /// Inspects a local target below one explicitly selected authority root.
+    pub fn inspect_within(
+        &mut self,
+        authority: &Path,
+        request: IncludeFilesystemRequest,
+    ) -> IncludeFilesystemInspectionOutcome {
+        let IncludeFilesystemRequest {
+            source_id,
+            base,
+            target,
+        } = request;
+        let outcome = self.draft_mut().inspect_target_within_outcome(
+            source_id.clone(),
+            authority,
+            &base,
+            &target,
+        );
         map_inspection(source_id, outcome)
     }
 

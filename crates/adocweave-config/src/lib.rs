@@ -232,6 +232,12 @@ impl ConfigSnapshot {
         Self::from_source(loaded.canonical_path().to_owned(), loaded.source())
     }
 
+    /// Parses configuration text whose path and contents were fixed by a
+    /// request-scoped host before this call.
+    pub fn from_utf8_source(path: PathBuf, source: &str) -> Result<Self, ConfigError> {
+        Self::from_source(path, source)
+    }
+
     fn from_source(path: PathBuf, source: &str) -> Result<Self, ConfigError> {
         let directory = path.parent().ok_or_else(|| {
             ConfigError::new(

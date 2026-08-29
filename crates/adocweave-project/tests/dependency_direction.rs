@@ -15,9 +15,9 @@ fn direct_dependencies(manifest: &str) -> BTreeSet<&str> {
 }
 
 #[test]
-fn project_has_only_the_three_lower_level_crate_dependencies() {
+fn project_has_only_lower_level_crates_and_standard_glob_dependency() {
     let actual = direct_dependencies(include_str!("../Cargo.toml"));
-    let expected = BTreeSet::from(["adocweave", "adocweave-config", "adocweave-host"]);
+    let expected = BTreeSet::from(["adocweave", "adocweave-config", "adocweave-host", "glob"]);
     assert_eq!(actual, expected);
 }
 
