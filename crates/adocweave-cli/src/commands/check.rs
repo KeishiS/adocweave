@@ -175,7 +175,7 @@ pub(crate) fn process(
             serde_json::to_string(&values).map_err(|error| Error::Serialize(error.to_string()))?
         }
         DiagnosticFormat::Human => {
-            let core = diagnostic::render_human(
+            let core = crate::diagnostic_output::render_human(
                 analysis.diagnostics(),
                 analysis.source_document(),
                 PositionEncoding::Utf8,

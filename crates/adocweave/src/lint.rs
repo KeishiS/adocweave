@@ -303,27 +303,6 @@ pub fn lint_rule(code: &str) -> Option<&'static LintRuleDescriptor> {
         .find(|descriptor| descriptor.id.as_str() == code)
 }
 
-pub fn render_lint_rule_catalog_json() -> String {
-    let mut rules = LINT_RULES.iter().collect::<Vec<_>>();
-    rules.sort_by_key(|descriptor| descriptor.id.as_str());
-    serde_json::to_string(&serde_json::json!({
-        "schemaVersion": 1,
-        "packageVersion": crate::VERSION,
-        "rules": rules
-            .into_iter()
-            .map(|descriptor| serde_json::json!({
-                "code": descriptor.id.as_str(),
-                "defaultSeverity": descriptor.default_severity.as_str(),
-                "enabledByDefault": descriptor.default_enabled,
-                "description": descriptor.description,
-                "fixable": descriptor.fixable,
-                "userConfigurable": descriptor.user_configurable,
-            }))
-            .collect::<Vec<_>>(),
-    }))
-    .expect("lint rule catalog contains only serializable values")
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RuleSettings {
     pub enabled: bool,

@@ -13,6 +13,7 @@ mod check_output;
 mod cli_error;
 mod commands;
 mod diagnostic_json;
+mod diagnostic_output;
 mod file_workflow;
 mod local_include;
 mod local_target;
@@ -1281,7 +1282,7 @@ async fn run() -> Result<ExitCode, CliError> {
         }
         Action::Rules { json } => {
             if json {
-                println!("{}", diagnostic::render_lint_rule_catalog_json());
+                println!("{}", diagnostic_output::render_lint_rule_catalog_json());
             } else {
                 print!("{}", render_rules_human());
             }

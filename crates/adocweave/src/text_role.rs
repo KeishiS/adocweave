@@ -25,7 +25,7 @@ pub enum BlockTextRole {
 ///
 /// List items and table cells carry their text on child nodes, so the block
 /// itself is a container; see [`table_cell_text_role`] for cells.
-pub const fn block_text_role(block: &AstBlock) -> BlockTextRole {
+pub(crate) const fn block_text_role(block: &AstBlock) -> BlockTextRole {
     match block {
         AstBlock::Heading(_) | AstBlock::Paragraph(_) => BlockTextRole::Prose,
         AstBlock::LiteralParagraph(_) | AstBlock::Verbatim(_) => BlockTextRole::Code,
@@ -54,7 +54,7 @@ pub const fn delimited_text_role(kind: DelimitedBlockKind) -> BlockTextRole {
 }
 
 /// Classifies the text one table cell carries.
-pub const fn table_cell_text_role(content: &TableCellContent) -> BlockTextRole {
+pub(crate) const fn table_cell_text_role(content: &TableCellContent) -> BlockTextRole {
     match content {
         TableCellContent::Inlines(_) => BlockTextRole::Prose,
         TableCellContent::Verbatim(_) => BlockTextRole::Code,

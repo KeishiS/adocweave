@@ -18,6 +18,6 @@ fuzz_target!(|input: &[u8]| {
             &adocweave::NeverCancel,
         );
         let _ = analysis.document().symbols();
-        let _ = adocweave::output::diagnostics::render_json(analysis.diagnostics());
+        let _ = analysis.diagnostics();
     }
 });

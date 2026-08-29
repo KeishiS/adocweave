@@ -6,6 +6,7 @@ use adocweave::preprocess::{
 };
 use adocweave::{CancellationCheck, NeverCancel, ParseError};
 
+mod canonical;
 #[cfg(target_arch = "wasm32")]
 mod js_input;
 mod object_deserialize;
@@ -96,10 +97,10 @@ fn execute_request(
     let products = ResponseProducts {
         syntax: requested
             .syntax
-            .map(|()| adocweave::output::canonical::canonical_syntax(&analysis.analysis)),
+            .map(|()| canonical::canonical_syntax(&analysis.analysis)),
         canonical_ast: requested
             .canonical_ast
-            .map(|()| adocweave::output::canonical::canonical_ast(&analysis.analysis)),
+            .map(|()| canonical::canonical_ast(&analysis.analysis)),
         html,
         attribute_occurrences: requested
             .attribute_occurrences
