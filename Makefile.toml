@@ -746,6 +746,26 @@ dependencies = [
   "textlint-plugin-public-js-unit",
 ]
 
+[tasks.test-vscode-acquisition]
+private = true
+description = "Start the VS Code extension without a configured or PATH Language Server and verify it downloads one from GitHub Releases"
+dependencies = ["vscode-dependencies"]
+script_runner = "@shell"
+script = '''
+# 単体試験は取得経路を差し替えており、実際のnetworkとfilesystemを通らない。
+# 0.48.0はその隙間で失敗した。この検査は公開済みReleaseへ実際に接続する。
+npm run build --prefix editors/vscode
+npm run build:test --prefix editors/vscode
+if [ "$(uname -s)" = Linux ]; then
+  Xvfb :98 -screen 0 1280x1024x24 >/dev/null 2>&1 &
+  xvfb_pid=$!
+  trap 'kill "$xvfb_pid" 2>/dev/null || true' EXIT
+  DISPLAY=:98 npm run test:acquisition --prefix editors/vscode
+else
+  npm run test:acquisition --prefix editors/vscode
+fi
+'''
+
 [tasks.main-integrations]
 category = "CI entry points"
 description = "Run the main-only integration checks except the independent fuzz and Nix checks"
@@ -755,6 +775,7 @@ dependencies = [
   "protocol-wasm-corpus-check",
   "test-cross-runtime",
   "test-vscode-extension-host",
+  "test-vscode-acquisition",
   "textlint-plugin-wasm-contract",
   "textlint-plugin-browser-isolation",
 ]

@@ -575,6 +575,7 @@ const MAIN_INTEGRATION_DEPENDENCIES = [
   "cross-native-check",
   "protocol-wasm-corpus-check",
   "test-cross-runtime",
+  "test-vscode-acquisition",
   "test-vscode-extension-host",
   "textlint-plugin-browser-isolation",
   "textlint-plugin-wasm-contract",
