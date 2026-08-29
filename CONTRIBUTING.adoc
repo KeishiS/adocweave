@@ -139,7 +139,7 @@ remote名、ブランチ名、mergeの方式および必須checkの構成は、M
 . 構文情報から意味情報への対応と、保持する元範囲を定義します。
 . 不完全入力の同期点、回復結果および安定した診断codeを定義します。
 . 厳格modeと寛容modeでの扱いを定義します。
-. 曖昧入力、境界値および回復をテスト用入力と期待結果で固定します。
+. 曖昧な入力、上限・下限付近の値および回復動作をテスト用入力と期待結果で固定します。
 
 既存構文の**不具合修正や挙動の調整**では、この6項目を求めません。再発を防ぐテスト用入力と期待結果を
 追加すれば十分です。認識規則そのものを変える場合だけ、上の項目のうち影響する範囲を更新します。
@@ -382,7 +382,7 @@ clean環境で、公開assetだけを使って実行します。
 
 * [ ] VS Code拡張: Open VSXまたは公開VSIXから導入し、AsciiDoc認識、基本構文色付けおよび設定したLanguage Serverとの接続を確認する。
 * [ ] Zed拡張: 公開archiveを導入し、AsciiDoc認識と設定したLanguage ServerによるLSP機能を確認する。
-* [ ] browser package: cross-origin isolationを使わない環境で実WASMを読み込み、HTML、診断、projection、解析の取消しおよび
+* [ ] browser package: cross-origin isolationを使わない環境で実WASMを読み込み、HTML、診断、構造情報、解析の取消しおよび
       取消し後の再解析を確認する。
 * [ ] textlint用Processor: 新しいプロジェクトへ導入し、``.adoc``の検査と``textlint --fix``で入力が変化しないことを
       確認する。

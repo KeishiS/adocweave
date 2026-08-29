@@ -27,7 +27,7 @@ attestationの確認はxref:../user-guide/release-installation.adoc[インスト
 成果物名、対象環境、個数、versionおよびmanifestのfield一覧を本文へ複製しません。
 
 [#distribution-boundary]
-== 配布境界
+== 製品ごとの配布単位
 
 配布計画に記載した各製品は、独立したversion、tagおよびGitHub Releaseを持ちます。一つのReleaseには一製品の
 成果物だけを公開します。変更していない製品の成果物を別のReleaseへコピーせず、同じ製品versionを再発行しません。
@@ -50,7 +50,7 @@ clean installと``npx``の経路を観測します。
 公開には配布計画の``tagPrefix``に従うstable tagを使用します。tag、source commit、versionの正本、
 配布manifestおよび成果物が一致しない場合は公開しません。
 
-この公開単位を選んだ理由はxref:adr/0027-product-release-trains.adoc[ADR 0027]、公開先と権限境界は
+この公開単位を選んだ理由はxref:adr/0027-product-release-trains.adoc[ADR 0027]、公開先と権限の分離は
 xref:adr/0023-publication-boundary.adoc[ADR 0023]を参照してください。
 
 [#artifact-contracts]
@@ -73,7 +73,7 @@ xref:core-profile.adoc#wasm-api[WebAssembly API]を基準とし、Worker内部�
 静的サイト生成のようにNodeで実行する利用側が、packageの内部layoutへ直接触れずに済むよう用意します。
 
 VS Code拡張とZed拡張はLanguage Serverを同梱せず、download、cacheまたは更新を実装しません。現在の導入方法と
-実行fileの選択規則は利用者向け文書を基準とします。この境界の理由は
+実行fileの選択規則は利用者向け文書を基準とします。この分担の理由は
 xref:adr/0028-editor-language-server-boundary.adoc[ADR 0028]を参照してください。
 
 textlint用ProcessorはProcessor、TxtAST変換、型定義、Node.js向けWebAssembly、licenseおよび第三者依存の通知を
@@ -97,7 +97,7 @@ source commitがある場合は受理しません。
 使用し、credentialをmanifest、log、sourceまたは設定例へ記録しません。
 
 [#publication-permissions]
-== 権限境界
+== 公開に使用する権限
 
 計画、構築、成果物検査およびcandidate集約はread-onlyで実行し、repository secretを参照しません。
 GitHub Releaseへの書込みとOIDCは、保護した``github-release`` Environmentを使用する公開jobだけへ付与します。
@@ -117,7 +117,7 @@ tagとcommit、成果物のchecksumおよびattestationを再検査し、同じc
 Cachixへ送信します。repositoryに対する権限はread-onlyで、ほかのjobはこのtokenを参照しません。
 
 repositoryへの書込み権限がある利用者による手元からのtag作成を、workflowだけで機械的に禁止することはできません。
-tag rulesetを追加せず、Environmentと公開前検査を権限境界にする理由は
+tag rulesetを追加せず、Environmentと公開前検査によって権限を制限する理由は
 xref:adr/0023-publication-boundary.adoc#publication-authority[ADR 0023]を参照してください。
 
 [#publication-failure]
@@ -137,14 +137,14 @@ registryへの送信だけが失敗した場合、GitHub Releaseは公開済み�
 再利用できません。
 
 [#distribution-verification]
-== 検証境界
+== 段階ごとの検証
 
 Pull Requestではsource、試験、生成fileおよび文書を標準の``verify``で検査し、配布candidateは構築しません。
 ``main``ではcross target、fuzz、Nix packageなどの統合検査を行います。公開workflowではこれらを固定commitに対して
 再確認し、選択した製品の完成成果物を対象OS、Browserまたは固定consumerで検査します。
 
 taskの現在の入口とreleaseの操作手順はxref:../../CONTRIBUTING.adoc[コントリビューションガイド]を基準とします。
-検査をこの境界へ分ける理由はxref:adr/0031-path-independent-pull-request-gate.adoc[ADR 0031]、
+検査をこの段階へ分ける理由はxref:adr/0031-path-independent-pull-request-gate.adoc[ADR 0031]、
 task間の責務はxref:adr/0033-make-task-boundary.adoc[ADR 0033]を参照してください。
 
 textlint用Processorは公開後に実際のRelease URLから取得し、公開checksumとの一致と``npx``による単発実行を

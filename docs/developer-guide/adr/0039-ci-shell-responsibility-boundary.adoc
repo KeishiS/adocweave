@@ -1,4 +1,4 @@
-= ADR 0039: CI検査ごとのNix開発shell境界
+= ADR 0039: CI検査ごとのNix開発shellの分担
 
 :status: accepted
 
@@ -24,7 +24,7 @@ main統合検査用の``ci-integrations``とfuzz検査用の``ci-fuzz``を分け
 通常開発用の``default``、標準CI用の``ci``およびbrowser検査用の``ci-browser``の責務は変更しません。
 各main専用jobは対応するshellを直接選び、複数jobをまとめるためのshellを設けません。
 
-本ADRはADR 0035のうち、開発用shellを四つに限定する決定と``ci-fuzz``へ統合検査の環境を含める境界だけを
+本ADRはADR 0035のうち、開発用shellを四つに限定する決定と``ci-fuzz``へ統合検査の環境を含める範囲だけを
 置き換えます。package、app、checkおよび公開出力を最小化するほかの決定は維持します。
 
 == 検討した代替案

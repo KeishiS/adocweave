@@ -16,7 +16,7 @@ workspace folderでは、Language Serverが展開を有効にしていました�
 無関係なinclude解決が止まります。原因が設定ファイルの存在そのものであるため、利用者が原因にたどり着くのは
 困難です。
 
-二つ目は、CLIが他のAsciiDoc実装と異なることです。Asciidoctorをはじめ、一般的な実装はincludeを既定で
+二つ目は、CLIが他のAsciiDoc実装と異なることです。一般的な実装はincludeを既定で
 解決します。``adocweave convert manual.adoc``がinclude先を無視するという挙動は、利用者の予想と一致しません。
 
 == 決定
@@ -37,7 +37,7 @@ optionとして残します。両方を同時に指定した場合はusage error
 == 帰結
 
 読み込める範囲は変わりません。既定で展開するのはincludeの解決であり、どこまで読めるかは従来どおり
-``resources.roots``、workspace境界およびfilesystemの権限が決めます。この決定は新しいパスを開きません。
+``resources.roots``、workspaceの許可範囲およびfilesystemの権限が決めます。この決定は新しいパスを開きません。
 
 include先を読ませたくないプロジェクトは``resources.include = false``を書きます。一度だけ止める場合は
 ``--no-include``を使います。

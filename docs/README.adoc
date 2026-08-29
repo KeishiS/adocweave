@@ -15,7 +15,7 @@ https://github.com/KeishiS/adocweave/releases[GitHub Releases]を参照してく
 user-guideディレクトリには、利用目的、操作、入力および結果を利用者の視点で記載します。
 実装内部の説明は、操作結果を理解するために必要な範囲に限定します。
 developer-guideディレクトリには、アプリへの組み込み、実装、配布および設計について、
-コンポーネントの責務、境界、不変条件および検証方法を記載します。基本的な操作手順は
+コンポーネントの責務と分担、不変条件および検証方法を記載します。基本的な操作手順は
 user-guideと重複させません。
 採用した設計とその背景はdeveloper-guide内のADR、
 現在の主要な計画はロードマップ、作業単位はGitHub Issuesに記録します。
@@ -38,11 +38,11 @@ user-guideと重複させません。
 |対応範囲(profile)
 |AdocWeaveが受け付け、期待どおりに処理するAsciiDocの範囲です。
 
-|意味情報(semantic model, projection)
+|意味情報（semantic modelと用途別の解析結果）
 |解析して得た、見出し・リンク・表・属性などの構造化された情報です。
 
 |利用側アプリ(host)
-|AdocWeaveを呼び出すCLI、エディター、Webアプリなどです。
+|AdocWeaveを呼び出すCLI、エディタ、Webアプリなどです。
 
 |テスト用入力(fixture)
 |期待する結果と組で保存する入力例です。
@@ -51,6 +51,6 @@ user-guideと重複させません。
 |``syntax-mode = "permissive"``を指します。未対応構文を元の内容のまま保持し、解析を続けます。
 
 |``strict``モード
-|``syntax-mode = "strict"``を指します。未対応構文を含む文書に対するコア操作を拒否します。
+|``syntax-mode = "strict"``を指します。未対応構文を含む文書の解析をエラーにします。
 
 |===

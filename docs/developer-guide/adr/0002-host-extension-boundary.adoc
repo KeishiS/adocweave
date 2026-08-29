@@ -1,4 +1,4 @@
-= ADR 0002: ホスト拡張境界
+= ADR 0002: ホスト拡張の責務分担
 :status: accepted
 
 == 文脈
@@ -11,7 +11,7 @@
 コアは標準構文、汎用属性、通常リンクおよび型付きxrefを解析します。任意スキームの意味、
 永続化、アクセス制御および解決済みURLはホストが解析後に付加します。
 xrefは記述時の構造とソースのrangeを``authored_destination``へ保持し、属性展開後にresolver、
-projectionおよび出力が共有する参照先を``target``へ保持します。consumerは意味判定に``target``を使用します。
+用途別の解析結果および出力が共有する参照先を``target``へ保持します。consumerは意味判定に``target``を使用します。
 
 コアはlocalのファイル候補を型付きqueryとして公開しますが、filesystemへアクセスしません。
 project root、path正規化、symlink解決、実在性、ファイル種別および読み取り上限はホストが所有します。
@@ -20,7 +20,7 @@ project root、path正規化、symlink解決、実在性、ファイル種別お
 
 Filesystemから本文を取得するAPIは、canonical pathと取得済みbyte列をprivate fieldへ保持する
 検証済みtargetを返します。UTF-8本文への変換はこの値を消費し、検証後にpathを再度開きません。
-これにより、別のpolicyで検証したpathの流用と、検証から読取りまでの間のpath差替えをAPI境界で
+これにより、別のpolicyで検証したpathの流用と、検証から読取りまでの間のpath差替えをAPI入口で
 防止します。利用側へ返す読取結果もprivate fieldを持つ型とし、未検証のpathと本文の組を
 検証済み結果として構築できないようにします。
 
@@ -31,6 +31,6 @@ Canonical pathはfilesystemのcache keyと安全性検査にだけ使用しま�
 == 帰結
 
 製品拡張は別リポジトリで実装できます。Parserへ任意コードを注入するplug-in ABIは提供せず、
-拡張は公開Analysis、projectionおよびResolver仕様だけを利用します。
+拡張は公開Analysis、用途別の解析結果およびResolver仕様だけを利用します。
 同じtargetが複数回現れる場合も位置は個別に保持し、filesystemへの問い合わせだけを共有します。
 検証済みtargetは取得時点のbyte列を所有するため、後続処理はfilesystemの状態変化に依存しません。

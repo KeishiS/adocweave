@@ -5,7 +5,7 @@
 
 Zedの開発拡張は次のファイルを入口とします。
 link:../../editors/zed/extension.toml[`editors/zed/extension.toml`]
-拡張はAsciiDoc用Tree-sitter grammar、inline grammarおよびhighlight／injection queryを提供します。
+拡張はAsciiDoc用Tree-sitter grammar、inline grammarおよびhighlight/injection queryを提供します。
 開発手順ではworktreeの``PATH``から``adocweave-lsp``を探して起動します。公開版における実行ファイルの選択は
 xref:../user-guide/release-installation.adoc#zed-installation[Zedへの導入]を参照します。
 
@@ -41,7 +41,7 @@ Nix shellのRustツールチェーンでリポジトリ本体をbuildできて�
 
 通常利用しているZedの拡張、設定、DBおよびキャッシュへ影響させないため、ワークスペース外の一時ディレクトリを
 user dataディレクトリとして使います。ワークスペース内へ置くと、Zedのworktree監視が拡張builder自身のWASI SDK、
-grammarおよびキャッシュの更新を走査し、一時的なsymlinkやinotify watchについて無関係なerror／warningを記録します。
+grammarおよびキャッシュの更新を走査し、一時的なsymlinkやinotify watchについて無関係なerror/warningを記録します。
 
 . リポジトリrootでLanguage ServerとZed拡張を検査します。
 
@@ -149,7 +149,7 @@ Zedの``settings.json``へ次を追加すると、Tree-sitter由来ではなくA
 * ``[,rust]``のlisting blockは``[source,rust]``と同じ言語注入を受けます。``source-language``による既定言語は
   tree-sitter queryだけでは文書属性を解決できないため、Zed上では明示指定したblockを確認対象とします。
 * 明示anchorとxrefでDefinitionおよびFind All Referencesが動作します。
-* xref targetはLinux／Windowsでは``Ctrl+クリック``、macOSでは``Cmd+クリック``で開けます。通常クリックは
+* xref targetはLinux/Windowsでは``Ctrl+クリック``、macOSでは``Cmd+クリック``で開けます。通常クリックは
   Document Linkを開く操作ではありません。
 
 基本色付けをLSPから分離して確認する場合は、Zedの``settings.json``へ一時的に次を設定します。
@@ -167,7 +167,7 @@ Zedの``settings.json``へ次を追加すると、Tree-sitter由来ではなくA
 
 この状態でも基本色付けが残ることを確認します。続いて``"semantic_tokens": "combined"``へ変更し、LSP起動後に
 リンク、参照、anchor、literalおよびformulaの意味的補足を重ねても、見出し等が不自然に上書きされないことを確認します。
-light／darkの標準themeを一つずつ使いますが、特定のRGB値ではなく構文同士を判別できることを確認対象とします。
+light/darkの標準themeを一つずつ使いますが、特定のRGB値ではなく構文同士を判別できることを確認対象とします。
 
 太字または斜体が通常本文と視覚的に同じ場合は、コマンドパレットから
 ``dev: open highlights tree view``を開き、対象範囲に``emphasis.strong``または``emphasis``が付いているか確認します。
@@ -196,7 +196,7 @@ grammar checkoutが固定コミットと一致することを確認します。
 
 AsciiDocとして認識されるが色付けされない::
 dev extensionを再導入して、Zed logに``asciidoc``と``asciidoc_inline``のgrammar build失敗がないことを確認します。
-``cargo make verify``は固定grammarとqueryのnode／capture仕様を、``cargo make acceptance``はqueryのarchive同梱を検査します。
+``cargo make verify``は固定grammarとqueryのnode/capture仕様を、``cargo make acceptance``はqueryのarchive同梱を検査します。
 Semantic Tokensを``off``にしても色付けされない場合はLSPではなくgrammarまたはquery側の問題です。
 
 ``wasi-sdk-temp``内のsymlinkまたはinotify watch errorが出る::

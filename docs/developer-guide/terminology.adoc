@@ -45,6 +45,54 @@ link:../../config/japanese-terminology.json[`config/japanese-terminology.json`]�
 公開契約、現行契約、契約項目、互換契約、処理契約、契約判定、release契約、契約fixture、HTML契約、
 配布契約、属性契約
 --
+
+[#katakana-editor-long-vowel]
+`エディター`::
++
+--
+一般名詞として文書編集用のソフトウェアを指す場合は、末尾を伸ばさず``エディタ``と記載します。
+製品名、設定名およびコード上の識別子は原綴りを保ちます。
+--
+
+[#katakana-header-long-vowel]
+`ヘッダー`::
++
+--
+文書や通信データの先頭に置く情報を指す場合は、末尾を伸ばさず``ヘッダ``と記載します。
+製品名、設定名およびコード上の識別子は原綴りを保ちます。
+--
+
+[#abstract-resource-limit]
+`資源上限`::
++
+--
+何を制限するのかが分からないため使いません。ファイル件数、読込量、入れ子の深さ、展開後のバイト数など、
+上限を設ける対象を具体的に記載します。
+--
+
+[#byte-count-notation]
+`byte数`::
++
+--
+日本語の地の文では、単位名をカタカナで表し、``バイト数``と記載します。識別子、型名および設定名は
+原綴りを保ちます。
+--
+
+[#abstract-projection]
+`投影`::
++
+--
+何を何へ対応付けるのか、どの情報へ変換するのかが分からないため使いません。位置の対応付け、解析結果の取得、
+構造情報への変換など、実際の動作を具体的に記載します。
+--
+
+[#english-projection]
+`projection`::
++
+--
+日本語の地の文では使いません。取得または変換する情報を具体的に記載します。識別子、型名、設定名および
+コード内の名前は原綴りを保ちます。
+--
 // textlint-enable adocweave-terminology
 
 この節の規則は``cargo make verify``で検査します。``docs/``以下の``.adoc``は、Gitの追跡状態にかかわらず
@@ -100,7 +148,7 @@ link:../../config/japanese-terminology.json[`config/japanese-terminology.json`]�
 
 directory → ディレクトリ、path → パス、package → パッケージ、release → リリース、
 workspace → ワークスペース、repository → リポジトリ、branch → ブランチ、commit → コミット、
-tag → タグ、cache → キャッシュ、log → ログ、option → オプション、boundary → 境界、
+tag → タグ、cache → キャッシュ、log → ログ、option → オプション、
 limit → 上限、default → 既定、snapshot → スナップショット、build → ビルド、test → テスト、
 runner → ランナー、toolchain → ツールチェーン
 

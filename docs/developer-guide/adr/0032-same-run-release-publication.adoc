@@ -54,4 +54,4 @@ tag refも削除します。他者が変更したtagやReleaseは削除しませ
 構築しないため、全未公開製品を毎回構築する負担はなくなります。
 
 ADR 0023、0027、0028および0031にある候補SHA、過去candidateの再利用、``main`` pushでの全candidate構築に関する決定を
-本ADRで置き換えます。製品別Release、成果物を作り直さない公開、GitHub Environmentによる権限境界は維持します。
+本ADRで置き換えます。製品別Release、成果物を作り直さない公開、GitHub Environmentによる権限制限は維持します。

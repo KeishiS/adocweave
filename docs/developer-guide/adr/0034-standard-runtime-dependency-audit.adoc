@@ -4,7 +4,7 @@
 
 == 文脈
 
-依存関係の検査では、Cargoとnpmの標準toolに加えて、manifestとlockfileの組を再掲する境界目録、固定した
+依存関係の検査では、Cargoとnpmの標準toolに加えて、manifestとlockfileの組を再掲する依存目録、固定した
 RustSecデータベースのrevision、空の例外一覧、ビルド専用npm依存のlicense目録およびDependabot設定の完全一致検査を
 保守していました。同じ依存関係を複数のfileへ記録するため、依存を更新するたびに配布時の安全性と直接関係しない
 一覧の同期が必要でした。固定したRustSecデータベースは、revisionを更新するまで新しいadvisoryを検出しませんでした。
@@ -20,7 +20,7 @@ licenseと取得元は一つの小さな検査で確認し、同じ集合を第�
 パッケージはruntime npm依存を持たないことを、それぞれのパッケージ検査で維持します。
 
 ビルド専用npm依存はmanifestとlockfileへ固定し、``npm ci --ignore-scripts``による取得時のintegrity検証に委ねます。
-観測したlicense集合の別目録、lockfileを再掲する依存境界目録、空の例外一覧およびDependabot設定の完全一致検査は
+観測したlicense集合の別目録、lockfileを再掲する依存目録、空の例外一覧およびDependabot設定の完全一致検査は
 置きません。
 
 Advisoryの例外が必要な場合だけ``deny.toml``へ構造化したignoreを追加します。``reason``には、影響しないと判断した

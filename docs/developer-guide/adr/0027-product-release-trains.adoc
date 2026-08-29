@@ -1,5 +1,5 @@
 = ADR 0027: 配布製品ごとのバージョンと公開単位
-:status: accepted; compatibility: ADR 0028; publication: ADR 0032; metadata: ADR 0036
+:status: accepted; compatibility: ADR 0028; publication: ADR 0032; メタデータ: ADR 0036
 
 == 文脈
 
@@ -8,7 +8,7 @@ ADR 0023では、CLI、Language Server、Browser、textlint用Processor、VS Cod
 修正した場合も、変更していないBrowserやtextlint用Processorを再構築し、同じ版として再公開する必要があります。
 
 製品間に必要なのは、すべての版番号が一致することではありません。CLIは単独で動作し、Browserとtextlint用
-Processorはそれぞれの配布物にWebAssemblyを同梱します。エディター拡張とLanguage Serverの間に必要なのは、
+Processorはそれぞれの配布物にWebAssemblyを同梱します。エディタ拡張とLanguage Serverの間に必要なのは、
 拡張が利用する機能とLanguage Serverが提供する機能の互換性です。完全な版番号の一致は、この互換性とは別の条件です。
 
 == 決定
@@ -50,13 +50,13 @@ VS Code拡張とZed拡張は、次の値を別々に管理します。
 探索せず、``managedLspVersion``が示す不変のtagと配布manifestを使用します。この固定値を変更した拡張だけが、
 新しいLanguage Serverへ厳密に依存します。
 
-Browserとtextlint用Processorは、同梱したJavaScriptとWebAssemblyの境界を各製品のschemaまたはAPI世代で検査します。
+Browserとtextlint用Processorは、同梱したJavaScriptとWebAssemblyの接続部分を各製品のschemaまたはAPI世代で検査します。
 他製品のバージョンとは比較しません。
 
 === 公開工程
 
 公開workflowは製品を一つ選び、その製品の正本からバージョン、tag、成果物およびRelease Notesを導出します。
-再発行の拒否とGitHub Environmentによる権限境界はADR 0023の決定を維持します。候補SHAと過去candidateの再利用は
+再発行の拒否とGitHub Environmentによる権限制限はADR 0023の決定を維持します。候補SHAと過去candidateの再利用は
 xref:0032-same-run-release-publication.adoc[ADR 0032]で置き換えます。
 
 Open VSXへの公開はVS Code拡張、textlintの公開後検査はtextlint用Processor、native archiveの検査はCLIまたは
@@ -76,11 +76,11 @@ Language Serverを選択した場合だけ実行します。製品に関係し�
 == 帰結
 
 Language Serverだけを変更したreleaseでは、Browserとtextlint用Processorのバージョン更新、構築および再公開を
-行いません。製品間の対応は版番号の偶然の一致ではなく、配布manifestと境界ごとのAPI世代から確認できます。
+行いません。製品間の対応は版番号の偶然の一致ではなく、配布manifestと接続部分ごとのAPI世代から確認できます。
 
 ADR 0023のうち、単一バージョン、単一``vX.Y.Z`` tag、全成果物を一つのReleaseへまとめる決定、ならびに
-エディター拡張とLanguage Serverの完全一致を要求する決定を本ADRで置き換えます。公開権限およびregistryを増やさない
-決定は維持します。公開runの境界はADR 0032で置き換えます。
+エディタ拡張とLanguage Serverの完全一致を要求する決定を本ADRで置き換えます。公開権限およびregistryを増やさない
+決定は維持します。公開runの扱いはADR 0032で置き換えます。
 
 ADR 0026のうち、``cargo-semver-checks``の結果と破壊的変更台帳からRust API差分をRelease Notesへ生成する決定も
 置き換えます。未検査の変更なし宣言を生成しない決定は維持します。

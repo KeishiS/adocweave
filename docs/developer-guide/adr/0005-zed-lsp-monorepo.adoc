@@ -3,7 +3,7 @@
 
 == 文脈
 
-Zed拡張、Language Serverおよびコアを同じリポジトリで管理すると、同じcommitで起動境界、queryおよび
+Zed拡張、Language Serverおよびコアを同じリポジトリで管理すると、同じcommitで起動時の接続、queryおよび
 回帰試験を横断して確認できます。
 
 Zed extensionとLanguage Serverを別repositoryへ分離すると、Zed固有のreviewと公開を独立できる可能性があります。一方で、
@@ -29,7 +29,7 @@ repository間で調整する運用費用が、現在の開発規模に対して�
   各回1件以上の必要性
 * 連続する10回のmain runにおける、Zed固有jobによるCI critical path中央値の50%超の占有と、
   monorepo内のjob分離による解消不能
-* Zed extensionを本体と異なる所有者、権限境界またはsecurity response期限で運用する
+* Zed extensionを本体と異なる所有者、権限制限またはsecurity response期限で運用する
   明確な要件の発生
 
 再評価では、repository分離前にCore/LSP/Zedの互換性範囲、artifact digest、ソースのrevisionおよびrollback対象を

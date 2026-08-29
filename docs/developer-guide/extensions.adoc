@@ -1,6 +1,6 @@
-= 拡張境界
+= 利用側アプリの拡張
 
-この文書では、利用側アプリが独自のリンク、メタデータおよび検索を追加する場合の責務境界を定義します。
+この文書では、利用側アプリが独自のリンク、メタデータおよび検索を追加する場合の責務分担を定義します。
 AdocWeave本体は標準AsciiDocを読みます。ノートアプリ固有のデータベースや権限、画面の作りは
 利用側アプリで扱います。
 
@@ -14,7 +14,7 @@ let analysis = Engine::new(options).analyze(source)?;
 let host_result = host_extension.analyze(&analysis, host_context).await?;
 ----
 
-ホストは``Analysis``を変更せず、別の結果型へアプリケーション固有の診断、メタデータ投影、
+ホストは``Analysis``を変更せず、別の結果型へアプリケーション固有の診断、メタデータの変換、
 解決済み参照および検索情報を格納します。標準診断とホスト診断を統合する場合は、範囲、
 診断コードおよび安定IDによる決定的な順序を定義します。
 
@@ -67,7 +67,7 @@ Parser、Formatterまたは標準Lintを停止させません。
 I/Oを必要とするホストは``ReferenceResolver``を実装します。アプリ専用メソッドではなく、
 ``resolve_scheme(scheme, locator)``で不透明な``SourceId``を返し、``resolve_anchor()``で
 アンカー確認と最終href生成を行います。文書候補、相対文書、任意スキーム、アンカーおよび逆参照は
-同じResolver境界で扱い、コアへファイルシステム、DBまたはネットワークの知識を持ち込みません。
+同じResolverインターフェイスで扱い、コアへファイルシステム、DBまたはネットワークの知識を持ち込みません。
 
 Resolverは次の規則を守ります。
 
@@ -83,7 +83,7 @@ Resolverは次の規則を守ります。
 古い成功結果と失敗結果を再利用しません。キャッシュキーは、この無効化条件を識別できる
 情報を含めます。
 
-== エディター統合
+== エディタ統合
 
 補完、Hover、Definition、ReferencesおよびDocument Linkは同じ``Analysis``、
 ``ReferenceQuery``および解決結果を共有します。機能ごとに対象文字列を再解析しません。
@@ -93,7 +93,7 @@ LSPアダプターはxref:language-server.adoc[Language Server設計]の通知�
 キャンセルおよびlock規則に従います。``ReferenceResolver``の仕様自体は特定async runtimeへ
 依存せず、外部ホストへTokioを要求しません。
 
-== HTMLと信頼境界
+== HTMLの安全性
 
 Resolverが返すhrefは信頼済みHTMLではありません。HTML出力前にAdocWeaveの``ActiveUrlPolicy``を
 必ず通過させます。拡張はraw HTML、イベント属性、``javascript:``または許可されていない

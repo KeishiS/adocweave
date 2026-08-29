@@ -1,4 +1,4 @@
-= ADR 0023: 公開と配布の境界
+= ADR 0023: 公開先と配布方法
 :status: accepted; amended by ADR 0027, 0028, 0030, 0031, 0032, 0033, and 0036
 
 == 文脈
@@ -8,8 +8,8 @@
 
 == 決定
 
-公開先と権限境界をこのADRで定めます。製品ごとのversionと公開単位は
-xref:0027-product-release-trains.adoc[ADR 0027]、エディターとLanguage Serverの導入境界は
+公開先と権限の分離方法をこのADRで定めます。製品ごとのversionと公開単位は
+xref:0027-product-release-trains.adoc[ADR 0027]、エディタとLanguage Serverの導入方法の分担は
 xref:0028-editor-language-server-boundary.adoc[ADR 0028]、同じrunの成果物を公開する手順は
 xref:0032-same-run-release-publication.adoc[ADR 0032]を基準とします。現在の成果物と公開先は
 xref:../release-distribution.adoc[配布仕様]を基準とし、このADRへ一覧を複製しません。

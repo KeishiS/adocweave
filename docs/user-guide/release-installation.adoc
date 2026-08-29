@@ -1,42 +1,37 @@
 = インストールと更新
 
-この文書では、GitHub ReleasesからCLI、Language Serverおよびtextlint用AsciiDoc Processorを導入し、
-更新および削除する手順を説明します。
+この文書では、CLI、Language Server、WebAssemblyライブラリ、
+エディタ拡張およびtextlint用Processorの導入、更新、ロールバックおよび削除を説明します。
 
-Rustツールチェーンおよびソースの取得を行わない場合はGitHub Releaseを、Nixを利用する場合はflakeを使用できます。
-GitHub Release archiveとNixパッケージは別の配布経路であり、Nixパッケージはarchiveを再包装せず、ソースからbuildします。
-
-この文書は複数の導入経路を扱います。全体を順に読む必要はありません。目的に応じて次の節へ進んでください。
-
-[cols="2,3"]
+[cols="2,3",options="header"]
 |===
-| 目的 | 読む節
+|目的
+|参照する節
 
-| 自分の端末でCLIを使う（Nix）
-| <<nix-installation>>
+|NixでCLIを使用
+|xref:#nix-installation[Nixによる導入]
 
-| 自分の端末でCLIを使う（Nixを使わない）
-| 「配布物の選択」「取得と完全性の検証」「利用者単位の導入」
+|Nixを使わずにCLIまたはLanguage Serverを使用
+|「配布物の選択」「取得したファイルの検証」「CLIとLanguage Serverの導入」
 
-| 複数の利用者が使う端末へ導入する
-| 「配布物の選択」「取得と完全性の検証」「システム全体への導入」
+|Webアプリへの組込み
+|xref:#wasm-npm-installation[WebAssemblyパッケージの導入]、
+xref:#browser-library-deployment[WebAssemblyライブラリの配備]
 
-| Webアプリへ組み込む
-| <<wasm-library-deployment>>
+|ZedまたはVS Codeで使用
+|xref:#editor-language-server[エディタからLanguage Serverを使う]
 
-| エディターで使う
-| <<zed-installation>>、<<vscode-installation>>
-
-| AsciiDoc文書をtextlintで検査する
-| <<textlint-plugin-installation>>
+|AsciiDoc文書をtextlintで検査
+|xref:#textlint-plugin-installation[textlint用Processorの導入]
 |===
 
-いずれの経路でも、導入前に「取得と完全性の検証」のchecksumとattestationの確認を行ってください。
+GitHub Releaseから取得する場合は、導入前にチェックサムとArtifact Attestationを確認してください。
 
 [#nix-installation]
 == Nixによる導入
 
-一時的にCLIを実行する場合は次のコマンドを使用します。再現性が必要な場合はtagまたはコミットを指定します。
+一時的に実行する場合は``nix run``を使用します。
+結果を再現できるようにする場合は、タグまたはコミットを指定します。
 
 [source,console]
 ----
@@ -45,7 +40,7 @@ nix run 'github:KeishiS/adocweave?ref=adocweave-cli/vX.Y.Z' -- convert document.
 nix run github:KeishiS/adocweave#adocweave-lsp
 ----
 
-利用者profileへ導入する場合は次のコマンドを使用します。
+利用者のprofileへ導入する場合は次のコマンドを使用します。
 
 [source,console]
 ----
@@ -55,16 +50,11 @@ nix profile rollback
 nix profile remove AdocWeave
 ----
 
-継続的に利用する構成では、flake inputを利用側の``flake.lock``へ固定し、
-``adocweave.packages.${system}.default``を使用します。同じパッケージに``adocweave``と
-``adocweave-lsp``が含まれます。専用のNixpkgs overlayとNixOS service moduleは提供しません。
+継続して使用する場合は、flake inputを利用側の``flake.lock``へ固定し、
+``adocweave.packages.${system}.default``を使用します。
+このパッケージには``adocweave``と``adocweave-lsp``が含まれます。
 
-Nixパッケージは``Cargo.lock``に固定したソースからbuildします。Rust compiler、Cargo、Node.js、Chromiumおよび
-fuzz toolは完成したパッケージのruntime closureへ含めません。
-
-stable releaseの公開時には、tagと同じcommitでbuildしたx86_64-linuxとaarch64-linux向けパッケージの
-runtime closureをbinary cache``https://keishis.cachix.org``へpushしています。利用側で次のsubstituterと
-公開鍵を設定し、flake inputをrelease tagのcommitへ固定すると、Rust buildを実行せずにパッケージを取得できます。
+Linuxでは、リリースタグを指定すると``https://keishis.cachix.org``からビルド済みパッケージを取得できます。
 
 [source,nix]
 ----
@@ -76,60 +66,53 @@ nix.settings = {
 };
 ----
 
-NixOS以外では、system全体の``nix.conf``へ同じ``extra-substituters``と``extra-trusted-public-keys``を
-記載します。cacheへpushするのはrelease tagのcommitだけです。tag以外のcommitを使う場合や、利用側flakeで
-``inputs.adocweave.inputs.nixpkgs.follows``のようにinputを差し替えた場合はderivationが変わるため取得できず、
-利用側でRust buildが実行されます。
+NixOS以外では、同じ値をシステムの``nix.conf``へ記載します。
 
 == 配布物の選択
 
 [cols="2,2,2,2",options="header"]
 |===
-|用途 |Linux |macOS |Windows
+|用途
+|Linux
+|macOS
+|Windows
 
 |CLI
-|`adocweave-cli-<target>.zip`
-|`adocweave-cli-<target>.zip`
-|`adocweave-cli-x86_64-pc-windows-msvc.zip`
+|``adocweave-cli-<target>.zip``
+|``adocweave-cli-<target>.zip``
+|``adocweave-cli-x86_64-pc-windows-msvc.zip``
 
 |Language Server
-|`adocweave-lsp-<target>.zip`
-|`adocweave-lsp-<target>.zip`
-|`adocweave-lsp-x86_64-pc-windows-msvc.zip`
+|``adocweave-lsp-<target>.zip``
+|``adocweave-lsp-<target>.zip``
+|``adocweave-lsp-x86_64-pc-windows-msvc.zip``
 
-|WebAssembly library
-3+|`adocweave-wasm-<version>.tgz`
+|WebAssemblyライブラリ
+3+|``adocweave-wasm-<version>.tgz``
 
 |Zed開発拡張
-3+|`adocweave-zed-<version>.tar.xz`
+3+|``adocweave-zed-<version>.tar.xz``
 
 |VS Code拡張
-3+|`adocweave-vscode-<version>.vsix`
+3+|``adocweave-vscode-<version>.vsix``
 
-|textlint用AsciiDoc Processor
-3+|`adocweave-textlint-plugin-asciidoc-<version>.tgz`
+|textlint用Processor
+3+|``adocweave-textlint-plugin-asciidoc-<version>.tgz``
 |===
 
-targetはLinux ARM64の``aarch64-unknown-linux-musl``、Linux x86-64の``x86_64-unknown-linux-musl``、
-macOS ARM64の``aarch64-apple-darwin``、Windows x86-64の
-``x86_64-pc-windows-msvc``です。32-bit環境とWindows ARM64向けのnative archiveは配布しません。
-Intel macOSも対応対象外です。
+``<target>``には次のいずれかを指定します。
 
-Linux musl binaryは静的linkします。macOSは14.0以降、WindowsはWindows 10 version 1809以降を対象とし、
-system libraryへ動的linkします。macOSとWindowsのbinaryにはOS code signingを行っていないため、
-download元に応じてOSの警告が表示される場合があります。
+* Linux ARM64: ``aarch64-unknown-linux-musl``
+* Linux x86-64: ``x86_64-unknown-linux-musl``
+* macOS ARM64: ``aarch64-apple-darwin``
+* Windows x86-64: ``x86_64-pc-windows-msvc``
 
-macOSでは展開後にquarantine属性を確認できます。
+32-bit環境、Windows ARM64およびIntel macOS向けの実行ファイルは配布しません。
+macOSは14.0以降、WindowsはWindows 10 version 1809以降を対象とします。
 
-[source,console]
-----
-xattr -p com.apple.quarantine "$ROOT/bin/adocweave" || true
-xattr -p com.apple.quarantine "$ROOT/bin/adocweave-lsp" || true
-----
-
-実行がGatekeeperにより拒否された場合は、checksumとattestationが正しいことを先に確認します。そのうえで
-配布元を信頼すると判断した実行ファイルだけからquarantine属性を削除します。この操作はOSの保護を弱めるため、
-親ディレクトリへ再帰的に適用しません。
+macOSとWindowsの実行ファイルにはOSのコード署名を行っていないため、実行時に警告が表示される場合があります。
+macOSでGatekeeperに拒否された場合は、後述する検証を完了してから、信頼すると判断した実行ファイルだけの
+quarantine属性を削除してください。親ディレクトリへ再帰的に適用しないでください。
 
 [source,console]
 ----
@@ -137,11 +120,11 @@ xattr -d com.apple.quarantine "$ROOT/bin/adocweave"
 xattr -d com.apple.quarantine "$ROOT/bin/adocweave-lsp"
 ----
 
-== 取得と完全性の検証
+== 取得したファイルの検証
 
-製品、バージョンおよび利用するarchiveを固定し、その製品のReleaseにある``sha256.sum``とともに空の
-ディレクトリへdownloadします。GitHub CLIを使う例は次のとおりです。``PRODUCT``、``VERSION``および
-``ASSET``を実際の値へ置き換えます。
+製品、バージョンおよび配布ファイルを決め、
+その製品のReleaseにある``sha256.sum``と一緒に空のディレクトリへダウンロードします。
+次の例では``PRODUCT``、``VERSION``および``ASSET``を置き換えてください。
 
 [source,console]
 ----
@@ -158,128 +141,23 @@ cd "adocweave-$VERSION"
 sha256sum --check --ignore-missing sha256.sum
 ----
 
-GitHub CLIを使わない場合は、Release画面から各assetを個別に保存します。HTMLをarchive名で保存する事故を避けるため、
-download後にnative archiveでは``unzip -t <archive>``、Zedのarchiveでは``tar -tJf <archive>``、
-browserとtextlint用パッケージでは``tar -tzf <archive>``も成功することを確認します。
-``curl | sh``形式のinstallerは提供しません。
-
-checksumとは別に、必要なassetのGitHub Artifact Attestationを検証します。
+続いて、配布ファイルと``sha256.sum``のArtifact Attestationを確認します。
 
 [source,console]
 ----
-gh attestation verify "$ASSET" \
-  --repo KeishiS/adocweave
+gh attestation verify "$ASSET" --repo KeishiS/adocweave
 gh attestation verify sha256.sum --repo KeishiS/adocweave
 ----
 
-checksumは取得したbyte列が配布時の値と一致することを示します。attestationは、そのbyte列が対象リポジトリの
-GitHub Actionsから生成された来歴を示します。いずれも、成果物に脆弱性や悪意ある処理がないことまでは保証しません。
+チェックサムでファイルの内容を、Artifact Attestationで配布元を確認できます。
 
-[#textlint-plugin-installation]
-== textlint用AsciiDoc Processorの導入
+Release画面から手動で保存した場合は、配布ファイルを正常に展開できることも確認してください。
 
-``@adocweave/textlint-plugin-asciidoc``はnpm registryから導入します。``X.Y.Z``には利用するtextlint用
-Processorのバージョンを指定します。
+== CLIとLanguage Serverの導入
 
-[source,console]
-----
-npm install --save-dev textlint@15.8.0 \
-  @adocweave/textlint-plugin-asciidoc@X.Y.Z
-----
+=== LinuxとmacOS
 
-npmへ公開するのは、GitHub Releaseへ添付したarchiveと同じbyte列です。checksumとattestationを自分で
-検証してから導入する場合は、GitHub ReleaseのURLを指定することもできます。
-
-[source,console]
-----
-VERSION=X.Y.Z
-RELEASE_URL="https://github.com/KeishiS/adocweave/releases/download/adocweave-textlint%2Fv$VERSION"
-npm install --save-dev textlint@15.8.0 \
-  "$RELEASE_URL/adocweave-textlint-plugin-asciidoc-$VERSION.tgz"
-----
-
-対応環境はNode.js 24.19.0以上とtextlint 15.8系です。パッケージの``engines``と``peerDependencies``へ
-同じ範囲を記録します。継続的な検査はNode.js 24.19.0とtextlint 15.8.0の組合せで行うため、上の例では
-その版を固定しています。パッケージにはNode.js用WebAssemblyを同梱するため、Rust、Cargo、
-``wasm-bindgen``、AdocWeave CLIおよび実行時の追加downloadは不要です。
-
-プロジェクトへ依存を導入せずに一度だけ試す場合は、``npx``の``--package``で必要な三つのパッケージを
-一時的に取得できます。次の例は、日本語技術文書向けの規則で``document.adoc``を検査します。
-
-[source,console]
-----
-npx --yes \
-  --package=textlint@15.8.0 \
-  --package=@adocweave/textlint-plugin-asciidoc@X.Y.Z \
-  --package=textlint-rule-preset-ja-technical-writing@12.0.2 \
-  textlint --no-textlintrc \
-  --plugin @adocweave/asciidoc \
-  --preset ja-technical-writing \
-  document.adoc
-----
-
-この方法では作業ディレクトリへ``package.json``、``package-lock.json``および``node_modules``を作成しません。
-取得したパッケージはnpmのキャッシュへ保存されます。継続して利用する場合は、依存とバージョンを
-``package.json``と``package-lock.json``へ記録してください。
-
-``.textlintrc.json``では、AsciiDoc Processorと利用する規則を別々に指定します。次の例では、規則のパッケージも
-利用側で開発用依存へ追加します。
-
-[source,json]
-----
-{
-  "plugins": ["@adocweave/asciidoc"],
-  "rules": {
-    "preset-ja-technical-writing": true
-  }
-}
-----
-
-既定では``.adoc``、``.asciidoc``および``.asc``を認識します。別の拡張子をAsciiDocとして扱う場合は、
-pluginの``extensions``へ先頭の``.``を含む名前を追加します。
-
-[source,json]
-----
-{
-  "plugins": {
-    "@adocweave/asciidoc": {
-      "extensions": [".guide"]
-    }
-  }
-}
-----
-
-見出し、block title、段落、リスト、引用、表、リンク、属性参照やinline記法を含まないfootnote本文、
-画像の代替文、iconの代替文またはtitle、audioとvideoのtitleおよびinline装飾を文章規則へ渡します。
-block titleはdepth 1の``Header``としてtitle向け規則の対象にします。
-code、UI macro、表示文字列のないURL、数式、属性参照、passおよび未対応構文は``Code``として保持し、``Str``を
-対象とする文章規則から除外します。属性参照またはinline記法を含むmacroの文章部分も保守的に除外します。
-includeは展開せず、入力した一つの物理ファイルだけを検査します。
-
-[source,console]
-----
-npx textlint "docs/**/*.{adoc,asciidoc,asc}"
-----
-
-このProcessorは自動修正に対応しません。規則が修正情報を返してもProcessorが除去するため、
-``npx textlint --fix``を実行してもAsciiDoc文書を変更しません。問題の検出と元の文書上の行・列の報告だけを
-利用してください。
-
-更新時は指定するバージョンを新しい版へ変更して``npm install``を実行し、``package-lock.json``の差分と
-検査結果を確認してから統合します。バージョンを固定せずに更新する場合も、``package-lock.json``へ
-記録した版で導入を再現できます。rollbackでは以前の版を指定し直すか、``package-lock.json``を元へ戻して
-``npm ci``で再導入します。GitHub ReleaseのURLで導入している場合は、URLを対象の版へ変更します。
-Processorと同梱WebAssemblyを別々のバージョンへ変更することはできません。削除する場合は次を実行します。
-
-[source,console]
-----
-npm uninstall --save-dev @adocweave/textlint-plugin-asciidoc
-----
-
-== 利用者単位の導入
-
-以下ではバージョン別のディレクトリを基準とし、`current` symlinkで選択したバージョンを固定します。この構成なら、
-更新中に旧バージョンを壊さずrollbackできます。
+次の例ではバージョン別のディレクトリへ配置し、``current``シンボリックリンクで使用するバージョンを選びます。
 
 [source,console]
 ----
@@ -288,26 +166,19 @@ TARGET=x86_64-unknown-linux-musl
 PREFIX="$HOME/.local"
 ROOT="$PREFIX/lib/adocweave/$VERSION"
 
-mkdir -p "$ROOT/bin" "$PREFIX/bin" "$PREFIX/share/adocweave/$VERSION"
+mkdir -p "$ROOT/bin" "$PREFIX/bin"
 mkdir "cli-$VERSION" "lsp-$VERSION"
 unzip "adocweave-cli-$TARGET.zip" -d "cli-$VERSION"
 unzip "adocweave-lsp-$TARGET.zip" -d "lsp-$VERSION"
 install -m 0755 "cli-$VERSION/adocweave" "$ROOT/bin/adocweave"
 install -m 0755 "lsp-$VERSION/adocweave-lsp" "$ROOT/bin/adocweave-lsp"
-tar -xzf "adocweave-wasm-$VERSION.tgz" -C "$PREFIX/share/adocweave/$VERSION"
-mv "$PREFIX/share/adocweave/$VERSION/package" \
-  "$PREFIX/share/adocweave/$VERSION/wasm"
-tar -xJf "adocweave-zed-$VERSION.tar.xz" -C "$PREFIX/share/adocweave/$VERSION"
-mv "$PREFIX/share/adocweave/$VERSION/adocweave-zed-$VERSION" \
-  "$PREFIX/share/adocweave/$VERSION/zed"
 
-ln -sfn "$ROOT" "$PREFIX/lib/adocweave/current.new"
-mv -Tf "$PREFIX/lib/adocweave/current.new" "$PREFIX/lib/adocweave/current"
+ln -sfn "$ROOT" "$PREFIX/lib/adocweave/current"
 ln -sfn "$PREFIX/lib/adocweave/current/bin/adocweave" "$PREFIX/bin/adocweave"
 ln -sfn "$PREFIX/lib/adocweave/current/bin/adocweave-lsp" "$PREFIX/bin/adocweave-lsp"
 ----
 
-``$HOME/.local/bin``が``PATH``にない場合だけshellの起動ファイルへ追加し、新しいshellで確認します。
+``$HOME/.local/bin``が``PATH``に含まれていない場合は、シェルの起動ファイルへ追加します。導入後は次を確認します。
 
 [source,console]
 ----
@@ -317,20 +188,16 @@ adocweave --version --json
 adocweave-lsp --version --json
 ----
 
-配布archiveはcompletionのファイルを自動配置しません。必要なshellでは
-xref:command-line.adoc[コマンドライン]の``adocweave completion``で生成してください。
+補完用ファイルは xref:command-line.adoc[コマンドライン]の``adocweave completion``で生成できます。
 
-== システム全体への導入
+複数の利用者が使用する端末では、``$PREFIX``を``/opt/adocweave``、
+実行ファイルへのシンボリックリンクを``/usr/local/bin``へ配置します。
+検証と展開は通常利用者で行い、配置だけを管理者権限で実行してください。
 
-複数利用者向けには、上の手順の``$PREFIX``を``/opt/adocweave``へ、symlinkの置き場所を``/usr/local/bin``へ
-読み替えます。archiveの検証と展開は通常利用者で行い、検証済みのファイルの配置だけを管理者権限で実行します。
-既存のファイルを上書きする前に、symlinkの参照先がAdocWeave管理下であることを確認します。
+=== Windows
 
-WebAssembly library、Zed拡張およびVS Code拡張は利用者ごとの設定を伴うため、原則としてuser-local配置を使用します。
-
-=== Windowsへの導入
-
-PowerShellで検証済みZIPをバージョン別のディレクトリへ展開し、そのディレクトリを利用者の``PATH``へ追加します。
+検証済みZIPをバージョン別のディレクトリへ展開し、
+CLIとLanguage Serverのディレクトリを利用者の``PATH``へ追加します。
 
 [source,powershell]
 ----
@@ -353,12 +220,194 @@ Get-Command adocweave.exe
 Get-Command adocweave-lsp.exe
 ----
 
-更新時は新しいバージョン別のディレクトリを作成して動作確認後に``PATH``を切り替えます。rollbackでは以前の
-バージョンを``$Version``へ指定して同じ``PATH``更新部分を再実行します。実行中の``.exe``を上書きせず、VS Codeと
-Zedを終了してから不要なバージョン別のディレクトリだけを削除します。
+更新時は別のバージョン別ディレクトリへ展開し、動作確認後に``PATH``を切り替えます。
+ロールバックする場合は、以前の``$Version``を指定して``PATH``の更新部分を再実行します。
 
-Windowsから完全に削除する場合は、上記と同じ正規表現でAdocWeave管理下の2 entryだけを利用者``PATH``から
-除き、導入したバージョン別のディレクトリを削除します。
+== 更新とロールバック
+
+新しいバージョンは既存のディレクトリへ上書きせず、別のディレクトリへ展開して検証します。
+LinuxとmacOSでは``current``、Windowsでは``PATH``を切り替えた後に``--version --json``を確認してください。
+ロールバックの確認が終わるまで、以前のディレクトリは削除しません。
+
+CLI、Language Server、WebAssembly、Zed拡張、VS Code拡張およびtextlint用Processorは、
+それぞれ独立したバージョンを持ちます。
+エディタ拡張とLanguage Serverのバージョンを一致させる必要はありません。
+
+[#textlint-plugin-installation]
+== textlint用Processorの導入
+
+``@adocweave/textlint-plugin-asciidoc``はnpm registryから導入します。
+対応環境はNode.js 24.19.0以上とtextlint 15.8系です。
+
+[source,console]
+----
+npm install --save-dev textlint@15.8.0 \
+  @adocweave/textlint-plugin-asciidoc@X.Y.Z
+----
+
+``.textlintrc.json``ではProcessorと文章規則を別々に指定します。
+文章規則のパッケージも開発用依存へ追加してください。
+
+..textlintrc.json
+[source,json]
+----
+{
+  "plugins": ["@adocweave/asciidoc"],
+  "rules": {
+    "preset-ja-technical-writing": true
+  }
+}
+----
+
+既定では``.adoc``、``.asciidoc``および``.asc``を認識します。
+
+[source,console]
+----
+npx textlint "docs/**/*.{adoc,asciidoc,asc}"
+----
+
+includeの展開と自動修正には対応しません。
+
+更新時は``package.json``のバージョンを変更し、``npm install``を実行します。
+ロールバックする場合は以前のバージョンを指定するか、``package-lock.json``を戻して``npm ci``を実行します。
+削除は次のコマンドで行います。
+
+[source,console]
+----
+npm uninstall --save-dev @adocweave/textlint-plugin-asciidoc
+----
+
+[#wasm-npm-installation]
+== WebAssemblyパッケージの導入
+
+npmから導入する場合は、使用するバージョンを指定します。
+
+[source,console]
+----
+npm install @adocweave/wasm@X.Y.Z
+----
+
+ブラウザでは``@adocweave/wasm``を、Node.jsでは``@adocweave/wasm/direct``をimportします。
+APIの詳細はxref:../developer-guide/core-profile.adoc#wasm-api[WebAssembly API]を参照してください。
+
+更新する場合はバージョンを変更して``npm install``を実行します。削除は次のコマンドで行います。
+
+[source,console]
+----
+npm uninstall @adocweave/wasm
+----
+
+[#browser-library-deployment]
+== WebAssemblyライブラリの配備
+
+``adocweave-wasm-<version>.tgz``を展開し、``worker``ディレクトリを静的配信します。公開APIは
+``worker/index.mjs``です。TypeScriptの型定義は``worker/index.d.mts``にあります。
+
+[source,javascript]
+----
+import { AdocWeaveClient, defaultAssetUrls } from "./worker/index.mjs";
+
+const entryUrl = new URL("./worker/index.mjs", import.meta.url);
+const client = new AdocWeaveClient(defaultAssetUrls(entryUrl));
+const result = await client.analyze({
+  source: "= Title\n\nText\n",
+  renderPolicy: { documentMode: "fragment" },
+});
+console.log(result.html, result.diagnostics);
+----
+
+バンドラを使用する場合も、``defaultAssetUrls``には公開先へコピーした``worker/index.mjs``のURLを指定します。
+APIの詳細は
+xref:../developer-guide/core-profile.adoc#wasm-api[WebAssembly API]を参照してください。
+
+[cols="2,3",options="header"]
+|===
+|拡張子
+|Content-Type
+
+|``.mjs``、``.js``
+|``text/javascript``
+
+|``.wasm``
+|``application/wasm``
+
+|``.html``
+|``text/html; charset=utf-8``
+|===
+
+これらのファイルは同じオリジンから配信します。CSPでは少なくとも
+``script-src 'self' 'wasm-unsafe-eval'``、``worker-src 'self'``および``connect-src 'self'``を許可します。
+HTML結果をDOMへ挿入する場合は、利用側で内容を検証し、表示用sandboxを適用してください。
+
+[#editor-language-server]
+== エディタからLanguage Serverを使う
+
+VS Code拡張とZed拡張は、必要なLanguage Serverを自動取得します。VS Code拡張は取得時にチェックサムを
+確認しますが、Zed拡張は確認しません。Artifact Attestationはどちらも確認しません。
+
+自分で検証した版や特定の版を使用する場合は、この文書の手順で``adocweave-lsp``を導入し、エディタの設定へ
+絶対パスを指定してください。``PATH``上にある実行ファイルも自動取得より優先されます。
+
+[#zed-installation]
+=== Zedへの導入
+
+Zed Extension Galleryへは公開していません。Releaseの``adocweave-zed-<version>.tar.xz``を展開し、
+``Install Dev Extension``または``zed: install dev extension``から展開先を選択します。
+
+Language Serverの場所を指定する場合は、``lsp.adocweave.binary.path``へ絶対パスを設定します。
+拡張を更新する場合は、新しい版を展開してdev extensionの参照先を変更します。
+
+[#vscode-installation]
+=== VS Codeへの導入
+
+Open VSX RegistryまたはVisual Studio Marketplaceから``adocweave.adocweave-vscode``を導入できます。
+発行者は``adocweave``です。
+
+[source,console]
+----
+codium --install-extension adocweave.adocweave-vscode
+code --install-extension adocweave.adocweave-vscode
+----
+
+ReleaseのVSIXを使用する場合は、チェックサムとArtifact Attestationを確認してから導入します。特定の
+バージョンへ固定する場合もこの方法を使用します。
+
+[source,console]
+----
+code --install-extension "adocweave-vscode-$VERSION.vsix" --force
+----
+
+Language Serverの場所を指定する場合は、machine scopeの``adocweave.server.path``へ絶対パスを設定します。
+設定の変更後は``AdocWeave: Restart Language Server``で再起動してください。
+
+更新時は新しいVSIXを同じコマンドで導入し、ウィンドウを再読み込みします。ロールバックする場合は、以前の
+Releaseから検証済みVSIXを取得して導入します。
+
+== 削除
+
+Zedではdev extensionを、VS Codeでは拡張画面または次のコマンドで拡張を削除します。
+
+[source,console]
+----
+code --uninstall-extension adocweave.adocweave-vscode
+----
+
+LinuxとmacOSでは、導入したバージョンとAdocWeaveが管理するシンボリックリンクだけを削除します。
+
+[source,console]
+----
+VERSION=X.Y.Z
+PREFIX="$HOME/.local"
+rm "$PREFIX/bin/adocweave" "$PREFIX/bin/adocweave-lsp"
+rm "$PREFIX/lib/adocweave/current"
+rm -rf "$PREFIX/lib/adocweave/$VERSION"
+rmdir --ignore-fail-on-non-empty "$PREFIX/lib/adocweave"
+----
+
+``$PREFIX/bin``やエディタの保存領域全体を再帰的に削除しないでください。別のバージョンを残す場合は、先に
+``current``をそのバージョンへ切り替えます。
+
+Windowsでは利用者の``PATH``からAdocWeaveの2件だけを除き、対象バージョンのディレクトリを削除します。
 
 [source,powershell]
 ----
@@ -368,315 +417,3 @@ $Next = [Environment]::GetEnvironmentVariable("Path", "User") -split ";" |
 [Environment]::SetEnvironmentVariable("Path", ($Next -join ";"), "User")
 Remove-Item -Recurse (Join-Path $env:LOCALAPPDATA "AdocWeave\$Version")
 ----
-
-== 更新、バージョン固定およびロールバック
-
-新しいバージョンは既存ディレクトリへ上書きせず、別のディレクトリへ展開・検証します。``current``を切り替えた後に
-``--version --json``を確認します。rollbackは``current``を以前のバージョン別のディレクトリへ戻すだけであり、動作確認が終わるまで
-旧ディレクトリを削除しません。CLI、Language Server、WebAssembly、Zed拡張、VS Code拡張およびtextlint用
-Processorは、それぞれ独立した製品バージョンを持ちます。WebAssemblyとtextlint用Processorは、同じ製品archiveに
-JavaScriptとWebAssemblyを同梱するため、別々に組み合わせません。エディター拡張とLanguage Serverの
-製品バージョンを一致させる必要はありません。利用できる機能は、接続時に交換する標準LSP capabilityから決まります。
-
-[#wasm-npm-installation]
-== WebAssemblyパッケージのnpmからの導入
-
-``@adocweave/wasm``はnpm registryから導入します。``X.Y.Z``には利用するWebAssemblyパッケージの
-バージョンを指定します。
-
-[source,console]
-----
-npm install @adocweave/wasm@X.Y.Z
-----
-
-npmへ公開するのは、GitHub Releaseへ添付したarchiveと同じbyte列です。checksumとattestationを自分で
-検証してから導入する場合は、GitHub ReleaseのURLを指定することもできます。
-
-[source,console]
-----
-VERSION=X.Y.Z
-RELEASE_URL="https://github.com/KeishiS/adocweave/releases/download/adocweave-wasm%2Fv$VERSION"
-npm install "$RELEASE_URL/adocweave-wasm-$VERSION.tgz"
-----
-
-このパッケージはWebAssemblyを同梱するため、導入にRust、Cargo、``wasm-bindgen``およびAdocWeave CLIは
-不要です。ブラウザー向けの入口は、同梱したWebAssemblyを配備先の同一originから取得します。
-
-パッケージは用途の異なる2つの入口を公開します。要求と応答の形式はどちらも同じです。
-
-[cols="2,2,3",options="header"]
-|===
-|入口 |実行環境 |特徴
-
-|``@adocweave/wasm``
-|ブラウザー
-|Web Workerで実行し、``AbortSignal``で解析を取り消せます。WebAssemblyが実行を中断（trap）しても、
-Workerごと終了して影響を分離します
-
-|``@adocweave/wasm/direct``
-|Node.js
-|呼び出し側と同じプロセスで実行します。取消しはできず、一つずつ順に実行する用途に限ります
-|===
-
-文書を編集しながら結果を更新する画面では、既定の入口である``@adocweave/wasm``を使います。解析をWeb
-Workerへ渡すため、入力が続いている間も画面の操作が止まらず、不要になった解析を取り消せます。
-
-[source,javascript]
-----
-import { AdocWeaveClient, defaultAssetUrls } from "@adocweave/wasm";
-
-const entryUrl = new URL("./worker/index.mjs", import.meta.url);
-const client = new AdocWeaveClient(defaultAssetUrls(entryUrl));
-const controller = new AbortController();
-const result = await client.analyze({
-  source: "= Title\n\nText\n",
-}, { signal: controller.signal });
-----
-
-bundlerを使う場合も、``defaultAssetUrls``にはbundleが生成したchunkではなく、公開ディレクトリへ
-コピーした``worker/index.mjs``のURLを渡します。配備時に必要なファイルの配置、Content-Typeおよび
-CSPの設定は、後述のxref:#wasm-library-deployment[ブラウザーライブラリーの配備]と同じです。
-
-静的サイト生成のようにビルド時へ組み込む場合は``@adocweave/wasm/direct``を使います。Web Workerを
-必要とせず、Node.jsのプロセス内で解析します。同梱WebAssemblyの位置はパッケージ内部から求めるため、
-パスを渡す必要はありません。
-
-[source,javascript]
-----
-import { analyze } from "@adocweave/wasm/direct";
-
-const result = await analyze({
-  sourceId: "docs/example.adoc",
-  source: "= Title\n\nText\n",
-  products: { html: true },
-});
-----
-
-初期化は最初の呼び出しで一度だけ行います。初期化のタイミングを自分で決める場合は
-``createDirectAnalyzer()``を使います。この入口は呼び出し側と同じプロセスでWebAssemblyを実行するため、
-WASMがtrapしたあとの結果を保証しません。trapが起きた場合は``createDirectAnalyzer()``で
-analyzerを作り直してください。
-
-WebAssembly APIの詳細はxref:../developer-guide/core-profile.adoc#wasm-api[WebAssembly API]を
-参照してください。
-
-更新時は指定するバージョンを新しい版へ変更して``npm install``を実行し、``package-lock.json``の差分と
-動作を確認してから統合します。rollbackでは以前の版を指定し直すか、``package-lock.json``を元へ戻して
-``npm ci``で再導入します。GitHub ReleaseのURLで導入している場合は、URLを対象の版へ変更します。
-JavaScriptと同梱WebAssemblyを別々のバージョンへ変更することはできません。削除する場合は次を実行します。
-
-[source,console]
-----
-npm uninstall @adocweave/wasm
-----
-
-[#wasm-library-deployment]
-== ブラウザーライブラリーの配備
-
-この節は、GitHub Releaseから取得したarchiveの展開物をそのまま静的hostingへ置く手順です。
-bundlerやNode.jsからパッケージとして使う場合は、
-前述のxref:#wasm-npm-installation[WebAssemblyパッケージのnpmからの導入]を参照してください。
-
-``$HOME/.local/share/adocweave/<version>/wasm``をそのまま静的hostingへ配置します。公開入口は
-``worker/index.mjs``だけです。``worker/worker.mjs``とWASM補助ファイルは内部用であり、直接importしません。
-TypeScriptの型定義は``worker/index.d.mts``にあります。
-
-[source,javascript]
-----
-import { AdocWeaveClient, defaultAssetUrls } from "./worker/index.mjs";
-
-const entryUrl = new URL("./worker/index.mjs", import.meta.url);
-const client = new AdocWeaveClient(defaultAssetUrls(entryUrl));
-const controller = new AbortController();
-const result = await client.analyze({
-  source: "= Title\n\nText\n",
-  renderPolicy: { documentMode: "fragment" },
-}, { signal: controller.signal });
-console.log(result.html, result.diagnostics);
-----
-
-``analyze``はPromiseを返し、一つのclientでは同時に一つだけ実行できます。異なる文書を並行して解析する場合は
-clientを分けます。入力の連続更新をまとめる待機、文書の版および古い結果を採用するかどうかは利用側で管理します。
-前の解析が不要になった場合は、その解析へ渡した``AbortController``の``abort()``を呼び、Promiseのrejectを処理します。
-
-``defaultAssetUrls``には、配備した``worker/index.mjs``のURLを必ず渡します。bundlerから利用する場合も、bundleの
-chunkではなく、公開ディレクトリへコピーした``worker/index.mjs``のURLを指定します。WebAssembly APIの詳細は
-xref:../developer-guide/core-profile.adoc#wasm-api[WebAssembly API]を参照してください。
-
-serverは少なくとも次を設定します。
-
-[cols="2,3",options="header"]
-|===
-|対象 |Content-Type
-
-|`.mjs`、`.js`
-|`text/javascript`
-
-|`.wasm`
-|`application/wasm`
-
-|`.html`
-|`text/html; charset=utf-8`
-|===
-
-main document、``worker/index.mjs``、WorkerおよびWASMは同一originから配信します。CSPは少なくとも
-``script-src 'self' 'wasm-unsafe-eval'``、``worker-src 'self'``および``connect-src 'self'``を許可します。
-inline scriptと``unsafe-eval``は不要です。HTML結果はDOMへ無検証で挿入せず、ホストの表示sandboxとpolicyを適用します。
-
-URLにはバージョンまたはarchive digestを含め、WASMとJavaScriptへ同じcache keyを使います。更新時に既存URLの内容を
-置換せず、新URLへ切り替えます。配備前のarchiveは``sha256.sum``で検証し、配備後はserverから取得したファイルのdigestを
-deploy記録へ残します。展開物の``example/index.html``と``example/app.mjs``はリアルタイム変換の最小例であり、同じserverから
-配信して入力更新、取消しおよび解析結果の表示を確認できます。
-
-[#editor-language-server]
-== エディターからLanguage Serverを使う
-
-VS Code拡張とZed拡張はLanguage Serverを同梱しません。エディター拡張とLanguage Serverは独立した製品であり、
-更新とrollbackも別々に行います。checksumとattestationを検証したうえで導入する場合は、先にこの文書の
-「配布物の選択」「取得と完全性の検証」と、利用環境に応じた導入手順に従って``adocweave-lsp``を導入してください。
-
-拡張は次の順序でLanguage Serverを探します。
-
-. エディターで有効な設定に明示した絶対path
-. エディターprocessから見える``PATH``上の``adocweave-lsp``
-. GitHub Releaseからの自動取得
-
-どちらの拡張も、最初の2つで見つからない場合はGitHub Releaseから最新のLanguage Serverを取得します。
-ただし完全性の確かめ方が異なります。VS Code拡張は同じReleaseの``sha256.sum``と照合してから展開します。
-Zed拡張は照合しません。Zedの拡張APIに検証手段がないためです。詳細は
-<<vscode-language-server-selection>>と<<zed-language-server-selection>>で説明します。
-
-いずれの拡張でも、導入済みの実行ファイルが見つかればそちらが優先されます。エディターをGUIから起動すると、
-shellの起動ファイルで設定した``PATH``が反映されない場合があります。その場合はエディターを起動する環境へ
-``PATH``を設定するか、導入した実行ファイルの絶対pathを利用者設定へ記載します。
-
-VS Codeでは設定をmachine scopeに限定し、未信頼ワークスペースに対して拡張自体を起動しません。Zedでは本体の
-Worktree Trustに従います。未信頼worktreeではZedがproject設定を適用せず、Language Serverを起動しません。
-信頼したworktreeではproject設定の絶対pathも候補になります。拡張にはZedの信頼判定を迂回する処理を設けません。
-
-拡張はLSPの初期化時にLanguage Serverが返す標準capabilityから、診断、補完および定義への移動などの
-利用可能な機能を判断します。拡張とLanguage Serverの製品バージョンや``lspApiVersion``の一致は要求しません。
-標準capabilityがない機能はeditorのLSP clientが有効にしません。初期化できない場合だけ起動失敗として理由を表示します。
-
-[#zed-installation]
-== Zedへの導入
-
-Zed Extension Galleryへ公開しないため、展開済み``$HOME/.local/share/adocweave/<version>/zed``をdev extensionとして
-導入します。Extension Galleryの``Install Dev Extension``またはコマンドパレットの``zed: install dev extension``から、この
-ディレクトリを選びます。ソースリポジトリの取得は不要です。
-
-[#zed-language-server-selection]
-=== ZedのLanguage Server選択
-
-Zed拡張は``lsp.adocweave.binary.path``の絶対path、Zed processから見える``PATH``、自動取得の順で
-Language Serverを探します。導入済みの実行ファイルがあれば、そちらが常に優先されます。
-
-どちらにも見つからない場合、拡張はGitHub Releaseから最新のLanguage Serverを取得します。この経路には
-checksumとattestationの検証がありません。Zedの拡張APIに検証手段がないためです。検証したうえで導入する場合は、
-このページのほかの手順、Nixまたはpackage registryで導入し、``lsp.adocweave.binary.path``または``PATH``で
-その実行ファイルを指定してください。指定した実行ファイルは自動取得より先に選ばれるため、取得は行われません。
-
-自動取得した実行ファイルは、Zedが拡張へ割り当てるworking ディレクトリの``adocweave-lsp-<version>``へ置きます。
-拡張は取得した版だけを残し、以前の版のディレクトリを削除します。GitHubへ到達できない場合は、取得済みの版が
-あればそれで起動します。取得したLanguage Serverの更新とrollbackを利用者が制御する必要がある場合は、
-``lsp.adocweave.binary.path``または``PATH``で版を指定してください。
-
-``binary.arguments``と``binary.env``は使用せず、引数なしで起動し、環境変数はZedがworktreeへ提供する
-shell環境を使用します。
-
-更新時は新しいバージョンのZed ディレクトリを別に展開し、dev extensionをそのディレクトリへ再設定します。旧ディレクトリは、新しいバージョンの
-拡張と、別に更新したLanguage Serverでeditor機能を確認するまで保持します。
-
-[#vscode-installation]
-== VS Codeへの導入
-
-Open VSX Registryを利用できる環境では、editorの拡張画面から``adocweave.adocweave-vscode``を導入できます。
-公式の発行者はnamespace``adocweave``です。同じ名前のほかのnamespaceが現れた場合は、
-https://open-vsx.org/extension/adocweave/adocweave-vscode[公式の拡張ページ]で発行者を確認してください。
-Open VSXへ公開するfileは、同じReleaseへ添付したVSIXと同一です。
-
-[source,console]
-----
-codium --install-extension adocweave.adocweave-vscode
-----
-
-Visual Studio Code本体では、Visual Studio Marketplaceの拡張画面から同じ識別子で導入できます。
-公式の発行者はpublisher``adocweave``です。Marketplaceへ公開するfileも、同じReleaseへ添付した
-VSIXと同一です。
-
-[source,console]
-----
-code --install-extension adocweave.adocweave-vscode
-----
-
-registryを利用しない場合は、同じReleaseの``adocweave-vscode-<version>.vsix``を検証して
-手動で導入します。特定のバージョンへ固定する場合もこの方法を使います。
-
-[source,console]
-----
-code --install-extension "adocweave-vscode-$VERSION.vsix" --force
-----
-
-VS CodeのExtensions viewにAdocWeaveと対象バージョンが表示されることを確認します。更新時は新しいバージョンの
-VSIXを同じcommandで導入し、Windowを再読込します。rollbackでは以前のVS Code拡張製品のReleaseから
-検証済みVSIXを取得し、同じ方法で導入します。拡張とLanguage Serverの製品バージョンを一致させる必要はありません。
-
-[#vscode-language-server-selection]
-=== VS CodeのLanguage Server選択
-
-VS Code拡張はmachine scopeの``adocweave.server.path``に指定した絶対path、``PATH``、自動取得の順で
-Language Serverを探します。導入済みの実行ファイルがあれば、そちらが常に優先されます。
-
-どちらにも見つからない場合、拡張はGitHub Releaseから最新のLanguage Serverを取得します。取得したarchiveは、
-同じReleaseの``sha256.sum``に記載された値と照合してから展開します。一致しない場合は展開せず、理由を示して
-起動を中止します。attestationの検証は行いません。sigstoreの検証を拡張へ組み込む必要があるためです。
-
-自動取得した実行ファイルは、拡張のglobal storageにある``servers``内の
-``adocweave-lsp-<version>-<target>``形式のディレクトリへ置きます。同じ版を取得済みの場合は再取得せず、
-新しい版を取得したときは以前の版を削除します。配布していないplatformでは自動取得へ進まず、対応するOSと
-architectureを示して失敗します。対応はlinuxのx86-64とARM64、macOSのARM64、Windowsのx86-64です。
-
-未信頼ワークスペースでは拡張を起動しません。したがって自動取得も行いません。Language Serverの再起動には
-``AdocWeave: Restart Language Server``を使用します（拡張のコマンド名は英語です）。
-
-[#legacy-editor-managed-cache-removal]
-=== 旧拡張が残したLanguage Serverキャッシュの削除
-
-managed downloadに対応していた旧版の拡張は、更新後に使用されないLanguage Serverをeditorの保存領域へ残す場合があります。
-VS Code拡張を更新する前なら、旧版で``adocweave.server.download``を``false``にしてから
-``AdocWeave: Remove Managed Language Server``を実行します。自動取得を無効にしてから削除することで、
-Language Serverの再起動時に同じキャッシュが再作成されることを防ぎます。
-
-すでに更新した場合はeditorを終了し、VS Codeでは拡張のglobal storageにある
-``adocweave.adocweave-vscode/servers``、ZedではAdocWeave拡張のworking ディレクトリにある
-``adocweave-lsp-<version>-<target>``形式のディレクトリを手動で削除します。VS Codeでは削除前に``servers``内の
-``.adocweave-vscode-managed-cache`` marker、Zedでは対象ディレクトリ内の``verified.json``を確認してください。
-markerと同じ親ディレクトリだけを削除し、editorのglobal storageまたは拡張用working ディレクトリ全体は削除しません。
-このキャッシュを削除しても、利用者が別途``PATH``または任意のディレクトリへ導入したLanguage Serverは削除されません。
-
-== 削除
-
-Zedでは最初にExtension GalleryからAdocWeave dev extensionを削除し、Zedを終了します。VS CodeではExtensions viewまたは
-次のcommandで拡張を削除してVS Codeを終了します。旧拡張のmanaged cacheが残っている場合は、前節の手順で削除します。
-
-[source,console]
-----
-code --uninstall-extension adocweave.adocweave-vscode
-----
-
-続いて、導入したバージョンを指定してAdocWeave管理対象だけを削除します。
-
-[source,console]
-----
-VERSION=X.Y.Z
-PREFIX="$HOME/.local"
-rm "$PREFIX/bin/adocweave" "$PREFIX/bin/adocweave-lsp"
-rm "$PREFIX/lib/adocweave/current"
-rm -rf "$PREFIX/lib/adocweave/$VERSION"
-rm -rf "$PREFIX/share/adocweave/$VERSION"
-rmdir --ignore-fail-on-non-empty "$PREFIX/lib/adocweave" "$PREFIX/share/adocweave"
-----
-
-`$PREFIX/bin`、Zed user data全体または共有親ディレクトリを再帰削除してはいけません。別のバージョンを保持する場合は``current``を
-先にそのバージョンへ切り替え、該当するバージョンだけを削除します。通常profileに残るZedの一般キャッシュはZedが所有するため、場所を
-推測して削除せず、ZedのUIから拡張を削除します。完全に隔離したprofileで試験した場合だけprofile ディレクトリ全体を削除します。
