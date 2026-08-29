@@ -72,6 +72,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "adocweave-project"
+version = "0.51.0"
+dependencies = [
+ "adocweave",
+ "adocweave-config",
+ "adocweave-host",
+]
+
+[[package]]
 name = "adocweave-textlint"
 version = "0.51.0"
 dependencies = [

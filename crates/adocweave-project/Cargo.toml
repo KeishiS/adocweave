@@ -1,0 +1,18 @@
+[package]
+name = "adocweave-project"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+publish.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Owned request and result contracts for one AdocWeave project run"
+
+[dependencies]
+adocweave = { path = "../adocweave" }
+adocweave-config = { path = "../adocweave-config" }
+adocweave-host = { path = "../adocweave-host" }
+
+[lib]
+path = "src/lib.rs"
