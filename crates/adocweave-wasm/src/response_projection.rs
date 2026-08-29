@@ -1,3 +1,5 @@
+use std::io;
+
 use adocweave::SourceId;
 
 use crate::response_conversion::{wasm_diagnostics, wasm_document_symbols, wasm_text_range};
@@ -82,9 +84,9 @@ pub(crate) fn enforce_output_limit(
     response: &AnalyzeResult,
     max_output_bytes: usize,
 ) -> Result<(), AdocWeaveError> {
-    let output_bytes = serde_json::to_vec(&response)
-        .map_err(serialization_error)?
-        .len();
+    let mut counter = ByteCounter::default();
+    serde_json::to_writer(&mut counter, response).map_err(serialization_error)?;
+    let output_bytes = counter.written;
     if output_bytes > max_output_bytes {
         return Err(AdocWeaveError {
             code: "output-limit-exceeded".to_owned(),
@@ -94,6 +96,25 @@ pub(crate) fn enforce_output_limit(
         });
     }
     Ok(())
+}
+
+#[derive(Default)]
+struct ByteCounter {
+    written: usize,
+}
+
+impl io::Write for ByteCounter {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        self.written = self
+            .written
+            .checked_add(buffer.len())
+            .ok_or_else(|| io::Error::other("serialized response length overflow"))?;
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 fn wasm_document_attribute_occurrence(
@@ -344,5 +365,19 @@ mod tests {
                 .code,
             "output-limit-exceeded"
         );
+    }
+
+    #[test]
+    fn output_limit_counts_the_exact_serialized_size_without_a_buffer() {
+        let response = AnalyzeResult {
+            html: Some("日本語 text".to_owned()),
+            ..AnalyzeResult::default()
+        };
+        let exact = serde_json::to_vec(&response)
+            .expect("serialized response")
+            .len();
+        enforce_output_limit(&response, exact).expect("exact limit");
+        let error = enforce_output_limit(&response, exact - 1).expect_err("one byte below limit");
+        assert!(error.message.contains(&format!("actual {exact}")));
     }
 }
