@@ -711,6 +711,195 @@ fn failed_rebuild_retries_after_watch_and_analyzes_latest_open_inputs_once() {
 }
 
 #[test]
+fn failed_structural_install_stays_pending_until_recovery_installs_latest_open_inputs() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-structural-retry-{unique}"));
+    fs::create_dir_all(&root).expect("workspace");
+    let config_path = root.join(adocweave_config::FILE_NAME);
+    let changed_path = root.join("changed.adoc");
+    let closed_path = root.join("closed.adoc");
+    let opened_path = root.join("opened.adoc");
+    fs::write(&config_path, "schema-version = 2\n").expect("configuration");
+    fs::write(&changed_path, "= Changed disk\n").expect("changed document");
+    fs::write(&closed_path, "= Closed disk\n").expect("closed document");
+    fs::write(&opened_path, "= Opened disk\n").expect("opened document");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
+    let config_uri = lsp::Url::from_file_path(&config_path).expect("configuration URI");
+    let changed_uri = lsp::Url::from_file_path(&changed_path).expect("changed URI");
+    let closed_uri = lsp::Url::from_file_path(&closed_path).expect("closed URI");
+    let opened_uri = lsp::Url::from_file_path(&opened_path).expect("opened URI");
+    let mut session = Session::default();
+    initialize_with_params(
+        &mut session,
+        typed(json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "capabilities": {}
+        })),
+    );
+    open(&mut session, changed_uri.as_str(), 1, "= Changed open 1\n");
+    open(&mut session, closed_uri.as_str(), 1, "= Closed overlay\n");
+
+    fs::remove_file(&config_path).expect("remove configuration");
+    fs::create_dir(&config_path).expect("unreadable configuration entry");
+    let replacement = session.handle_workspace_files_changed(typed(json!({
+        "changes": [{"uri": config_uri, "type": 2}]
+    })));
+    let (failed_sequence, _) = replacement
+        .rebuild
+        .expect("structural replacement")
+        .into_parts();
+    let failed_scan = session.plan_workspace_scan(&adocweave::NeverCancel);
+
+    assert!(
+        session
+            .begin_change(typed(json!({
+                "textDocument": {"uri": changed_uri, "version": 2},
+                "contentChanges": [{"text": "= Changed open 2\n"}]
+            })))
+            .expect("change during rebuild")
+            .is_empty()
+    );
+    assert!(
+        session
+            .begin_open(typed(json!({
+                "textDocument": {
+                    "uri": opened_uri,
+                    "languageId": "asciidoc",
+                    "version": 1,
+                    "text": "= Opened 1\n"
+                }
+            })))
+            .is_empty()
+    );
+    let (closed, close_jobs) = session.close(&closed_uri);
+    assert!(closed);
+    assert!(close_jobs.is_empty());
+    let watched_before_failure = session.handle_workspace_files_changed(typed(json!({
+        "changes": [{
+            "uri": lsp::Url::from_file_path(root.join("before.txt")).expect("watch URI"),
+            "type": 2
+        }]
+    })));
+    assert!(watched_before_failure.jobs.is_empty());
+
+    let failed = session
+        .complete_workspace_scan(crate::workspace_scan::WorkspaceScanned::new(
+            failed_sequence,
+            Ok(failed_scan),
+        ))
+        .expect("failed structural install");
+    assert!(failed.jobs.is_empty());
+    assert!(session.workspace_rebuild_is_pending());
+    let crate::workspace_scan::WorkspaceRecoveryTimerUpdate::Arm(_) = failed.recovery_timer else {
+        panic!("failed structural install must arm recovery");
+    };
+    assert!(session.documents.snapshot(changed_uri.as_str()).is_none());
+    assert!(session.documents.snapshot(opened_uri.as_str()).is_none());
+    assert_eq!(
+        session
+            .workspace_resource(&changed_uri)
+            .expect("preserved coherent overlay")
+            .as_ref(),
+        "= Changed open 1\n"
+    );
+    assert_eq!(
+        session
+            .workspace_resource(&closed_uri)
+            .expect("not-yet-replaced closed overlay")
+            .as_ref(),
+        "= Closed overlay\n"
+    );
+
+    assert!(
+        session
+            .begin_change(typed(json!({
+                "textDocument": {"uri": changed_uri, "version": 3},
+                "contentChanges": [{"text": "= Changed latest\n"}]
+            })))
+            .expect("change after failed install")
+            .is_empty()
+    );
+    assert!(
+        session
+            .begin_change(typed(json!({
+                "textDocument": {"uri": opened_uri, "version": 2},
+                "contentChanges": [{"text": "= Opened latest\n"}]
+            })))
+            .expect("opened change after failed install")
+            .is_empty()
+    );
+    let watched_after_failure = session.handle_workspace_files_changed(typed(json!({
+        "changes": [{
+            "uri": lsp::Url::from_file_path(root.join("after.txt")).expect("watch URI"),
+            "type": 2
+        }]
+    })));
+    assert!(watched_after_failure.jobs.is_empty());
+    let recovery_generation = watched_after_failure
+        .recovery_generation
+        .expect("recovery generation");
+
+    fs::remove_dir(&config_path).expect("remove unreadable configuration entry");
+    fs::write(&config_path, "schema-version = 2\n").expect("restored configuration");
+    let retry = session
+        .request_workspace_scan_recovery(crate::workspace_scan::WorkspaceScanRecovery::new(
+            recovery_generation,
+        ))
+        .expect("recovery scan");
+    let (retry_sequence, _) = retry.into_parts();
+    let recovered_scan = session.plan_workspace_scan(&adocweave::NeverCancel);
+    let recovered = session
+        .complete_workspace_scan(crate::workspace_scan::WorkspaceScanned::new(
+            retry_sequence,
+            Ok(recovered_scan),
+        ))
+        .expect("successful recovery");
+
+    assert!(!session.workspace_rebuild_is_pending());
+    assert_eq!(recovered.jobs.len(), 2);
+    assert_eq!(
+        recovered
+            .jobs
+            .iter()
+            .filter(|job| job.uri == changed_uri.as_str())
+            .count(),
+        1
+    );
+    assert_eq!(
+        recovered
+            .jobs
+            .iter()
+            .filter(|job| job.uri == opened_uri.as_str())
+            .count(),
+        1
+    );
+    assert!(recovered.jobs.iter().any(|job| {
+        job.uri == changed_uri.as_str() && job.request.source.as_ref() == "= Changed latest\n"
+    }));
+    assert!(recovered.jobs.iter().any(|job| {
+        job.uri == opened_uri.as_str() && job.request.source.as_ref() == "= Opened latest\n"
+    }));
+    assert!(
+        recovered
+            .jobs
+            .iter()
+            .all(|job| job.uri != closed_uri.as_str())
+    );
+    assert_eq!(
+        session
+            .workspace_resource(&closed_uri)
+            .expect("closed disk resource")
+            .as_ref(),
+        "= Closed disk\n"
+    );
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
 #[should_panic(expected = "Language Server workspace input epoch exhausted")]
 fn workspace_input_epoch_is_never_reused_after_exhaustion() {
     let mut session = Session::default();

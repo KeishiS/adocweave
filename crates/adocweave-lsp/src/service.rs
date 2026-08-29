@@ -273,6 +273,7 @@ pub(crate) struct WorkspaceFileEventOutcome {
 pub(crate) struct WorkspaceScanApplication {
     pub(crate) jobs: Vec<AnalysisJob>,
     pub(crate) installed: bool,
+    pub(crate) structural_rebuild_pending: bool,
     pub(crate) notices: Vec<WorkspaceScanNotice>,
 }
 
@@ -1091,18 +1092,24 @@ impl Session {
     /// The documents open at this moment are overlaid onto the read, not the
     /// ones open when it started, so a document opened during the walk is kept.
     pub(crate) fn apply_workspace_scan(&mut self, scan: WorkspaceScan) -> WorkspaceScanApplication {
+        let structural_rebuild = self.workspace_input_status == WorkspaceInputStatus::Rebuilding;
         let open_sources = self.documents.open_sources();
         let parsed_open_sources = parse_open_sources(&open_sources);
         let outcome = self
             .workspace
             .apply_loaded_roots(scan.loaded, &parsed_open_sources);
         let installed = outcome.is_ok();
-        if installed {
-            self.documents.synchronize_all_workspace_inputs();
-        }
-        self.workspace_input_status = WorkspaceInputStatus::Ready;
-        self.advance_input_revision();
-        let jobs = self.finish_reload(outcome, open_sources);
+        let structural_rebuild_pending = structural_rebuild && !installed;
+        let jobs = if structural_rebuild_pending {
+            self.workspace_scan_failed(outcome.expect_err("failed structural workspace install"))
+        } else {
+            if installed {
+                self.documents.synchronize_all_workspace_inputs();
+            }
+            self.workspace_input_status = WorkspaceInputStatus::Ready;
+            self.advance_input_revision();
+            self.finish_reload(outcome, open_sources)
+        };
         let notices = if installed {
             let current = self.workspace.scan_notices().clone();
             let newly_active = current
@@ -1117,6 +1124,7 @@ impl Session {
         WorkspaceScanApplication {
             jobs,
             installed,
+            structural_rebuild_pending,
             notices,
         }
     }
@@ -1231,6 +1239,11 @@ impl Session {
         self.workspace.resource_count()
     }
 
+    #[cfg(test)]
+    pub(crate) fn workspace_rebuild_is_pending(&self) -> bool {
+        self.workspace_input_status == WorkspaceInputStatus::Rebuilding
+    }
+
     pub fn watched_files_registration(&self) -> Option<lsp::RegistrationParams> {
         self.client
             .watched_files_dynamic_registration
@@ -1241,9 +1254,8 @@ impl Session {
                     register_options: Some(
                         serde_json::to_value(lsp::DidChangeWatchedFilesRegistrationOptions {
                             watchers: vec![lsp::FileSystemWatcher {
-                                // Includes may use any extension. The handler
-                                // reads only known dependencies or new `.adoc`
-                                // roots, so unrelated notifications stay I/O-free.
+                                // Include targets may use any extension; the
+                                // handler filters unrelated paths before I/O.
                                 glob_pattern: lsp::GlobPattern::String("**/*".to_owned()),
                                 kind: Some(
                                     lsp::WatchKind::Create
