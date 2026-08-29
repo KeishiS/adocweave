@@ -118,7 +118,7 @@ Release作成後は、公開先ごとの再利用workflowを最小権限で直�
 公開jobへ設定したGitHub environmentだけから取得し、呼出し元のjobへ渡しません。外部actionは完全なcommit SHAへ
 固定します。
 
-Open VSX Registryへの公開workflowだけが専用tokenを使用します。Visual Studio MarketplaceはTrusted Publisherと
+Open VSX Registryへの公開workflowの``publish`` jobだけが専用tokenを使用します。Visual Studio MarketplaceはTrusted Publisherと
 ``vsce publish --oidc``を使用し、長期tokenを持ちません。MarketplaceのTrusted Publisherにはrepository、
 呼出し元workflow file``release.yml``および``marketplace-publish`` environmentを登録します。OIDCのworkflow identityは
 再利用workflowの``marketplace-publish.yml``ではなく``release.yml``です。両workflowともGitHub Releaseから取得した
@@ -150,11 +150,14 @@ xref:adr/0023-publication-boundary.adoc#publication-authority[ADR 0023]を参照
 == 公開と失敗時保証
 
 公開前検査に成功した``main``のcommitへ``vX.Y.Z``タグを作成すると、cargo-distのRelease workflowが起動します。
-workflowはplanを生成し、native成果物と追加成果物を構築して検査した後、一つのGitHub Releaseへ公開します。
+共通のrelease contractは、checkout時に``origin/main``を含む履歴を取得し、tag、commitおよびworkspace版の対応と、
+tagのcommitが``main``に含まれることを``host``より前に一度だけ検査します。workflowはplanを生成し、native成果物と
+追加成果物を構築して検査した後、一つのGitHub Releaseへ公開します。
 異なるworkflow runや手元の成果物を途中で混在させません。Release作成に成功すると、Release workflow内の4つのjobが
 公開先ごとの``workflow_call``専用workflowを直接かつ並列に呼び出します。呼出し先へはplanで確定したtagと
 Releaseを作成した完全なcommit SHAだけを渡します。各公開jobはstableなRelease、tagのcommit、checkoutしたcommit、
-workspace版、checksumおよびattestationを照合します。
+workspace版、checksumおよびattestationを照合します。``main``との関係は共通のrelease contractを正本とし、公開先ごとの
+workflowでは重ねて検査しません。
 
 外部公開jobはRelease workflowの一部であり、いずれかが失敗するとRelease workflow全体も失敗します。外部サービスへの
 送信だけが失敗した場合は、GitHub Actionsの標準操作``Re-run failed jobs``を使用します。成功済みのRelease作成jobと

@@ -16,6 +16,36 @@ const pin = "actions/checkout@0000000000000000000000000000000000000000";
 const publicationTag = "${{ inputs.tag }}";
 const publicationCommit = "${{ inputs.commit }}";
 
+function releaseContractWorkflow() {
+  return {
+    on: { workflow_call: {} },
+    permissions: { contents: "read" },
+    jobs: {
+      verify: {
+        steps: [
+          {
+            uses: pin,
+            with: { "fetch-depth": 0, "persist-credentials": false },
+          },
+          { run: "nix develop .#ci -c cargo make release-contract" },
+          {
+            if: "${{ github.event_name == 'push' }}",
+            env: {
+              RELEASE_COMMIT: "${{ github.sha }}",
+              RELEASE_TAG: "${{ github.ref_name }}",
+            },
+            run: `
+tag_commit="$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")"
+test "$tag_commit" = "$RELEASE_COMMIT"
+git merge-base --is-ancestor "$tag_commit" refs/remotes/origin/main
+`,
+          },
+        ],
+      },
+    },
+  };
+}
+
 function releasePublicationJob(workflow, oidc = false) {
   return {
     needs: ["plan", "host"],
@@ -40,17 +70,19 @@ function releaseWorkflow() {
         outputs: { publishing: "${{ !github.event.pull_request }}" },
         steps: [{ uses: pin }],
       },
-      "build-local-artifacts": { needs: ["plan"], steps: [] },
+      "custom-release-contract": { uses: "./.github/workflows/release-contract.yml" },
+      "build-local-artifacts": { needs: ["plan", "custom-release-contract"], steps: [] },
       "build-global-artifacts": { needs: ["plan", "build-local-artifacts"], steps: [] },
       "custom-native-artifact-smoke": { needs: ["plan", "build-local-artifacts"], steps: [] },
       host: {
         needs: [
           "plan",
+          "custom-release-contract",
           "build-local-artifacts",
           "build-global-artifacts",
           "custom-native-artifact-smoke",
         ],
-        if: "${{ always() && needs.plan.result == 'success' && needs.build-local-artifacts.result == 'success' && needs.build-global-artifacts.result == 'success' && needs.custom-native-artifact-smoke.result == 'success' && needs.plan.outputs.publishing == 'true' }}",
+        if: "${{ always() && needs.plan.result == 'success' && needs.custom-release-contract.result == 'success' && needs.build-local-artifacts.result == 'success' && needs.build-global-artifacts.result == 'success' && needs.custom-native-artifact-smoke.result == 'success' && needs.plan.outputs.publishing == 'true' }}",
         environment: "github-release",
         permissions: { attestations: "write", contents: "write", "id-token": "write" },
         steps: [
@@ -222,9 +254,19 @@ function marketplacePublicationWorkflow() {
   return workflow;
 }
 
+function openVsxPublicationWorkflow() {
+  const workflow = publicationWorkflow("open-vsx-publish");
+  workflow.jobs.publish.steps.push({
+    env: { OPEN_VSX_TOKEN: "${{ secrets.OPEN_VSX_TOKEN }}" },
+    run: "curl --url-query token=$OPEN_VSX_TOKEN https://open-vsx.org/api/-/publish",
+  });
+  return workflow;
+}
+
 function workflows() {
   return {
     "release.yml": releaseWorkflow(),
+    "release-contract.yml": releaseContractWorkflow(),
     "ci.yml": ciWorkflow(),
     "native-artifact-smoke.yml": {
       on: { workflow_call: {} },
@@ -234,7 +276,14 @@ function workflows() {
     "binary-cache-publish.yml": binaryCachePublicationWorkflow(),
     "marketplace-publish.yml": marketplacePublicationWorkflow(),
     "npm-publish.yml": npmPublicationWorkflow(),
-    "open-vsx-publish.yml": publicationWorkflow("open-vsx-publish"),
+    "open-vsx-publish.yml": openVsxPublicationWorkflow(),
+  };
+}
+
+function releaseFlowWorkflows(release) {
+  return {
+    "release.yml": release,
+    "release-contract.yml": releaseContractWorkflow(),
   };
 }
 
@@ -271,12 +320,39 @@ test("workflowと公開jobの権限を必要最小限に限定する", () => {
 
 test("ReleaseはPRでplanだけを作り、tagの成功済み成果物だけをhostする", () => {
   const release = releaseWorkflow();
-  validateReleaseFlow({ "release.yml": release }, 'pr-run-mode = "plan"');
+  validateReleaseFlow(releaseFlowWorkflows(release), 'pr-run-mode = "plan"');
 
   release.on.push = { branches: ["main"] };
   assert.throws(
-    () => validateReleaseFlow({ "release.yml": release }, 'pr-run-mode = "plan"'),
+    () => validateReleaseFlow(releaseFlowWorkflows(release), 'pr-run-mode = "plan"'),
     /tag.*only/,
+  );
+});
+
+test("共通contractはstable tagがmainに含まれることをhost前に一度だけ検査する", () => {
+  const fixtures = releaseFlowWorkflows(releaseWorkflow());
+  validateReleaseFlow(fixtures, 'pr-run-mode = "plan"');
+
+  fixtures["release-contract.yml"].jobs.verify.steps[0].with["fetch-depth"] = 1;
+  assert.throws(
+    () => validateReleaseFlow(fixtures, 'pr-run-mode = "plan"'),
+    /fetch complete history/u,
+  );
+
+  const late = releaseFlowWorkflows(releaseWorkflow());
+  late["release-contract.yml"].jobs.verify.steps.reverse();
+  assert.throws(
+    () => validateReleaseFlow(late, 'pr-run-mode = "plan"'),
+    /main ancestry once after tag and version checks/u,
+  );
+
+  const bypassed = releaseFlowWorkflows(releaseWorkflow());
+  bypassed["release.yml"].jobs.host.needs = bypassed["release.yml"].jobs.host.needs.filter(
+    (job) => job !== "custom-release-contract",
+  );
+  assert.throws(
+    () => validateReleaseFlow(bypassed, 'pr-run-mode = "plan"'),
+    /host must wait for.*common contract/u,
   );
 });
 
@@ -287,7 +363,7 @@ test("hostはplan、local、global、native smokeの成功をすべて要求す�
     "needs.build-global-artifacts.result == 'skipped'",
   );
   assert.throws(
-    () => validateReleaseFlow({ "release.yml": release }, 'pr-run-mode = "plan"'),
+    () => validateReleaseFlow(releaseFlowWorkflows(release), 'pr-run-mode = "plan"'),
     /build-global-artifacts success/,
   );
 });
@@ -296,7 +372,7 @@ test("hostの書込み権限とOIDCをgithub-release environmentへ隔離する"
   const release = releaseWorkflow();
   delete release.jobs.host.environment;
   assert.throws(
-    () => validateReleaseFlow({ "release.yml": release }, 'pr-run-mode = "plan"'),
+    () => validateReleaseFlow(releaseFlowWorkflows(release), 'pr-run-mode = "plan"'),
     /github-release environment/u,
   );
 });
@@ -305,18 +381,18 @@ test("hostは公開する全成果物をattestation対象にする", () => {
   const release = releaseWorkflow();
   release.jobs.host.steps[0].with["subject-path"] = "artifacts/*.zip";
   assert.throws(
-    () => validateReleaseFlow({ "release.yml": release }, 'pr-run-mode = "plan"'),
+    () => validateReleaseFlow(releaseFlowWorkflows(release), 'pr-run-mode = "plan"'),
     /attest every published artifact/,
   );
 });
 
 test("Release成功後は4つの公開workflowを直接呼び出して成否を集約する", () => {
   const release = releaseWorkflow();
-  validateReleaseFlow({ "release.yml": release }, 'pr-run-mode = "plan"');
+  validateReleaseFlow(releaseFlowWorkflows(release), 'pr-run-mode = "plan"');
 
   release.jobs["publish-npm"].uses = "./.github/workflows/open-vsx-publish.yml";
   assert.throws(
-    () => validateReleaseFlow({ "release.yml": release }, 'pr-run-mode = "plan"'),
+    () => validateReleaseFlow(releaseFlowWorkflows(release), 'pr-run-mode = "plan"'),
     /publish-npm must call npm-publish\.yml/u,
   );
 
@@ -325,7 +401,7 @@ test("Release成功後は4つの公開workflowを直接呼び出して成否を�
     (job) => job !== "publish-marketplace",
   );
   assert.throws(
-    () => validateReleaseFlow({ "release.yml": incomplete }, 'pr-run-mode = "plan"'),
+    () => validateReleaseFlow(releaseFlowWorkflows(incomplete), 'pr-run-mode = "plan"'),
     /announce must wait for every external publication/u,
   );
 
@@ -335,7 +411,7 @@ test("Release成功後は4つの公開workflowを直接呼び出して成否を�
     "(needs.publish-open-vsx.result == 'success' || needs.publish-open-vsx.result == 'skipped')",
   );
   assert.throws(
-    () => validateReleaseFlow({ "release.yml": skipped }, 'pr-run-mode = "plan"'),
+    () => validateReleaseFlow(releaseFlowWorkflows(skipped), 'pr-run-mode = "plan"'),
     /must not report success after a skipped publication/u,
   );
 });
@@ -370,6 +446,15 @@ test("外部公開workflowはReleaseからの再利用呼出しだけを受け�
     /binary-cache-publish.*isolated publication jobs/u,
   );
 
+  const duplicateAncestry = workflows();
+  duplicateAncestry["npm-publish.yml"].jobs.publish.steps.push({
+    run: "git merge-base --is-ancestor HEAD refs/remotes/origin/main",
+  });
+  assert.throws(
+    () => validateExternalPublicationIsolation(duplicateAncestry),
+    /npm-publish.*leave main ancestry verification.*common release contract/u,
+  );
+
   const extraSender = workflows();
   extraSender["open-vsx-publish.yml"].jobs.publish.steps.push({
     run: 'gh api "repos/$GITHUB_REPOSITORY/dispatches"',
@@ -377,6 +462,20 @@ test("外部公開workflowはReleaseからの再利用呼出しだけを受け�
   assert.throws(
     () => validateExternalPublicationIsolation(extraSender),
     /must not use dispatch events/u,
+  );
+});
+
+test("Open VSXのtokenを専用workflowの公開job以外へ渡さない", () => {
+  const fixtures = workflows();
+  validateExternalPublicationIsolation(fixtures);
+
+  fixtures["binary-cache-publish.yml"].jobs.verify.steps.push({
+    env: { TOKEN: "${{ secrets.OPEN_VSX_TOKEN }}" },
+    run: "true",
+  });
+  assert.throws(
+    () => validateExternalPublicationIsolation(fixtures),
+    /OPEN_VSX_TOKEN.*only by open-vsx-publish\.yml publish/u,
   );
 });
 

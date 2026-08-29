@@ -13,9 +13,19 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
       - uses: DeterminateSystems/determinate-nix-action@527f17dd63d2d60d3e5552934bc84b9a33a14d11 # v3.22.2
       - name: Unified version, tag, and cargo-dist plan
         env:
           RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
         run: nix develop .#ci -c cargo make release-contract
+      - name: Stable tag commit belongs to main
+        if: ${{ github.event_name == 'push' }}
+        env:
+          RELEASE_COMMIT: ${{ github.sha }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          tag_commit="$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")"
+          test "$tag_commit" = "$RELEASE_COMMIT"
+          git merge-base --is-ancestor "$tag_commit" refs/remotes/origin/main

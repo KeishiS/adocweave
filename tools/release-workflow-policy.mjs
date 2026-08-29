@@ -175,15 +175,68 @@ export function validateReleaseFlow(workflows, distConfiguration) {
     fail("release plan must distinguish tag publication from pull-request planning");
   }
 
+  const contractCalls = Object.entries(jobs).filter(([, job]) =>
+    job.uses === "./.github/workflows/release-contract.yml"
+  );
+  if (contractCalls.length !== 1) {
+    fail("release must call the common release contract exactly once");
+  }
+  const [contractJobName, contractCall] = contractCalls[0];
+  if (needs(contractCall).length !== 0 || contractCall.if !== undefined ||
+      contractCall.strategy !== undefined) {
+    fail("common release contract must be one unconditional root job");
+  }
+  const contract = workflows["release-contract.yml"];
+  const contractJobs = Object.entries(contract?.jobs ?? {});
+  if (contract?.on?.workflow_call === undefined || contractJobs.length !== 1) {
+    fail("release-contract.yml must expose one common workflow_call job");
+  }
+  const [, contractVerification] = contractJobs[0];
+  const contractSteps = contractVerification.steps ?? [];
+  const contractCheckout = contractSteps.find((step) =>
+    typeof step.uses === "string" && step.uses.startsWith("actions/checkout@")
+  );
+  if (contractCheckout?.with?.["fetch-depth"] !== 0 ||
+      contractCheckout?.with?.["persist-credentials"] !== false) {
+    fail("common release contract must fetch complete history without checkout credentials");
+  }
+  const releaseContractIndex = contractSteps.findIndex((step) =>
+    String(step.run ?? "").includes("cargo make release-contract")
+  );
+  const ancestrySteps = contractSteps
+    .map((step, index) => ({ index, step }))
+    .filter(({ step }) => String(step.run ?? "").includes("git merge-base --is-ancestor"));
+  if (releaseContractIndex < 0 || ancestrySteps.length !== 1 ||
+      ancestrySteps[0].index <= releaseContractIndex) {
+    fail("common release contract must verify main ancestry once after tag and version checks");
+  }
+  const ancestry = ancestrySteps[0].step;
+  const ancestrySource = String(ancestry.run ?? "");
+  for (const required of [
+    'git rev-parse "refs/tags/$RELEASE_TAG^{commit}"',
+    'test "$tag_commit" = "$RELEASE_COMMIT"',
+    'git merge-base --is-ancestor "$tag_commit" refs/remotes/origin/main',
+  ]) {
+    if (!ancestrySource.includes(required)) {
+      fail(`common release contract must bind the stable tag to origin/main: ${required}`);
+    }
+  }
+  if (!condition(ancestry).includes("github.event_name == 'push'") ||
+      ancestry.env?.RELEASE_COMMIT !== "${{ github.sha }}" ||
+      ancestry.env?.RELEASE_TAG !== "${{ github.ref_name }}") {
+    fail("common release contract main ancestry check must use the triggering tag commit");
+  }
+
   const host = jobs.host;
   const required = [
     "plan",
+    contractJobName,
     "build-local-artifacts",
     "build-global-artifacts",
     "custom-native-artifact-smoke",
   ];
   if (!host || !required.every((jobName) => needs(host).includes(jobName))) {
-    fail("release host must wait for plan, local, global, and native smoke jobs");
+    fail("release host must wait for plan, common contract, local, global, and native smoke jobs");
   }
   if (host.environment !== "github-release") {
     fail("release host write access and OIDC must stay in the github-release environment");
@@ -318,6 +371,9 @@ export function validateExternalPublicationIsolation(workflows) {
       fail(`${name} publication credentials must stay in the ${expectedEnvironment} environment`);
     }
     const publicationSource = jobRuns(publication);
+    if (/merge-base\s+--is-ancestor|refs\/remotes\/origin\/main/u.test(publicationSource)) {
+      fail(`${name} must leave main ancestry verification in the common release contract`);
+    }
     for (const required of [
       'releases/tags/$RELEASE_TAG',
       ".draft",
@@ -337,6 +393,25 @@ export function validateExternalPublicationIsolation(workflows) {
     JSON.stringify(workflows),
   )) {
     fail("external publication must not use dispatch events or custom event delivery");
+  }
+
+  const openVsxTokenUsers = [];
+  for (const [workflowName, workflow] of Object.entries(workflows)) {
+    const workflowScope = { ...workflow };
+    delete workflowScope.jobs;
+    if (JSON.stringify(workflowScope).includes("OPEN_VSX_TOKEN")) {
+      openVsxTokenUsers.push(`${workflowName}:workflow`);
+    }
+    for (const [jobName, job] of Object.entries(workflow.jobs ?? {})) {
+      if (JSON.stringify(job).includes("OPEN_VSX_TOKEN")) {
+        openVsxTokenUsers.push(`${workflowName}:${jobName}`);
+      }
+    }
+  }
+  if (canonical(openVsxTokenUsers) !== canonical(["open-vsx-publish.yml:publish"]) ||
+      !JSON.stringify(workflows["open-vsx-publish.yml"]?.jobs?.publish)
+        .includes("${{ secrets.OPEN_VSX_TOKEN }}")) {
+    fail("OPEN_VSX_TOKEN must be used only by open-vsx-publish.yml publish");
   }
 
   const marketplace = workflows["marketplace-publish.yml"]?.jobs?.publish;

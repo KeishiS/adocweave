@@ -232,11 +232,12 @@ jobs:
   host:
     needs:
       - plan
+      - custom-release-contract
       - build-local-artifacts
       - build-global-artifacts
       - custom-native-artifact-smoke
     # Publish only after every build and smoke-test prerequisite succeeds.
-    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.publishing == 'true' && needs.build-global-artifacts.result == 'success' && needs.custom-native-artifact-smoke.result == 'success' && needs.build-local-artifacts.result == 'success' }}
+    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.publishing == 'true' && needs.custom-release-contract.result == 'success' && needs.build-global-artifacts.result == 'success' && needs.custom-native-artifact-smoke.result == 'success' && needs.build-local-artifacts.result == 'success' }}
     environment: github-release
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
