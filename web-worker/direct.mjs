@@ -1,10 +1,10 @@
-// ビルド時にNodeで解析と変換を行うための入口。Web Workerを使わず同じprocessで実行する。
+// ビルド時にNode.jsで解析と変換を行うための入口。Web Workerを使わず同じプロセスで実行する。
 // 取消しとWASM trapの分離は提供しない。単一の処理を順に実行する用途に限る。
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { analysisPayload, parseWasmError } from "./analysis.mjs";
-import { AdocWeaveClientError } from "./client.mjs";
+import { AdocWeaveError } from "./client.mjs";
 import { PROTOCOL_SCHEMA_VERSION } from "./worker-protocol.mjs";
 
 export function defaultDirectAssetUrls(baseUrl = import.meta.url) {
@@ -29,24 +29,24 @@ export async function createDirectAnalyzer(assets = defaultDirectAssetUrls()) {
     // byte列を自分で渡して同期的に初期化する。
     wasm.initSync({ module: readWasm(new URL(wasmUrl)) });
   } catch (cause) {
-    throw new AdocWeaveClientError({
+    throw new AdocWeaveError({
       code: "worker-failed",
       message: `AdocWeave WASM could not be initialized: ${cause?.message ?? cause}`,
     });
   }
   if (wasm.protocolSchemaVersion?.() !== PROTOCOL_SCHEMA_VERSION) {
-    throw new AdocWeaveClientError({
+    throw new AdocWeaveError({
       code: "unsupported-worker-protocol",
       message: `expected WASM protocol schema ${PROTOCOL_SCHEMA_VERSION}`,
     });
   }
-  if (typeof wasm.process !== "function") {
-    throw new AdocWeaveClientError({
+  if (typeof wasm.analyze !== "function") {
+    throw new AdocWeaveError({
       code: "worker-failed",
-      message: "AdocWeave WASM process export is missing",
+      message: "AdocWeave WASM analyze export is missing",
     });
   }
-  return { analyze: (request) => runAnalysis(wasm.process, request) };
+  return { analyze: (request) => runAnalysis(wasm.analyze, request) };
 }
 
 let shared = null;
@@ -57,13 +57,13 @@ export async function analyze(request) {
   return analyzer.analyze(request);
 }
 
-function runAnalysis(process, request) {
+function runAnalysis(analyze, request) {
   try {
-    return process(analysisPayload(request));
+    return analyze(analysisPayload(request));
   } catch (cause) {
     const wasmError = parseWasmError(cause);
-    if (wasmError !== null) throw new AdocWeaveClientError(wasmError);
-    throw new AdocWeaveClientError({
+    if (wasmError !== null) throw new AdocWeaveError(wasmError);
+    throw new AdocWeaveError({
       code: "wasm-trapped",
       message: `AdocWeave WASM trapped: ${cause?.message ?? cause}`,
     });

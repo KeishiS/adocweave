@@ -1,40 +1,46 @@
 //! Direct conversion from core output types to the public WASM wire contract.
 
-use adocweave::output::diagnostics::{Applicability, Diagnostic, Severity, sort_diagnostics};
+use adocweave::output::diagnostics::{
+    Applicability as CoreApplicability, Diagnostic as CoreDiagnostic, Severity as CoreSeverity,
+    sort_diagnostics,
+};
 use adocweave::output::projection::{
-    self, BlockPresentationKind, FormulaKind, ProjectedText, SearchTextKind,
+    self, BlockPresentationKind as CoreBlockPresentationKind, FormulaKind as CoreFormulaKind,
+    ProjectedText, SearchTextKind as CoreSearchTextKind,
 };
 use adocweave::resolution::{
-    ReferenceKey, ResolutionFailureKind, ResolutionNoticeKind, ResolutionOutcome,
+    ReferenceKey as CoreReferenceKey, ResolutionFailureKind, ResolutionNoticeKind,
+    ResolutionOutcome,
 };
 use adocweave::semantic::{
-    DocumentSymbol, MathLanguage, OrderedListStyle, ReferenceTargetKind, SectionKind, SymbolKind,
-    TocEntry,
+    DocumentSymbol as CoreDocumentSymbol, MathLanguage as CoreMathLanguage,
+    OrderedListStyle as CoreOrderedListStyle, ReferenceTargetKind as CoreReferenceTargetKind,
+    SectionKind as CoreSectionKind, SymbolKind as CoreSymbolKind, TocEntry as CoreTocEntry,
 };
 
 use crate::response_wire::*;
-use crate::{WasmMathLanguage, WasmSeverity};
+use crate::{MathLanguage, Severity};
 
-pub(crate) fn wasm_diagnostics(diagnostics: &[Diagnostic]) -> Vec<WasmDiagnostic> {
+pub(crate) fn wasm_diagnostics(diagnostics: &[CoreDiagnostic]) -> Vec<Diagnostic> {
     let mut diagnostics = diagnostics.to_vec();
     sort_diagnostics(&mut diagnostics);
     diagnostics
         .into_iter()
-        .map(|diagnostic| WasmDiagnostic {
+        .map(|diagnostic| Diagnostic {
             id: diagnostic.id.as_str().to_owned(),
             code: diagnostic.code.as_str().to_owned(),
             severity: match diagnostic.severity {
-                Severity::Error => WasmSeverity::Error,
-                Severity::Warning => WasmSeverity::Warning,
-                Severity::Information => WasmSeverity::Information,
-                Severity::Hint => WasmSeverity::Hint,
+                CoreSeverity::Error => Severity::Error,
+                CoreSeverity::Warning => Severity::Warning,
+                CoreSeverity::Information => Severity::Information,
+                CoreSeverity::Hint => Severity::Hint,
             },
             message: diagnostic.message,
             range: wasm_text_range(diagnostic.range),
             related: diagnostic
                 .related
                 .into_iter()
-                .map(|related| WasmRelatedInformation {
+                .map(|related| RelatedInformation {
                     range: wasm_text_range(related.range),
                     message: related.message,
                 })
@@ -46,16 +52,16 @@ pub(crate) fn wasm_diagnostics(diagnostics: &[Diagnostic]) -> Vec<WasmDiagnostic
                     let edits = fix
                         .edits()
                         .iter()
-                        .map(|edit| WasmTextEdit {
+                        .map(|edit| TextEdit {
                             range: wasm_text_range(edit.range),
                             replacement: edit.replacement.clone(),
                         })
                         .collect();
-                    WasmFix {
+                    Fix {
                         title: fix.title,
                         applicability: match fix.applicability {
-                            Applicability::Always => WasmApplicability::Always,
-                            Applicability::Maybe => WasmApplicability::Maybe,
+                            CoreApplicability::Always => Applicability::Always,
+                            CoreApplicability::Maybe => Applicability::Maybe,
                         },
                         edits,
                     }
@@ -65,18 +71,18 @@ pub(crate) fn wasm_diagnostics(diagnostics: &[Diagnostic]) -> Vec<WasmDiagnostic
         .collect()
 }
 
-pub(crate) fn wasm_document_symbols(symbols: Vec<DocumentSymbol>) -> Vec<WasmDocumentSymbol> {
+pub(crate) fn wasm_document_symbols(symbols: Vec<CoreDocumentSymbol>) -> Vec<DocumentSymbol> {
     symbols.into_iter().map(wasm_document_symbol).collect()
 }
 
-fn wasm_document_symbol(symbol: DocumentSymbol) -> WasmDocumentSymbol {
-    WasmDocumentSymbol {
+fn wasm_document_symbol(symbol: CoreDocumentSymbol) -> DocumentSymbol {
+    DocumentSymbol {
         name: symbol.name,
         kind: match symbol.kind {
-            SymbolKind::DocumentTitle => WasmSymbolKind::DocumentTitle,
-            SymbolKind::Part => WasmSymbolKind::Part,
-            SymbolKind::Section => WasmSymbolKind::Section,
-            SymbolKind::ListItem => WasmSymbolKind::ListItem,
+            CoreSymbolKind::DocumentTitle => SymbolKind::DocumentTitle,
+            CoreSymbolKind::Part => SymbolKind::Part,
+            CoreSymbolKind::Section => SymbolKind::Section,
+            CoreSymbolKind::ListItem => SymbolKind::ListItem,
         },
         range: wasm_text_range(symbol.range),
         selection_range: wasm_text_range(symbol.selection_range),
@@ -91,7 +97,7 @@ fn wasm_document_symbol(symbol: DocumentSymbol) -> WasmDocumentSymbol {
 pub(crate) fn wasm_document_projection(
     analysis: &adocweave::Analysis,
     inputs: &adocweave::resolution::RenderInputs,
-) -> WasmDocumentProjection {
+) -> DocumentView {
     let headings = analysis
         .structure()
         .headings()
@@ -101,7 +107,7 @@ pub(crate) fn wasm_document_projection(
                 .presentation()
                 .heading_at(heading.range)
                 .expect("every projected heading has presentation facts");
-            WasmStructuredHeading {
+            StructuredHeading {
                 kind: section_kind(heading.kind),
                 level: u32::from(heading.level),
                 id: heading.id.clone(),
@@ -120,7 +126,7 @@ pub(crate) fn wasm_document_projection(
         .iter()
         .map(wasm_toc_entry)
         .collect();
-    let manpage = analysis.structure().manpage().map(|manpage| WasmManpage {
+    let manpage = analysis.structure().manpage().map(|manpage| Manpage {
         name: manpage.name.clone(),
         section: manpage.section.clone(),
         purpose: manpage.purpose.clone(),
@@ -132,7 +138,7 @@ pub(crate) fn wasm_document_projection(
         .catalogs()
         .footnotes()
         .iter()
-        .map(|footnote| WasmFootnote {
+        .map(|footnote| Footnote {
             number: footnote.number,
             id: footnote.id.clone(),
             definition_range: wasm_text_range(footnote.definition_range),
@@ -149,7 +155,7 @@ pub(crate) fn wasm_document_projection(
         .catalogs()
         .bibliography()
         .iter()
-        .map(|entry| WasmBibliographyEntry {
+        .map(|entry| BibliographyEntry {
             id: entry.id.clone(),
             label: entry.label.clone(),
             definition_range: wasm_text_range(entry.definition_range),
@@ -164,7 +170,7 @@ pub(crate) fn wasm_document_projection(
         .catalogs()
         .index()
         .iter()
-        .map(|entry| WasmIndexEntry {
+        .map(|entry| IndexEntry {
             terms: entry.terms.clone(),
             display: entry.display.clone(),
             occurrences: entry
@@ -176,13 +182,13 @@ pub(crate) fn wasm_document_projection(
         })
         .collect();
 
-    WasmDocumentProjection {
+    DocumentView {
         source_id: analysis
             .source_id()
             .map(|source_id| source_id.as_str().to_owned()),
         source_blocks: projection::source_blocks(analysis)
             .into_iter()
-            .map(|source| WasmSourceBlockProjection {
+            .map(|source| SourceBlock {
                 source_range: wasm_text_range(source.source_range),
                 content_range: wasm_text_range(source.content_range),
                 title: source.title.map(wasm_projected_text),
@@ -196,10 +202,10 @@ pub(crate) fn wasm_document_projection(
             .collect(),
         formulas: projection::formulas(analysis)
             .into_iter()
-            .map(|formula| WasmFormulaProjection {
+            .map(|formula| Formula {
                 kind: match formula.kind {
-                    FormulaKind::Inline => WasmFormulaKind::Inline,
-                    FormulaKind::Block => WasmFormulaKind::Block,
+                    CoreFormulaKind::Inline => FormulaKind::Inline,
+                    CoreFormulaKind::Block => FormulaKind::Block,
                 },
                 language: math_language(formula.language),
                 source_range: wasm_text_range(formula.source_range),
@@ -210,13 +216,13 @@ pub(crate) fn wasm_document_projection(
         citations: analysis
             .citations()
             .into_iter()
-            .map(|citation| WasmCitationProjection {
+            .map(|citation| Citation {
                 order: citation.order,
                 source_range: wasm_text_range(citation.range),
                 keys: citation
                     .keys
                     .into_iter()
-                    .map(|key| WasmCitationKeyProjection {
+                    .map(|key| CitationKey {
                         source_range: wasm_text_range(key.range),
                         key: key.value,
                     })
@@ -224,7 +230,7 @@ pub(crate) fn wasm_document_projection(
                 attributes: citation
                     .attributes
                     .into_iter()
-                    .map(|attribute| WasmCitationAttributeProjection {
+                    .map(|attribute| CitationAttribute {
                         source_range: wasm_text_range(attribute.range),
                         name: attribute.name,
                         value: attribute.value,
@@ -234,7 +240,7 @@ pub(crate) fn wasm_document_projection(
             .collect(),
         block_presentations: projection::block_presentations(analysis)
             .into_iter()
-            .map(|block| WasmBlockPresentationProjection {
+            .map(|block| BlockPresentation {
                 kind: block_presentation_kind(block.kind),
                 source_range: wasm_text_range(block.source_range),
                 content_range: wasm_text_range(block.content_range),
@@ -248,7 +254,7 @@ pub(crate) fn wasm_document_projection(
             .collect(),
         ordered_lists: projection::ordered_lists(analysis)
             .into_iter()
-            .map(|list| WasmOrderedListProjection {
+            .map(|list| OrderedList {
                 source_range: wasm_text_range(list.source_range),
                 start: list.start,
                 reversed: list.reversed,
@@ -257,7 +263,7 @@ pub(crate) fn wasm_document_projection(
             .collect(),
         reference_edges: projection::reference_edges(analysis, inputs)
             .into_iter()
-            .map(|edge| WasmReferenceEdge {
+            .map(|edge| ReferenceEdge {
                 source_id: edge
                     .source_id
                     .map(|source_id| source_id.as_str().to_owned()),
@@ -268,7 +274,7 @@ pub(crate) fn wasm_document_projection(
             .collect(),
         external_links: projection::external_links(analysis)
             .into_iter()
-            .map(|link| WasmExternalLink {
+            .map(|link| ExternalLink {
                 source_range: wasm_text_range(link.source_range),
                 target_range: wasm_text_range(link.target_range),
                 target: link.target,
@@ -277,15 +283,15 @@ pub(crate) fn wasm_document_projection(
             .collect(),
         searchable_text: {
             let searchable = projection::searchable_text(analysis);
-            WasmSearchableText {
+            SearchableText {
                 text: searchable.text,
                 segments: searchable
                     .segments
                     .into_iter()
-                    .map(|segment| WasmSearchTextSegment {
+                    .map(|segment| SearchTextSegment {
                         kind: match segment.kind {
-                            SearchTextKind::Prose => WasmSearchTextKind::Prose,
-                            SearchTextKind::Code => WasmSearchTextKind::Code,
+                            CoreSearchTextKind::Prose => SearchTextKind::Prose,
+                            CoreSearchTextKind::Code => SearchTextKind::Code,
                         },
                         source_range: wasm_text_range(segment.source_range),
                         text: segment.text,
@@ -293,12 +299,12 @@ pub(crate) fn wasm_document_projection(
                     .collect(),
             }
         },
-        structure: WasmDocumentStructure {
+        structure: DocumentStructure {
             headings,
             toc,
             manpage,
         },
-        catalogs: WasmDocumentCatalogs {
+        catalogs: DocumentCatalogs {
             footnotes,
             bibliography,
             index,
@@ -306,7 +312,7 @@ pub(crate) fn wasm_document_projection(
         targets: analysis
             .reference_targets()
             .iter()
-            .map(|target| WasmReferenceTarget {
+            .map(|target| ReferenceTarget {
                 kind: reference_target_kind(target.kind),
                 id: target.id.clone(),
                 label: target.label.clone(),
@@ -318,15 +324,15 @@ pub(crate) fn wasm_document_projection(
     }
 }
 
-fn wasm_projected_text(text: ProjectedText) -> WasmProjectedText {
-    WasmProjectedText {
+fn wasm_projected_text(text: ProjectedText) -> DocumentText {
+    DocumentText {
         source_range: wasm_text_range(text.source_range),
         text: text.text,
     }
 }
 
-fn wasm_toc_entry(entry: &TocEntry) -> WasmTocEntry {
-    WasmTocEntry {
+fn wasm_toc_entry(entry: &CoreTocEntry) -> TocEntry {
+    TocEntry {
         id: entry.id.clone(),
         title: entry.title.clone(),
         level: u32::from(entry.level),
@@ -336,70 +342,70 @@ fn wasm_toc_entry(entry: &TocEntry) -> WasmTocEntry {
     }
 }
 
-const fn math_language(language: MathLanguage) -> WasmMathLanguage {
+const fn math_language(language: CoreMathLanguage) -> MathLanguage {
     match language {
-        MathLanguage::Latex => WasmMathLanguage::Latex,
-        MathLanguage::Typst => WasmMathLanguage::Typst,
+        CoreMathLanguage::Latex => MathLanguage::Latex,
+        CoreMathLanguage::Typst => MathLanguage::Typst,
     }
 }
 
-const fn section_kind(kind: SectionKind) -> WasmSectionKind {
+const fn section_kind(kind: CoreSectionKind) -> SectionKind {
     match kind {
-        SectionKind::DocumentTitle => WasmSectionKind::DocumentTitle,
-        SectionKind::Part => WasmSectionKind::Part,
-        SectionKind::Section => WasmSectionKind::Section,
-        SectionKind::Appendix => WasmSectionKind::Appendix,
-        SectionKind::Discrete => WasmSectionKind::Discrete,
+        CoreSectionKind::DocumentTitle => SectionKind::DocumentTitle,
+        CoreSectionKind::Part => SectionKind::Part,
+        CoreSectionKind::Section => SectionKind::Section,
+        CoreSectionKind::Appendix => SectionKind::Appendix,
+        CoreSectionKind::Discrete => SectionKind::Discrete,
     }
 }
 
-const fn reference_target_kind(kind: ReferenceTargetKind) -> WasmReferenceTargetKind {
+const fn reference_target_kind(kind: CoreReferenceTargetKind) -> ReferenceTargetKind {
     match kind {
-        ReferenceTargetKind::DocumentTitle => WasmReferenceTargetKind::DocumentTitle,
-        ReferenceTargetKind::Part => WasmReferenceTargetKind::Part,
-        ReferenceTargetKind::Section => WasmReferenceTargetKind::Section,
-        ReferenceTargetKind::ExplicitAnchor => WasmReferenceTargetKind::ExplicitAnchor,
-        ReferenceTargetKind::InlineAnchor => WasmReferenceTargetKind::InlineAnchor,
+        CoreReferenceTargetKind::DocumentTitle => ReferenceTargetKind::DocumentTitle,
+        CoreReferenceTargetKind::Part => ReferenceTargetKind::Part,
+        CoreReferenceTargetKind::Section => ReferenceTargetKind::Section,
+        CoreReferenceTargetKind::ExplicitAnchor => ReferenceTargetKind::ExplicitAnchor,
+        CoreReferenceTargetKind::InlineAnchor => ReferenceTargetKind::InlineAnchor,
     }
 }
 
-const fn block_presentation_kind(kind: BlockPresentationKind) -> WasmBlockPresentationKind {
+const fn block_presentation_kind(kind: CoreBlockPresentationKind) -> BlockPresentationKind {
     match kind {
-        BlockPresentationKind::Admonition => WasmBlockPresentationKind::Admonition,
-        BlockPresentationKind::Quote => WasmBlockPresentationKind::Quote,
-        BlockPresentationKind::Verse => WasmBlockPresentationKind::Verse,
-        BlockPresentationKind::Example => WasmBlockPresentationKind::Example,
-        BlockPresentationKind::Sidebar => WasmBlockPresentationKind::Sidebar,
-        BlockPresentationKind::Open => WasmBlockPresentationKind::Open,
-        BlockPresentationKind::Collapsible => WasmBlockPresentationKind::Collapsible,
-        BlockPresentationKind::Figure => WasmBlockPresentationKind::Figure,
-        BlockPresentationKind::Table => WasmBlockPresentationKind::Table,
+        CoreBlockPresentationKind::Admonition => BlockPresentationKind::Admonition,
+        CoreBlockPresentationKind::Quote => BlockPresentationKind::Quote,
+        CoreBlockPresentationKind::Verse => BlockPresentationKind::Verse,
+        CoreBlockPresentationKind::Example => BlockPresentationKind::Example,
+        CoreBlockPresentationKind::Sidebar => BlockPresentationKind::Sidebar,
+        CoreBlockPresentationKind::Open => BlockPresentationKind::Open,
+        CoreBlockPresentationKind::Collapsible => BlockPresentationKind::Collapsible,
+        CoreBlockPresentationKind::Figure => BlockPresentationKind::Figure,
+        CoreBlockPresentationKind::Table => BlockPresentationKind::Table,
     }
 }
 
-const fn ordered_list_style(style: OrderedListStyle) -> WasmOrderedListStyle {
+const fn ordered_list_style(style: CoreOrderedListStyle) -> OrderedListStyle {
     match style {
-        OrderedListStyle::Arabic => WasmOrderedListStyle::Arabic,
-        OrderedListStyle::Decimal => WasmOrderedListStyle::Decimal,
-        OrderedListStyle::LowerAlpha => WasmOrderedListStyle::Loweralpha,
-        OrderedListStyle::UpperAlpha => WasmOrderedListStyle::Upperalpha,
-        OrderedListStyle::LowerRoman => WasmOrderedListStyle::Lowerroman,
-        OrderedListStyle::UpperRoman => WasmOrderedListStyle::Upperroman,
-        OrderedListStyle::LowerGreek => WasmOrderedListStyle::Lowergreek,
+        CoreOrderedListStyle::Arabic => OrderedListStyle::Arabic,
+        CoreOrderedListStyle::Decimal => OrderedListStyle::Decimal,
+        CoreOrderedListStyle::LowerAlpha => OrderedListStyle::Loweralpha,
+        CoreOrderedListStyle::UpperAlpha => OrderedListStyle::Upperalpha,
+        CoreOrderedListStyle::LowerRoman => OrderedListStyle::Lowerroman,
+        CoreOrderedListStyle::UpperRoman => OrderedListStyle::Upperroman,
+        CoreOrderedListStyle::LowerGreek => OrderedListStyle::Lowergreek,
     }
 }
 
-fn reference_key(key: ReferenceKey) -> WasmReferenceKey {
+fn reference_key(key: CoreReferenceKey) -> ReferenceKey {
     match key {
-        ReferenceKey::Local { anchor } => WasmReferenceKey::Local { anchor },
-        ReferenceKey::Document { document, anchor } => {
-            WasmReferenceKey::Document { document, anchor }
+        CoreReferenceKey::Local { anchor } => ReferenceKey::Local { anchor },
+        CoreReferenceKey::Document { document, anchor } => {
+            ReferenceKey::Document { document, anchor }
         }
-        ReferenceKey::Scheme {
+        CoreReferenceKey::Scheme {
             scheme,
             locator,
             anchor,
-        } => WasmReferenceKey::Scheme {
+        } => ReferenceKey::Scheme {
             scheme,
             locator,
             anchor,
@@ -407,48 +413,48 @@ fn reference_key(key: ReferenceKey) -> WasmReferenceKey {
     }
 }
 
-fn resolution_outcome(outcome: ResolutionOutcome) -> WasmProjectedResolutionOutcome {
+fn resolution_outcome(outcome: ResolutionOutcome) -> DocumentResolutionOutcome {
     match outcome {
         ResolutionOutcome::Resolved {
             href,
             display_text,
             notices,
-        } => WasmProjectedResolutionOutcome::Resolved {
+        } => DocumentResolutionOutcome::Resolved {
             href,
             display_text,
             notices: notices
                 .into_iter()
                 .map(|notice| match notice.kind {
                     ResolutionNoticeKind::Fallback => {
-                        WasmProjectedReferenceNotice::ReferenceResolutionFallback
+                        DocumentReferenceNotice::ReferenceResolutionFallback
                     }
                 })
                 .collect(),
         },
-        ResolutionOutcome::Failed(failure) => WasmProjectedResolutionOutcome::Failed {
+        ResolutionOutcome::Failed(failure) => DocumentResolutionOutcome::Failed {
             kind: match failure.kind {
                 ResolutionFailureKind::MissingTarget => {
-                    WasmProjectedReferenceFailureKind::MissingReferenceTarget
+                    DocumentReferenceFailureKind::MissingReferenceTarget
                 }
                 ResolutionFailureKind::MissingAnchor => {
-                    WasmProjectedReferenceFailureKind::MissingReferenceAnchor
+                    DocumentReferenceFailureKind::MissingReferenceAnchor
                 }
                 ResolutionFailureKind::AmbiguousTarget => {
-                    WasmProjectedReferenceFailureKind::AmbiguousReferenceTarget
+                    DocumentReferenceFailureKind::AmbiguousReferenceTarget
                 }
                 ResolutionFailureKind::OutsideRoot => {
-                    WasmProjectedReferenceFailureKind::ReferenceOutsideRoot
+                    DocumentReferenceFailureKind::ReferenceOutsideRoot
                 }
                 ResolutionFailureKind::ResolverFailure => {
-                    WasmProjectedReferenceFailureKind::ReferenceResolverFailure
+                    DocumentReferenceFailureKind::ReferenceResolverFailure
                 }
             },
         },
     }
 }
 
-pub(crate) fn wasm_text_range(range: adocweave::text::TextRange) -> WasmTextRange {
-    WasmTextRange {
+pub(crate) fn wasm_text_range(range: adocweave::text::TextRange) -> TextRange {
+    TextRange {
         start: range.start().to_u32(),
         end: range.end().to_u32(),
     }
@@ -463,100 +469,100 @@ mod tests {
     #[test]
     fn every_core_projection_enum_has_the_intended_wire_variant() {
         for (core, wire) in [
-            (MathLanguage::Latex, WasmMathLanguage::Latex),
-            (MathLanguage::Typst, WasmMathLanguage::Typst),
+            (CoreMathLanguage::Latex, MathLanguage::Latex),
+            (CoreMathLanguage::Typst, MathLanguage::Typst),
         ] {
             assert_eq!(math_language(core), wire);
         }
         for (core, wire) in [
-            (SectionKind::DocumentTitle, WasmSectionKind::DocumentTitle),
-            (SectionKind::Part, WasmSectionKind::Part),
-            (SectionKind::Section, WasmSectionKind::Section),
-            (SectionKind::Appendix, WasmSectionKind::Appendix),
-            (SectionKind::Discrete, WasmSectionKind::Discrete),
+            (CoreSectionKind::DocumentTitle, SectionKind::DocumentTitle),
+            (CoreSectionKind::Part, SectionKind::Part),
+            (CoreSectionKind::Section, SectionKind::Section),
+            (CoreSectionKind::Appendix, SectionKind::Appendix),
+            (CoreSectionKind::Discrete, SectionKind::Discrete),
         ] {
             assert_eq!(section_kind(core), wire);
         }
         for (core, wire) in [
             (
+                CoreReferenceTargetKind::DocumentTitle,
                 ReferenceTargetKind::DocumentTitle,
-                WasmReferenceTargetKind::DocumentTitle,
             ),
-            (ReferenceTargetKind::Part, WasmReferenceTargetKind::Part),
+            (CoreReferenceTargetKind::Part, ReferenceTargetKind::Part),
             (
+                CoreReferenceTargetKind::Section,
                 ReferenceTargetKind::Section,
-                WasmReferenceTargetKind::Section,
             ),
             (
+                CoreReferenceTargetKind::ExplicitAnchor,
                 ReferenceTargetKind::ExplicitAnchor,
-                WasmReferenceTargetKind::ExplicitAnchor,
             ),
             (
+                CoreReferenceTargetKind::InlineAnchor,
                 ReferenceTargetKind::InlineAnchor,
-                WasmReferenceTargetKind::InlineAnchor,
             ),
         ] {
             assert_eq!(reference_target_kind(core), wire);
         }
         for (core, wire) in [
             (
+                CoreBlockPresentationKind::Admonition,
                 BlockPresentationKind::Admonition,
-                WasmBlockPresentationKind::Admonition,
             ),
             (
+                CoreBlockPresentationKind::Quote,
                 BlockPresentationKind::Quote,
-                WasmBlockPresentationKind::Quote,
             ),
             (
+                CoreBlockPresentationKind::Verse,
                 BlockPresentationKind::Verse,
-                WasmBlockPresentationKind::Verse,
             ),
             (
+                CoreBlockPresentationKind::Example,
                 BlockPresentationKind::Example,
-                WasmBlockPresentationKind::Example,
             ),
             (
+                CoreBlockPresentationKind::Sidebar,
                 BlockPresentationKind::Sidebar,
-                WasmBlockPresentationKind::Sidebar,
             ),
-            (BlockPresentationKind::Open, WasmBlockPresentationKind::Open),
+            (CoreBlockPresentationKind::Open, BlockPresentationKind::Open),
             (
+                CoreBlockPresentationKind::Collapsible,
                 BlockPresentationKind::Collapsible,
-                WasmBlockPresentationKind::Collapsible,
             ),
             (
+                CoreBlockPresentationKind::Figure,
                 BlockPresentationKind::Figure,
-                WasmBlockPresentationKind::Figure,
             ),
             (
+                CoreBlockPresentationKind::Table,
                 BlockPresentationKind::Table,
-                WasmBlockPresentationKind::Table,
             ),
         ] {
             assert_eq!(block_presentation_kind(core), wire);
         }
         for (core, wire) in [
-            (OrderedListStyle::Arabic, WasmOrderedListStyle::Arabic),
-            (OrderedListStyle::Decimal, WasmOrderedListStyle::Decimal),
+            (CoreOrderedListStyle::Arabic, OrderedListStyle::Arabic),
+            (CoreOrderedListStyle::Decimal, OrderedListStyle::Decimal),
             (
-                OrderedListStyle::LowerAlpha,
-                WasmOrderedListStyle::Loweralpha,
+                CoreOrderedListStyle::LowerAlpha,
+                OrderedListStyle::Loweralpha,
             ),
             (
-                OrderedListStyle::UpperAlpha,
-                WasmOrderedListStyle::Upperalpha,
+                CoreOrderedListStyle::UpperAlpha,
+                OrderedListStyle::Upperalpha,
             ),
             (
-                OrderedListStyle::LowerRoman,
-                WasmOrderedListStyle::Lowerroman,
+                CoreOrderedListStyle::LowerRoman,
+                OrderedListStyle::Lowerroman,
             ),
             (
-                OrderedListStyle::UpperRoman,
-                WasmOrderedListStyle::Upperroman,
+                CoreOrderedListStyle::UpperRoman,
+                OrderedListStyle::Upperroman,
             ),
             (
-                OrderedListStyle::LowerGreek,
-                WasmOrderedListStyle::Lowergreek,
+                CoreOrderedListStyle::LowerGreek,
+                OrderedListStyle::Lowergreek,
             ),
         ] {
             assert_eq!(ordered_list_style(core), wire);
@@ -568,28 +574,28 @@ mod tests {
         for (core, wire) in [
             (
                 ResolutionFailureKind::MissingTarget,
-                WasmProjectedReferenceFailureKind::MissingReferenceTarget,
+                DocumentReferenceFailureKind::MissingReferenceTarget,
             ),
             (
                 ResolutionFailureKind::MissingAnchor,
-                WasmProjectedReferenceFailureKind::MissingReferenceAnchor,
+                DocumentReferenceFailureKind::MissingReferenceAnchor,
             ),
             (
                 ResolutionFailureKind::AmbiguousTarget,
-                WasmProjectedReferenceFailureKind::AmbiguousReferenceTarget,
+                DocumentReferenceFailureKind::AmbiguousReferenceTarget,
             ),
             (
                 ResolutionFailureKind::OutsideRoot,
-                WasmProjectedReferenceFailureKind::ReferenceOutsideRoot,
+                DocumentReferenceFailureKind::ReferenceOutsideRoot,
             ),
             (
                 ResolutionFailureKind::ResolverFailure,
-                WasmProjectedReferenceFailureKind::ReferenceResolverFailure,
+                DocumentReferenceFailureKind::ReferenceResolverFailure,
             ),
         ] {
             assert_eq!(
                 resolution_outcome(ResolutionOutcome::Failed(ResolverFailure { kind: core })),
-                WasmProjectedResolutionOutcome::Failed { kind: wire },
+                DocumentResolutionOutcome::Failed { kind: wire },
             );
         }
 
@@ -601,10 +607,10 @@ mod tests {
                     kind: ResolutionNoticeKind::Fallback,
                 }],
             }),
-            WasmProjectedResolutionOutcome::Resolved {
+            DocumentResolutionOutcome::Resolved {
                 href: "#target".to_owned(),
                 display_text: Some("Target".to_owned()),
-                notices: vec![WasmProjectedReferenceNotice::ReferenceResolutionFallback],
+                notices: vec![DocumentReferenceNotice::ReferenceResolutionFallback],
             },
         );
     }

@@ -2,10 +2,11 @@ import { parseWasmError } from "./analysis.mjs";
 import {
   PROTOCOL_SCHEMA_VERSION,
   WORKER_PROTOCOL_VERSION,
+  isAdocWeaveErrorCode,
   validateWorkerMessage,
 } from "./worker-protocol.mjs";
 
-let process = null;
+let analyze = null;
 let state = "new";
 
 self.onmessage = async ({ data }) => {
@@ -41,11 +42,11 @@ self.onmessage = async ({ data }) => {
       if (wasm.protocolSchemaVersion?.() !== PROTOCOL_SCHEMA_VERSION) {
         throw new Error("incompatible AdocWeave WASM protocol schema");
       }
-      if (typeof wasm.process !== "function") {
-        throw new Error("AdocWeave WASM process export is missing");
+      if (typeof wasm.analyze !== "function") {
+        throw new Error("AdocWeave WASM analyze export is missing");
       }
       if (state !== "initializing") return;
-      process = wasm.process;
+      analyze = wasm.analyze;
       state = "ready";
       publish({
         protocolVersion: WORKER_PROTOCOL_VERSION,
@@ -58,7 +59,7 @@ self.onmessage = async ({ data }) => {
   }
 
   const { requestId } = data;
-  if (state !== "ready" || process === null) {
+  if (state !== "ready" || analyze === null) {
     fatal(requestId, {
       code: "worker-failed",
       message: "AdocWeave worker was not initialized",
@@ -67,7 +68,7 @@ self.onmessage = async ({ data }) => {
   }
 
   try {
-    const result = process(data.payload);
+    const result = analyze(data.payload);
     publish({
       type: "result",
       requestId,
@@ -124,7 +125,7 @@ function publish(message) {
 function normalizeFatal(cause) {
   if (
     typeof cause === "object" && cause !== null && !(cause instanceof Error) &&
-    typeof cause.code === "string" && typeof cause.message === "string"
+    isAdocWeaveErrorCode(cause.code) && typeof cause.message === "string"
   ) {
     return { code: cause.code, message: cause.message };
   }

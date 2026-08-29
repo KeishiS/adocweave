@@ -1,14 +1,31 @@
 // Workerの封筒では、解析要求を内部requestId一つだけで識別します。
 // payloadとresultのschemaはWebAssembly境界で検査します。
 
-export const PROTOCOL_SCHEMA_VERSION = 15;
+export const PROTOCOL_SCHEMA_VERSION = 16;
 export const WORKER_PROTOCOL_VERSION = 3;
 
 const string = (value) => typeof value === "string";
 const u32 = (value) => Number.isInteger(value) && value >= 0 && value <= 4294967295;
+const any = () => true;
 const object = (value) =>
   typeof value === "object" && value !== null && !Array.isArray(value);
-const error = (value) => object(value) && string(value.code) && string(value.message);
+export const PROCESSING_ERROR_CODES = new Set([
+  "invalid-request",
+  "input-limit-exceeded",
+  "output-limit-exceeded",
+  "analysis-failed",
+  "cancelled",
+]);
+const ERROR_CODES = new Set([
+  ...PROCESSING_ERROR_CODES,
+  "analysis-in-progress",
+  "disposed",
+  "unsupported-worker-protocol",
+  "wasm-trapped",
+  "worker-failed",
+]);
+export const isAdocWeaveErrorCode = (value) => ERROR_CODES.has(value);
+const error = (value) => object(value) && ERROR_CODES.has(value.code) && string(value.message);
 
 const ENVELOPES = {
   requests: {
@@ -19,7 +36,7 @@ const ENVELOPES = {
     },
     analyze: {
       requestId: u32,
-      payload: object,
+      payload: any,
     },
   },
   responses: {

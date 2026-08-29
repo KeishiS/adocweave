@@ -1,6 +1,9 @@
 = ADR 0020: hostが許可したblock roleだけのclass出力
 
-:status: accepted
+:status: accepted; WebAssembly public request path amended by ADR 0042
+
+WebAssembly APIの設定pathはxref:0042-wasm-public-contract.adoc[ADR 0042]で改訂しました。許可したroleだけを
+classへ出力する本ADRの判断は維持します。
 
 == 文脈
 
@@ -24,7 +27,7 @@ classになるかを文書ではなく利用側が決める必要があります
 roleが衝突しないようにし、stylesheet側が``[class^="role-"]``のように一族として扱えるようにするためです。
 
 この方針はsource blockの言語class（``SourceLanguagePolicy``で許可した言語だけ``language-*``を出す）と同じ形です。
-CLIでは``html.roles``、WASM APIでは``renderPolicy.roles``が同じ一覧を渡します。構造情報には
+CLIでは``html.roles``、WASM APIでは``products.html.roles``が同じ一覧を渡します。構造情報には
 policyと無関係に文書に書かれたroleをそのまま載せ、HTMLを介さずに利用側が判断できるようにします。
 
 == 帰結

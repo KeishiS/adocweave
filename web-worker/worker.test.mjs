@@ -8,19 +8,19 @@ import {
   validateWorkerMessage,
 } from "./worker-protocol.mjs";
 
-function moduleUrl(processBody, { initBody = "", schemaVersion = PROTOCOL_SCHEMA_VERSION } = {}) {
+function moduleUrl(analyzeBody, { initBody = "", schemaVersion = PROTOCOL_SCHEMA_VERSION } = {}) {
   const source = `
     export default async function init() { ${initBody} }
     export function protocolSchemaVersion() { return ${schemaVersion}; }
-    export function process(request) { ${processBody} }
+    export function analyze(request) { ${analyzeBody} }
   `;
   return `data:text/javascript,${encodeURIComponent(source)}`;
 }
 
 async function harness(
-  processBody,
+  analyzeBody,
   moduleOptions,
-  wasmModuleUrl = moduleUrl(processBody, moduleOptions),
+  wasmModuleUrl = moduleUrl(analyzeBody, moduleOptions),
   protocolVersion = WORKER_PROTOCOL_VERSION,
 ) {
   const previousSelf = globalThis.self;
@@ -42,7 +42,7 @@ async function harness(
   return {
     messages,
     get closes() { return closes; },
-    async analyze(requestId, payload = { source: "text" }) {
+    async analyze(requestId, payload = { source: { text: "text" }, products: { html: true } }) {
       await globalThis.self.onmessage({
         data: {
           type: "analyze",
@@ -89,6 +89,11 @@ test("worker envelope has one requestId and exact fields", () => {
       assert.equal(validateWorkerMessage(missing, direction), false, `${contract}.${field}`);
     }
   }
+  assert.equal(validateWorkerMessage({
+    type: "error",
+    requestId: 1,
+    error: { code: "unknown", message: "invalid code" },
+  }, "responses"), false);
 });
 
 test("an incompatible Worker protocol rejects initialization explicitly", async () => {
@@ -126,13 +131,13 @@ test("WASM initialization and schema failures publish an error and close the wor
 });
 
 test("worker initializes WASM and returns its result unchanged", async () => {
-  const state = await harness("return { html: request.source };");
+  const state = await harness("return { html: request.source.text };");
   try {
     assert.deepEqual(state.messages, [{
       protocolVersion: WORKER_PROTOCOL_VERSION,
       type: "ready",
     }]);
-    await state.analyze(7, { source: "result" });
+    await state.analyze(7, { source: { text: "result" }, products: { html: true } });
     assert.deepEqual(state.messages[1], {
       type: "result",
       requestId: 7,
@@ -164,22 +169,44 @@ test("an invalid analysis envelope fails the active request and closes", async (
 
 test("ordinary structured WASM errors do not close the worker", async () => {
   const state = await harness(`
-    if (request.source === "bad") {
-      throw JSON.stringify({ code: "invalid-request", message: "bad input" });
+    if (request.source.text === "bad") {
+      throw { code: "invalid-request", message: "bad input" };
     }
-    return { html: request.source };
+    return { html: request.source.text };
   `);
   try {
-    await state.analyze(1, { source: "bad" });
+    await state.analyze(1, { source: { text: "bad" }, products: { html: true } });
     assert.deepEqual(state.messages[1], {
       type: "error",
       requestId: 1,
       error: { code: "invalid-request", message: "bad input" },
     });
     assert.equal(state.closes, 0);
-    await state.analyze(2, { source: "good" });
+    await state.analyze(2, { source: { text: "good" }, products: { html: true } });
     assert.equal(state.messages[2].type, "result");
     assert.equal(state.messages[2].requestId, 2);
+  } finally { state.restore(); }
+});
+
+test("null and primitive requests return invalid-request without closing", async () => {
+  const state = await harness(`
+    if (request === null || typeof request !== "object") {
+      throw { code: "invalid-request", message: "invalid request" };
+    }
+    return { html: request.source.text };
+  `);
+  try {
+    for (const [index, payload] of [null, 1, "text"].entries()) {
+      await state.analyze(index + 1, payload);
+      assert.deepEqual(state.messages[index + 1], {
+        type: "error",
+        requestId: index + 1,
+        error: { code: "invalid-request", message: "invalid request" },
+      });
+      assert.equal(state.closes, 0);
+    }
+    await state.analyze(4);
+    assert.equal(state.messages[4].type, "result");
   } finally { state.restore(); }
 });
 

@@ -1,303 +1,388 @@
 use std::collections::BTreeMap;
 
+use serde::Deserialize;
+
+use crate::object_deserialize::serde_object;
 use crate::{
-    WasmAnalysisPreprocessInput, WasmDocumentMode, WasmMathLanguage, WasmProductSet,
-    WasmRenderInputs, WasmSeverity, WasmSyntaxMode, WasmUnknownRole, WasmUnknownSourceLanguage,
-    WasmUnresolvedReferencePresentation,
+    DocumentMode, GeneratedBibliography, MathLanguage, ResolvedCitation, ResolvedReference,
+    ResolvedResource, SafeMode, Severity, SyntaxMode, UnknownRole, UnknownSourceLanguage,
+    UnresolvedReferencePresentation,
 };
 
-#[cfg_attr(
-    feature = "ts-rs",
-    derive(ts_rs::TS),
-    ts(export, export_to = "protocol.d.mts")
-)]
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmActiveUrlPolicy {
-    pub allowed_schemes: Vec<String>,
-    pub allow_authored_relative: bool,
-    pub allow_resolved_relative: bool,
-    pub allow_resolved_root_relative: bool,
-    pub allow_data_uris: bool,
+#[cfg(not(target_arch = "wasm32"))]
+fn present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
 }
 
-impl Default for WasmActiveUrlPolicy {
-    fn default() -> Self {
-        Self {
-            allowed_schemes: vec!["http".to_owned(), "https".to_owned()],
-            allow_authored_relative: false,
-            allow_resolved_relative: false,
-            allow_resolved_root_relative: false,
-            allow_data_uris: false,
-        }
+#[cfg(target_arch = "wasm32")]
+fn present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Present<T> {
+        Value(T),
+        Undefined(()),
+    }
+
+    Ok(match Present::deserialize(deserializer)? {
+        Present::Value(value) => Some(value),
+        Present::Undefined(()) => None,
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn requested<'de, D>(deserializer: D) -> Result<Option<()>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match bool::deserialize(deserializer)? {
+        true => Ok(Some(())),
+        false => Err(serde::de::Error::custom("product value must be true")),
     }
 }
 
-#[cfg_attr(
-    feature = "ts-rs",
-    derive(ts_rs::TS),
-    ts(export, export_to = "protocol.d.mts")
-)]
-#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmLimits {
-    pub max_input_bytes: u32,
-    pub max_line_bytes: u32,
-    pub max_list_depth: u32,
-    pub max_list_continuations: u32,
-    pub max_block_depth: u32,
-    pub max_inline_depth: u32,
-    pub max_formula_bytes: u32,
-    pub max_table_bytes: u32,
-    pub max_table_cells: u32,
-    pub max_table_columns: u32,
-    pub max_table_depth: u32,
-    pub max_catalog_entries: u32,
-    pub max_catalog_bytes: u32,
-    pub max_blocks: u32,
-    pub max_nodes: u32,
-    pub max_references: u32,
-    pub max_attributes: u32,
-    pub max_attribute_expansion_depth: u32,
-    pub max_attribute_expansion_bytes: u32,
-}
-
-impl Default for WasmLimits {
-    fn default() -> Self {
-        Self {
-            max_input_bytes: 10485760,
-            max_line_bytes: 1048576,
-            max_list_depth: 8,
-            max_list_continuations: 10000,
-            max_block_depth: 32,
-            max_inline_depth: 32,
-            max_formula_bytes: 1048576,
-            max_table_bytes: 5242880,
-            max_table_cells: 100000,
-            max_table_columns: 1000,
-            max_table_depth: 8,
-            max_catalog_entries: 100000,
-            max_catalog_bytes: 5242880,
-            max_blocks: 100000,
-            max_nodes: 1000000,
-            max_references: 100000,
-            max_attributes: 1000,
-            max_attribute_expansion_depth: 32,
-            max_attribute_expansion_bytes: 1048576,
-        }
+fn serialize_requested<S>(value: &Option<()>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    match value {
+        Some(()) => serializer.serialize_bool(true),
+        None => serializer.serialize_none(),
     }
 }
 
-#[cfg_attr(
-    feature = "ts-rs",
-    derive(ts_rs::TS),
-    ts(export, export_to = "protocol.d.mts")
-)]
-#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmAnalysisOptions {
-    pub syntax: WasmSyntaxOptions,
-    pub diagnostics: WasmDiagnosticProfile,
-    pub attributes: BTreeMap<String, Option<String>>,
-}
+#[cfg(target_arch = "wasm32")]
+fn requested<'de, D>(deserializer: D) -> Result<Option<()>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Selection {
+        Enabled(bool),
+        Undefined(()),
+    }
 
-#[cfg_attr(
-    feature = "ts-rs",
-    derive(ts_rs::TS),
-    ts(export, export_to = "protocol.d.mts")
-)]
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmAuthoredUrlPolicy {
-    pub allowed_schemes: Vec<String>,
-    pub allow_relative: bool,
-}
-
-impl Default for WasmAuthoredUrlPolicy {
-    fn default() -> Self {
-        Self {
-            allowed_schemes: vec!["http".to_owned(), "https".to_owned()],
-            allow_relative: true,
-        }
+    match Selection::deserialize(deserializer)? {
+        Selection::Enabled(true) => Ok(Some(())),
+        Selection::Enabled(false) => Err(serde::de::Error::custom("product value must be true")),
+        Selection::Undefined(()) => Ok(None),
     }
 }
 
-#[cfg_attr(
-    feature = "ts-rs",
-    derive(ts_rs::TS),
-    ts(export, export_to = "protocol.d.mts")
-)]
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmDiagnosticProfile {
-    pub protected_attributes: BTreeMap<String, Option<String>>,
-    pub authored_urls: WasmAuthoredUrlPolicy,
-    pub max_diagnostics: u32,
-    pub rules: BTreeMap<String, WasmRuleSettings>,
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum HtmlSelection {
+    Enabled(bool),
+    Options(Box<HtmlOptions>),
+    #[cfg(target_arch = "wasm32")]
+    Undefined(()),
 }
 
-impl Default for WasmDiagnosticProfile {
-    fn default() -> Self {
-        Self {
-            protected_attributes: BTreeMap::new(),
-            authored_urls: Default::default(),
-            max_diagnostics: 1000,
-            rules: BTreeMap::new(),
+fn html_product<'de, D>(deserializer: D) -> Result<Option<HtmlOptions>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match HtmlSelection::deserialize(deserializer)? {
+        HtmlSelection::Enabled(true) => Ok(Some(HtmlOptions::default())),
+        HtmlSelection::Enabled(false) => {
+            Err(serde::de::Error::custom("product value must be true"))
         }
+        HtmlSelection::Options(options) => Ok(Some(*options)),
+        #[cfg(target_arch = "wasm32")]
+        HtmlSelection::Undefined(()) => Ok(None),
     }
 }
 
-#[cfg_attr(
-    feature = "ts-rs",
-    derive(ts_rs::TS),
-    ts(export, export_to = "protocol.d.mts")
-)]
-#[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmExternalLinkPolicy {
-    pub open_in_new_context: bool,
-    pub noreferrer: bool,
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum DiagnosticSelection {
+    Enabled(bool),
+    Options(DiagnosticOptions),
+    #[cfg(target_arch = "wasm32")]
+    Undefined(()),
 }
 
-#[cfg_attr(
-    feature = "ts-rs",
-    derive(ts_rs::TS),
-    ts(export, export_to = "protocol.d.mts")
-)]
-#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmOutputLimits {
-    pub max_output_bytes: u32,
-}
-
-impl Default for WasmOutputLimits {
-    fn default() -> Self {
-        Self {
-            max_output_bytes: 52428800,
+fn diagnostic_product<'de, D>(deserializer: D) -> Result<Option<DiagnosticOptions>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match DiagnosticSelection::deserialize(deserializer)? {
+        DiagnosticSelection::Enabled(true) => Ok(Some(DiagnosticOptions::default())),
+        DiagnosticSelection::Enabled(false) => {
+            Err(serde::de::Error::custom("product value must be true"))
         }
+        DiagnosticSelection::Options(options) => Ok(Some(options)),
+        #[cfg(target_arch = "wasm32")]
+        DiagnosticSelection::Undefined(()) => Ok(None),
     }
 }
 
-#[cfg_attr(
-    feature = "ts-rs",
-    derive(ts_rs::TS),
-    ts(export, export_to = "protocol.d.mts")
-)]
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmRenderPolicy {
-    pub active_urls: WasmActiveUrlPolicy,
-    pub external_links: WasmExternalLinkPolicy,
-    pub source_languages: WasmSourceLanguagePolicy,
-    pub roles: WasmRolePolicy,
-    pub math_languages: Vec<WasmMathLanguage>,
-    pub unresolved_references: WasmUnresolvedReferencePresentation,
-    pub resources: WasmResourceCapabilities,
-    pub document_mode: WasmDocumentMode,
-    pub stylesheets: Vec<WasmStylesheet>,
-}
-
-impl Default for WasmRenderPolicy {
-    fn default() -> Self {
-        Self {
-            active_urls: Default::default(),
-            external_links: Default::default(),
-            source_languages: Default::default(),
-            roles: Default::default(),
-            math_languages: vec![WasmMathLanguage::Latex, WasmMathLanguage::Typst],
-            unresolved_references: WasmUnresolvedReferencePresentation::Target,
-            resources: Default::default(),
-            document_mode: WasmDocumentMode::Fragment,
-            stylesheets: vec![],
-        }
+serde_object! {
+    #[cfg_attr(
+        feature = "ts-rs",
+        derive(ts_rs::TS),
+        ts(export, export_to = "protocol.d.mts")
+    )]
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    #[wire(rename_all = "camelCase", deny_unknown_fields)]
+    pub struct AnalyzeRequest as AnalyzeRequestObject {
+        pub source: SourceInput,
+        pub products: ProductRequest,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "ResourceInput"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub resources: Option<ResourceInput>,
     }
 }
 
-#[cfg_attr(
-    feature = "ts-rs",
-    derive(ts_rs::TS),
-    ts(export, export_to = "protocol.d.mts")
-)]
-#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmResourceCapabilities {
-    pub images: bool,
-    pub media: bool,
-}
-
-impl Default for WasmResourceCapabilities {
-    fn default() -> Self {
-        Self {
-            images: true,
-            media: true,
-        }
+serde_object! {
+    #[cfg_attr(
+        feature = "ts-rs",
+        derive(ts_rs::TS),
+        ts(export, export_to = "protocol.d.mts")
+    )]
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    #[wire(rename_all = "camelCase", deny_unknown_fields)]
+    pub struct SourceInput as SourceInputObject {
+        pub text: String,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "string"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub id: Option<String>,
+        #[cfg_attr(
+            feature = "ts-rs",
+            ts(optional, type = "{ [key in string]: string | null }")
+        )]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub attributes: Option<BTreeMap<String, Option<String>>>,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "SyntaxMode"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub syntax_mode: Option<SyntaxMode>,
     }
 }
 
-#[cfg_attr(
-    feature = "ts-rs",
-    derive(ts_rs::TS),
-    ts(export, export_to = "protocol.d.mts")
-)]
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmRolePolicy {
-    pub allowed: Vec<String>,
-    pub unknown: WasmUnknownRole,
-}
-
-impl Default for WasmRolePolicy {
-    fn default() -> Self {
-        Self {
-            allowed: vec![],
-            unknown: WasmUnknownRole::Silent,
-        }
+serde_object! {
+    #[cfg_attr(
+        feature = "ts-rs",
+        derive(ts_rs::TS),
+        ts(export, export_to = "protocol.d.mts")
+    )]
+    #[derive(Clone, Debug, Default, Eq, PartialEq)]
+    #[wire(default, rename_all = "camelCase", deny_unknown_fields)]
+    pub struct ProductRequest as ProductRequestObject {
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "true"))]
+        #[wire_field(serde(default, deserialize_with = "requested", serialize_with = "serialize_requested", skip_serializing_if = "Option::is_none"))]
+        pub syntax: Option<()>,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "true"))]
+        #[wire_field(serde(default, deserialize_with = "requested", serialize_with = "serialize_requested", skip_serializing_if = "Option::is_none"))]
+        pub canonical_ast: Option<()>,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "true | HtmlOptions"))]
+        #[wire_field(serde(default, deserialize_with = "html_product", skip_serializing_if = "Option::is_none"))]
+        pub html: Option<HtmlOptions>,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "true"))]
+        #[wire_field(serde(default, deserialize_with = "requested", serialize_with = "serialize_requested", skip_serializing_if = "Option::is_none"))]
+        pub attribute_occurrences: Option<()>,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "true"))]
+        #[wire_field(serde(default, deserialize_with = "requested", serialize_with = "serialize_requested", skip_serializing_if = "Option::is_none"))]
+        pub attribute_queries: Option<()>,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "true"))]
+        #[wire_field(serde(default, deserialize_with = "requested", serialize_with = "serialize_requested", skip_serializing_if = "Option::is_none"))]
+        pub resource_queries: Option<()>,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "true | DiagnosticOptions"))]
+        #[wire_field(serde(default, deserialize_with = "diagnostic_product", skip_serializing_if = "Option::is_none"))]
+        pub diagnostics: Option<DiagnosticOptions>,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "true"))]
+        #[wire_field(serde(default, deserialize_with = "requested", serialize_with = "serialize_requested", skip_serializing_if = "Option::is_none"))]
+        pub symbols: Option<()>,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "true"))]
+        #[wire_field(serde(default, deserialize_with = "requested", serialize_with = "serialize_requested", skip_serializing_if = "Option::is_none"))]
+        pub document: Option<()>,
     }
 }
 
-#[cfg_attr(
-    feature = "ts-rs",
-    derive(ts_rs::TS),
-    ts(export, export_to = "protocol.d.mts")
-)]
-#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmRuleSettings {
-    pub enabled: bool,
-    pub severity: WasmSeverity,
-}
-
-impl Default for WasmRuleSettings {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            severity: WasmSeverity::Warning,
-        }
+impl ProductRequest {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.syntax.is_none()
+            && self.canonical_ast.is_none()
+            && self.html.is_none()
+            && self.attribute_occurrences.is_none()
+            && self.attribute_queries.is_none()
+            && self.resource_queries.is_none()
+            && self.diagnostics.is_none()
+            && self.symbols.is_none()
+            && self.document.is_none()
     }
 }
 
-#[cfg_attr(
-    feature = "ts-rs",
-    derive(ts_rs::TS),
-    ts(export, export_to = "protocol.d.mts")
-)]
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmSourceLanguagePolicy {
-    pub allowed: Option<Vec<String>>,
-    pub unknown: WasmUnknownSourceLanguage,
-}
-
-impl Default for WasmSourceLanguagePolicy {
-    fn default() -> Self {
-        Self {
-            allowed: None,
-            unknown: WasmUnknownSourceLanguage::PreserveSanitized,
-        }
+serde_object! {
+    #[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+    #[derive(Clone, Debug, Default, Eq, PartialEq)]
+    #[wire(default, rename_all = "camelCase", deny_unknown_fields)]
+    pub struct DiagnosticOptions as DiagnosticOptionsObject {
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "{ [key in string]: string | null }"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub protected_attributes: Option<BTreeMap<String, Option<String>>>,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "AuthoredUrlOptions"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub authored_urls: Option<AuthoredUrlOptions>,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "{ [key in string]: RuleOptions }"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub rules: Option<BTreeMap<String, RuleOptions>>,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "number"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub max_diagnostics: Option<u32>,
     }
 }
 
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+serde_object! {
+    #[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+    #[derive(Clone, Debug, Default, Eq, PartialEq)]
+    #[wire(default, rename_all = "camelCase", deny_unknown_fields)]
+    pub struct AuthoredUrlOptions as AuthoredUrlOptionsObject {
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "Array<string>"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub allowed_schemes: Option<Vec<String>>,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "boolean"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub allow_relative: Option<bool>,
+    }
+}
+
+serde_object! {
+    #[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+    #[derive(Clone, Debug, Default, Eq, PartialEq)]
+    #[wire(default, rename_all = "camelCase", deny_unknown_fields)]
+    pub struct RuleOptions as RuleOptionsObject {
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "boolean"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub enabled: Option<bool>,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "Severity"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub severity: Option<Severity>,
+    }
+}
+
+serde_object! {
+    #[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+    #[derive(Clone, Debug, Default, Eq, PartialEq)]
+    #[wire(default, rename_all = "camelCase", deny_unknown_fields)]
+    pub struct HtmlOptions as HtmlOptionsObject {
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "DocumentMode"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub document_mode: Option<DocumentMode>,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "ActiveUrlOptions"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub active_urls: Option<ActiveUrlOptions>,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "ExternalLinkOptions"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub external_links: Option<ExternalLinkOptions>,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "SourceLanguageOptions"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub source_languages: Option<SourceLanguageOptions>,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "RoleOptions"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub roles: Option<RoleOptions>,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "Array<MathLanguage>"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub math_languages: Option<Vec<MathLanguage>>,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "UnresolvedReferencePresentation"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub unresolved_references: Option<UnresolvedReferencePresentation>,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "ResourceCapabilities"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub resource_capabilities: Option<ResourceCapabilities>,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "Array<Stylesheet>"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub stylesheets: Option<Vec<Stylesheet>>,
+    }
+}
+
+serde_object! {
+    #[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+    #[derive(Clone, Debug, Default, Eq, PartialEq)]
+    #[wire(default, rename_all = "camelCase", deny_unknown_fields)]
+    pub struct ActiveUrlOptions as ActiveUrlOptionsObject {
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "Array<string>"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub allowed_schemes: Option<Vec<String>>,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "boolean"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub allow_authored_relative: Option<bool>,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "boolean"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub allow_resolved_relative: Option<bool>,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "boolean"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub allow_resolved_root_relative: Option<bool>,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "boolean"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub allow_data_uris: Option<bool>,
+    }
+}
+
+serde_object! {
+    #[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+    #[derive(Clone, Debug, Default, Eq, PartialEq)]
+    #[wire(default, rename_all = "camelCase", deny_unknown_fields)]
+    pub struct ExternalLinkOptions as ExternalLinkOptionsObject {
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "boolean"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub open_in_new_context: Option<bool>,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "boolean"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub noreferrer: Option<bool>,
+    }
+}
+
+serde_object! {
+    #[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+    #[derive(Clone, Debug, Default, Eq, PartialEq)]
+    #[wire(default, rename_all = "camelCase", deny_unknown_fields)]
+    pub struct SourceLanguageOptions as SourceLanguageOptionsObject {
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "Array<string>"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub allowed: Option<Vec<String>>,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "UnknownSourceLanguage"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub unknown: Option<UnknownSourceLanguage>,
+    }
+}
+
+serde_object! {
+    #[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+    #[derive(Clone, Debug, Default, Eq, PartialEq)]
+    #[wire(default, rename_all = "camelCase", deny_unknown_fields)]
+    pub struct RoleOptions as RoleOptionsObject {
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "Array<string>"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub allowed: Option<Vec<String>>,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "UnknownRole"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub unknown: Option<UnknownRole>,
+    }
+}
+
+serde_object! {
+    #[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+    #[derive(Clone, Debug, Default, Eq, PartialEq)]
+    #[wire(default, rename_all = "camelCase", deny_unknown_fields)]
+    pub struct ResourceCapabilities as ResourceCapabilitiesObject {
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "boolean"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub images: Option<bool>,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "boolean"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub media: Option<bool>,
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(
     tag = "kind",
     rename_all = "kebab-case",
@@ -309,81 +394,55 @@ impl Default for WasmSourceLanguagePolicy {
     derive(ts_rs::TS),
     ts(export, export_to = "protocol.d.mts")
 )]
-pub enum WasmStylesheet {
+pub enum Stylesheet {
     External { url: String },
     Inline { css: String },
 }
 
-#[cfg_attr(
-    feature = "ts-rs",
-    derive(ts_rs::TS),
-    ts(export, export_to = "protocol.d.mts")
-)]
-#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmSyntaxOptions {
-    pub syntax_mode: WasmSyntaxMode,
-    pub limits: WasmLimits,
-}
-
-impl Default for WasmSyntaxOptions {
-    fn default() -> Self {
-        Self {
-            syntax_mode: WasmSyntaxMode::Permissive,
-            limits: Default::default(),
-        }
+serde_object! {
+    #[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+    #[derive(Clone, Debug, Default, Eq, PartialEq)]
+    #[wire(default, rename_all = "camelCase", deny_unknown_fields)]
+    pub struct ResourceInput as ResourceInputObject {
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "{ [key in string]: string }"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub documents: Option<BTreeMap<String, String>>,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "string"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub base_uri: Option<String>,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "SafeMode"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub safe_mode: Option<SafeMode>,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "Array<string>"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub allowed_schemes: Option<Vec<String>>,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "IncludeHandling"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub includes: Option<IncludeHandling>,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "Array<ResolvedReference>"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub references: Option<Vec<ResolvedReference>>,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "Array<ResolvedResource>"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub assets: Option<Vec<ResolvedResource>>,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "Array<ResolvedCitation>"))]
+        #[wire_field(serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none"))]
+        pub citations: Option<Vec<ResolvedCitation>>,
+        #[cfg_attr(feature = "ts-rs", ts(optional = nullable))]
+        #[wire_field(serde(default))]
+        pub bibliography: Option<GeneratedBibliography>,
     }
 }
 
-fn default_wasm_request_source_id() -> Option<String> {
-    None
-}
-
-fn default_wasm_request_preprocess() -> Option<WasmAnalysisPreprocessInput> {
-    None
-}
-
-fn default_wasm_request_products() -> WasmProductSet {
-    Default::default()
-}
-
-fn default_wasm_request_render_inputs() -> WasmRenderInputs {
-    Default::default()
-}
-
-fn default_wasm_request_analysis_options() -> WasmAnalysisOptions {
-    Default::default()
-}
-
-fn default_wasm_request_render_policy() -> WasmRenderPolicy {
-    Default::default()
-}
-
-fn default_wasm_request_output_limits() -> WasmOutputLimits {
-    Default::default()
-}
-
 #[cfg_attr(
     feature = "ts-rs",
     derive(ts_rs::TS),
     ts(export, export_to = "protocol.d.mts")
 )]
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmRequest {
-    #[serde(default = "default_wasm_request_source_id")]
-    pub source_id: Option<String>,
-    pub source: String,
-    #[serde(default = "default_wasm_request_preprocess")]
-    pub preprocess: Option<WasmAnalysisPreprocessInput>,
-    #[serde(default = "default_wasm_request_products")]
-    pub products: WasmProductSet,
-    #[serde(default = "default_wasm_request_render_inputs")]
-    pub render_inputs: WasmRenderInputs,
-    #[serde(default = "default_wasm_request_analysis_options")]
-    pub analysis_options: WasmAnalysisOptions,
-    #[serde(default = "default_wasm_request_render_policy")]
-    pub render_policy: WasmRenderPolicy,
-    #[serde(default = "default_wasm_request_output_limits")]
-    pub output_limits: WasmOutputLimits,
+#[derive(Clone, Copy, Debug, Default, Deserialize, serde::Serialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum IncludeHandling {
+    #[default]
+    Expand,
+    Preserve,
 }

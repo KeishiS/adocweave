@@ -14,7 +14,7 @@ const client = new AdocWeaveClient({
 async function analyze(revision, text, controller) {
   try {
     const result = await client.analyze(
-      { source: text },
+      { source: { text }, products: { html: true } },
       { signal: controller.signal },
     );
     if (revision !== sourceRevision) return;
@@ -45,7 +45,7 @@ if (new URL(location.href).searchParams.has("smoke")) {
   ++sourceRevision;
   const cancelled = new AbortController();
   const stale = client.analyze(
-    { source: "= stale result\n" },
+    { source: { text: "= stale result\n" }, products: { html: true } },
     { signal: cancelled.signal },
   );
   cancelled.abort();

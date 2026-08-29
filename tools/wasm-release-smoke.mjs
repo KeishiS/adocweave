@@ -85,7 +85,7 @@ async function runArchiveSmoke(archive, chromium, root) {
           let trapped = false;
           export default async function initialize() {}
           export function protocolSchemaVersion() { return PROTOCOL_SCHEMA_VERSION; }
-          export function process() {
+          export function analyze() {
             if (!trapped) {
               trapped = true;
               throw new WebAssembly.RuntimeError("browser smoke trap");
@@ -99,7 +99,7 @@ async function runArchiveSmoke(archive, chromium, root) {
         response.end(`
           export default async function initialize() { throw new Error("browser init failure"); }
           export function protocolSchemaVersion() { return 15; }
-          export function process() { return {}; }
+          export function analyze() { return {}; }
         `);
         return;
       }
@@ -107,7 +107,7 @@ async function runArchiveSmoke(archive, chromium, root) {
         response.end(`
           export default async function initialize() {}
           export function protocolSchemaVersion() { return 0; }
-          export function process() { return {}; }
+          export function analyze() { return {}; }
         `);
         return;
       }
@@ -143,21 +143,7 @@ async function runArchiveSmoke(archive, chromium, root) {
     if (expectedAssets.some((asset) => !requests.includes(asset))) {
       throw new Error(`browser assets were not requested: ${requests.join(",")}`);
     }
-    const expectedProducts = {
-      syntax: false,
-      canonicalAst: false,
-      html: true,
-      attributeOccurrences: false,
-      attributeQueries: false,
-      resourceQueries: true,
-      diagnostics: true,
-      symbols: false,
-      projection: true,
-    };
-    if (Object.keys(state.products).length !== Object.keys(expectedProducts).length ||
-        Object.entries(expectedProducts).some(([name, enabled]) => state.products[name] !== enabled) ||
-        !state.diagnosticsAreArrays || state.projectionTitle !== "Latest browser result" ||
-        state.projectionHeadingTitle !== "Latest browser result") {
+    if (Object.keys(state.products).length !== 1 || state.products.html !== true) {
       throw new Error(`browser result products mismatch: ${JSON.stringify(state)}`);
     }
     console.log("browser release smoke: passed non-isolated context");
@@ -365,11 +351,9 @@ export async function inspectPageAttempt(
                 && trapCodes.every((code) => code === 'wasm-trapped'),
               initializationFailuresSettled: initializationCodes.length === 3
                 && initializationCodes.every((code) => code === 'worker-failed'),
-              products: response.products,
-              diagnosticsAreArrays: Array.isArray(response.diagnostics)
-                && Array.isArray(response.renderDiagnostics),
-              projectionTitle: response.projection?.title?.text,
-              projectionHeadingTitle: response.projection?.structure?.headings?.[0]?.title,
+              products: Object.fromEntries(
+                Object.keys(response).map((product) => [product, true]),
+              ),
             });
           } else if (Date.now() >= deadline) {
             reject(new Error('result timeout: ' + status));

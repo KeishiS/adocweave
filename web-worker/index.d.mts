@@ -1,30 +1,7 @@
-import type { WasmRequest, WasmResponse } from "./protocol.d.mts";
+import type { AnalyzeRequest, AnalyzeResult } from "./protocol.d.mts";
 
 export type * from "./protocol.d.mts";
 export declare const PROTOCOL_SCHEMA_VERSION: number;
-
-export type AdocWeaveResult = WasmResponse;
-
-type Settings<T> = {
-  [K in keyof T]?: T[K] extends ReadonlyArray<unknown>
-    ? T[K]
-    : T[K] extends object
-      ? Settings<T[K]>
-      : T[K];
-};
-
-export type AnalyzeRequest = Pick<WasmRequest, "source"> & {
-  sourceId?: WasmRequest["sourceId"];
-  preprocess?: {
-    resources?: NonNullable<WasmRequest["preprocess"]>["resources"];
-    options?: Settings<NonNullable<WasmRequest["preprocess"]>["options"]>;
-  } | null;
-  products?: WasmRequest["products"];
-  renderInputs?: Settings<WasmRequest["renderInputs"]>;
-  analysisOptions?: Settings<WasmRequest["analysisOptions"]>;
-  renderPolicy?: Settings<WasmRequest["renderPolicy"]>;
-  outputLimits?: Settings<WasmRequest["outputLimits"]>;
-};
 
 export interface AdocWeaveClientOptions {
   workerUrl: string | URL;
@@ -33,29 +10,42 @@ export interface AdocWeaveClientOptions {
   Worker?: typeof Worker;
 }
 
-export type AdocWeaveClientLifecycleErrorCode =
+export type AdocWeaveErrorCode =
+  | "invalid-request"
+  | "input-limit-exceeded"
+  | "output-limit-exceeded"
+  | "analysis-failed"
+  | "cancelled"
   | "analysis-in-progress"
   | "disposed"
-  | "invalid-worker-response"
   | "unsupported-worker-protocol"
   | "wasm-trapped"
   | "worker-failed";
 
-export declare class AdocWeaveClientError<Code extends string = string> extends Error {
+export type AdocWeaveLifecycleErrorCode =
+  | "cancelled"
+  | "analysis-in-progress"
+  | "disposed"
+  | "unsupported-worker-protocol"
+  | "wasm-trapped"
+  | "worker-failed";
+
+export declare class AdocWeaveError<Code extends AdocWeaveErrorCode = AdocWeaveErrorCode>
+  extends Error {
   constructor(error: { code: Code; message: string });
   readonly code: Code;
 }
 
-export declare function isAdocWeaveClientLifecycleError(
+export declare function isAdocWeaveLifecycleError(
   error: unknown,
-): error is AdocWeaveClientError<AdocWeaveClientLifecycleErrorCode>;
+): error is AdocWeaveError<AdocWeaveLifecycleErrorCode>;
 
 export declare class AdocWeaveClient {
   constructor(options: AdocWeaveClientOptions);
   analyze(
     request: AnalyzeRequest,
     options?: { signal?: AbortSignal },
-  ): Promise<AdocWeaveResult>;
+  ): Promise<AnalyzeResult>;
   dispose(): void;
 }
 

@@ -1,25 +1,43 @@
-use crate::{WasmMathLanguage, WasmProductSet, WasmSeverity};
+use crate::{MathLanguage, Severity};
 
 #[cfg_attr(
     feature = "ts-rs",
     derive(ts_rs::TS),
     ts(export, export_to = "protocol.d.mts")
 )]
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmResponse {
-    pub products: WasmProductSet,
-    pub parse: ParseSummary,
-    pub syntax: String,
-    pub ast: String,
-    pub html: String,
-    pub attribute_occurrences: Vec<WasmDocumentAttributeOccurrence>,
-    pub attribute_queries: WasmAttributeQueryProduct,
-    pub resource_queries: Vec<WasmResourceQuery>,
-    pub diagnostics: Vec<WasmDiagnostic>,
-    pub render_diagnostics: Vec<WasmDiagnostic>,
-    pub symbols: Vec<WasmDocumentSymbol>,
-    pub projection: Option<WasmDocumentProjection>,
+pub struct AnalyzeResult {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "string"))]
+    pub syntax: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "string"))]
+    pub canonical_ast: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "string"))]
+    pub html: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        feature = "ts-rs",
+        ts(optional, type = "Array<DocumentAttributeOccurrence>")
+    )]
+    pub attribute_occurrences: Option<Vec<DocumentAttributeOccurrence>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "AttributeQueryResult"))]
+    pub attribute_queries: Option<AttributeQueryResult>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "Array<ResourceQuery>"))]
+    pub resource_queries: Option<Vec<ResourceQuery>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "Array<Diagnostic>"))]
+    pub diagnostics: Option<Vec<Diagnostic>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "Array<DocumentSymbol>"))]
+    pub symbols: Option<Vec<DocumentSymbol>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "DocumentView | null"))]
+    pub document: Option<Option<DocumentView>>,
 }
 
 #[cfg_attr(
@@ -29,7 +47,7 @@ pub struct WasmResponse {
 )]
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
-pub enum WasmApplicability {
+pub enum Applicability {
     Always,
     Maybe,
 }
@@ -41,13 +59,13 @@ pub enum WasmApplicability {
 )]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmAttributeBindingQuery {
+pub struct AttributeBindingQuery {
     pub id: u32,
     pub source_id: Option<String>,
-    pub operation: WasmDocumentAttributeOperation,
+    pub operation: DocumentAttributeOperation,
     pub effective_value: Option<String>,
-    pub error: Option<WasmAttributeExpansionError>,
-    pub occurrence: WasmDocumentAttributeOccurrence,
+    pub error: Option<AttributeExpansionError>,
+    pub occurrence: DocumentAttributeOccurrence,
 }
 
 #[cfg_attr(
@@ -57,7 +75,7 @@ pub struct WasmAttributeBindingQuery {
 )]
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
-pub enum WasmAttributeExpansionError {
+pub enum AttributeExpansionError {
     Undefined,
     Cycle,
     DepthLimitExceeded,
@@ -71,9 +89,9 @@ pub enum WasmAttributeExpansionError {
 )]
 #[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmAttributeQueryProduct {
-    pub bindings: Vec<WasmAttributeBindingQuery>,
-    pub references: Vec<WasmAttributeReferenceQuery>,
+pub struct AttributeQueryResult {
+    pub bindings: Vec<AttributeBindingQuery>,
+    pub references: Vec<AttributeReferenceQuery>,
 }
 
 #[cfg_attr(
@@ -83,14 +101,14 @@ pub struct WasmAttributeQueryProduct {
 )]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmAttributeReferenceQuery {
+pub struct AttributeReferenceQuery {
     pub source_id: Option<String>,
-    pub range: WasmTextRange,
-    pub name_range: WasmTextRange,
+    pub range: TextRange,
+    pub name_range: TextRange,
     pub name: String,
     pub binding_id: Option<u32>,
     pub effective_value: Option<String>,
-    pub error: Option<WasmAttributeExpansionError>,
+    pub error: Option<AttributeExpansionError>,
 }
 
 #[cfg_attr(
@@ -100,7 +118,7 @@ pub struct WasmAttributeReferenceQuery {
 )]
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
-pub enum WasmAttributeValueContinuation {
+pub enum AttributeValueContinuation {
     Soft,
     Hard,
 }
@@ -112,11 +130,11 @@ pub enum WasmAttributeValueContinuation {
 )]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmBibliographyEntry {
+pub struct BibliographyEntry {
     pub id: String,
     pub label: Option<String>,
-    pub definition_range: WasmTextRange,
-    pub references: Vec<WasmTextRange>,
+    pub definition_range: TextRange,
+    pub references: Vec<TextRange>,
 }
 
 #[cfg_attr(
@@ -126,7 +144,7 @@ pub struct WasmBibliographyEntry {
 )]
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
-pub enum WasmBlockPresentationKind {
+pub enum BlockPresentationKind {
     Admonition,
     Quote,
     Verse,
@@ -145,10 +163,10 @@ pub enum WasmBlockPresentationKind {
 )]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmBlockPresentationProjection {
-    pub kind: WasmBlockPresentationKind,
-    pub source_range: WasmTextRange,
-    pub content_range: WasmTextRange,
+pub struct BlockPresentation {
+    pub kind: BlockPresentationKind,
+    pub source_range: TextRange,
+    pub content_range: TextRange,
     pub title: Option<String>,
     pub attribution: Option<String>,
     pub citation: Option<String>,
@@ -164,8 +182,8 @@ pub struct WasmBlockPresentationProjection {
 )]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmCitationAttributeProjection {
-    pub source_range: WasmTextRange,
+pub struct CitationAttribute {
+    pub source_range: TextRange,
     pub name: Option<String>,
     pub value: String,
 }
@@ -177,8 +195,8 @@ pub struct WasmCitationAttributeProjection {
 )]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmCitationKeyProjection {
-    pub source_range: WasmTextRange,
+pub struct CitationKey {
+    pub source_range: TextRange,
     pub key: String,
 }
 
@@ -189,11 +207,11 @@ pub struct WasmCitationKeyProjection {
 )]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmCitationProjection {
+pub struct Citation {
     pub order: u32,
-    pub source_range: WasmTextRange,
-    pub keys: Vec<WasmCitationKeyProjection>,
-    pub attributes: Vec<WasmCitationAttributeProjection>,
+    pub source_range: TextRange,
+    pub keys: Vec<CitationKey>,
+    pub attributes: Vec<CitationAttribute>,
 }
 
 #[cfg_attr(
@@ -203,14 +221,14 @@ pub struct WasmCitationProjection {
 )]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmDiagnostic {
+pub struct Diagnostic {
     pub id: String,
     pub code: String,
-    pub severity: WasmSeverity,
+    pub severity: Severity,
     pub message: String,
-    pub range: WasmTextRange,
-    pub related: Vec<WasmRelatedInformation>,
-    pub fixes: Vec<WasmFix>,
+    pub range: TextRange,
+    pub related: Vec<RelatedInformation>,
+    pub fixes: Vec<Fix>,
 }
 
 #[cfg_attr(
@@ -220,9 +238,9 @@ pub struct WasmDiagnostic {
 )]
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmDocumentAttributeContinuation {
-    pub kind: WasmAttributeValueContinuation,
-    pub range: WasmTextRange,
+pub struct DocumentAttributeContinuation {
+    pub kind: AttributeValueContinuation,
+    pub range: TextRange,
 }
 
 #[cfg_attr(
@@ -233,12 +251,12 @@ pub struct WasmDocumentAttributeContinuation {
 /// One source-preserving standard document-attribute occurrence.
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmDocumentAttributeOccurrence {
-    pub range: WasmTextRange,
-    pub name_range: WasmTextRange,
+pub struct DocumentAttributeOccurrence {
+    pub range: TextRange,
+    pub name_range: TextRange,
     pub name: String,
-    pub value: WasmDocumentAttributeValue,
-    pub operation: WasmDocumentAttributeOperation,
+    pub value: DocumentAttributeValue,
+    pub operation: DocumentAttributeOperation,
     pub valid: bool,
 }
 
@@ -249,7 +267,7 @@ pub struct WasmDocumentAttributeOccurrence {
 )]
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
-pub enum WasmDocumentAttributeOperation {
+pub enum DocumentAttributeOperation {
     Set,
     Unset,
     Counter,
@@ -262,11 +280,11 @@ pub enum WasmDocumentAttributeOperation {
 )]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmDocumentAttributeValue {
-    pub source_range: WasmTextRange,
+pub struct DocumentAttributeValue {
+    pub source_range: TextRange,
     pub source_text: String,
     pub folded_text: String,
-    pub lines: Vec<WasmDocumentAttributeValueLine>,
+    pub lines: Vec<DocumentAttributeValueLine>,
 }
 
 #[cfg_attr(
@@ -276,12 +294,12 @@ pub struct WasmDocumentAttributeValue {
 )]
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmDocumentAttributeValueLine {
-    pub range: WasmTextRange,
-    pub indent_range: WasmTextRange,
-    pub content_range: WasmTextRange,
-    pub ending_range: WasmTextRange,
-    pub continuation: Option<WasmDocumentAttributeContinuation>,
+pub struct DocumentAttributeValueLine {
+    pub range: TextRange,
+    pub indent_range: TextRange,
+    pub content_range: TextRange,
+    pub ending_range: TextRange,
+    pub continuation: Option<DocumentAttributeContinuation>,
 }
 
 #[cfg_attr(
@@ -291,10 +309,10 @@ pub struct WasmDocumentAttributeValueLine {
 )]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmDocumentCatalogs {
-    pub footnotes: Vec<WasmFootnote>,
-    pub bibliography: Vec<WasmBibliographyEntry>,
-    pub index: Vec<WasmIndexEntry>,
+pub struct DocumentCatalogs {
+    pub footnotes: Vec<Footnote>,
+    pub bibliography: Vec<BibliographyEntry>,
+    pub index: Vec<IndexEntry>,
 }
 
 #[cfg_attr(
@@ -304,20 +322,20 @@ pub struct WasmDocumentCatalogs {
 )]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmDocumentProjection {
+pub struct DocumentView {
     pub source_id: Option<String>,
-    pub source_blocks: Vec<WasmSourceBlockProjection>,
-    pub formulas: Vec<WasmFormulaProjection>,
-    pub citations: Vec<WasmCitationProjection>,
-    pub block_presentations: Vec<WasmBlockPresentationProjection>,
-    pub ordered_lists: Vec<WasmOrderedListProjection>,
-    pub reference_edges: Vec<WasmReferenceEdge>,
-    pub external_links: Vec<WasmExternalLink>,
-    pub searchable_text: WasmSearchableText,
-    pub structure: WasmDocumentStructure,
-    pub catalogs: WasmDocumentCatalogs,
-    pub targets: Vec<WasmReferenceTarget>,
-    pub title: Option<WasmProjectedText>,
+    pub source_blocks: Vec<SourceBlock>,
+    pub formulas: Vec<Formula>,
+    pub citations: Vec<Citation>,
+    pub block_presentations: Vec<BlockPresentation>,
+    pub ordered_lists: Vec<OrderedList>,
+    pub reference_edges: Vec<ReferenceEdge>,
+    pub external_links: Vec<ExternalLink>,
+    pub searchable_text: SearchableText,
+    pub structure: DocumentStructure,
+    pub catalogs: DocumentCatalogs,
+    pub targets: Vec<ReferenceTarget>,
+    pub title: Option<DocumentText>,
 }
 
 #[cfg_attr(
@@ -327,10 +345,10 @@ pub struct WasmDocumentProjection {
 )]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmDocumentStructure {
-    pub headings: Vec<WasmStructuredHeading>,
-    pub toc: Vec<WasmTocEntry>,
-    pub manpage: Option<WasmManpage>,
+pub struct DocumentStructure {
+    pub headings: Vec<StructuredHeading>,
+    pub toc: Vec<TocEntry>,
+    pub manpage: Option<Manpage>,
 }
 
 #[cfg_attr(
@@ -340,12 +358,12 @@ pub struct WasmDocumentStructure {
 )]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmDocumentSymbol {
+pub struct DocumentSymbol {
     pub name: String,
-    pub kind: WasmSymbolKind,
-    pub range: WasmTextRange,
-    pub selection_range: WasmTextRange,
-    pub children: Vec<WasmDocumentSymbol>,
+    pub kind: SymbolKind,
+    pub range: TextRange,
+    pub selection_range: TextRange,
+    pub children: Vec<DocumentSymbol>,
 }
 
 #[cfg_attr(
@@ -355,9 +373,9 @@ pub struct WasmDocumentSymbol {
 )]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmExternalLink {
-    pub source_range: WasmTextRange,
-    pub target_range: WasmTextRange,
+pub struct ExternalLink {
+    pub source_range: TextRange,
+    pub target_range: TextRange,
     pub target: String,
     pub label: String,
 }
@@ -369,10 +387,10 @@ pub struct WasmExternalLink {
 )]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmFix {
+pub struct Fix {
     pub title: String,
-    pub applicability: WasmApplicability,
-    pub edits: Vec<WasmTextEdit>,
+    pub applicability: Applicability,
+    pub edits: Vec<TextEdit>,
 }
 
 #[cfg_attr(
@@ -382,13 +400,13 @@ pub struct WasmFix {
 )]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmFootnote {
+pub struct Footnote {
     pub number: u32,
     pub id: Option<String>,
-    pub definition_range: WasmTextRange,
-    pub content_range: WasmTextRange,
+    pub definition_range: TextRange,
+    pub content_range: TextRange,
     pub text: String,
-    pub occurrences: Vec<WasmTextRange>,
+    pub occurrences: Vec<TextRange>,
 }
 
 #[cfg_attr(
@@ -398,7 +416,7 @@ pub struct WasmFootnote {
 )]
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
-pub enum WasmFormulaKind {
+pub enum FormulaKind {
     Inline,
     Block,
 }
@@ -410,11 +428,11 @@ pub enum WasmFormulaKind {
 )]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmFormulaProjection {
-    pub kind: WasmFormulaKind,
-    pub language: WasmMathLanguage,
-    pub source_range: WasmTextRange,
-    pub content_range: WasmTextRange,
+pub struct Formula {
+    pub kind: FormulaKind,
+    pub language: MathLanguage,
+    pub source_range: TextRange,
+    pub content_range: TextRange,
     pub source: String,
 }
 
@@ -425,10 +443,10 @@ pub struct WasmFormulaProjection {
 )]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmIndexEntry {
+pub struct IndexEntry {
     pub terms: Vec<String>,
     pub display: String,
-    pub occurrences: Vec<WasmTextRange>,
+    pub occurrences: Vec<TextRange>,
 }
 
 #[cfg_attr(
@@ -438,7 +456,7 @@ pub struct WasmIndexEntry {
 )]
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
-pub enum WasmMacroForm {
+pub enum MacroForm {
     Inline,
     Block,
 }
@@ -450,13 +468,13 @@ pub enum WasmMacroForm {
 )]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmManpage {
+pub struct Manpage {
     pub name: String,
     pub section: String,
     pub purpose: String,
-    pub title_range: WasmTextRange,
-    pub name_range: WasmTextRange,
-    pub purpose_range: WasmTextRange,
+    pub title_range: TextRange,
+    pub name_range: TextRange,
+    pub purpose_range: TextRange,
 }
 
 #[cfg_attr(
@@ -466,11 +484,11 @@ pub struct WasmManpage {
 )]
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmOrderedListProjection {
-    pub source_range: WasmTextRange,
+pub struct OrderedList {
+    pub source_range: TextRange,
     pub start: Option<u32>,
     pub reversed: bool,
-    pub style: WasmOrderedListStyle,
+    pub style: OrderedListStyle,
 }
 
 #[cfg_attr(
@@ -480,7 +498,7 @@ pub struct WasmOrderedListProjection {
 )]
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
-pub enum WasmOrderedListStyle {
+pub enum OrderedListStyle {
     Arabic,
     Decimal,
     Loweralpha,
@@ -496,21 +514,8 @@ pub enum WasmOrderedListStyle {
     ts(export, export_to = "protocol.d.mts")
 )]
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ParseSummary {
-    pub block_count: u32,
-    pub node_count: u32,
-    pub reference_count: u32,
-}
-
-#[cfg_attr(
-    feature = "ts-rs",
-    derive(ts_rs::TS),
-    ts(export, export_to = "protocol.d.mts")
-)]
-#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
-pub enum WasmProjectedReferenceFailureKind {
+pub enum DocumentReferenceFailureKind {
     MissingReferenceTarget,
     MissingReferenceAnchor,
     AmbiguousReferenceTarget,
@@ -525,7 +530,7 @@ pub enum WasmProjectedReferenceFailureKind {
 )]
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
-pub enum WasmProjectedReferenceNotice {
+pub enum DocumentReferenceNotice {
     ReferenceResolutionFallback,
 }
 
@@ -541,14 +546,14 @@ pub enum WasmProjectedReferenceNotice {
     derive(ts_rs::TS),
     ts(export, export_to = "protocol.d.mts")
 )]
-pub enum WasmProjectedResolutionOutcome {
+pub enum DocumentResolutionOutcome {
     Failed {
-        kind: WasmProjectedReferenceFailureKind,
+        kind: DocumentReferenceFailureKind,
     },
     Resolved {
         href: String,
         display_text: Option<String>,
-        notices: Vec<WasmProjectedReferenceNotice>,
+        notices: Vec<DocumentReferenceNotice>,
     },
 }
 
@@ -559,8 +564,8 @@ pub enum WasmProjectedResolutionOutcome {
 )]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmProjectedText {
-    pub source_range: WasmTextRange,
+pub struct DocumentText {
+    pub source_range: TextRange,
     pub text: String,
 }
 
@@ -571,11 +576,11 @@ pub struct WasmProjectedText {
 )]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmReferenceEdge {
+pub struct ReferenceEdge {
     pub source_id: Option<String>,
-    pub source_range: WasmTextRange,
-    pub target: WasmReferenceKey,
-    pub resolution: Option<WasmProjectedResolutionOutcome>,
+    pub source_range: TextRange,
+    pub target: ReferenceKey,
+    pub resolution: Option<DocumentResolutionOutcome>,
 }
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
@@ -590,7 +595,7 @@ pub struct WasmReferenceEdge {
     derive(ts_rs::TS),
     ts(export, export_to = "protocol.d.mts")
 )]
-pub enum WasmReferenceKey {
+pub enum ReferenceKey {
     Document {
         document: String,
         anchor: Option<String>,
@@ -612,12 +617,12 @@ pub enum WasmReferenceKey {
 )]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmReferenceTarget {
-    pub kind: WasmReferenceTargetKind,
+pub struct ReferenceTarget {
+    pub kind: ReferenceTargetKind,
     pub id: String,
     pub label: String,
-    pub id_range: WasmTextRange,
-    pub target_range: WasmTextRange,
+    pub id_range: TextRange,
+    pub target_range: TextRange,
 }
 
 #[cfg_attr(
@@ -627,7 +632,7 @@ pub struct WasmReferenceTarget {
 )]
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
-pub enum WasmReferenceTargetKind {
+pub enum ReferenceTargetKind {
     DocumentTitle,
     Part,
     Section,
@@ -642,8 +647,8 @@ pub enum WasmReferenceTargetKind {
 )]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmRelatedInformation {
-    pub range: WasmTextRange,
+pub struct RelatedInformation {
+    pub range: TextRange,
     pub message: String,
 }
 
@@ -654,7 +659,7 @@ pub struct WasmRelatedInformation {
 )]
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
-pub enum WasmResourcePurpose {
+pub enum ResourcePurpose {
     Image,
     Icon,
     Audio,
@@ -669,12 +674,12 @@ pub enum WasmResourcePurpose {
 )]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmResourceQuery {
-    pub purpose: WasmResourcePurpose,
-    pub form: WasmMacroForm,
-    pub owner_range: WasmTextRange,
-    pub range: WasmTextRange,
-    pub target_range: WasmTextRange,
+pub struct ResourceQuery {
+    pub purpose: ResourcePurpose,
+    pub form: MacroForm,
+    pub owner_range: TextRange,
+    pub range: TextRange,
+    pub target_range: TextRange,
     pub target: String,
 }
 
@@ -685,7 +690,7 @@ pub struct WasmResourceQuery {
 )]
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
-pub enum WasmSearchTextKind {
+pub enum SearchTextKind {
     Prose,
     Code,
 }
@@ -697,9 +702,9 @@ pub enum WasmSearchTextKind {
 )]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmSearchTextSegment {
-    pub kind: WasmSearchTextKind,
-    pub source_range: WasmTextRange,
+pub struct SearchTextSegment {
+    pub kind: SearchTextKind,
+    pub source_range: TextRange,
     pub text: String,
 }
 
@@ -710,9 +715,9 @@ pub struct WasmSearchTextSegment {
 )]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmSearchableText {
+pub struct SearchableText {
     pub text: String,
-    pub segments: Vec<WasmSearchTextSegment>,
+    pub segments: Vec<SearchTextSegment>,
 }
 
 #[cfg_attr(
@@ -722,7 +727,7 @@ pub struct WasmSearchableText {
 )]
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
-pub enum WasmSectionKind {
+pub enum SectionKind {
     DocumentTitle,
     Part,
     Section,
@@ -737,11 +742,11 @@ pub enum WasmSectionKind {
 )]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmSourceBlockProjection {
-    pub source_range: WasmTextRange,
-    pub content_range: WasmTextRange,
-    pub title: Option<WasmProjectedText>,
-    pub language_range: Option<WasmTextRange>,
+pub struct SourceBlock {
+    pub source_range: TextRange,
+    pub content_range: TextRange,
+    pub title: Option<DocumentText>,
+    pub language_range: Option<TextRange>,
     pub language: Option<String>,
     pub line_numbers: bool,
     pub start_line: Option<u32>,
@@ -756,14 +761,14 @@ pub struct WasmSourceBlockProjection {
 )]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmStructuredHeading {
-    pub kind: WasmSectionKind,
+pub struct StructuredHeading {
+    pub kind: SectionKind,
     pub level: u32,
     pub id: String,
-    pub id_range: WasmTextRange,
+    pub id_range: TextRange,
     pub title: String,
-    pub range: WasmTextRange,
-    pub title_range: WasmTextRange,
+    pub range: TextRange,
+    pub title_range: TextRange,
     pub number: Vec<u32>,
     pub toc_included: bool,
 }
@@ -775,7 +780,7 @@ pub struct WasmStructuredHeading {
 )]
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
-pub enum WasmSymbolKind {
+pub enum SymbolKind {
     DocumentTitle,
     Part,
     Section,
@@ -789,8 +794,8 @@ pub enum WasmSymbolKind {
 )]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmTextEdit {
-    pub range: WasmTextRange,
+pub struct TextEdit {
+    pub range: TextRange,
     pub replacement: String,
 }
 
@@ -802,7 +807,7 @@ pub struct WasmTextEdit {
 /// A half-open UTF-8 byte range in the submitted source.
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmTextRange {
+pub struct TextRange {
     pub start: u32,
     pub end: u32,
 }
@@ -814,11 +819,11 @@ pub struct WasmTextRange {
 )]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmTocEntry {
+pub struct TocEntry {
     pub id: String,
     pub title: String,
     pub level: u32,
     pub number: Vec<u32>,
-    pub range: WasmTextRange,
-    pub children: Vec<WasmTocEntry>,
+    pub range: TextRange,
+    pub children: Vec<TocEntry>,
 }

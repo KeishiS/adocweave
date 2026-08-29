@@ -1,0 +1,330 @@
+use std::collections::BTreeMap;
+
+use adocweave_wasm::{
+    ActiveUrlOptions, AnalyzeRequest, AuthoredUrlOptions, CitationOutcome, CitationSegment,
+    DiagnosticOptions, ExternalLinkOptions, GeneratedBibliography, GeneratedBibliographyEntry,
+    HtmlOptions, ProductRequest, ReferenceNotice, ReferenceOutcome, ResolvedCitation,
+    ResolvedReference, ResolvedResource, ResourceCapabilities, ResourceInput, ResourceOutcome,
+    RoleOptions, RuleOptions, SourceInput, SourceLanguageOptions, Stylesheet,
+};
+use serde::Serialize;
+use serde::de::DeserializeOwned;
+
+fn assert_omits_and_round_trips<T>(value: &T, omitted: &[&str])
+where
+    T: Serialize + DeserializeOwned + PartialEq + std::fmt::Debug,
+{
+    let json = serde_json::to_value(value).expect("serialize public value");
+    let object = json.as_object().expect("public value serializes as object");
+    for field in omitted {
+        assert!(!object.contains_key(*field), "{field} was serialized");
+    }
+    let decoded: T = serde_json::from_value(json)
+        .unwrap_or_else(|error| panic!("serialized public value did not deserialize: {error}"));
+    assert_eq!(&decoded, value);
+}
+
+#[test]
+fn public_request_types_are_constructible_with_struct_literals() {
+    let source_languages = SourceLanguageOptions {
+        allowed: Some(vec!["rust".to_owned()]),
+        unknown: None,
+    };
+    let roles = RoleOptions {
+        allowed: Some(vec!["note".to_owned()]),
+        unknown: None,
+    };
+    let resource_capabilities = ResourceCapabilities {
+        images: Some(true),
+        media: Some(false),
+    };
+    let html = HtmlOptions {
+        document_mode: None,
+        active_urls: Some(ActiveUrlOptions {
+            allowed_schemes: Some(vec!["https".to_owned()]),
+            allow_authored_relative: Some(true),
+            allow_resolved_relative: Some(true),
+            allow_resolved_root_relative: Some(false),
+            allow_data_uris: Some(false),
+        }),
+        external_links: Some(ExternalLinkOptions {
+            open_in_new_context: Some(true),
+            noreferrer: Some(true),
+        }),
+        source_languages: Some(source_languages),
+        roles: Some(roles),
+        math_languages: None,
+        unresolved_references: None,
+        resource_capabilities: Some(resource_capabilities),
+        stylesheets: Some(vec![Stylesheet::Inline {
+            css: "p { color: black; }".to_owned(),
+        }]),
+    };
+    let diagnostics = DiagnosticOptions {
+        protected_attributes: Some(BTreeMap::new()),
+        authored_urls: Some(AuthoredUrlOptions {
+            allowed_schemes: Some(vec!["https".to_owned()]),
+            allow_relative: Some(false),
+        }),
+        rules: Some(BTreeMap::from([(
+            "example-rule".to_owned(),
+            RuleOptions {
+                enabled: Some(true),
+                severity: None,
+            },
+        )])),
+        max_diagnostics: Some(10),
+    };
+    let products = ProductRequest {
+        syntax: Some(()),
+        canonical_ast: None,
+        html: Some(html),
+        attribute_occurrences: None,
+        attribute_queries: None,
+        resource_queries: None,
+        diagnostics: Some(diagnostics),
+        symbols: None,
+        document: None,
+    };
+
+    let references = vec![ResolvedReference {
+        source_start: 0,
+        source_end: 0,
+        outcome: ReferenceOutcome::Resolved {
+            href: "chapter.adoc".to_owned(),
+            display_text: Some("Chapter".to_owned()),
+            notices: vec![ReferenceNotice::Fallback],
+        },
+    }];
+    let assets = vec![ResolvedResource {
+        source_start: 0,
+        source_end: 0,
+        outcome: ResourceOutcome::Resolved {
+            href: "image.png".to_owned(),
+            media_type: "image/png".to_owned(),
+            byte_length: Some(42),
+        },
+    }];
+    let citations = vec![ResolvedCitation {
+        source_start: 0,
+        source_end: 0,
+        outcome: CitationOutcome::Resolved {
+            segments: vec![CitationSegment {
+                text: "Example".to_owned(),
+                anchor: Some("example".to_owned()),
+            }],
+        },
+    }];
+    let bibliography = GeneratedBibliography {
+        title: "References".to_owned(),
+        entries: vec![GeneratedBibliographyEntry {
+            citation_key: "example".to_owned(),
+            text: "Example entry".to_owned(),
+            label: Some("[1]".to_owned()),
+            number: Some(1),
+        }],
+    };
+    let resources = ResourceInput {
+        documents: Some(BTreeMap::from([(
+            "chapter.adoc".to_owned(),
+            "Chapter".to_owned(),
+        )])),
+        base_uri: None,
+        safe_mode: None,
+        allowed_schemes: Some(vec!["https".to_owned()]),
+        includes: None,
+        references: Some(references),
+        assets: Some(assets),
+        citations: Some(citations),
+        bibliography: Some(bibliography),
+    };
+    let request = AnalyzeRequest {
+        source: SourceInput {
+            text: "Text".to_owned(),
+            id: Some("main.adoc".to_owned()),
+            attributes: Some(BTreeMap::new()),
+            syntax_mode: None,
+        },
+        products,
+        resources: Some(resources),
+    };
+
+    assert_eq!(request.source.text, "Text");
+    let serialized = serde_json::to_value(&request).expect("serialize public request hierarchy");
+    assert_eq!(serialized["products"]["syntax"], true);
+    assert!(serialized["products"].get("canonicalAst").is_none());
+    assert!(!contains_null(&serialized));
+    let decoded: AnalyzeRequest =
+        serde_json::from_value(serialized).expect("deserialize public request hierarchy");
+    assert_eq!(decoded, request);
+}
+
+fn contains_null(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Null => true,
+        serde_json::Value::Array(values) => values.iter().any(contains_null),
+        serde_json::Value::Object(values) => values.values().any(contains_null),
+        _ => false,
+    }
+}
+
+#[test]
+fn request_serialization_uses_true_omission_defaults_and_bibliography_null() {
+    let products = ProductRequest {
+        syntax: Some(()),
+        html: Some(HtmlOptions::default()),
+        diagnostics: Some(DiagnosticOptions::default()),
+        ..ProductRequest::default()
+    };
+    let resources = ResourceInput::default();
+    let request = AnalyzeRequest {
+        source: SourceInput {
+            text: "Text".to_owned(),
+            id: None,
+            attributes: None,
+            syntax_mode: None,
+        },
+        products,
+        resources: Some(resources),
+    };
+    let value = serde_json::to_value(&request).expect("serialize request");
+    assert_eq!(value["products"]["syntax"], true);
+    assert_eq!(value["products"]["html"], serde_json::json!({}));
+    assert_eq!(value["products"]["diagnostics"], serde_json::json!({}));
+    assert_eq!(value["resources"]["bibliography"], serde_json::Value::Null);
+    assert_eq!(value["source"], serde_json::json!({ "text": "Text" }));
+    assert!(value["products"].get("canonicalAst").is_none());
+    assert_eq!(
+        serde_json::from_value::<AnalyzeRequest>(value).expect("round-trip request"),
+        request
+    );
+}
+
+#[test]
+fn omission_only_public_fields_serialize_without_null_and_round_trip() {
+    assert_omits_and_round_trips(
+        &ReferenceOutcome::Resolved {
+            href: "chapter.adoc".to_owned(),
+            display_text: None,
+            notices: Vec::new(),
+        },
+        &["displayText"],
+    );
+    assert_omits_and_round_trips(
+        &ResourceOutcome::Resolved {
+            href: "image.png".to_owned(),
+            media_type: "image/png".to_owned(),
+            byte_length: None,
+        },
+        &["byteLength"],
+    );
+    assert_omits_and_round_trips(
+        &CitationSegment {
+            text: "citation".to_owned(),
+            anchor: None,
+        },
+        &["anchor"],
+    );
+    assert_omits_and_round_trips(
+        &GeneratedBibliographyEntry {
+            citation_key: "key".to_owned(),
+            text: "entry".to_owned(),
+            label: None,
+            number: None,
+        },
+        &["label", "number"],
+    );
+}
+
+#[test]
+fn optional_collection_defaults_serialize_as_empty_arrays_and_round_trip() {
+    let reference = ReferenceOutcome::Resolved {
+        href: "chapter.adoc".to_owned(),
+        display_text: None,
+        notices: Vec::new(),
+    };
+    let citation = CitationOutcome::Resolved {
+        segments: Vec::new(),
+    };
+    let bibliography = GeneratedBibliography {
+        title: "References".to_owned(),
+        entries: Vec::new(),
+    };
+
+    for (value, field) in [
+        (
+            serde_json::to_value(&reference).expect("serialize reference"),
+            "notices",
+        ),
+        (
+            serde_json::to_value(&citation).expect("serialize citation"),
+            "segments",
+        ),
+        (
+            serde_json::to_value(&bibliography).expect("serialize bibliography"),
+            "entries",
+        ),
+    ] {
+        assert_eq!(value[field], serde_json::json!([]));
+    }
+    assert_eq!(
+        serde_json::from_value::<ReferenceOutcome>(
+            serde_json::to_value(&reference).expect("serialize reference")
+        )
+        .expect("deserialize reference"),
+        reference
+    );
+    assert_eq!(
+        serde_json::from_value::<CitationOutcome>(
+            serde_json::to_value(&citation).expect("serialize citation")
+        )
+        .expect("deserialize citation"),
+        citation
+    );
+    assert_eq!(
+        serde_json::from_value::<GeneratedBibliography>(
+            serde_json::to_value(&bibliography).expect("serialize bibliography")
+        )
+        .expect("deserialize bibliography"),
+        bibliography
+    );
+}
+
+#[test]
+fn attribute_maps_serialize_string_and_null_values_and_round_trip() {
+    let attributes = BTreeMap::from([
+        ("set".to_owned(), Some("value".to_owned())),
+        ("unset".to_owned(), None),
+    ]);
+    let source = SourceInput {
+        text: "Text".to_owned(),
+        id: None,
+        attributes: Some(attributes.clone()),
+        syntax_mode: None,
+    };
+    let source_json = serde_json::to_value(&source).expect("serialize source attributes");
+    assert_eq!(
+        source_json["attributes"],
+        serde_json::json!({ "set": "value", "unset": null })
+    );
+    assert_eq!(
+        serde_json::from_value::<SourceInput>(source_json).expect("deserialize source attributes"),
+        source
+    );
+
+    let diagnostics = DiagnosticOptions {
+        protected_attributes: Some(attributes),
+        ..DiagnosticOptions::default()
+    };
+    let diagnostics_json =
+        serde_json::to_value(&diagnostics).expect("serialize protected attributes");
+    assert_eq!(
+        diagnostics_json["protectedAttributes"],
+        serde_json::json!({ "set": "value", "unset": null })
+    );
+    assert_eq!(
+        serde_json::from_value::<DiagnosticOptions>(diagnostics_json)
+            .expect("deserialize protected attributes"),
+        diagnostics
+    );
+}

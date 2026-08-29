@@ -96,6 +96,7 @@ name = "adocweave-wasm"
 version = "0.51.0"
 dependencies = [
  "adocweave",
+ "js-sys",
  "serde",
  "serde-wasm-bindgen",
  "serde_json",

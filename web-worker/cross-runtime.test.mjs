@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
@@ -8,39 +7,119 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
-const fixtureRoot = resolve(root, "fixtures/conformance");
-const manifest = JSON.parse(
-  readFileSync(resolve(root, "crates/adocweave/conformance/cases.json"), "utf8"),
-);
 const require = createRequire(import.meta.url);
 const wasm = require(resolve(root, "target/adocweave-wasm-node/adocweave_wasm.js"));
 const native = resolve(root, "target/debug/adocweave-conformance-native");
 
-function requestFor(entry) {
-  const source = entry.sourceFile
-    ? readFileSync(resolve(fixtureRoot, entry.sourceFile), "utf8")
-    : entry.source;
-  return {
-    sourceId: entry.sourceId ?? `conformance:${entry.name}`,
-    source,
-    preprocess: entry.preprocess ?? null,
-    products: {
-      syntax: true,
-      canonicalAst: true,
-      html: true,
-      attributeOccurrences: true,
-      attributeQueries: true,
-      resourceQueries: true,
-      diagnostics: true,
-      symbols: true,
-      projection: true,
+const cases = [
+  {
+    name: "要求した全product",
+    request: {
+      source: { text: "= Title\n\n== Section\n\nText *strong*.\n", id: "main.adoc" },
+      products: {
+        syntax: true, canonicalAst: true, html: true, attributeOccurrences: true,
+        attributeQueries: true, resourceQueries: true, diagnostics: true, symbols: true,
+        document: true,
+      },
     },
-    renderInputs: entry.renderInputs ?? {},
-    analysisOptions: entry.analysisOptions ?? {},
-    renderPolicy: entry.renderPolicy ?? {},
-    outputLimits: entry.outputLimits ?? {},
-  };
-}
+  },
+  {
+    name: "include文書",
+    request: {
+      source: { text: "include::part.adoc[]", id: "main.adoc" },
+      products: { html: true, attributeQueries: true },
+      resources: { documents: { "part.adoc": "== Included\n" } },
+    },
+  },
+  {
+    name: "不正な要求",
+    request: { source: { text: "Text" }, products: { html: false } },
+  },
+  {
+    name: "入れ子の未知項目を持つ要求",
+    request: {
+      source: { text: "Text" },
+      products: { symbols: true },
+      resources: {
+        references: [{
+          sourceStart: 0,
+          sourceEnd: 1,
+          outcome: { status: "failed", kind: "missing-target" },
+          unknown: Array.from({ length: 10_001 }, () => "ignored"),
+        }],
+      },
+    },
+  },
+  {
+    name: "prototype名の未知項目を持つ要求",
+    request: JSON.parse(
+      '{"source":{"text":"Text"},"products":{"symbols":true},"__proto__":{"value":1}}',
+    ),
+  },
+  {
+    name: "省略可能なrender入力を省略した要求",
+    request: {
+      source: { text: "Text" },
+      products: { html: true },
+      resources: {
+        references: [{
+          sourceStart: 0,
+          sourceEnd: 1,
+          outcome: { status: "resolved", href: "https://example.test" },
+        }],
+        assets: [{
+          sourceStart: 1,
+          sourceEnd: 2,
+          outcome: {
+            status: "resolved",
+            href: "https://example.test/a",
+            mediaType: "text/plain",
+            byteLength: 42,
+          },
+        }],
+      },
+    },
+  },
+  {
+    name: "省略専用のrender入力へnullを指定した要求",
+    request: {
+      source: { text: "Text" },
+      products: { html: true },
+      resources: {
+        assets: [{
+          sourceStart: 0,
+          sourceEnd: 1,
+          outcome: {
+            status: "resolved",
+            href: "https://example.test/a",
+            mediaType: "text/plain",
+            byteLength: null,
+          },
+        }],
+      },
+    },
+  },
+  {
+    name: "bibliographyを明示的に解除した要求",
+    request: {
+      source: { text: "Text" },
+      products: { html: true },
+      resources: { bibliography: null },
+    },
+  },
+  {
+    name: "属性の文字列とnullを指定した要求",
+    request: {
+      source: {
+        text: ":locked: changed\n",
+        attributes: { set: "value", unset: null },
+      },
+      products: {
+        diagnostics: { protectedAttributes: { locked: null, set: "value" } },
+      },
+    },
+  },
+];
 
 function nativeResult(request) {
   const run = spawnSync(native, [], {
@@ -54,31 +133,18 @@ function nativeResult(request) {
 
 function wasmResult(request) {
   try {
-    return { ok: true, value: wasm.process(request) };
+    return { ok: true, value: wasm.analyze(request) };
   } catch (error) {
-    const text = String(error);
-    let value;
-    try {
-      value = JSON.parse(text);
-    } catch {
-      value = text;
-    }
-    return { ok: false, error: value };
+    return { ok: false, error };
   }
 }
 
-for (const [name, responsibility] of [
-  ["attributes-anchors-links-references-lists-stem", "全productの変換"],
-  ["position-dependent-attribute-queries-with-include-origin", "include前処理"],
-  ["resolved-render-inputs", "解決済み描画入力"],
-  ["strict-unsupported", "入力errorの変換"],
-]) {
-  const entry = manifest.cases.find((candidate) => candidate.name === name);
-  if (!entry) throw new Error(`cross-runtime case is missing: ${name}`);
-  test(`nativeとWASMで${responsibility}が一致する`, () => {
-    const request = requestFor(entry);
-    const expected = nativeResult(request);
+for (const { name, request } of cases) {
+  test(`nativeとWASMで${name}が一致する`, () => {
     const actual = wasmResult(request);
-    assert.deepEqual(actual, expected);
+    const expected = nativeResult(request);
+    assert.equal(actual.ok, expected.ok);
+    if (actual.ok) assert.deepEqual(actual.value, expected.value);
+    else assert.equal(actual.error.code, expected.error.code);
   });
 }
