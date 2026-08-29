@@ -78,6 +78,7 @@ dependencies = [
  "adocweave",
  "adocweave-config",
  "adocweave-host",
+ "glob",
  "tempfile",
 ]
 

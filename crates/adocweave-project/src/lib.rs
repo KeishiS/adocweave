@@ -57,6 +57,8 @@ pub enum ProjectTarget {
     Directory(PathBuf),
     /// Files selected by one authored glob pattern.
     Glob(String),
+    /// Supported documents found by workspace discovery with configured excludes.
+    Workspace(PathBuf),
 }
 
 /// How a request selects its project configuration.
@@ -90,6 +92,9 @@ pub struct ProjectLimits {
     pub filesystem_reads: FilesystemReadLimits,
     pub max_directory_entries: u64,
     pub max_processing_iterations: u32,
+    /// Maximum UTF-8 bytes retained in returned expanded documents and loaded
+    /// resource bodies. Rendered products added by later stages have their own
+    /// output accounting and are not charged here.
     pub output: OutputLimits,
 }
 
@@ -162,11 +167,21 @@ pub enum ProjectResourceFailure {
     Limit(ProjectLimit),
 }
 
+impl fmt::Display for ProjectResourceFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unreadable(error) | Self::Rejected(error) => error.fmt(formatter),
+            Self::Limit(limit) => limit.fmt(formatter),
+        }
+    }
+}
+
 /// Resource use accumulated over one request.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ProjectUsage {
     pub filesystem: FilesystemJobUsage,
     pub processing_iterations: u32,
+    /// Expanded document and loaded resource bytes retained in this result.
     pub output_bytes: u64,
 }
 
@@ -210,6 +225,14 @@ impl std::error::Error for ProjectLimit {}
 pub enum ProjectWarning {
     /// Directory scanning stopped at its shared entry limit.
     ScanTruncated { limit: u64 },
+    /// A related resource could not be represented or acquired safely.
+    Resource {
+        path: PathBuf,
+        kind: ProjectResourceKind,
+        failure: ProjectResourceFailure,
+    },
+    /// Local-reference projection could not produce verifiable candidates.
+    LocalTargetProjection { message: String },
 }
 
 /// A malformed target selector known before reading a selected document.

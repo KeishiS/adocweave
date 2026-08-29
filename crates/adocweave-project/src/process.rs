@@ -16,7 +16,9 @@ use adocweave_host::{
     LocalFilesystemSession, LogicalSourceId, ResourceError,
 };
 
-use crate::selection::{absolute_lexical, logical_path, select_targets};
+use crate::selection::{
+    absolute_lexical, identity_path, logical_path, scan_root_for_selector, select_targets,
+};
 use crate::{
     ConfigSelection, ProjectError, ProjectLimit, ProjectOutcome, ProjectRequest,
     ProjectResourceFailure, ProjectResourceKind, ProjectResourceOutcome, ProjectResourceResult,
@@ -29,15 +31,16 @@ pub fn process(request: ProjectRequest) -> ProjectOutcome {
 
 struct Processor {
     project_root: PathBuf,
-    project_policy: adocweave_host::LocalTargetPolicy,
     config_selection: ConfigSelection,
     overrides: crate::ProjectOverrides,
     limits: crate::ProjectLimits,
     selectors: Vec<crate::ProjectTarget>,
     authority: LocalFilesystemPolicy,
+    identity_roots: Vec<PathBuf>,
     filesystem: LocalFilesystemSession,
     job: IncludeFilesystemJob,
     fixed: BTreeMap<LogicalSourceId, FixedResource>,
+    inspections: BTreeMap<LogicalSourceId, FixedInspection>,
     configs: BTreeMap<PathBuf, ConfigSnapshot>,
     processing_iterations: u32,
     output_bytes: u64,
@@ -52,6 +55,13 @@ struct FixedResource {
     outcome: ProjectResourceOutcome,
 }
 
+#[derive(Clone, Debug)]
+struct FixedInspection {
+    source_id: LogicalSourceId,
+    path: PathBuf,
+    outcome: ProjectResourceOutcome,
+}
+
 struct TargetAnalysisContext<'target> {
     source_id: &'target LogicalSourceId,
     source: &'target Arc<str>,
@@ -60,6 +70,19 @@ struct TargetAnalysisContext<'target> {
     budget: &'target mut TargetBudget,
     bases: &'target mut BTreeMap<String, PathBuf>,
     resources: &'target mut Vec<ProjectResourceResult>,
+    filesystem: &'target mut LocalFilesystemSession,
+}
+
+impl FixedInspection {
+    fn result(&self, requested_by: Option<LogicalSourceId>) -> ProjectResourceResult {
+        ProjectResourceResult {
+            source_id: self.source_id.clone(),
+            path: self.path.clone(),
+            kind: ProjectResourceKind::LocalTarget,
+            requested_by,
+            outcome: self.outcome.clone(),
+        }
+    }
 }
 
 impl FixedResource {
@@ -113,6 +136,7 @@ impl Processor {
         };
         let project_root = project_policy.root().to_owned();
         let retained_roots = authority.roots().to_vec();
+        let identity_roots = retained_roots.clone();
         authority = authority
             .access_existing(retained_roots, limits.filesystem_reads)
             .map_err(ProjectError::Authority)?;
@@ -123,6 +147,7 @@ impl Processor {
         let max_sessions = limits
             .filesystem_reads
             .max_files
+            .saturating_mul(2)
             .saturating_add(targets.len())
             .saturating_add(1);
         let job = IncludeFilesystemJob::new(FilesystemJobLimits {
@@ -140,15 +165,16 @@ impl Processor {
         .map_err(|error| ProjectError::Authority(ResourceError::Job(error)))?;
         Ok(Self {
             project_root,
-            project_policy,
             config_selection: config,
             overrides,
             limits,
             selectors: targets,
             authority,
+            identity_roots,
             filesystem,
             job,
             fixed: BTreeMap::new(),
+            inspections: BTreeMap::new(),
             configs: BTreeMap::new(),
             processing_iterations: 0,
             output_bytes: 0,
@@ -158,12 +184,20 @@ impl Processor {
 
     fn run(mut self) -> ProjectOutcome {
         let selectors = self.selectors.clone();
+        let mut scan_settings = BTreeMap::new();
+        for selector in &selectors {
+            if let Some(root) = scan_root_for_selector(&self.project_root, selector)? {
+                let (_, config, _) = self.resolve_config_at(&root, true)?;
+                scan_settings.insert(root, config.workspace.scan);
+            }
+        }
         let paths = select_targets(
             &self.project_root,
             &selectors,
             &mut self.authority,
             self.limits,
             &self.job,
+            &scan_settings,
             &mut self.warnings,
         )?;
         let mut targets = Vec::with_capacity(paths.len());
@@ -172,7 +206,8 @@ impl Processor {
         }
         let processing_iterations = self.processing_iterations;
         let output_bytes = self.output_bytes;
-        let warnings = self.warnings;
+        let mut warnings = self.warnings;
+        warnings.sort_by_key(|warning| format!("{warning:?}"));
         drop(self.filesystem);
         let filesystem = self.job.finish().map_err(|error| match error {
             FilesystemJobError::Limit(limit) => {
@@ -192,7 +227,8 @@ impl Processor {
     }
 
     fn process_target(&mut self, path: PathBuf) -> Result<ProjectTargetResult, ProjectError> {
-        let (config_snapshot, mut config, config_resource) = self.resolve_config(&path)?;
+        let (config_snapshot, mut config, config_resource) =
+            self.resolve_config_at(&path, false)?;
         if let Some(include) = self.overrides.include {
             config.resources.include = include;
             config.preprocess.enable_includes = include;
@@ -204,7 +240,7 @@ impl Processor {
         let source = match &primary.outcome {
             ProjectResourceOutcome::Loaded { source } => Arc::clone(source),
             ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(limit)) => {
-                return Ok(target_result(
+                return Ok(self.finish_target(
                     source_id,
                     path,
                     config_snapshot,
@@ -214,7 +250,7 @@ impl Processor {
                 ));
             }
             ProjectResourceOutcome::Missing => {
-                return Ok(target_result(
+                return Ok(self.finish_target(
                     source_id,
                     path.clone(),
                     config_snapshot,
@@ -224,7 +260,7 @@ impl Processor {
                 ));
             }
             ProjectResourceOutcome::Failed(failure) => {
-                return Ok(target_result(
+                return Ok(self.finish_target(
                     source_id,
                     path,
                     config_snapshot,
@@ -237,7 +273,7 @@ impl Processor {
         };
         let mut target_budget = TargetBudget::new(config.resources.limit_plan.filesystem_reads);
         if let Err(limit) = target_budget.charge(&source_id, source.len()) {
-            return Ok(target_result(
+            return Ok(self.finish_target(
                 source_id,
                 path,
                 config_snapshot,
@@ -253,8 +289,26 @@ impl Processor {
                 .clone()
                 .unwrap_or_else(|| self.project_root.clone()),
         )]);
-        let allowed_roots = include_roots(&path, &config);
-        let mut outcome = self.analyze_target(TargetAnalysisContext {
+        let base = primary.base.as_deref().unwrap_or(&path);
+        let allowed_roots = if config.resources.include {
+            include_roots(base, &config)
+        } else {
+            vec![base.to_owned()]
+        };
+        let mut include_filesystem = match self.confined_session(&allowed_roots) {
+            Ok(filesystem) => filesystem,
+            Err(error) => {
+                return Ok(self.finish_target(
+                    source_id,
+                    path,
+                    config_snapshot,
+                    config,
+                    resources,
+                    Err(ProjectTargetError::Read(error)),
+                ));
+            }
+        };
+        let outcome = self.analyze_target(TargetAnalysisContext {
             source_id: &source_id,
             source: &source,
             config: &config,
@@ -262,41 +316,67 @@ impl Processor {
             budget: &mut target_budget,
             bases: &mut bases,
             resources: &mut resources,
+            filesystem: &mut include_filesystem,
         });
-        if let Ok(analysis) = &outcome {
-            let bytes = u64::try_from(analysis.document.source.len()).unwrap_or(u64::MAX);
-            let total = self.output_bytes.saturating_add(bytes);
-            if total > u64::from(self.limits.output.max_output_bytes) {
-                outcome = Err(ProjectTargetError::Incomplete(ProjectLimit::OutputBytes {
-                    limit: self.limits.output.max_output_bytes,
-                }));
-            } else {
-                self.output_bytes = total;
-            }
-        }
         if let Ok(analysis) = &outcome {
             self.collect_local_targets(analysis, &config, &bases, &mut resources);
         }
         self.collect_stylesheets(&source_id, &config, &mut resources);
+        Ok(self.finish_target(source_id, path, config_snapshot, config, resources, outcome))
+    }
+
+    fn finish_target(
+        &mut self,
+        source_id: LogicalSourceId,
+        path: PathBuf,
+        config: Option<ConfigSnapshot>,
+        resolved_config: ResolvedProjectConfig,
+        mut resources: Vec<ProjectResourceResult>,
+        mut outcome: Result<PreprocessedAnalysis, ProjectTargetError>,
+    ) -> ProjectTargetResult {
         resources.sort_by(|left, right| {
             left.source_id
                 .cmp(&right.source_id)
                 .then_with(|| left.path.cmp(&right.path))
                 .then_with(|| resource_kind_order(left.kind).cmp(&resource_kind_order(right.kind)))
+                .then_with(|| left.requested_by.cmp(&right.requested_by))
         });
-        Ok(target_result(
-            source_id,
-            path,
-            config_snapshot,
-            config,
-            resources,
-            outcome,
-        ))
+        let returned_bytes = outcome
+            .as_ref()
+            .map_or(0, |analysis| analysis.document.source.len())
+            .saturating_add(
+                resources
+                    .iter()
+                    .map(|resource| match &resource.outcome {
+                        ProjectResourceOutcome::Loaded { source } => source.len(),
+                        _ => 0,
+                    })
+                    .sum::<usize>(),
+            );
+        let total = self
+            .output_bytes
+            .saturating_add(u64::try_from(returned_bytes).unwrap_or(u64::MAX));
+        if total > u64::from(self.limits.output.max_output_bytes) {
+            let limit = ProjectLimit::OutputBytes {
+                limit: self.limits.output.max_output_bytes,
+            };
+            for resource in &mut resources {
+                if matches!(resource.outcome, ProjectResourceOutcome::Loaded { .. }) {
+                    resource.outcome =
+                        ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(limit));
+                }
+            }
+            outcome = Err(ProjectTargetError::Incomplete(limit));
+        } else {
+            self.output_bytes = total;
+        }
+        target_result(source_id, path, config, resolved_config, resources, outcome)
     }
 
-    fn resolve_config(
+    fn resolve_config_at(
         &mut self,
         target: &Path,
+        target_is_directory: bool,
     ) -> Result<
         (
             Option<ConfigSnapshot>,
@@ -310,10 +390,7 @@ impl Processor {
             ConfigSelection::Explicit(path) => {
                 Some(absolute_lexical(&self.project_root, &path).map_err(ProjectError::Authority)?)
             }
-            ConfigSelection::Discover => {
-                adocweave_config::discover_with_policy(target, &self.project_policy)
-                    .map_err(ProjectError::Config)?
-            }
+            ConfigSelection::Discover => self.discover_config(target, target_is_directory)?,
         };
         let Some(path) = path else {
             return Ok((None, ResolvedProjectConfig::default(), None));
@@ -332,69 +409,137 @@ impl Processor {
             return Ok(snapshot.clone());
         }
         let source_id = self.source_id_for_path(&path)?;
-        if let Some(fixed) = self.fixed.get(&source_id) {
+        let fixed = self.read_fixed_no_symlinks(source_id, path.clone());
+        let ProjectResourceOutcome::Loaded { source } = &fixed.outcome else {
             return match &fixed.outcome {
-                ProjectResourceOutcome::Loaded { .. } => {
-                    Err(ProjectError::Authority(ResourceError::Unverifiable(
-                        "configuration identity already names another resource".to_owned(),
-                    )))
-                }
                 ProjectResourceOutcome::Missing => {
                     Err(ProjectError::Authority(ResourceError::Missing(path)))
+                }
+                ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(limit)) => {
+                    Err(ProjectError::Limit(*limit))
                 }
                 ProjectResourceOutcome::Failed(failure) => {
                     Err(ProjectError::Authority(failure.error().clone()))
                 }
-                ProjectResourceOutcome::Present => {
-                    Err(ProjectError::Authority(ResourceError::Unverifiable(
-                        "configuration identity was only inspected".to_owned(),
-                    )))
+                ProjectResourceOutcome::Present | ProjectResourceOutcome::Loaded { .. } => {
+                    unreachable!("configuration reads return content, absence or failure")
                 }
             };
+        };
+        let snapshot =
+            adocweave_config::ConfigSnapshot::from_utf8_source(fixed.path.clone(), source)
+                .map_err(ProjectError::Config)?;
+        self.configs.insert(path, snapshot.clone());
+        Ok(snapshot)
+    }
+
+    fn discover_config(
+        &mut self,
+        target: &Path,
+        target_is_directory: bool,
+    ) -> Result<Option<PathBuf>, ProjectError> {
+        let mut directory = if !target.starts_with(&self.project_root) {
+            self.project_root.clone()
+        } else if target_is_directory {
+            target.to_owned()
+        } else {
+            target
+                .parent()
+                .map(Path::to_owned)
+                .unwrap_or_else(|| self.project_root.clone())
+        };
+        loop {
+            let candidate = directory.join(adocweave_config::FILE_NAME);
+            let source_id = self.source_id_for_path(&candidate)?;
+            let fixed = self.read_fixed_no_symlinks(source_id, candidate.clone());
+            match fixed.outcome {
+                ProjectResourceOutcome::Loaded { .. } => return Ok(Some(fixed.path)),
+                ProjectResourceOutcome::Missing => {}
+                ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(limit)) => {
+                    return Err(ProjectError::Limit(limit));
+                }
+                ProjectResourceOutcome::Failed(failure) => {
+                    return Err(ProjectError::Authority(failure.error().clone()));
+                }
+                ProjectResourceOutcome::Present => {
+                    unreachable!("configuration discovery reads candidates")
+                }
+            }
+            if directory == self.project_root {
+                return Ok(None);
+            }
+            if !directory.pop() || !directory.starts_with(&self.project_root) {
+                return Ok(None);
+            }
         }
-        let mut transaction = self
+    }
+
+    fn read_fixed_no_symlinks(
+        &mut self,
+        source_id: LogicalSourceId,
+        path: PathBuf,
+    ) -> FixedResource {
+        if let Some(fixed) = self.fixed.get(&source_id) {
+            return fixed.clone();
+        }
+        let transaction = self
             .job
             .transaction(&self.filesystem)
-            .map_err(|error| ProjectError::Authority(ResourceError::from(error)))?;
-        let outcome = transaction.read_utf8_no_symlinks_within_budget(
-            IncludeFilesystemPathRequest::new(source_id.clone(), path.clone()),
-        );
-        match outcome {
-            IncludeFilesystemBudgetedOutcome::Found(found) => {
-                let snapshot = ConfigSnapshot::from_include_filesystem_source(&found)
-                    .map_err(ProjectError::Config)?;
-                let canonical = found.provenance().canonical_path().to_owned();
-                let source = Arc::<str>::from(found.source());
-                transaction
-                    .commit(&mut self.filesystem)
-                    .map_err(|error| ProjectError::Authority(ResourceError::from(error)))?;
-                self.fixed.insert(
-                    source_id.clone(),
-                    FixedResource {
-                        source_id,
-                        base: canonical.parent().map(Path::to_owned),
-                        path: canonical,
-                        outcome: ProjectResourceOutcome::Loaded { source },
-                    },
-                );
-                self.configs.insert(path, snapshot.clone());
-                Ok(snapshot)
+            .map_err(ResourceError::from);
+        let outcome = transaction.and_then(|mut transaction| {
+            match transaction.read_utf8_no_symlinks_within_budget(
+                IncludeFilesystemPathRequest::new(source_id.clone(), path.clone()),
+            ) {
+                IncludeFilesystemBudgetedOutcome::Found(found) => {
+                    let canonical = found.provenance().canonical_path().to_owned();
+                    let source = Arc::<str>::from(found.source());
+                    transaction
+                        .commit(&mut self.filesystem)
+                        .map_err(ResourceError::from)?;
+                    Ok((
+                        canonical.clone(),
+                        canonical.parent().map(Path::to_owned),
+                        ProjectResourceOutcome::Loaded { source },
+                    ))
+                }
+                IncludeFilesystemBudgetedOutcome::NotFound(missing) => {
+                    transaction
+                        .commit(&mut self.filesystem)
+                        .map_err(ResourceError::from)?;
+                    Ok((
+                        missing.watch_candidate().path().to_owned(),
+                        None,
+                        ProjectResourceOutcome::Missing,
+                    ))
+                }
+                IncludeFilesystemBudgetedOutcome::BudgetExhausted { .. } => Ok((
+                    path.clone(),
+                    None,
+                    ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(
+                        self.current_read_limit(),
+                    )),
+                )),
+                IncludeFilesystemBudgetedOutcome::Failed(failed) => {
+                    Err(ResourceError::from(failed.error().clone()))
+                }
             }
-            IncludeFilesystemBudgetedOutcome::NotFound(missing) => {
-                transaction
-                    .commit(&mut self.filesystem)
-                    .map_err(|error| ProjectError::Authority(ResourceError::from(error)))?;
-                Err(ProjectError::Authority(ResourceError::Missing(
-                    missing.watch_candidate().path().to_owned(),
-                )))
-            }
-            IncludeFilesystemBudgetedOutcome::BudgetExhausted { .. } => {
-                Err(ProjectError::Limit(self.current_read_limit()))
-            }
-            IncludeFilesystemBudgetedOutcome::Failed(failed) => Err(ProjectError::Authority(
-                ResourceError::from(failed.error().clone()),
-            )),
-        }
+        });
+        let (path, base, outcome) = outcome.unwrap_or_else(|error| {
+            (
+                path,
+                None,
+                ProjectResourceOutcome::Failed(classify_resource_failure(error, self.limits)),
+            )
+        });
+        let fixed = FixedResource {
+            source_id: source_id.clone(),
+            path,
+            base,
+            outcome,
+        };
+        self.fixed.insert(source_id, fixed.clone());
+        observe_fixed(&fixed);
+        fixed
     }
 
     fn analyze_target(
@@ -409,6 +554,7 @@ impl Processor {
             budget,
             bases,
             resources,
+            filesystem,
         } = context;
         let mut preprocess = config.preprocess.clone();
         preprocess.enable_includes = config.resources.include;
@@ -443,11 +589,11 @@ impl Processor {
                         .map(|id| self.source_id_for_value(id.as_str()))
                         .transpose()
                         .map_err(ProjectTargetError::Read)?;
-                    let include_id = self
-                        .source_id_for_value(&target)
-                        .map_err(ProjectTargetError::Read)?;
                     let path = absolute_lexical(&self.project_root, Path::new(&target))
                         .map_err(ProjectTargetError::Read)?;
+                    let include_id = self
+                        .source_id_for_path(&path)
+                        .map_err(|error| ProjectTargetError::Read(project_error_resource(error)))?;
                     if !allowed_roots.iter().any(|root| path.starts_with(root)) {
                         let error = ResourceError::OutsideRoots(path.clone());
                         let fixed = self.fix_failure(
@@ -458,7 +604,14 @@ impl Processor {
                         resources.push(fixed.result(ProjectResourceKind::Include, requested_by));
                         return Err(ProjectTargetError::Read(error));
                     }
-                    let fixed = self.read_fixed(include_id.clone(), path);
+                    let fixed = read_fixed_from(
+                        &self.job,
+                        &mut self.fixed,
+                        self.limits,
+                        include_id.clone(),
+                        path,
+                        filesystem,
+                    );
                     resources
                         .push(fixed.result(ProjectResourceKind::Include, requested_by.clone()));
                     let response = match &fixed.outcome {
@@ -485,14 +638,13 @@ impl Processor {
                                 .insert(target.clone(), ResourceLookupResult::Missing);
                             request.not_found()
                         }
-                        ProjectResourceOutcome::Failed(ProjectResourceFailure::Unreadable(
-                            error,
-                        )) => return Err(ProjectTargetError::Read(error.clone())),
-                        ProjectResourceOutcome::Failed(ProjectResourceFailure::Rejected(error)) => {
-                            return Err(ProjectTargetError::Read(error.clone()));
-                        }
-                        ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(limit)) => {
-                            return Err(ProjectTargetError::Incomplete(*limit));
+                        ProjectResourceOutcome::Failed(failure) => {
+                            let message = failure.to_string();
+                            lookup.entries.insert(
+                                target.clone(),
+                                ResourceLookupResult::Failed(message.clone()),
+                            );
+                            request.load_failed(message)
                         }
                         ProjectResourceOutcome::Present => unreachable!("an include is read"),
                     };
@@ -529,8 +681,22 @@ impl Processor {
         resources: &mut Vec<ProjectResourceResult>,
     ) {
         for path in &config.html.stylesheet_files {
-            let Ok(source_id) = self.source_id_for_path(path) else {
-                continue;
+            let source_id = match self.source_id_for_path(path) {
+                Ok(source_id) => source_id,
+                Err(ProjectError::Authority(error)) => {
+                    self.warnings.push(ProjectWarning::Resource {
+                        path: path.clone(),
+                        kind: ProjectResourceKind::Stylesheet,
+                        failure: ProjectResourceFailure::Rejected(error),
+                    });
+                    continue;
+                }
+                Err(error) => {
+                    self.warnings.push(ProjectWarning::LocalTargetProjection {
+                        message: error.to_string(),
+                    });
+                    continue;
+                }
             };
             let fixed = self.read_fixed(source_id, path.clone());
             resources
@@ -551,68 +717,112 @@ impl Processor {
         let Some(authority) = config.local_targets.project_root.as_deref() else {
             return;
         };
-        let Ok(local_policy) = self.authority.access_derived(
-            &self.project_root,
-            DerivedFilesystemRoots {
-                confined: vec![authority.to_owned()],
-                independent: Vec::new(),
-            },
-            self.limits.filesystem_reads,
-        ) else {
-            return;
+        let mut local_filesystem = match self.confined_session(&[authority.to_owned()]) {
+            Ok(filesystem) => filesystem,
+            Err(error) => {
+                self.warnings.push(ProjectWarning::Resource {
+                    path: authority.to_owned(),
+                    kind: ProjectResourceKind::LocalTarget,
+                    failure: ProjectResourceFailure::Rejected(error),
+                });
+                return;
+            }
         };
-        let Ok(mut local_filesystem) = local_policy.session() else {
-            return;
+        let projection = match analysis.project_origins(ProjectionLimits::default()) {
+            Ok(projection) => projection,
+            Err(error) => {
+                self.warnings.push(ProjectWarning::LocalTargetProjection {
+                    message: error.to_string(),
+                });
+                return;
+            }
         };
-        let Ok(projection) = analysis.project_origins(ProjectionLimits::default()) else {
-            return;
-        };
-        let candidates = projection
-            .local_targets
-            .into_iter()
-            .filter_map(|target| {
-                let owner = target
-                    .origins
-                    .first()
-                    .and_then(|origin| origin.source_id.as_ref())
-                    .map_or_else(
-                        || analysis.analysis.source_id().map(SourceId::as_str),
-                        |source| Some(source.as_str()),
-                    )?;
-                let base = bases.get(owner)?.clone();
-                Some((owner.to_owned(), base, target.value))
-            })
-            .collect::<Vec<_>>();
+        let mut candidates = Vec::new();
+        for target in projection.local_targets {
+            let owner = target
+                .origins
+                .first()
+                .and_then(|origin| origin.source_id.as_ref())
+                .map_or_else(
+                    || analysis.analysis.source_id().map(SourceId::as_str),
+                    |source| Some(source.as_str()),
+                );
+            let Some(owner) = owner else {
+                self.warnings.push(ProjectWarning::LocalTargetProjection {
+                    message: "local target has no source owner".to_owned(),
+                });
+                continue;
+            };
+            let Some(base) = bases.get(owner).cloned() else {
+                self.warnings.push(ProjectWarning::LocalTargetProjection {
+                    message: format!("local target owner has no verified base: {owner}"),
+                });
+                continue;
+            };
+            candidates.push((owner.to_owned(), base, target.value));
+        }
         let mut seen = BTreeSet::new();
         for (owner, base, target) in candidates {
             if !seen.insert((owner.clone(), target.path.clone())) {
                 continue;
             }
-            let requested_by = self.source_id_for_value(&owner).ok();
+            let requested_by = match self.source_id_for_value(&owner) {
+                Ok(source_id) => Some(source_id),
+                Err(error) => {
+                    self.warnings.push(ProjectWarning::Resource {
+                        path: base.clone(),
+                        kind: ProjectResourceKind::LocalTarget,
+                        failure: ProjectResourceFailure::Rejected(error),
+                    });
+                    None
+                }
+            };
             let path = match absolute_lexical(&base, Path::new(&target.path)) {
                 Ok(path) => path,
                 Err(error) => {
-                    if let Ok(source_id) = self.source_id_for_value(&target.path) {
-                        let fixed = self.fix_failure(
-                            source_id,
-                            base.join(&target.path),
-                            ProjectResourceFailure::Rejected(error),
-                        );
-                        resources
-                            .push(fixed.result(ProjectResourceKind::LocalTarget, requested_by));
+                    match self.source_id_for_value(&target.path) {
+                        Ok(source_id) => {
+                            let fixed = self.fix_failure(
+                                source_id,
+                                base.join(&target.path),
+                                ProjectResourceFailure::Rejected(error),
+                            );
+                            resources
+                                .push(fixed.result(ProjectResourceKind::LocalTarget, requested_by));
+                        }
+                        Err(id_error) => self.warnings.push(ProjectWarning::Resource {
+                            path: base.join(&target.path),
+                            kind: ProjectResourceKind::LocalTarget,
+                            failure: ProjectResourceFailure::Rejected(id_error),
+                        }),
                     }
                     continue;
                 }
             };
-            let Ok(source_id) = self.source_id_for_path(&path) else {
-                continue;
+            let source_id = match self.source_id_for_path(&path) {
+                Ok(source_id) => source_id,
+                Err(ProjectError::Authority(error)) => {
+                    self.warnings.push(ProjectWarning::Resource {
+                        path,
+                        kind: ProjectResourceKind::LocalTarget,
+                        failure: ProjectResourceFailure::Rejected(error),
+                    });
+                    continue;
+                }
+                Err(error) => {
+                    self.warnings.push(ProjectWarning::LocalTargetProjection {
+                        message: error.to_string(),
+                    });
+                    continue;
+                }
             };
-            let fixed = if target.syntax == adocweave::LocalTargetSyntax::Unverifiable {
+            let result = if target.syntax == adocweave::LocalTargetSyntax::Unverifiable {
                 self.fix_failure(
                     source_id,
                     path,
                     ProjectResourceFailure::Rejected(ResourceError::Unverifiable(target.target)),
                 )
+                .result(ProjectResourceKind::LocalTarget, requested_by)
             } else {
                 self.inspect_fixed_in(
                     source_id,
@@ -622,72 +832,21 @@ impl Processor {
                     &target.path,
                     &mut local_filesystem,
                 )
+                .result(requested_by)
             };
-            resources.push(fixed.result(ProjectResourceKind::LocalTarget, requested_by));
+            resources.push(result);
         }
     }
 
     fn read_fixed(&mut self, source_id: LogicalSourceId, path: PathBuf) -> FixedResource {
-        if let Some(fixed) = self.fixed.get(&source_id) {
-            return fixed.clone();
-        }
-        let outcome = self
-            .job
-            .transaction(&self.filesystem)
-            .map_err(ResourceError::from)
-            .and_then(|mut transaction| {
-                let outcome = transaction.read_utf8_within_budget(
-                    IncludeFilesystemPathRequest::new(source_id.clone(), path.clone()),
-                );
-                match outcome {
-                    IncludeFilesystemBudgetedOutcome::Found(found) => {
-                        let canonical = found.provenance().canonical_path().to_owned();
-                        let source = Arc::<str>::from(found.source());
-                        transaction
-                            .commit(&mut self.filesystem)
-                            .map_err(ResourceError::from)?;
-                        Ok((
-                            canonical.clone(),
-                            canonical.parent().map(Path::to_owned),
-                            ProjectResourceOutcome::Loaded { source },
-                        ))
-                    }
-                    IncludeFilesystemBudgetedOutcome::NotFound(missing) => {
-                        let candidate = missing.watch_candidate().path().to_owned();
-                        transaction
-                            .commit(&mut self.filesystem)
-                            .map_err(ResourceError::from)?;
-                        Ok((candidate, None, ProjectResourceOutcome::Missing))
-                    }
-                    IncludeFilesystemBudgetedOutcome::BudgetExhausted { .. } => Ok((
-                        path.clone(),
-                        None,
-                        ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(
-                            self.current_read_limit(),
-                        )),
-                    )),
-                    IncludeFilesystemBudgetedOutcome::Failed(failed) => {
-                        Err(ResourceError::from(failed.error().clone()))
-                    }
-                }
-            });
-        let (path, base, outcome) = match outcome {
-            Ok(value) => value,
-            Err(error) => (
-                path,
-                None,
-                ProjectResourceOutcome::Failed(classify_resource_failure(error, self.limits)),
-            ),
-        };
-        let fixed = FixedResource {
-            source_id: source_id.clone(),
+        read_fixed_from(
+            &self.job,
+            &mut self.fixed,
+            self.limits,
+            source_id,
             path,
-            base,
-            outcome,
-        };
-        self.fixed.insert(source_id, fixed.clone());
-        observe_fixed(&fixed);
-        fixed
+            &mut self.filesystem,
+        )
     }
 
     fn inspect_fixed_in(
@@ -698,8 +857,20 @@ impl Processor {
         base: &Path,
         target: &str,
         filesystem: &mut LocalFilesystemSession,
-    ) -> FixedResource {
+    ) -> FixedInspection {
         if let Some(fixed) = self.fixed.get(&source_id) {
+            return FixedInspection {
+                source_id,
+                path: fixed.path.clone(),
+                outcome: match &fixed.outcome {
+                    ProjectResourceOutcome::Loaded { .. } | ProjectResourceOutcome::Present => {
+                        ProjectResourceOutcome::Present
+                    }
+                    outcome => outcome.clone(),
+                },
+            };
+        }
+        if let Some(fixed) = self.inspections.get(&source_id) {
             return fixed.clone();
         }
         let outcome = self
@@ -737,14 +908,23 @@ impl Processor {
                 ProjectResourceOutcome::Failed(classify_resource_failure(error, self.limits)),
             ),
         };
-        let fixed = FixedResource {
+        let fixed = FixedInspection {
             source_id: source_id.clone(),
-            path,
-            base: None,
-            outcome,
+            path: path.clone(),
+            outcome: outcome.clone(),
         };
-        self.fixed.insert(source_id, fixed.clone());
-        observe_fixed(&fixed);
+        if !matches!(outcome, ProjectResourceOutcome::Present) {
+            self.fixed.insert(
+                source_id.clone(),
+                FixedResource {
+                    source_id: source_id.clone(),
+                    path,
+                    base: None,
+                    outcome,
+                },
+            );
+        }
+        self.inspections.insert(source_id, fixed.clone());
         fixed
     }
 
@@ -792,13 +972,142 @@ impl Processor {
         }
     }
 
+    fn confined_session(
+        &mut self,
+        roots: &[PathBuf],
+    ) -> Result<LocalFilesystemSession, ResourceError> {
+        let mut selected = Vec::new();
+        for root in roots {
+            let anchor = self
+                .authority
+                .policy_for_path(root)
+                .map(|policy| policy.root().to_owned())
+                .ok_or_else(|| ResourceError::OutsideRoots(root.clone()))?;
+            let access = if anchor == *root {
+                self.authority
+                    .access_existing([anchor], self.limits.filesystem_reads)?
+            } else {
+                self.authority.access_derived(
+                    &anchor,
+                    DerivedFilesystemRoots {
+                        confined: vec![root.clone()],
+                        independent: Vec::new(),
+                    },
+                    self.limits.filesystem_reads,
+                )?
+            };
+            selected.extend(access.roots().iter().cloned());
+        }
+        selected.sort();
+        selected.dedup();
+        self.authority
+            .access_existing(selected, self.limits.filesystem_reads)?
+            .session()
+    }
+
     fn source_id_for_path(&self, path: &Path) -> Result<LogicalSourceId, ProjectError> {
-        self.source_id_for_value(&logical_path(&self.project_root, path))
+        let value = if path.starts_with(&self.project_root) {
+            format!("project:{}", identity_path(&self.project_root, path))
+        } else {
+            let (index, root) = self
+                .identity_roots
+                .iter()
+                .enumerate()
+                .filter(|(_, root)| path.starts_with(root))
+                .max_by_key(|(_, root)| root.components().count())
+                .ok_or_else(|| {
+                    ProjectError::Authority(ResourceError::OutsideRoots(path.to_owned()))
+                })?;
+            format!("authority:{index}:{}", identity_path(root, path))
+        };
+        self.source_id_for_value(&value)
             .map_err(ProjectError::Authority)
     }
 
     fn source_id_for_value(&self, value: &str) -> Result<LogicalSourceId, ResourceError> {
         LogicalSourceId::new(if value.is_empty() { "." } else { value })
+    }
+}
+
+fn read_fixed_from(
+    job: &IncludeFilesystemJob,
+    fixed_resources: &mut BTreeMap<LogicalSourceId, FixedResource>,
+    limits: crate::ProjectLimits,
+    source_id: LogicalSourceId,
+    path: PathBuf,
+    filesystem: &mut LocalFilesystemSession,
+) -> FixedResource {
+    if let Some(fixed) = fixed_resources.get(&source_id) {
+        return fixed.clone();
+    }
+    let outcome = job
+        .transaction(filesystem)
+        .map_err(ResourceError::from)
+        .and_then(|mut transaction| {
+            match transaction.read_utf8_within_budget(IncludeFilesystemPathRequest::new(
+                source_id.clone(),
+                path.clone(),
+            )) {
+                IncludeFilesystemBudgetedOutcome::Found(found) => {
+                    let canonical = found.provenance().canonical_path().to_owned();
+                    let source = Arc::<str>::from(found.source());
+                    transaction
+                        .commit(filesystem)
+                        .map_err(ResourceError::from)?;
+                    Ok((
+                        canonical.clone(),
+                        canonical.parent().map(Path::to_owned),
+                        ProjectResourceOutcome::Loaded { source },
+                    ))
+                }
+                IncludeFilesystemBudgetedOutcome::NotFound(missing) => {
+                    let candidate = missing.watch_candidate().path().to_owned();
+                    transaction
+                        .commit(filesystem)
+                        .map_err(ResourceError::from)?;
+                    Ok((candidate, None, ProjectResourceOutcome::Missing))
+                }
+                IncludeFilesystemBudgetedOutcome::BudgetExhausted { .. } => Ok((
+                    path.clone(),
+                    None,
+                    ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(
+                        current_read_limit(job, limits),
+                    )),
+                )),
+                IncludeFilesystemBudgetedOutcome::Failed(failed) => {
+                    Err(ResourceError::from(failed.error().clone()))
+                }
+            }
+        });
+    let (path, base, outcome) = outcome.unwrap_or_else(|error| {
+        (
+            path,
+            None,
+            ProjectResourceOutcome::Failed(classify_resource_failure(error, limits)),
+        )
+    });
+    let fixed = FixedResource {
+        source_id: source_id.clone(),
+        path,
+        base,
+        outcome,
+    };
+    fixed_resources.insert(source_id, fixed.clone());
+    observe_fixed(&fixed);
+    fixed
+}
+
+fn current_read_limit(job: &IncludeFilesystemJob, limits: crate::ProjectLimits) -> ProjectLimit {
+    let usage = job.usage().unwrap_or_default();
+    if usage.read_operations >= u64::try_from(limits.filesystem_reads.max_files).unwrap_or(u64::MAX)
+    {
+        ProjectLimit::Files {
+            limit: limits.filesystem_reads.max_files,
+        }
+    } else {
+        ProjectLimit::ReadBytes {
+            limit: limits.filesystem_reads.max_total_bytes,
+        }
     }
 }
 
@@ -820,12 +1129,10 @@ fn target_result(
     }
 }
 
-fn include_roots(path: &Path, config: &ResolvedProjectConfig) -> Vec<PathBuf> {
+fn include_roots(base: &Path, config: &ResolvedProjectConfig) -> Vec<PathBuf> {
     let mut roots = config.resources.roots.clone();
-    if let Some(parent) = path.parent()
-        && !roots.iter().any(|root| root == parent)
-    {
-        roots.push(parent.to_owned());
+    if !roots.iter().any(|root| root == base) {
+        roots.push(base.to_owned());
     }
     roots.sort();
     roots.dedup();
@@ -895,6 +1202,13 @@ fn map_prepared_error(error: PreparedAnalysisError) -> ProjectTargetError {
         PreparedAnalysisError::Cancelled => {
             ProjectTargetError::Analysis(PreprocessedAnalysisError::Cancelled)
         }
+    }
+}
+
+fn project_error_resource(error: ProjectError) -> ResourceError {
+    match error {
+        ProjectError::Authority(error) => error,
+        error => ResourceError::Unverifiable(error.to_string()),
     }
 }
 
