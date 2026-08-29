@@ -56,6 +56,7 @@ fn session_tracks_multiple_project_roots_with_one_revision() {
         ]
     );
     let initialized_revision = session.input_revision();
+    let initialized_epoch = session.workspace_input_epoch();
 
     let changed = session.workspace_folders_changed(typed(json!({
         "event": {
@@ -71,6 +72,7 @@ fn session_tracks_multiple_project_roots_with_one_revision() {
     })));
     assert!(changed);
     assert_eq!(session.input_revision(), initialized_revision + 1);
+    assert_eq!(session.workspace_input_epoch(), initialized_epoch + 1);
     assert_eq!(
         session.workspace_roots(),
         vec![
@@ -212,6 +214,7 @@ fn project_configuration_change_invalidates_jobs_before_rebuild_finishes() {
         .analyze(&adocweave::NeverCancel)
         .expect("analysis before configuration change");
     let previous_revision = session.input_revision();
+    let previous_epoch = session.workspace_input_epoch();
 
     let outcome = session.handle_workspace_files_changed(typed(json!({
         "changes": [{"uri": "file:///.adocweave.toml", "type": 2}]
@@ -222,6 +225,7 @@ fn project_configuration_change_invalidates_jobs_before_rebuild_finishes() {
     assert!(outcome.jobs.is_empty());
     assert!(job.cancellation.is_cancelled());
     assert_eq!(session.input_revision(), previous_revision + 1);
+    assert_eq!(session.workspace_input_epoch(), previous_epoch + 1);
     assert_eq!(
         session
             .documents
@@ -252,6 +256,7 @@ fn oversized_watch_batch_invalidates_jobs_before_recovery_scan() {
         .analyze(&adocweave::NeverCancel)
         .expect("analysis before watched changes");
     let previous_revision = session.input_revision();
+    let previous_epoch = session.workspace_input_epoch();
     let changes = (0..=10_000)
         .map(|index| {
             lsp::FileEvent::new(
@@ -269,6 +274,7 @@ fn oversized_watch_batch_invalidates_jobs_before_recovery_scan() {
     assert!(outcome.jobs.is_empty());
     assert!(job.cancellation.is_cancelled());
     assert_eq!(session.input_revision(), previous_revision + 1);
+    assert_eq!(session.workspace_input_epoch(), previous_epoch + 1);
     assert_eq!(session.adopt(&job, result), Adoption::Stale);
 }
 
@@ -399,4 +405,300 @@ fn open_and_change_wait_for_rebuild_before_creating_analysis_jobs() {
         jobs.iter()
             .any(|job| job.request.source.as_ref() == "= Opened\n")
     );
+}
+
+#[test]
+fn workspace_error_epoch_survives_document_changes_and_hides_superseded_errors() {
+    let mut session = Session::default();
+    initialize(&mut session, &["utf-16"]);
+    open(&mut session, "file:///guide.adoc", 1, "= Before\n");
+
+    let _ = session.workspace_scan_failed("old workspace failure".to_owned());
+    let epoch = session.workspace_input_epoch();
+    assert!(
+        session
+            .diagnostics(&uri("file:///guide.adoc"))
+            .expect("old failure diagnostics")
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("old workspace failure"))
+    );
+
+    assert!(
+        change(
+            &mut session,
+            "file:///guide.adoc",
+            2,
+            json!([{"text": "= Changed\n"}])
+        )
+        .expect("document change")
+    );
+    assert_eq!(session.workspace_input_epoch(), epoch);
+    assert!(
+        session
+            .diagnostics(&uri("file:///guide.adoc"))
+            .expect("failure after document change")
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("old workspace failure"))
+    );
+
+    let outcome = session.handle_workspace_files_changed(typed(json!({
+        "changes": [{"uri": "file:///.adocweave.toml", "type": 2}]
+    })));
+    assert_eq!(session.workspace_input_epoch(), epoch + 1);
+    assert!(
+        session
+            .diagnostics(&uri("file:///guide.adoc"))
+            .expect("diagnostics during replacement")
+            .diagnostics
+            .iter()
+            .all(|diagnostic| !diagnostic.message.contains("old workspace failure"))
+    );
+
+    let (sequence, _) = outcome.rebuild.expect("replacement scan").into_parts();
+    let transition = session
+        .complete_workspace_scan(crate::workspace_scan::WorkspaceScanned::new(
+            sequence,
+            Err("current workspace failure".to_owned()),
+        ))
+        .expect("accepted failed scan");
+    assert!(transition.jobs.is_empty());
+    assert!(
+        session
+            .diagnostics(&uri("file:///guide.adoc"))
+            .expect("current failure diagnostics")
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("current workspace failure"))
+    );
+}
+
+#[test]
+fn workspace_input_and_watch_errors_follow_the_workspace_epoch() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-session-errors-{unique}"));
+    let docs = root.join("docs");
+    let other = root.join("other");
+    fs::create_dir_all(&docs).expect("docs");
+    fs::create_dir_all(&other).expect("other");
+    let config_path = root.join(adocweave_config::FILE_NAME);
+    let document_path = docs.join("root.adoc");
+    let include_path = docs.join("part.adoc");
+    let rejected_path = other.join("rejected.adoc");
+    fs::write(
+        &config_path,
+        "schema-version = 2\n[resources]\ninclude = true\nroots = [\"docs\"]\n",
+    )
+    .expect("configuration");
+    fs::write(&document_path, "include::part.adoc[]\n").expect("document");
+    fs::write(&include_path, "part\n").expect("include");
+    fs::write(&rejected_path, "rejected\n").expect("rejected document");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
+    let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
+    let include_uri = lsp::Url::from_file_path(&include_path).expect("include URI");
+    let rejected_uri = lsp::Url::from_file_path(&rejected_path).expect("rejected URI");
+    let config_uri = lsp::Url::from_file_path(&config_path).expect("configuration URI");
+    let mut session = Session::default();
+    initialize_with_params(
+        &mut session,
+        typed(json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "capabilities": {}
+        })),
+    );
+    let scan = session.plan_workspace_scan(&adocweave::NeverCancel);
+    let _ = session.apply_workspace_scan(scan);
+    open(
+        &mut session,
+        document_uri.as_str(),
+        1,
+        "include::part.adoc[]\n",
+    );
+
+    fs::write(&include_path, [0xff]).expect("invalid include");
+    for job in session
+        .workspace_files_changed_with_journal(typed(json!({
+            "changes": [{"uri": include_uri, "type": 2}]
+        })))
+        .jobs
+    {
+        adopt(&mut session, job);
+    }
+    assert!(
+        session
+            .begin_open(typed(json!({
+                "textDocument": {
+                    "uri": rejected_uri,
+                    "languageId": "asciidoc",
+                    "version": 1,
+                    "text": "rejected\n"
+                }
+            })))
+            .is_empty()
+    );
+    let current = session
+        .diagnostics(&document_uri)
+        .expect("current workspace errors");
+    assert!(current.diagnostics.iter().any(|diagnostic| {
+        diagnostic
+            .message
+            .contains("outside configured resource roots")
+    }));
+    assert!(
+        current
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("UTF-8"))
+    );
+
+    fs::write(
+        &config_path,
+        "schema-version = 2\n[resources]\ninclude = true\nroots = [\".\"]\n",
+    )
+    .expect("expanded configuration");
+    let replacement = session.handle_workspace_files_changed(typed(json!({
+        "changes": [{"uri": config_uri, "type": 2}]
+    })));
+    let rebuilding = session
+        .diagnostics(&document_uri)
+        .expect("rebuilding diagnostics");
+    assert!(rebuilding.diagnostics.iter().all(|diagnostic| {
+        !diagnostic
+            .message
+            .contains("outside configured resource roots")
+            && !diagnostic.message.contains("UTF-8")
+    }));
+
+    fs::write(&include_path, "restored\n").expect("restored include");
+    let scan = session.plan_workspace_scan(&adocweave::NeverCancel);
+    let (sequence, _) = replacement
+        .rebuild
+        .expect("configuration replacement")
+        .into_parts();
+    let completed = session
+        .complete_workspace_scan(crate::workspace_scan::WorkspaceScanned::new(
+            sequence,
+            Ok(scan),
+        ))
+        .expect("successful replacement");
+    assert_eq!(completed.jobs.len(), 1);
+    let recovered = session
+        .diagnostics(&document_uri)
+        .expect("recovered diagnostics");
+    assert!(recovered.diagnostics.iter().all(|diagnostic| {
+        !diagnostic
+            .message
+            .contains("outside configured resource roots")
+            && !diagnostic.message.contains("UTF-8")
+    }));
+
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn failed_rebuild_retries_after_watch_and_analyzes_latest_open_inputs_once() {
+    let mut session = Session::default();
+    initialize(&mut session, &["utf-16"]);
+    open(&mut session, "file:///changed.adoc", 1, "= Before\n");
+    let outcome = session.handle_workspace_files_changed(typed(json!({
+        "changes": [{"uri": "file:///.adocweave.toml", "type": 2}]
+    })));
+    let (failed_sequence, _) = outcome.rebuild.expect("replacement scan").into_parts();
+    let failed = session
+        .complete_workspace_scan(crate::workspace_scan::WorkspaceScanned::new(
+            failed_sequence,
+            Err("workspace worker failed".to_owned()),
+        ))
+        .expect("failed scan completion");
+    assert!(failed.jobs.is_empty());
+
+    assert!(
+        session
+            .begin_change(typed(json!({
+                "textDocument": {"uri": "file:///changed.adoc", "version": 2},
+                "contentChanges": [{"text": "= Latest\n"}]
+            })))
+            .expect("change while waiting for retry")
+            .is_empty()
+    );
+    assert!(
+        session
+            .begin_open(typed(json!({
+                "textDocument": {
+                    "uri": "file:///opened.adoc",
+                    "languageId": "asciidoc",
+                    "version": 1,
+                    "text": "= Opened\n"
+                }
+            })))
+            .is_empty()
+    );
+
+    let watched = session.handle_workspace_files_changed(typed(json!({
+        "changes": [{"uri": "file:///ordinary.adoc", "type": 2}]
+    })));
+    let generation = watched
+        .recovery_generation
+        .expect("failed scan recovery generation");
+    let retry = session
+        .request_workspace_scan_recovery(crate::workspace_scan::WorkspaceScanRecovery::new(
+            generation,
+        ))
+        .expect("retry scan");
+    let (retry_sequence, _) = retry.into_parts();
+    let scan = session.plan_workspace_scan(&adocweave::NeverCancel);
+    let recovered = session
+        .complete_workspace_scan(crate::workspace_scan::WorkspaceScanned::new(
+            retry_sequence,
+            Ok(scan),
+        ))
+        .expect("successful retry");
+
+    assert_eq!(recovered.jobs.len(), 2);
+    assert_eq!(
+        recovered
+            .jobs
+            .iter()
+            .filter(|job| job.uri == "file:///changed.adoc")
+            .count(),
+        1
+    );
+    assert_eq!(
+        recovered
+            .jobs
+            .iter()
+            .filter(|job| job.uri == "file:///opened.adoc")
+            .count(),
+        1
+    );
+    assert!(recovered.jobs.iter().any(|job| {
+        job.uri == "file:///changed.adoc" && job.request.source.as_ref() == "= Latest\n"
+    }));
+    assert!(recovered.jobs.iter().any(|job| {
+        job.uri == "file:///opened.adoc" && job.request.source.as_ref() == "= Opened\n"
+    }));
+    assert!(
+        session
+            .diagnostics(&uri("file:///changed.adoc"))
+            .expect("diagnostics after recovery")
+            .diagnostics
+            .iter()
+            .all(|diagnostic| !diagnostic.message.contains("workspace worker failed"))
+    );
+}
+
+#[test]
+#[should_panic(expected = "Language Server workspace input epoch exhausted")]
+fn workspace_input_epoch_is_never_reused_after_exhaustion() {
+    let mut session = Session::default();
+    initialize(&mut session, &["utf-16"]);
+    session.set_workspace_input_epoch_for_test(u64::MAX);
+    let _ = session.handle_workspace_files_changed(typed(json!({
+        "changes": [{"uri": "file:///.adocweave.toml", "type": 2}]
+    })));
 }

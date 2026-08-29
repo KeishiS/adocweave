@@ -220,12 +220,13 @@ pub(crate) struct Session {
     pub(crate) documents: DocumentStore,
     pub position_encoding: PositionEncoding,
     input_revision: u64,
+    workspace_input_epoch: u64,
     client: ClientProfile,
     settings: ServerSettings,
     host_index: Arc<dyn HostReferenceIndex>,
     workspace: WorkspaceResources,
     workspace_roots: std::collections::BTreeMap<String, lsp::Url>,
-    workspace_error: Option<String>,
+    workspace_error: Option<WorkspaceEpochError>,
     /// Incomplete-scan reasons whose notification period is still active.
     ///
     /// A failed scan does not end a period because it establishes neither a
@@ -235,7 +236,8 @@ pub(crate) struct Session {
     workspace_watch_error_bytes: usize,
     workspace_watch_errors_overflowed: bool,
     workspace_watch_recovery_required: bool,
-    workspace_input_error: Option<String>,
+    workspace_watch_error_epoch: u64,
+    workspace_input_error: Option<WorkspaceEpochError>,
     workspace_scans: Arc<Mutex<WorkspaceScanCoordinator>>,
     workspace_input_status: WorkspaceInputStatus,
 }
@@ -245,6 +247,12 @@ enum WorkspaceInputStatus {
     #[default]
     Ready,
     Rebuilding,
+}
+
+#[derive(Clone, Debug)]
+struct WorkspaceEpochError {
+    epoch: u64,
+    message: String,
 }
 
 pub(crate) struct WorkspaceFileChanges {
@@ -276,6 +284,7 @@ impl fmt::Debug for Session {
             .field("documents", &self.documents)
             .field("position_encoding", &self.position_encoding)
             .field("input_revision", &self.input_revision)
+            .field("workspace_input_epoch", &self.workspace_input_epoch)
             .field("client", &self.client)
             .field("settings", &self.settings)
             .field("workspace_input_status", &self.workspace_input_status)
@@ -290,6 +299,7 @@ impl Default for Session {
             documents: DocumentStore::default(),
             position_encoding: PositionEncoding::Utf16,
             input_revision: 0,
+            workspace_input_epoch: 0,
             client: ClientProfile::default(),
             settings: ServerSettings::default(),
             host_index: Arc::new(NoHostReferenceIndex),
@@ -301,6 +311,7 @@ impl Default for Session {
             workspace_watch_error_bytes: 0,
             workspace_watch_errors_overflowed: false,
             workspace_watch_recovery_required: false,
+            workspace_watch_error_epoch: 0,
             workspace_input_error: None,
             workspace_scans: Arc::new(Mutex::new(WorkspaceScanCoordinator::default())),
             workspace_input_status: WorkspaceInputStatus::Ready,
@@ -366,6 +377,41 @@ impl Session {
             .expect("Language Server session input revision exhausted");
     }
 
+    fn advance_workspace_input_epoch(&mut self) {
+        self.workspace_input_epoch = self
+            .workspace_input_epoch
+            .checked_add(1)
+            .expect("Language Server workspace input epoch exhausted");
+    }
+
+    fn current_workspace_error(&self) -> Option<&str> {
+        self.workspace_error
+            .as_ref()
+            .filter(|error| error.epoch == self.workspace_input_epoch)
+            .map(|error| error.message.as_str())
+    }
+
+    fn set_workspace_error(&mut self, message: String) {
+        self.workspace_error = Some(WorkspaceEpochError {
+            epoch: self.workspace_input_epoch,
+            message,
+        });
+    }
+
+    fn current_workspace_input_error(&self) -> Option<&str> {
+        self.workspace_input_error
+            .as_ref()
+            .filter(|error| error.epoch == self.workspace_input_epoch)
+            .map(|error| error.message.as_str())
+    }
+
+    fn set_workspace_input_error(&mut self, message: String) {
+        self.workspace_input_error = Some(WorkspaceEpochError {
+            epoch: self.workspace_input_epoch,
+            message,
+        });
+    }
+
     fn analysis_job_is_current(&self, job: &AnalysisJob) -> bool {
         self.workspace_input_status == WorkspaceInputStatus::Ready
             && self.documents.job_is_current(job)
@@ -377,6 +423,11 @@ impl Session {
         self.workspace_input_status = WorkspaceInputStatus::Rebuilding;
     }
 
+    fn begin_workspace_rebuild(&mut self) {
+        self.advance_workspace_input_epoch();
+        self.invalidate_all_document_inputs();
+    }
+
     #[cfg(test)]
     pub(crate) const fn input_revision(&self) -> u64 {
         self.input_revision
@@ -385,6 +436,16 @@ impl Session {
     #[cfg(test)]
     pub(crate) fn set_input_revision_for_test(&mut self, revision: u64) {
         self.input_revision = revision;
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn workspace_input_epoch(&self) -> u64 {
+        self.workspace_input_epoch
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_workspace_input_epoch_for_test(&mut self, epoch: u64) {
+        self.workspace_input_epoch = epoch;
     }
 
     #[cfg(test)]
@@ -432,7 +493,9 @@ impl Session {
             .into_iter()
             .map(|uri| (uri.to_string(), uri))
             .collect();
+        self.advance_workspace_input_epoch();
         self.workspace_error = None;
+        self.workspace_input_error = None;
         self.clear_workspace_watch_errors();
         self.advance_input_revision();
         lsp::InitializeResult {
@@ -526,7 +589,7 @@ impl Session {
             );
             return Vec::new();
         }
-        if let Some(error) = self.workspace_error.clone() {
+        if let Some(error) = self.current_workspace_error().map(str::to_owned) {
             self.advance_input_revision();
             let options = self.analysis_options_for(None);
             let mut job = self.documents.begin_open_with_options(
@@ -546,7 +609,7 @@ impl Session {
         ) {
             Ok(affected) => affected,
             Err(error) => {
-                self.workspace_input_error = Some(error);
+                self.set_workspace_input_error(error);
                 return Vec::new();
             }
         };
@@ -675,17 +738,31 @@ impl Session {
     }
 
     fn clear_workspace_watch_errors(&mut self) -> bool {
-        let changed = !self.workspace_watch_errors.is_empty()
-            || self.workspace_watch_errors_overflowed
-            || self.workspace_watch_recovery_required;
+        let changed = self.workspace_watch_error_epoch == self.workspace_input_epoch
+            && (!self.workspace_watch_errors.is_empty()
+                || self.workspace_watch_errors_overflowed
+                || self.workspace_watch_recovery_required);
         self.workspace_watch_errors.clear();
         self.workspace_watch_error_bytes = 0;
         self.workspace_watch_errors_overflowed = false;
         self.workspace_watch_recovery_required = false;
+        self.workspace_watch_error_epoch = self.workspace_input_epoch;
         changed
     }
 
+    fn ensure_current_workspace_watch_errors(&mut self) {
+        if self.workspace_watch_error_epoch != self.workspace_input_epoch {
+            self.clear_workspace_watch_errors();
+        }
+    }
+
+    fn current_workspace_watch_recovery_required(&self) -> bool {
+        self.workspace_watch_error_epoch == self.workspace_input_epoch
+            && self.workspace_watch_recovery_required
+    }
+
     fn clear_workspace_watch_error(&mut self, uri: &lsp::Url) -> bool {
+        self.ensure_current_workspace_watch_errors();
         let Some(error) = self.workspace_watch_errors.remove(uri.as_str()) else {
             return false;
         };
@@ -696,6 +773,7 @@ impl Session {
     }
 
     fn record_workspace_watch_error(&mut self, uri: &lsp::Url, error: String) -> bool {
+        self.ensure_current_workspace_watch_errors();
         if let Some(previous) = self.workspace_watch_errors.get_mut(uri.as_str()) {
             if *previous == error {
                 return false;
@@ -731,7 +809,9 @@ impl Session {
     }
 
     fn workspace_watch_error_message(&self) -> Option<String> {
-        if self.workspace_watch_errors.is_empty() && !self.workspace_watch_errors_overflowed {
+        if self.workspace_watch_error_epoch != self.workspace_input_epoch
+            || (self.workspace_watch_errors.is_empty() && !self.workspace_watch_errors_overflowed)
+        {
             return None;
         }
         let mut messages = self
@@ -772,6 +852,7 @@ impl Session {
                     || uri_bytes.saturating_add(change.uri.as_str().len())
                         > MAX_WORKSPACE_WATCH_URI_BYTES
                 {
+                    self.ensure_current_workspace_watch_errors();
                     self.workspace_watch_recovery_required = true;
                     return WorkspaceFileChanges {
                         jobs: Vec::new(),
@@ -845,8 +926,9 @@ impl Session {
             jobs,
             journal,
             replay_complete: true,
-            recovery_required: self.workspace_watch_errors_overflowed
-                || self.workspace_watch_recovery_required,
+            recovery_required: self.workspace_watch_error_epoch == self.workspace_input_epoch
+                && (self.workspace_watch_errors_overflowed
+                    || self.workspace_watch_recovery_required),
         }
     }
 
@@ -857,7 +939,7 @@ impl Session {
         if params.changes.iter().any(|change| {
             change.uri.path_segments().and_then(Iterator::last) == Some(adocweave_config::FILE_NAME)
         }) {
-            self.invalidate_all_document_inputs();
+            self.begin_workspace_rebuild();
             return WorkspaceFileEventOutcome {
                 jobs: Vec::new(),
                 recovery_generation: None,
@@ -891,10 +973,11 @@ impl Session {
                     Vec::new()
                 },
                 replay_complete,
-                recovery_required: !replay_complete,
+                recovery_required: !replay_complete
+                    || self.current_workspace_watch_recovery_required(),
             };
             if !replay_complete {
-                self.invalidate_all_document_inputs();
+                self.begin_workspace_rebuild();
             }
             let recovery_generation = self.record_workspace_changes(&changes);
             return WorkspaceFileEventOutcome {
@@ -907,7 +990,7 @@ impl Session {
 
         let changes = self.workspace_files_changed_with_journal(params);
         if changes.recovery_required && !changes.replay_complete {
-            self.invalidate_all_document_inputs();
+            self.begin_workspace_rebuild();
         }
         let recovery_generation = self.record_workspace_changes(&changes);
         WorkspaceFileEventOutcome {
@@ -1044,12 +1127,14 @@ impl Session {
     /// coherent workspace snapshot.
     pub fn workspace_scan_failed(&mut self, error: String) -> Vec<AnalysisJob> {
         if self.workspace_input_status == WorkspaceInputStatus::Rebuilding {
-            self.workspace_error = Some(error);
+            self.set_workspace_error(error);
+            self.ensure_current_workspace_watch_errors();
             self.workspace_watch_recovery_required = true;
             return Vec::new();
         }
         self.advance_input_revision();
-        self.workspace_error = Some(error);
+        self.set_workspace_error(error);
+        self.ensure_current_workspace_watch_errors();
         self.workspace_watch_recovery_required = true;
         self.documents
             .open_sources()
@@ -1075,7 +1160,8 @@ impl Session {
     ) -> Vec<AnalysisJob> {
         if let Err(error) = outcome {
             let failed_closed = self.workspace.last_load_failed_closed();
-            self.workspace_error = Some(error.clone());
+            self.set_workspace_error(error.clone());
+            self.ensure_current_workspace_watch_errors();
             self.workspace_watch_recovery_required = true;
             return open_sources
                 .into_iter()
@@ -1096,6 +1182,7 @@ impl Session {
                 .collect();
         }
         self.workspace_error = None;
+        self.workspace_input_error = None;
         self.clear_workspace_watch_errors();
         open_sources
             .into_iter()
@@ -1131,7 +1218,7 @@ impl Session {
         }
         self.workspace_roots = roots;
         self.active_scan_notices.clear();
-        self.invalidate_all_document_inputs();
+        self.begin_workspace_rebuild();
         true
     }
 
@@ -1313,12 +1400,12 @@ impl Session {
             return (closed, Vec::new());
         }
         let mut affected = self.workspace.close_open(uri).unwrap_or_else(|error| {
-            self.workspace_error = Some(error);
+            self.set_workspace_error(error);
             std::collections::BTreeSet::new()
         });
         match self.workspace.forget_include_dependencies(uri) {
             Ok(pruned) => affected.extend(pruned),
-            Err(error) => self.workspace_error = Some(error),
+            Err(error) => self.set_workspace_error(error),
         }
         if closed {
             self.advance_input_revision();
@@ -1407,10 +1494,9 @@ impl Session {
         let Some(source) = source else {
             return Ok(lsp::PublishDiagnosticsParams::new(
                 uri.clone(),
-                self.workspace_error
-                    .as_deref()
+                self.current_workspace_error()
                     .or(workspace_watch_error.as_deref())
-                    .or(self.workspace_input_error.as_deref())
+                    .or(self.current_workspace_input_error())
                     .map(crate::diagnostics::workspace_error)
                     .into_iter()
                     .collect(),
@@ -1446,13 +1532,13 @@ impl Session {
                 )
             })
             .collect::<Result<Vec<_>, String>>()?;
-        if let Some(error) = &self.workspace_error {
+        if let Some(error) = self.current_workspace_error() {
             diagnostics.push(crate::diagnostics::workspace_error(error));
         }
         if let Some(error) = &workspace_watch_error {
             diagnostics.push(crate::diagnostics::workspace_error(error));
         }
-        if let Some(error) = &self.workspace_input_error {
+        if let Some(error) = self.current_workspace_input_error() {
             diagnostics.push(crate::diagnostics::workspace_error(error));
         }
         for workspace in self.documents.workspace_analyses() {
