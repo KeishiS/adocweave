@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::local_resource::FilesystemInspectOutcome;
+use crate::local_resource::{FilesystemInspectOutcome, FilesystemLimitedReadOutcome};
 use crate::{
     FilesystemDraftError, FilesystemJobCoordinator, FilesystemJobError, FilesystemJobLimits,
     FilesystemJobUsage, FilesystemReadLimits, FilesystemReadOutcome, FilesystemResourceBinding,
@@ -205,6 +205,26 @@ pub enum IncludeFilesystemBudgetedOutcome {
     Found(IncludeFilesystemSource),
     NotFound(MissingIncludeFilesystemSource),
     BudgetExhausted { source_id: LogicalSourceId },
+    Failed(FailedIncludeFilesystemSource),
+}
+
+/// The limit which refused a read with an additional operation ceiling.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum IncludeFilesystemReadLimit {
+    /// The additional ceiling supplied for this operation was narrower.
+    Additional,
+    /// A pre-existing session or shared-job ceiling was narrower.
+    Established(FilesystemDraftError),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum IncludeFilesystemLimitedOutcome {
+    Found(IncludeFilesystemSource),
+    NotFound(MissingIncludeFilesystemSource),
+    Limit {
+        source_id: LogicalSourceId,
+        cause: IncludeFilesystemReadLimit,
+    },
     Failed(FailedIncludeFilesystemSource),
 }
 
@@ -430,23 +450,34 @@ impl IncludeFilesystemTransaction {
         &mut self,
         request: IncludeFilesystemPathRequest,
         limits: FilesystemReadLimits,
-    ) -> IncludeFilesystemBudgetedOutcome {
+    ) -> IncludeFilesystemLimitedOutcome {
         let IncludeFilesystemPathRequest { source_id, path } = request;
         match self
             .draft_mut()
             .read_utf8_within_limits(source_id.clone(), &path, limits)
         {
-            Ok(Some(outcome)) => match map_read(outcome) {
+            Ok(FilesystemLimitedReadOutcome::Read(outcome)) => match map_read(outcome) {
                 IncludeFilesystemOutcome::Found(found) => {
-                    IncludeFilesystemBudgetedOutcome::Found(found)
+                    IncludeFilesystemLimitedOutcome::Found(found)
                 }
                 IncludeFilesystemOutcome::NotFound(missing) => {
-                    IncludeFilesystemBudgetedOutcome::NotFound(missing)
+                    IncludeFilesystemLimitedOutcome::NotFound(missing)
                 }
                 IncludeFilesystemOutcome::Failed(_) => unreachable!("successful read mapping"),
             },
-            Ok(None) => IncludeFilesystemBudgetedOutcome::BudgetExhausted { source_id },
-            Err(error) => IncludeFilesystemBudgetedOutcome::Failed(FailedIncludeFilesystemSource {
+            Ok(FilesystemLimitedReadOutcome::AdditionalLimit) => {
+                IncludeFilesystemLimitedOutcome::Limit {
+                    source_id,
+                    cause: IncludeFilesystemReadLimit::Additional,
+                }
+            }
+            Ok(FilesystemLimitedReadOutcome::EstablishedLimit(error)) => {
+                IncludeFilesystemLimitedOutcome::Limit {
+                    source_id,
+                    cause: IncludeFilesystemReadLimit::Established(error),
+                }
+            }
+            Err(error) => IncludeFilesystemLimitedOutcome::Failed(FailedIncludeFilesystemSource {
                 source_id,
                 error,
             }),

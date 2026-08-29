@@ -10,9 +10,10 @@ use adocweave::preprocess::{
 use adocweave::{NeverCancel, SourceId};
 use adocweave_config::{ConfigSnapshot, ResolvedProjectConfig};
 use adocweave_host::{
-    DerivedFilesystemRoots, FilesystemJobError, FilesystemJobLimit, FilesystemJobLimits,
-    FilesystemReadLimits, IncludeFilesystemBudgetedOutcome, IncludeFilesystemInspectionOutcome,
-    IncludeFilesystemJob, IncludeFilesystemPathRequest, IncludeFilesystemRequest,
+    DerivedFilesystemRoots, FilesystemDraftError, FilesystemJobError, FilesystemJobLimit,
+    FilesystemJobLimits, FilesystemReadLimits, IncludeFilesystemBudgetedOutcome,
+    IncludeFilesystemInspectionOutcome, IncludeFilesystemJob, IncludeFilesystemLimitedOutcome,
+    IncludeFilesystemPathRequest, IncludeFilesystemReadLimit, IncludeFilesystemRequest,
     LocalFilesystemPolicy, LocalFilesystemSession, LocalTargetPolicy, LogicalSourceId,
     ResourceError,
 };
@@ -1375,11 +1376,29 @@ fn read_fixed_from(
         .and_then(|mut transaction| {
             let request = IncludeFilesystemPathRequest::new(source_id.clone(), path.clone());
             let outcome = match allowance {
-                Some(allowance) => transaction.read_utf8_within_limits(request, allowance.limits),
-                None => transaction.read_utf8_within_budget(request),
+                Some(allowance) => {
+                    match transaction.read_utf8_within_limits(request, allowance.limits) {
+                        IncludeFilesystemLimitedOutcome::Found(found) => {
+                            Ok(IncludeFilesystemBudgetedOutcome::Found(found))
+                        }
+                        IncludeFilesystemLimitedOutcome::NotFound(missing) => {
+                            Ok(IncludeFilesystemBudgetedOutcome::NotFound(missing))
+                        }
+                        IncludeFilesystemLimitedOutcome::Limit { cause, .. } => Err(match cause {
+                            IncludeFilesystemReadLimit::Additional => allowance.limit,
+                            IncludeFilesystemReadLimit::Established(error) => {
+                                established_read_limit(error, limits)
+                            }
+                        }),
+                        IncludeFilesystemLimitedOutcome::Failed(failed) => {
+                            Ok(IncludeFilesystemBudgetedOutcome::Failed(failed))
+                        }
+                    }
+                }
+                None => Ok(transaction.read_utf8_within_budget(request)),
             };
             match outcome {
-                IncludeFilesystemBudgetedOutcome::Found(found) => {
+                Ok(IncludeFilesystemBudgetedOutcome::Found(found)) => {
                     let canonical = found.provenance().canonical_path().to_owned();
                     let source = Arc::<str>::from(found.source());
                     transaction
@@ -1391,30 +1410,28 @@ fn read_fixed_from(
                         ProjectResourceOutcome::Loaded { source },
                     ))
                 }
-                IncludeFilesystemBudgetedOutcome::NotFound(missing) => {
+                Ok(IncludeFilesystemBudgetedOutcome::NotFound(missing)) => {
                     let candidate = missing.watch_candidate().path().to_owned();
                     transaction
                         .commit(filesystem)
                         .map_err(ResourceError::from)?;
                     Ok((candidate, None, ProjectResourceOutcome::Missing))
                 }
-                IncludeFilesystemBudgetedOutcome::BudgetExhausted { .. } => Ok((
+                Ok(IncludeFilesystemBudgetedOutcome::BudgetExhausted { .. }) => Ok((
                     path.clone(),
                     None,
                     ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(
-                        allowance.map_or_else(
-                            || current_read_limit(job, limits),
-                            |allowance| match current_read_limit(job, limits) {
-                                file_limit @ ProjectLimit::Files { .. } => file_limit,
-                                ProjectLimit::ReadBytes { .. } => allowance.limit,
-                                _ => unreachable!("filesystem reads use file or byte limits"),
-                            },
-                        ),
+                        current_read_limit(job, limits),
                     )),
                 )),
-                IncludeFilesystemBudgetedOutcome::Failed(failed) => {
+                Ok(IncludeFilesystemBudgetedOutcome::Failed(failed)) => {
                     Err(ResourceError::from(failed.error().clone()))
                 }
+                Err(limit) => Ok((
+                    path.clone(),
+                    None,
+                    ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(limit)),
+                )),
             }
         });
     let (resolved_path, base, outcome) = outcome.unwrap_or_else(|error| {
@@ -1613,6 +1630,18 @@ fn current_read_limit(job: &IncludeFilesystemJob, limits: crate::ProjectLimits) 
     }
 }
 
+fn established_read_limit(
+    error: FilesystemDraftError,
+    limits: crate::ProjectLimits,
+) -> ProjectLimit {
+    match classify_resource_failure(ResourceError::from(error), limits) {
+        ProjectResourceFailure::Limit(limit) => limit,
+        ProjectResourceFailure::Unreadable(_) | ProjectResourceFailure::Rejected(_) => {
+            unreachable!("the host reports only an established filesystem read limit")
+        }
+    }
+}
+
 fn target_result(
     source_id: LogicalSourceId,
     path: PathBuf,
@@ -1788,15 +1817,14 @@ impl ScopeBudget {
         }
         let remaining_total = scope_remaining_bytes.min(request_remaining_bytes);
         let (limit, scope_specific) = if resource_bytes <= remaining_total {
-            let scope_specific =
-                self.limits.max_resource_bytes <= request_limits.max_resource_bytes;
+            let scope_specific = self.limits.max_resource_bytes < request_limits.max_resource_bytes;
             let limit = if scope_specific {
                 self.limits.max_resource_bytes
             } else {
                 request_limits.max_resource_bytes
             };
             (ProjectLimit::ReadBytes { limit }, scope_specific)
-        } else if scope_remaining_bytes <= request_remaining_bytes {
+        } else if scope_remaining_bytes < request_remaining_bytes {
             (
                 ProjectLimit::ReadBytes {
                     limit: self.limits.max_total_bytes,
@@ -1917,9 +1945,12 @@ fn classify_resource_failure(
         ResourceError::FileLimit { limit } => {
             ProjectResourceFailure::Limit(ProjectLimit::Files { limit: *limit })
         }
-        ResourceError::ByteLimit | ResourceError::ResourceTooLarge(_) => {
+        ResourceError::ByteLimit => ProjectResourceFailure::Limit(ProjectLimit::ReadBytes {
+            limit: limits.filesystem_reads.max_total_bytes,
+        }),
+        ResourceError::ResourceTooLarge(_) => {
             ProjectResourceFailure::Limit(ProjectLimit::ReadBytes {
-                limit: limits.filesystem_reads.max_total_bytes,
+                limit: limits.filesystem_reads.max_resource_bytes,
             })
         }
         ResourceError::Job(FilesystemJobError::Limit(limit)) => {

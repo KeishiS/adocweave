@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::filesystem_job::{FilesystemJobCoordinator, FilesystemReadPermit};
+use crate::filesystem_job::{FilesystemJobCoordinator, FilesystemJobError, FilesystemReadPermit};
 use crate::filesystem_limits::FilesystemReadLimits;
 use crate::local_target::{
     CoordinatedLocalTargetError, FilesystemRaceResistance, LocalTargetError, LocalTargetPolicy,
@@ -301,6 +301,40 @@ struct FilesystemReadOptions {
     follow_symlinks: bool,
     missing: MissingDisposition,
     additional_limits: Option<FilesystemReadLimits>,
+}
+
+enum FilesystemBoundedReadError {
+    Established(FilesystemDraftError),
+    AdditionalLimit,
+}
+
+impl FilesystemBoundedReadError {
+    fn into_established(self) -> FilesystemDraftError {
+        match self {
+            Self::Established(error) => error,
+            Self::AdditionalLimit => {
+                unreachable!("a read without an additional limit cannot exhaust one")
+            }
+        }
+    }
+}
+
+impl From<FilesystemDraftError> for FilesystemBoundedReadError {
+    fn from(error: FilesystemDraftError) -> Self {
+        Self::Established(error)
+    }
+}
+
+impl From<ResourceError> for FilesystemBoundedReadError {
+    fn from(error: ResourceError) -> Self {
+        Self::Established(error.into())
+    }
+}
+
+pub(crate) enum FilesystemLimitedReadOutcome {
+    Read(FilesystemReadOutcome),
+    EstablishedLimit(FilesystemDraftError),
+    AdditionalLimit,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1095,7 +1129,7 @@ impl LocalFilesystemMutationCursor<'_> {
         source_id: LogicalSourceId,
         path: &Path,
         limits: FilesystemReadLimits,
-    ) -> Result<FilesystemReadOutcome, FilesystemDraftError> {
+    ) -> Result<FilesystemReadOutcome, FilesystemBoundedReadError> {
         self.read_utf8_with_disposition(
             source_id,
             path,
@@ -1125,6 +1159,7 @@ impl LocalFilesystemMutationCursor<'_> {
                 additional_limits: None,
             },
         )
+        .map_err(FilesystemBoundedReadError::into_established)
     }
 
     fn read_utf8_preserving_missing(
@@ -1143,6 +1178,7 @@ impl LocalFilesystemMutationCursor<'_> {
                 additional_limits: None,
             },
         )
+        .map_err(FilesystemBoundedReadError::into_established)
     }
 
     fn read_target_utf8(
@@ -1390,6 +1426,7 @@ impl LocalFilesystemMutationCursor<'_> {
                 additional_limits: None,
             },
         )
+        .map_err(FilesystemBoundedReadError::into_established)
     }
 
     fn read_utf8_with_disposition(
@@ -1398,7 +1435,7 @@ impl LocalFilesystemMutationCursor<'_> {
         path: &Path,
         after_open: impl FnOnce(),
         options: FilesystemReadOptions,
-    ) -> Result<FilesystemReadOutcome, FilesystemDraftError> {
+    ) -> Result<FilesystemReadOutcome, FilesystemBoundedReadError> {
         let FilesystemReadOptions {
             reuse_cached_text,
             follow_symlinks,
@@ -1424,6 +1461,7 @@ impl LocalFilesystemMutationCursor<'_> {
         let candidates = &self.state.candidates;
         let limits = self.state.limits;
         let file_limit_denied = std::cell::Cell::new(false);
+        let established_capacity = std::cell::Cell::new(None);
         let loaded = match read_candidate_with_optional_job(
             &mut self.state.sessions[index],
             &candidate,
@@ -1440,6 +1478,7 @@ impl LocalFilesystemMutationCursor<'_> {
                     canonical,
                     &file_limit_denied,
                 );
+                established_capacity.set(Some(established));
                 additional_limits.map_or(established, |additional| {
                     narrow_read_capacity(established, additional)
                 })
@@ -1459,15 +1498,19 @@ impl LocalFilesystemMutationCursor<'_> {
                 });
             }
             Err(error) => {
-                return Err(map_coordinated_read_error(
-                    error,
-                    limits,
-                    file_limit_denied.get(),
+                if additional_limits.is_some_and(|additional| {
+                    additional_limit_caused(&error, established_capacity.get(), additional)
+                }) {
+                    return Err(FilesystemBoundedReadError::AdditionalLimit);
+                }
+                return Err(FilesystemBoundedReadError::Established(
+                    map_coordinated_read_error(error, limits, file_limit_denied.get()),
                 ));
             }
         };
         self.finish_read(binding_generation, source_id, &candidate, loaded)
             .map(FilesystemReadOutcome::Found)
+            .map_err(FilesystemBoundedReadError::Established)
     }
 
     fn root_index(&self, path: &Path) -> Result<usize, FilesystemDraftError> {
@@ -1844,19 +1887,20 @@ impl LocalFilesystemDraft {
         source_id: LogicalSourceId,
         path: &Path,
         limits: FilesystemReadLimits,
-    ) -> Result<Option<FilesystemReadOutcome>, FilesystemDraftError> {
+    ) -> Result<FilesystemLimitedReadOutcome, FilesystemDraftError> {
         self.ensure_operation_can_start()?;
         let result = self
             .mutation_cursor()
             .read_utf8_with_limits(source_id, path, limits);
         match result {
-            Ok(outcome) => Ok(Some(outcome)),
-            Err(FilesystemDraftError::Resource(
-                ResourceError::FileLimit { .. }
-                | ResourceError::ByteLimit
-                | ResourceError::ResourceTooLarge(_),
-            )) => Ok(None),
-            Err(error) => {
+            Ok(outcome) => Ok(FilesystemLimitedReadOutcome::Read(outcome)),
+            Err(FilesystemBoundedReadError::AdditionalLimit) => {
+                Ok(FilesystemLimitedReadOutcome::AdditionalLimit)
+            }
+            Err(FilesystemBoundedReadError::Established(error)) if is_read_limit_error(&error) => {
+                Ok(FilesystemLimitedReadOutcome::EstablishedLimit(error))
+            }
+            Err(FilesystemBoundedReadError::Established(error)) => {
                 self.poisoned = true;
                 Err(error)
             }
@@ -2176,6 +2220,46 @@ fn narrow_read_capacity(
             .max_resource_bytes
             .min(additional.max_resource_bytes),
     }
+}
+
+fn additional_limit_caused(
+    error: &CoordinatedLocalTargetError,
+    established: Option<crate::local_target::CandidateReadCapacity>,
+    additional: FilesystemReadLimits,
+) -> bool {
+    let Some(established) = established else {
+        return false;
+    };
+    match error {
+        CoordinatedLocalTargetError::Target(LocalTargetError::ReadLimitExceeded) => {
+            if !established.allow_file {
+                false
+            } else if additional.max_files == 0 {
+                true
+            } else {
+                additional.max_total_bytes < established.max_total_bytes
+            }
+        }
+        CoordinatedLocalTargetError::Target(LocalTargetError::ResourceTooLarge(_)) => {
+            additional.max_resource_bytes < established.max_resource_bytes
+        }
+        CoordinatedLocalTargetError::Target(_) | CoordinatedLocalTargetError::Job(_) => false,
+    }
+}
+
+fn is_read_limit_error(error: &FilesystemDraftError) -> bool {
+    matches!(
+        error,
+        FilesystemDraftError::Resource(
+            ResourceError::FileLimit { .. }
+                | ResourceError::ByteLimit
+                | ResourceError::ResourceTooLarge(_)
+        ) | FilesystemDraftError::Job(FilesystemJobError::Limit(
+            crate::FilesystemJobLimit::ReadOperations { .. }
+                | crate::FilesystemJobLimit::ReadBytes { .. }
+                | crate::FilesystemJobLimit::ReadProbeBytes { .. }
+        ))
+    )
 }
 
 fn map_shared_read_error(

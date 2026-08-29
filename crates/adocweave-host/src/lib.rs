@@ -19,10 +19,10 @@ pub use filesystem_limits::FilesystemReadLimits;
 pub use include_filesystem::{
     FailedIncludeFilesystemSource, IncludeFilesystem, IncludeFilesystemBinding,
     IncludeFilesystemBudgetedOutcome, IncludeFilesystemInspection,
-    IncludeFilesystemInspectionOutcome, IncludeFilesystemJob, IncludeFilesystemOutcome,
-    IncludeFilesystemPathRequest, IncludeFilesystemProvenance, IncludeFilesystemRequest,
-    IncludeFilesystemSource, IncludeFilesystemTransaction, IncludeWatchCandidate,
-    MissingIncludeFilesystemSource,
+    IncludeFilesystemInspectionOutcome, IncludeFilesystemJob, IncludeFilesystemLimitedOutcome,
+    IncludeFilesystemOutcome, IncludeFilesystemPathRequest, IncludeFilesystemProvenance,
+    IncludeFilesystemReadLimit, IncludeFilesystemRequest, IncludeFilesystemSource,
+    IncludeFilesystemTransaction, IncludeWatchCandidate, MissingIncludeFilesystemSource,
 };
 pub use local_resource::{
     DerivedFilesystemRoots, FilesystemDraftError, FilesystemReadOutcome, FilesystemReleaseOutcome,

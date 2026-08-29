@@ -664,6 +664,7 @@ fn per_resource_scope_limit_bounds_io_and_reports_its_own_ceiling() {
     write(root.join("large.adoc"), &"x".repeat(64 * 1024));
     let mut request = request(root, vec![ProjectTarget::Path(PathBuf::from("large.adoc"))]);
     request.config = ConfigSelection::Explicit(PathBuf::from(".adocweave.toml"));
+    request.limits.filesystem_reads.max_files = 2;
 
     let result = process(request).expect("configured limit remains target-local");
     assert!(matches!(
@@ -673,6 +674,66 @@ fn per_resource_scope_limit_bounds_io_and_reports_its_own_ceiling() {
         }))
     ));
     assert_eq!(result.usage.filesystem.read_bytes, config.len() as u64 + 5);
+}
+
+#[test]
+fn scope_limit_is_fixed_without_rereading_one_resource_for_later_targets() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    let config = "schema-version = 2\n[resources]\nmax-files = 3\nmax-total-bytes = 1024\nmax-resource-bytes = 4\n[html]\nstylesheet-files = [\"large.css\"]\n";
+    write(root.join(".adocweave.toml"), config);
+    write(root.join("a.adoc"), "a\n");
+    write(root.join("b.adoc"), "b\n");
+    write(root.join("large.css"), &"x".repeat(64 * 1024));
+    let mut request = request(
+        root,
+        vec![
+            ProjectTarget::Path(PathBuf::from("a.adoc")),
+            ProjectTarget::Path(PathBuf::from("b.adoc")),
+        ],
+    );
+    request.config = ConfigSelection::Explicit(PathBuf::from(".adocweave.toml"));
+
+    let result = process(request).expect("scope limit remains target-local");
+    assert!(result.targets.iter().all(|target| matches!(
+        target.outcome,
+        Err(ProjectTargetError::Incomplete(ProjectLimit::ReadBytes {
+            limit: 4
+        }))
+    )));
+    assert_eq!(result.usage.filesystem.read_bytes, config.len() as u64 + 9);
+}
+
+#[test]
+fn simultaneous_request_resource_limit_is_cached_without_fixing_the_scope() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    let config = "schema-version = 2\n[resources]\nmax-files = 3\nmax-total-bytes = 4096\nmax-resource-bytes = 1000\n[html]\nstylesheet-files = [\"large.css\"]\n";
+    write(root.join(".adocweave.toml"), config);
+    write(root.join("a.adoc"), "a\n");
+    write(root.join("b.adoc"), "b\n");
+    write(root.join("large.css"), &"x".repeat(64 * 1024));
+    let mut request = request(
+        root,
+        vec![
+            ProjectTarget::Path(PathBuf::from("a.adoc")),
+            ProjectTarget::Path(PathBuf::from("b.adoc")),
+        ],
+    );
+    request.config = ConfigSelection::Explicit(PathBuf::from(".adocweave.toml"));
+    request.limits.filesystem_reads.max_resource_bytes = 1000;
+
+    let result = process(request).expect("resource limit remains target-local");
+    assert!(result.targets.iter().all(|target| matches!(
+        target.outcome,
+        Err(ProjectTargetError::Incomplete(ProjectLimit::ReadBytes {
+            limit: 1000
+        }))
+    )));
+    assert_eq!(
+        result.usage.filesystem.read_bytes,
+        config.len() as u64 + 1005
+    );
 }
 
 #[test]
@@ -692,6 +753,25 @@ fn request_total_limit_is_reported_when_it_has_less_read_capacity() {
         Err(ProjectError::Limit(ProjectLimit::ReadBytes { limit }))
             if limit == request_limit
     ));
+}
+
+#[test]
+fn request_resource_limit_reports_its_resource_ceiling() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    write(root.join("large.adoc"), &"x".repeat(64 * 1024));
+    let mut request = request(root, vec![ProjectTarget::Path(PathBuf::from("large.adoc"))]);
+    request.limits.filesystem_reads.max_total_bytes = 1024;
+    request.limits.filesystem_reads.max_resource_bytes = 4;
+
+    let result = process(request).expect("resource limit remains target-local");
+    assert!(matches!(
+        result.targets[0].outcome,
+        Err(ProjectTargetError::Incomplete(ProjectLimit::ReadBytes {
+            limit: 4
+        }))
+    ));
+    assert_eq!(result.usage.filesystem.read_bytes, 5);
 }
 
 #[test]
