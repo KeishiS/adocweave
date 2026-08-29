@@ -84,7 +84,7 @@ command = "node"
 args = ["--test", "web-worker/protocol-wasm.test.mjs"]
 
 [tasks.release-contract]
-private = true
+category = "CI entry points"
 description = "Verify the unified version, release tag, artifacts, and Cargo metadata"
 dependencies = [
   "release-version-check",
