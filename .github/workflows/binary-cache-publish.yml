@@ -1,7 +1,8 @@
 name: Binary cache publication
 
 # 公開済みReleaseと同じcommitからNix package closureを構築し、Cachixへ送信する。
-# GitHub Release公開後の呼び出しと、同じtagを指定した単独再実行の両方に対応する。
+# 送信後は別のrunnerでローカルでの構築を禁止し、Cachixから取得したpackageを検査する。
+# Nix store pathは内容から決まるため、同じtagを指定した再実行でも既存の内容を変更しない。
 on:
   workflow_call:
     inputs:
@@ -56,24 +57,6 @@ jobs:
           workspace_version="$(sed -n '/^\[workspace\.package\]/,/^\[/ s/^version = "\([^"]*\)"/\1/p' Cargo.toml)"
           [[ "$workspace_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
           test "$RELEASE_TAG" = "v$workspace_version"
-
-          mkdir -p artifacts
-          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir artifacts \
-            --pattern sha256.sum --pattern 'adocweave-*.zip'
-          set -- artifacts/adocweave-*.zip
-          test "$#" -eq 4
-          for target in \
-            aarch64-apple-darwin \
-            aarch64-unknown-linux-musl \
-            x86_64-pc-windows-msvc \
-            x86_64-unknown-linux-musl
-          do
-            archive="artifacts/adocweave-$target.zip"
-            test -f "$archive"
-            (cd artifacts && grep -F "  $(basename "$archive")" sha256.sum | sha256sum --check --strict -)
-            gh attestation verify "$archive" --repo "$GITHUB_REPOSITORY"
-          done
-          gh attestation verify artifacts/sha256.sum --repo "$GITHUB_REPOSITORY"
       - uses: DeterminateSystems/determinate-nix-action@527f17dd63d2d60d3e5552934bc84b9a33a14d11 # v3.22.2
       - uses: cachix/cachix-action@5f2d7c5294214f71b873db4b969586b980625e71 # v17
         with:
@@ -88,3 +71,38 @@ jobs:
           package="$(readlink -f "$check/package")"
           test -n "$package"
           cachix push keishis "$package"
+
+  verify:
+    needs: publish
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            nixSystem: x86_64-linux
+          - runner: ubuntu-24.04-arm
+            nixSystem: aarch64-linux
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+      - uses: DeterminateSystems/determinate-nix-action@527f17dd63d2d60d3e5552934bc84b9a33a14d11 # v3.22.2
+      - uses: cachix/cachix-action@5f2d7c5294214f71b873db4b969586b980625e71 # v17
+        with:
+          name: keishis
+          skipPush: true
+      - name: Cache-only package acquisition and smoke
+        env:
+          NIX_SYSTEM: ${{ matrix.nixSystem }}
+        run: |
+          package="$(nix build ".#packages.${NIX_SYSTEM}.default" \
+            --no-link --print-out-paths \
+            --option builders '' \
+            --option fallback false \
+            --option max-jobs 0 \
+            --option substituters https://keishis.cachix.org)"
+          test -n "$package"
+          node tools/binary-cache-smoke.mjs "$package/bin/adocweave"
