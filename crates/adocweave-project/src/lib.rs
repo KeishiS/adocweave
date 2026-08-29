@@ -31,6 +31,19 @@ use adocweave_host::{
 
 pub use process::process;
 
+/// Fixed request ceiling applied before compiling or scanning glob selectors.
+///
+/// This is not part of [`ProjectLimits`]: accepting a request must itself stay
+/// bounded before request-controlled filesystem and processing limits can be
+/// applied.
+pub const MAX_DISTINCT_GLOB_SELECTORS: usize = 256;
+
+/// Fixed ceiling for the UTF-8 bytes in distinct authored glob patterns.
+///
+/// Duplicate patterns are counted once. Exceeding this ceiling is a target
+/// selection error known before any glob is compiled or any directory is read.
+pub const MAX_TOTAL_GLOB_PATTERN_BYTES: usize = 64 * 1024;
+
 /// One owned request covering every target selected for a single run.
 ///
 /// `authority` contains already verified directory handles and is the maximum
@@ -124,10 +137,10 @@ pub struct ProjectResult {
 pub struct ProjectTargetResult {
     pub source_id: LogicalSourceId,
     pub path: PathBuf,
-    /// Exact configuration used for this target, or `None` for defaults.
-    pub config: Option<ConfigSnapshot>,
-    /// Configuration after applying request-local overrides.
-    pub resolved_config: ResolvedProjectConfig,
+    /// Exact configuration used for this target, shared by every target in its scope.
+    pub config: Option<Arc<ConfigSnapshot>>,
+    /// Configuration after applying request-local overrides, shared by scope.
+    pub resolved_config: Arc<ResolvedProjectConfig>,
     /// Files read or inspected on behalf of this target.
     pub resources: Vec<ProjectResourceResult>,
     pub outcome: Result<PreprocessedAnalysis, ProjectTargetError>,
@@ -244,16 +257,32 @@ pub enum ProjectWarning {
     LocalTargetProjection { message: String },
 }
 
-/// A malformed target selector known before reading a selected document.
+/// A target selection failure known before reading a selected document.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TargetSelectionError {
-    InvalidGlob { pattern: String },
+    InvalidGlob {
+        pattern: String,
+    },
+    /// Too many distinct patterns were supplied for one bounded request.
+    TooManyGlobs {
+        limit: usize,
+    },
+    /// Distinct authored patterns exceeded their fixed aggregate size.
+    GlobPatternBytes {
+        limit: usize,
+    },
 }
 
 impl fmt::Display for TargetSelectionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidGlob { pattern } => write!(formatter, "invalid target glob: {pattern}"),
+            Self::TooManyGlobs { limit } => {
+                write!(formatter, "distinct glob selector limit exceeded: {limit}")
+            }
+            Self::GlobPatternBytes { limit } => {
+                write!(formatter, "glob pattern byte limit exceeded: {limit}")
+            }
         }
     }
 }

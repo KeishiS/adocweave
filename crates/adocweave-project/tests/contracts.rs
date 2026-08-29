@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use adocweave::OutputLimits;
 use adocweave_config::ResolvedProjectConfig;
@@ -68,7 +69,7 @@ fn partial_scan_warning_preserves_collected_targets() {
         source_id: LogicalSourceId::new("guide.adoc").expect("valid logical source ID"),
         path: PathBuf::from("guide.adoc"),
         config: None,
-        resolved_config: ResolvedProjectConfig::default(),
+        resolved_config: Arc::new(ResolvedProjectConfig::default()),
         resources: Vec::new(),
         outcome: Err(ProjectTargetError::Incomplete(
             ProjectLimit::ProcessingIterations { limit: 8 },

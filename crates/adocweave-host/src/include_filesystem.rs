@@ -12,8 +12,8 @@ use std::sync::Arc;
 use crate::local_resource::FilesystemInspectOutcome;
 use crate::{
     FilesystemDraftError, FilesystemJobCoordinator, FilesystemJobError, FilesystemJobLimits,
-    FilesystemJobUsage, FilesystemReadOutcome, FilesystemResourceBinding, LocalFilesystemDraft,
-    LocalFilesystemSession, LogicalSourceId, ResourceError,
+    FilesystemJobUsage, FilesystemReadLimits, FilesystemReadOutcome, FilesystemResourceBinding,
+    LocalFilesystemDraft, LocalFilesystemSession, LogicalSourceId, ResourceError,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -403,6 +403,38 @@ impl IncludeFilesystemTransaction {
         match self
             .draft_mut()
             .read_utf8_within_budget(source_id.clone(), &path)
+        {
+            Ok(Some(outcome)) => match map_read(outcome) {
+                IncludeFilesystemOutcome::Found(found) => {
+                    IncludeFilesystemBudgetedOutcome::Found(found)
+                }
+                IncludeFilesystemOutcome::NotFound(missing) => {
+                    IncludeFilesystemBudgetedOutcome::NotFound(missing)
+                }
+                IncludeFilesystemOutcome::Failed(_) => unreachable!("successful read mapping"),
+            },
+            Ok(None) => IncludeFilesystemBudgetedOutcome::BudgetExhausted { source_id },
+            Err(error) => IncludeFilesystemBudgetedOutcome::Failed(FailedIncludeFilesystemSource {
+                source_id,
+                error,
+            }),
+        }
+    }
+
+    /// Reads one UTF-8 file under an additional ceiling for this operation.
+    ///
+    /// The additional ceiling cannot widen the session or shared job limits.
+    /// It is applied by the bounded reader before the complete body is
+    /// materialized.
+    pub fn read_utf8_within_limits(
+        &mut self,
+        request: IncludeFilesystemPathRequest,
+        limits: FilesystemReadLimits,
+    ) -> IncludeFilesystemBudgetedOutcome {
+        let IncludeFilesystemPathRequest { source_id, path } = request;
+        match self
+            .draft_mut()
+            .read_utf8_within_limits(source_id.clone(), &path, limits)
         {
             Ok(Some(outcome)) => match map_read(outcome) {
                 IncludeFilesystemOutcome::Found(found) => {

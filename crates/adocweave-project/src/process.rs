@@ -11,9 +11,10 @@ use adocweave::{NeverCancel, SourceId};
 use adocweave_config::{ConfigSnapshot, ResolvedProjectConfig};
 use adocweave_host::{
     DerivedFilesystemRoots, FilesystemJobError, FilesystemJobLimit, FilesystemJobLimits,
-    IncludeFilesystemBudgetedOutcome, IncludeFilesystemInspectionOutcome, IncludeFilesystemJob,
-    IncludeFilesystemPathRequest, IncludeFilesystemRequest, LocalFilesystemPolicy,
-    LocalFilesystemSession, LocalTargetPolicy, LogicalSourceId, ResourceError,
+    FilesystemReadLimits, IncludeFilesystemBudgetedOutcome, IncludeFilesystemInspectionOutcome,
+    IncludeFilesystemJob, IncludeFilesystemPathRequest, IncludeFilesystemRequest,
+    LocalFilesystemPolicy, LocalFilesystemSession, LocalTargetPolicy, LogicalSourceId,
+    ResourceError,
 };
 
 use crate::selection::{
@@ -42,7 +43,8 @@ struct Processor {
     job: IncludeFilesystemJob,
     fixed: BTreeMap<LogicalSourceId, Vec<FixedResource>>,
     inspections: BTreeMap<LogicalSourceId, Vec<FixedInspection>>,
-    configs: BTreeMap<PathBuf, ConfigSnapshot>,
+    configs: BTreeMap<PathBuf, Arc<ConfigSnapshot>>,
+    resolved_configs: BTreeMap<Option<PathBuf>, Arc<ResolvedProjectConfig>>,
     scope_budgets: BTreeMap<PathBuf, ScopeBudget>,
     processing_iterations: u32,
     output_bytes: u64,
@@ -79,6 +81,18 @@ struct TargetAnalysisContext<'target> {
     lookup_bases: &'target mut BTreeMap<String, PathBuf>,
     resources: &'target mut Vec<ProjectResourceResult>,
     filesystem: &'target mut LocalFilesystemSession,
+}
+
+struct TargetConfig {
+    snapshot: Option<Arc<ConfigSnapshot>>,
+    resolved: Arc<ResolvedProjectConfig>,
+    resource: Option<ProjectResourceResult>,
+}
+
+struct FixedReadRequest {
+    source_id: LogicalSourceId,
+    path: PathBuf,
+    allowance: Option<ScopeReadAllowance>,
 }
 
 struct InspectionRequest<'request> {
@@ -193,6 +207,7 @@ impl Processor {
             fixed: BTreeMap::new(),
             inspections: BTreeMap::new(),
             configs: BTreeMap::new(),
+            resolved_configs: BTreeMap::new(),
             scope_budgets: BTreeMap::new(),
             processing_iterations: 0,
             output_bytes: 0,
@@ -205,8 +220,8 @@ impl Processor {
         let mut scan_settings = BTreeMap::new();
         for selector in &selectors {
             if let Some(root) = scan_root_for_selector(selector)? {
-                let (_, config, _) = self.resolve_config_at(&root, true)?;
-                scan_settings.insert(root, config.workspace.scan);
+                let config = self.resolve_config_at(&root, true)?;
+                scan_settings.insert(root, config.resolved.workspace.scan.clone());
             }
         }
         let paths = select_targets(
@@ -244,12 +259,11 @@ impl Processor {
     }
 
     fn process_target(&mut self, path: PathBuf) -> Result<ProjectTargetResult, ProjectError> {
-        let (config_snapshot, mut config, config_resource) =
-            self.resolve_config_at(&path, false)?;
-        if let Some(include) = self.overrides.include {
-            config.resources.include = include;
-            config.preprocess.enable_includes = include;
-        }
+        let TargetConfig {
+            snapshot: config_snapshot,
+            resolved: config,
+            resource: config_resource,
+        } = self.resolve_config_at(&path, false)?;
         let scope = config_snapshot.as_ref().map_or_else(
             || self.project_root.clone(),
             |snapshot| snapshot.path.clone(),
@@ -334,7 +348,7 @@ impl Processor {
         let mut outcome = self.analyze_target(TargetAnalysisContext {
             source_id: &source_id,
             source: &source,
-            config: &config,
+            config: config.as_ref(),
             allowed_roots: &allowed_roots,
             scope: &scope,
             bases: &mut bases,
@@ -343,9 +357,9 @@ impl Processor {
             filesystem: &mut include_filesystem,
         });
         if let Ok(analysis) = &outcome {
-            self.collect_local_targets(analysis, &config, &scope, &bases, &mut resources);
+            self.collect_local_targets(analysis, config.as_ref(), &scope, &bases, &mut resources);
         }
-        self.collect_stylesheets(&source_id, &config, &scope, &mut resources);
+        self.collect_stylesheets(&source_id, config.as_ref(), &scope, &mut resources);
         if let Some(limit) = resources
             .iter()
             .find_map(|resource| match &resource.outcome {
@@ -364,8 +378,8 @@ impl Processor {
         &mut self,
         source_id: LogicalSourceId,
         path: PathBuf,
-        config: Option<ConfigSnapshot>,
-        resolved_config: ResolvedProjectConfig,
+        config: Option<Arc<ConfigSnapshot>>,
+        resolved_config: Arc<ResolvedProjectConfig>,
         mut resources: Vec<ProjectResourceResult>,
         mut outcome: Result<PreprocessedAnalysis, ProjectTargetError>,
     ) -> ProjectTargetResult {
@@ -383,7 +397,11 @@ impl Processor {
                 resources
                     .iter()
                     .map(|resource| match &resource.outcome {
-                        ProjectResourceOutcome::Loaded { source } => source.len(),
+                        ProjectResourceOutcome::Loaded { source }
+                            if resource.kind != ProjectResourceKind::Config =>
+                        {
+                            source.len()
+                        }
                         ProjectResourceOutcome::LoadedOmitted { .. } => 0,
                         _ => 0,
                     })
@@ -412,14 +430,7 @@ impl Processor {
         &mut self,
         target: &Path,
         target_is_directory: bool,
-    ) -> Result<
-        (
-            Option<ConfigSnapshot>,
-            ResolvedProjectConfig,
-            Option<ProjectResourceResult>,
-        ),
-        ProjectError,
-    > {
+    ) -> Result<TargetConfig, ProjectError> {
         let path = match self.config_selection.clone() {
             ConfigSelection::Disabled => None,
             ConfigSelection::Explicit(path) => {
@@ -428,7 +439,12 @@ impl Processor {
             ConfigSelection::Discover => self.discover_config(target, target_is_directory)?,
         };
         let Some(path) = path else {
-            return Ok((None, ResolvedProjectConfig::default(), None));
+            let resolved = self.resolved_config_for(None);
+            return Ok(TargetConfig {
+                snapshot: None,
+                resolved,
+                resource: None,
+            });
         };
         let snapshot = self.load_config(path.clone())?;
         if !snapshot.path.starts_with(&self.project_root) {
@@ -452,12 +468,37 @@ impl Processor {
             reusable_resource(fixed, &path, &self.filesystem, true)
                 .map(|fixed| fixed.result(ProjectResourceKind::Config, None))
         });
-        Ok((Some(snapshot.clone()), snapshot.config.clone(), resource))
+        let resolved = self.resolved_config_for(Some(&snapshot));
+        Ok(TargetConfig {
+            snapshot: Some(snapshot),
+            resolved,
+            resource,
+        })
     }
 
-    fn load_config(&mut self, path: PathBuf) -> Result<ConfigSnapshot, ProjectError> {
+    fn resolved_config_for(
+        &mut self,
+        snapshot: Option<&Arc<ConfigSnapshot>>,
+    ) -> Arc<ResolvedProjectConfig> {
+        let key = snapshot.map(|snapshot| snapshot.path.clone());
+        if let Some(config) = self.resolved_configs.get(&key) {
+            return Arc::clone(config);
+        }
+        let mut config = snapshot.map_or_else(ResolvedProjectConfig::default, |snapshot| {
+            snapshot.config.clone()
+        });
+        if let Some(include) = self.overrides.include {
+            config.resources.include = include;
+            config.preprocess.enable_includes = include;
+        }
+        let config = Arc::new(config);
+        self.resolved_configs.insert(key, Arc::clone(&config));
+        config
+    }
+
+    fn load_config(&mut self, path: PathBuf) -> Result<Arc<ConfigSnapshot>, ProjectError> {
         if let Some(snapshot) = self.configs.get(&path) {
-            return Ok(snapshot.clone());
+            return Ok(Arc::clone(snapshot));
         }
         let source_id = self.source_id_for_path(&path)?;
         let fixed = self.read_fixed_no_symlinks(source_id, path.clone());
@@ -479,11 +520,26 @@ impl Processor {
                 }
             };
         };
-        let snapshot =
+        let snapshot = Arc::new(
             adocweave_config::ConfigSnapshot::from_utf8_source(fixed.path.clone(), source)
-                .map_err(ProjectError::Config)?;
-        self.configs.insert(path, snapshot.clone());
+                .map_err(ProjectError::Config)?,
+        );
+        self.retain_config_output(source.len())?;
+        self.configs.insert(path, Arc::clone(&snapshot));
         Ok(snapshot)
+    }
+
+    fn retain_config_output(&mut self, bytes: usize) -> Result<(), ProjectError> {
+        let total = self
+            .output_bytes
+            .saturating_add(u64::try_from(bytes).unwrap_or(u64::MAX));
+        if total > u64::from(self.limits.output.max_output_bytes) {
+            return Err(ProjectError::Limit(ProjectLimit::OutputBytes {
+                limit: self.limits.output.max_output_bytes,
+            }));
+        }
+        self.output_bytes = total;
+        Ok(())
     }
 
     fn discover_config(
@@ -904,14 +960,22 @@ impl Processor {
         }
     }
 
-    fn read_fixed(&mut self, source_id: LogicalSourceId, path: PathBuf) -> FixedResource {
+    fn read_fixed(
+        &mut self,
+        source_id: LogicalSourceId,
+        path: PathBuf,
+        allowance: ScopeReadAllowance,
+    ) -> FixedResource {
         read_fixed_from(
             &self.job,
             &mut self.fixed,
             &self.inspections,
             self.limits,
-            source_id,
-            path,
+            FixedReadRequest {
+                source_id,
+                path,
+                allowance: Some(allowance),
+            },
             &mut self.filesystem,
         )
     }
@@ -926,7 +990,12 @@ impl Processor {
         if let Err(limit) = self.reserve_scope(scope, &source_id, authority.as_ref()) {
             return limited_resource(source_id, path, false, authority, limit);
         }
-        let fixed = self.read_fixed(source_id.clone(), path.clone());
+        let allowance = match self.scope_read_allowance(scope, &source_id, authority.as_ref()) {
+            Ok(allowance) => allowance,
+            Err(limit) => return limited_resource(source_id, path, false, authority, limit),
+        };
+        let fixed = self.read_fixed(source_id.clone(), path.clone(), allowance);
+        self.fix_scope_read_limit(scope, &source_id, authority.as_ref(), &fixed, allowance);
         self.apply_body_budget(scope, fixed, source_id, path)
     }
 
@@ -941,15 +1010,23 @@ impl Processor {
         if let Err(limit) = self.reserve_scope(scope, &source_id, authority.as_ref()) {
             return limited_resource(source_id, path, false, authority, limit);
         }
+        let allowance = match self.scope_read_allowance(scope, &source_id, authority.as_ref()) {
+            Ok(allowance) => allowance,
+            Err(limit) => return limited_resource(source_id, path, false, authority, limit),
+        };
         let fixed = read_fixed_from(
             &self.job,
             &mut self.fixed,
             &self.inspections,
             self.limits,
-            source_id.clone(),
-            path.clone(),
+            FixedReadRequest {
+                source_id: source_id.clone(),
+                path: path.clone(),
+                allowance: Some(allowance),
+            },
             filesystem,
         );
+        self.fix_scope_read_limit(scope, &source_id, authority.as_ref(), &fixed, allowance);
         self.apply_body_budget(scope, fixed, source_id, path)
     }
 
@@ -1000,6 +1077,51 @@ impl Processor {
             .get_mut(scope)
             .expect("a resolved configuration creates its scope budget")
             .charge_body(source_id, authority, bytes)
+    }
+
+    fn scope_read_allowance(
+        &self,
+        scope: &Path,
+        source_id: &LogicalSourceId,
+        authority: Option<&LocalTargetPolicy>,
+    ) -> Result<ScopeReadAllowance, ProjectLimit> {
+        let usage = self.job.usage().unwrap_or_default();
+        let request_remaining_bytes = self
+            .limits
+            .filesystem_reads
+            .max_total_bytes
+            .saturating_sub(usage.read_bytes);
+        self.scope_budgets
+            .get(scope)
+            .expect("a resolved configuration creates its scope budget")
+            .read_allowance(
+                source_id,
+                authority,
+                self.limits.filesystem_reads,
+                request_remaining_bytes,
+            )
+    }
+
+    fn fix_scope_read_limit(
+        &mut self,
+        scope: &Path,
+        source_id: &LogicalSourceId,
+        authority: Option<&LocalTargetPolicy>,
+        fixed: &FixedResource,
+        allowance: ScopeReadAllowance,
+    ) {
+        if allowance.scope_specific
+            && matches!(
+                fixed.outcome,
+                ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(limit))
+                    if limit == allowance.limit
+            )
+        {
+            self.scope_budgets
+                .get_mut(scope)
+                .expect("a resolved configuration creates its scope budget")
+                .fix_limit(source_id, authority, allowance.limit);
+        }
     }
 
     fn inspect_fixed_in(
@@ -1211,10 +1333,14 @@ fn read_fixed_from(
     fixed_resources: &mut BTreeMap<LogicalSourceId, Vec<FixedResource>>,
     fixed_inspections: &BTreeMap<LogicalSourceId, Vec<FixedInspection>>,
     limits: crate::ProjectLimits,
-    source_id: LogicalSourceId,
-    path: PathBuf,
+    request: FixedReadRequest,
     filesystem: &mut LocalFilesystemSession,
 ) -> FixedResource {
+    let FixedReadRequest {
+        source_id,
+        path,
+        allowance,
+    } = request;
     if let Some(fixed) = fixed_resources
         .get(&source_id)
         .and_then(|fixed| reusable_resource(fixed, &path, filesystem, false))
@@ -1247,10 +1373,12 @@ fn read_fixed_from(
         .transaction(filesystem)
         .map_err(ResourceError::from)
         .and_then(|mut transaction| {
-            match transaction.read_utf8_within_budget(IncludeFilesystemPathRequest::new(
-                source_id.clone(),
-                path.clone(),
-            )) {
+            let request = IncludeFilesystemPathRequest::new(source_id.clone(), path.clone());
+            let outcome = match allowance {
+                Some(allowance) => transaction.read_utf8_within_limits(request, allowance.limits),
+                None => transaction.read_utf8_within_budget(request),
+            };
+            match outcome {
                 IncludeFilesystemBudgetedOutcome::Found(found) => {
                     let canonical = found.provenance().canonical_path().to_owned();
                     let source = Arc::<str>::from(found.source());
@@ -1274,7 +1402,14 @@ fn read_fixed_from(
                     path.clone(),
                     None,
                     ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(
-                        current_read_limit(job, limits),
+                        allowance.map_or_else(
+                            || current_read_limit(job, limits),
+                            |allowance| match current_read_limit(job, limits) {
+                                file_limit @ ProjectLimit::Files { .. } => file_limit,
+                                ProjectLimit::ReadBytes { .. } => allowance.limit,
+                                _ => unreachable!("filesystem reads use file or byte limits"),
+                            },
+                        ),
                     )),
                 )),
                 IncludeFilesystemBudgetedOutcome::Failed(failed) => {
@@ -1298,7 +1433,15 @@ fn read_fixed_from(
         authority,
         outcome,
     };
-    if fixed.authority.is_some() {
+    let scope_limited = allowance.is_some_and(|allowance| {
+        allowance.scope_specific
+            && matches!(
+                fixed.outcome,
+                ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(limit))
+                    if limit == allowance.limit
+            )
+    });
+    if fixed.authority.is_some() && !scope_limited {
         fixed_resources
             .entry(source_id)
             .or_default()
@@ -1473,8 +1616,8 @@ fn current_read_limit(job: &IncludeFilesystemJob, limits: crate::ProjectLimits) 
 fn target_result(
     source_id: LogicalSourceId,
     path: PathBuf,
-    config: Option<ConfigSnapshot>,
-    resolved_config: ResolvedProjectConfig,
+    config: Option<Arc<ConfigSnapshot>>,
+    resolved_config: Arc<ResolvedProjectConfig>,
     resources: Vec<ProjectResourceResult>,
     outcome: Result<PreprocessedAnalysis, ProjectTargetError>,
 ) -> ProjectTargetResult {
@@ -1513,22 +1656,31 @@ impl ResourceLookup for FixedLookup {
 }
 
 struct ScopeBudget {
-    limits: adocweave_host::FilesystemReadLimits,
-    observations: Vec<BudgetObservation>,
+    limits: FilesystemReadLimits,
+    observations: BTreeMap<LogicalSourceId, Vec<BudgetObservation>>,
+    files: usize,
     bytes: u64,
 }
 
 struct BudgetObservation {
-    source_id: LogicalSourceId,
     authority: Option<LocalTargetPolicy>,
     body_charged: bool,
+    limit: Option<ProjectLimit>,
+}
+
+#[derive(Clone, Copy)]
+struct ScopeReadAllowance {
+    limits: FilesystemReadLimits,
+    limit: ProjectLimit,
+    scope_specific: bool,
 }
 
 impl ScopeBudget {
-    fn new(limits: adocweave_host::FilesystemReadLimits) -> Self {
+    fn new(limits: FilesystemReadLimits) -> Self {
         Self {
             limits,
-            observations: Vec::new(),
+            observations: BTreeMap::new(),
+            files: 0,
             bytes: 0,
         }
     }
@@ -1541,16 +1693,20 @@ impl ScopeBudget {
         if self.observation(source_id, authority).is_some() {
             return Ok(());
         }
-        if self.observations.len() >= self.limits.max_files {
+        if self.files >= self.limits.max_files {
             return Err(ProjectLimit::Files {
                 limit: self.limits.max_files,
             });
         }
-        self.observations.push(BudgetObservation {
-            source_id: source_id.clone(),
-            authority: authority.cloned(),
-            body_charged: false,
-        });
+        self.observations
+            .entry(source_id.clone())
+            .or_default()
+            .push(BudgetObservation {
+                authority: authority.cloned(),
+                body_charged: false,
+                limit: None,
+            });
+        self.files += 1;
         Ok(())
     }
 
@@ -1560,22 +1716,35 @@ impl ScopeBudget {
         authority: Option<&LocalTargetPolicy>,
         bytes: usize,
     ) -> Result<(), ProjectLimit> {
-        let Some(index) = self.observation(source_id, authority) else {
+        let Some(observations) = self.observations.get_mut(source_id) else {
             unreachable!("resource bodies are charged only after reserving their observation")
         };
-        if self.observations[index].body_charged {
+        let Some(observation) = observations
+            .iter_mut()
+            .find(|observation| same_budget_authority(observation.authority.as_ref(), authority))
+        else {
+            unreachable!("resource bodies are charged only under their reserved authority")
+        };
+        if observation.body_charged {
             return Ok(());
         }
         let bytes = u64::try_from(bytes).unwrap_or(u64::MAX);
-        if bytes > self.limits.max_resource_bytes
-            || self.bytes.saturating_add(bytes) > self.limits.max_total_bytes
-        {
-            return Err(ProjectLimit::ReadBytes {
+        if bytes > self.limits.max_resource_bytes {
+            let limit = ProjectLimit::ReadBytes {
+                limit: self.limits.max_resource_bytes,
+            };
+            observation.limit = Some(limit);
+            return Err(limit);
+        }
+        if self.bytes.saturating_add(bytes) > self.limits.max_total_bytes {
+            let limit = ProjectLimit::ReadBytes {
                 limit: self.limits.max_total_bytes,
-            });
+            };
+            observation.limit = Some(limit);
+            return Err(limit);
         }
         self.bytes += bytes;
-        self.observations[index].body_charged = true;
+        observation.body_charged = true;
         Ok(())
     }
 
@@ -1583,15 +1752,107 @@ impl ScopeBudget {
         &self,
         source_id: &LogicalSourceId,
         authority: Option<&LocalTargetPolicy>,
-    ) -> Option<usize> {
-        self.observations.iter().position(|observation| {
-            observation.source_id == *source_id
-                && match (observation.authority.as_ref(), authority) {
-                    (Some(left), Some(right)) => left.has_same_authority(right),
-                    (None, None) => true,
-                    _ => false,
-                }
+    ) -> Option<&BudgetObservation> {
+        self.observations
+            .get(source_id)?
+            .iter()
+            .find(|observation| same_budget_authority(observation.authority.as_ref(), authority))
+    }
+
+    fn read_allowance(
+        &self,
+        source_id: &LogicalSourceId,
+        authority: Option<&LocalTargetPolicy>,
+        request_limits: FilesystemReadLimits,
+        request_remaining_bytes: u64,
+    ) -> Result<ScopeReadAllowance, ProjectLimit> {
+        let observation = self
+            .observation(source_id, authority)
+            .expect("a read allowance follows a reserved observation");
+        if let Some(limit) = observation.limit {
+            return Err(limit);
+        }
+        let resource_bytes = self
+            .limits
+            .max_resource_bytes
+            .min(request_limits.max_resource_bytes);
+        let scope_remaining_bytes = if observation.body_charged {
+            resource_bytes
+        } else {
+            self.limits.max_total_bytes.saturating_sub(self.bytes)
+        };
+        if scope_remaining_bytes == 0 {
+            return Err(ProjectLimit::ReadBytes {
+                limit: self.limits.max_total_bytes,
+            });
+        }
+        let remaining_total = scope_remaining_bytes.min(request_remaining_bytes);
+        let (limit, scope_specific) = if resource_bytes <= remaining_total {
+            let scope_specific =
+                self.limits.max_resource_bytes <= request_limits.max_resource_bytes;
+            let limit = if scope_specific {
+                self.limits.max_resource_bytes
+            } else {
+                request_limits.max_resource_bytes
+            };
+            (ProjectLimit::ReadBytes { limit }, scope_specific)
+        } else if scope_remaining_bytes <= request_remaining_bytes {
+            (
+                ProjectLimit::ReadBytes {
+                    limit: self.limits.max_total_bytes,
+                },
+                true,
+            )
+        } else {
+            (
+                ProjectLimit::ReadBytes {
+                    limit: request_limits.max_total_bytes,
+                },
+                false,
+            )
+        };
+        Ok(ScopeReadAllowance {
+            limits: FilesystemReadLimits {
+                // Scope observations are reserved before this allowance is
+                // created. Keep the session's cumulative file ceiling here;
+                // replacing it with one would make every read after the first
+                // committed resource fail.
+                max_files: request_limits.max_files,
+                max_total_bytes: remaining_total,
+                max_resource_bytes: resource_bytes,
+            },
+            limit,
+            scope_specific,
         })
+    }
+
+    fn fix_limit(
+        &mut self,
+        source_id: &LogicalSourceId,
+        authority: Option<&LocalTargetPolicy>,
+        limit: ProjectLimit,
+    ) {
+        let observation = self
+            .observations
+            .get_mut(source_id)
+            .and_then(|observations| {
+                observations.iter_mut().find(|observation| {
+                    same_budget_authority(observation.authority.as_ref(), authority)
+                })
+            })
+            .expect("a fixed limit follows a reserved observation");
+        observation.limit = Some(limit);
+    }
+}
+
+fn same_budget_authority(
+    left: Option<&LocalTargetPolicy>,
+    right: Option<&LocalTargetPolicy>,
+) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => left.has_same_authority(right),
+        (None, None) => true,
+        _ => false,
     }
 }
 

@@ -226,6 +226,56 @@ fn absolute_read_reports_budget_exhaustion_without_poisoning() {
 }
 
 #[test]
+fn additional_read_limits_bound_io_without_replacing_the_session_budget() {
+    let root = TestDir::new("additional-read-limits");
+    let retained = root.path().join("retained.adoc");
+    let exact = root.path().join("exact.adoc");
+    let large = root.path().join("large.adoc");
+    fs::write(&retained, "retained").expect("retained source");
+    fs::write(&exact, "four").expect("exact source");
+    fs::write(&large, "x".repeat(64 * 1024)).expect("large source");
+    let mut session = session(root.path(), 1_024 * 1024);
+    let job = IncludeFilesystemJob::new(FilesystemJobLimits::unbounded()).expect("job");
+
+    let mut first = job.transaction(&session).expect("first transaction");
+    assert!(matches!(
+        first.read_utf8_within_budget(path_request("retained", &retained)),
+        IncludeFilesystemBudgetedOutcome::Found(_)
+    ));
+    first.commit(&mut session).expect("commit retained source");
+
+    let limits = FilesystemReadLimits {
+        max_files: 16,
+        max_total_bytes: 4,
+        max_resource_bytes: 4,
+    };
+    let mut exact_read = job.transaction(&session).expect("exact transaction");
+    assert!(matches!(
+        exact_read.read_utf8_within_limits(path_request("exact", &exact), limits),
+        IncludeFilesystemBudgetedOutcome::Found(_)
+    ));
+    exact_read
+        .commit(&mut session)
+        .expect("commit exact source");
+
+    let before = job
+        .usage()
+        .expect("usage before bounded failure")
+        .read_bytes;
+    let mut bounded = job.transaction(&session).expect("bounded transaction");
+    assert!(matches!(
+        bounded.read_utf8_within_limits(path_request("large", &large), limits),
+        IncludeFilesystemBudgetedOutcome::BudgetExhausted { .. }
+    ));
+    bounded
+        .commit(&mut session)
+        .expect("limit leaves draft usable");
+    let usage = job.finish().expect("finish");
+    assert_eq!(usage.read_bytes - before, 5);
+    assert_eq!(session.budget().bytes(), 12);
+}
+
+#[test]
 fn inspection_reads_no_bytes_and_creates_no_binding() {
     let root = TestDir::new("inspect");
     let asset = root.path().join("asset.png");

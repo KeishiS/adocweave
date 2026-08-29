@@ -295,6 +295,14 @@ enum MissingDisposition {
     ApplyNotFound,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct FilesystemReadOptions {
+    reuse_cached_text: bool,
+    follow_symlinks: bool,
+    missing: MissingDisposition,
+    additional_limits: Option<FilesystemReadLimits>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct FilesystemCandidateBinding {
     canonical_path: PathBuf,
@@ -1082,6 +1090,25 @@ impl LocalFilesystemMutationCursor<'_> {
         self.read_utf8_with(source_id, path, false, || {})
     }
 
+    fn read_utf8_with_limits(
+        &mut self,
+        source_id: LogicalSourceId,
+        path: &Path,
+        limits: FilesystemReadLimits,
+    ) -> Result<FilesystemReadOutcome, FilesystemDraftError> {
+        self.read_utf8_with_disposition(
+            source_id,
+            path,
+            || {},
+            FilesystemReadOptions {
+                reuse_cached_text: false,
+                follow_symlinks: true,
+                missing: MissingDisposition::ApplyNotFound,
+                additional_limits: Some(limits),
+            },
+        )
+    }
+
     fn read_utf8_no_symlinks(
         &mut self,
         source_id: LogicalSourceId,
@@ -1090,10 +1117,13 @@ impl LocalFilesystemMutationCursor<'_> {
         self.read_utf8_with_disposition(
             source_id,
             path,
-            false,
-            false,
             || {},
-            MissingDisposition::ApplyNotFound,
+            FilesystemReadOptions {
+                reuse_cached_text: false,
+                follow_symlinks: false,
+                missing: MissingDisposition::ApplyNotFound,
+                additional_limits: None,
+            },
         )
     }
 
@@ -1105,10 +1135,13 @@ impl LocalFilesystemMutationCursor<'_> {
         self.read_utf8_with_disposition(
             source_id,
             path,
-            false,
-            true,
             || {},
-            MissingDisposition::PreserveLegacyState,
+            FilesystemReadOptions {
+                reuse_cached_text: false,
+                follow_symlinks: true,
+                missing: MissingDisposition::PreserveLegacyState,
+                additional_limits: None,
+            },
         )
     }
 
@@ -1349,10 +1382,13 @@ impl LocalFilesystemMutationCursor<'_> {
         self.read_utf8_with_disposition(
             source_id,
             path,
-            reuse_cached_text,
-            true,
             after_open,
-            MissingDisposition::ApplyNotFound,
+            FilesystemReadOptions {
+                reuse_cached_text,
+                follow_symlinks: true,
+                missing: MissingDisposition::ApplyNotFound,
+                additional_limits: None,
+            },
         )
     }
 
@@ -1360,11 +1396,15 @@ impl LocalFilesystemMutationCursor<'_> {
         &mut self,
         source_id: LogicalSourceId,
         path: &Path,
-        reuse_cached_text: bool,
-        follow_symlinks: bool,
         after_open: impl FnOnce(),
-        missing: MissingDisposition,
+        options: FilesystemReadOptions,
     ) -> Result<FilesystemReadOutcome, FilesystemDraftError> {
+        let FilesystemReadOptions {
+            reuse_cached_text,
+            follow_symlinks,
+            missing,
+            additional_limits,
+        } = options;
         let mut permit = self.begin_read()?;
         if !path.is_absolute() {
             return Err(ResourceError::PathNotAbsolute(path.to_owned()).into());
@@ -1391,7 +1431,7 @@ impl LocalFilesystemMutationCursor<'_> {
             follow_symlinks,
             after_open,
             |canonical| {
-                shared_read_capacity(
+                let established = shared_read_capacity(
                     budget,
                     charged,
                     candidates,
@@ -1399,7 +1439,10 @@ impl LocalFilesystemMutationCursor<'_> {
                     &candidate,
                     canonical,
                     &file_limit_denied,
-                )
+                );
+                additional_limits.map_or(established, |additional| {
+                    narrow_read_capacity(established, additional)
+                })
             },
             permit.as_mut(),
         ) {
@@ -1791,6 +1834,35 @@ impl LocalFilesystemDraft {
         }
     }
 
+    /// Reads one absolute path under an additional per-operation ceiling.
+    ///
+    /// The additional limits can only narrow the session and shared job
+    /// limits. A limit refusal leaves the draft usable and returns `None`.
+    /// The file body is read only through the effective bounded capacity.
+    pub(crate) fn read_utf8_within_limits(
+        &mut self,
+        source_id: LogicalSourceId,
+        path: &Path,
+        limits: FilesystemReadLimits,
+    ) -> Result<Option<FilesystemReadOutcome>, FilesystemDraftError> {
+        self.ensure_operation_can_start()?;
+        let result = self
+            .mutation_cursor()
+            .read_utf8_with_limits(source_id, path, limits);
+        match result {
+            Ok(outcome) => Ok(Some(outcome)),
+            Err(FilesystemDraftError::Resource(
+                ResourceError::FileLimit { .. }
+                | ResourceError::ByteLimit
+                | ResourceError::ResourceTooLarge(_),
+            )) => Ok(None),
+            Err(error) => {
+                self.poisoned = true;
+                Err(error)
+            }
+        }
+    }
+
     /// Reads one absolute path while rejecting every symbolic link.
     ///
     /// This form is intended for policy-bearing files. `NotFound` keeps the
@@ -2090,6 +2162,19 @@ fn shared_read_capacity(
         allow_file,
         max_total_bytes: limits.max_total_bytes.saturating_sub(retained),
         max_resource_bytes: limits.max_resource_bytes,
+    }
+}
+
+fn narrow_read_capacity(
+    established: crate::local_target::CandidateReadCapacity,
+    additional: FilesystemReadLimits,
+) -> crate::local_target::CandidateReadCapacity {
+    crate::local_target::CandidateReadCapacity {
+        allow_file: established.allow_file && additional.max_files > 0,
+        max_total_bytes: established.max_total_bytes.min(additional.max_total_bytes),
+        max_resource_bytes: established
+            .max_resource_bytes
+            .min(additional.max_resource_bytes),
     }
 }
 

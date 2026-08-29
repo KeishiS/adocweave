@@ -1,12 +1,14 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use adocweave::OutputLimits;
 use adocweave_host::{FilesystemReadLimits, LocalFilesystemPolicy, ResourceError};
 use adocweave_project::{
-    ConfigSelection, ProjectLimit, ProjectLimits, ProjectOverrides, ProjectRequest,
-    ProjectResourceFailure, ProjectResourceKind, ProjectResourceOutcome, ProjectTarget,
-    ProjectTargetError, process,
+    ConfigSelection, MAX_DISTINCT_GLOB_SELECTORS, MAX_TOTAL_GLOB_PATTERN_BYTES, ProjectError,
+    ProjectLimit, ProjectLimits, ProjectOverrides, ProjectRequest, ProjectResourceFailure,
+    ProjectResourceKind, ProjectResourceOutcome, ProjectTarget, ProjectTargetError,
+    TargetSelectionError, process,
 };
 
 fn request(root: &Path, targets: Vec<ProjectTarget>) -> ProjectRequest {
@@ -301,6 +303,40 @@ fn selector_errors_are_stable_across_input_order() {
     let second = process(request(root, selectors.into_iter().rev().collect()))
         .expect_err("reversed selectors are invalid");
     assert_eq!(first.to_string(), second.to_string());
+}
+
+#[test]
+fn distinct_glob_selector_count_is_bounded_before_scanning() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let targets = (0..257)
+        .map(|index| ProjectTarget::Glob(format!("document-{index}-*.adoc")))
+        .collect();
+
+    assert!(matches!(
+        process(request(directory.path(), targets)),
+        Err(ProjectError::TargetSelection(
+            TargetSelectionError::TooManyGlobs {
+                limit: MAX_DISTINCT_GLOB_SELECTORS
+            }
+        ))
+    ));
+}
+
+#[test]
+fn total_distinct_glob_pattern_bytes_are_bounded_before_compilation() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let targets = (0..128)
+        .map(|index| ProjectTarget::Glob(format!("{}-{index}-*.adoc", "segment".repeat(80))))
+        .collect();
+
+    assert!(matches!(
+        process(request(directory.path(), targets)),
+        Err(ProjectError::TargetSelection(
+            TargetSelectionError::GlobPatternBytes {
+                limit: MAX_TOTAL_GLOB_PATTERN_BYTES
+            }
+        ))
+    ));
 }
 
 #[test]
@@ -599,10 +635,8 @@ fn one_config_scope_combines_resource_counts_across_targets() {
 fn one_config_scope_combines_body_bytes_across_targets() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let root = directory.path();
-    write(
-        root.join(".adocweave.toml"),
-        "schema-version = 2\n[resources]\nmax-files = 2\nmax-total-bytes = 6\nmax-resource-bytes = 6\n",
-    );
+    let config = "schema-version = 2\n[resources]\nmax-files = 2\nmax-total-bytes = 6\nmax-resource-bytes = 6\n";
+    write(root.join(".adocweave.toml"), config);
     write(root.join("a.adoc"), "aaaa");
     write(root.join("b.adoc"), "bbbb");
 
@@ -617,6 +651,115 @@ fn one_config_scope_combines_body_bytes_across_targets() {
         Err(ProjectTargetError::Incomplete(ProjectLimit::ReadBytes {
             limit: 6
         }))
+    ));
+    assert_eq!(result.usage.filesystem.read_bytes, config.len() as u64 + 7);
+}
+
+#[test]
+fn per_resource_scope_limit_bounds_io_and_reports_its_own_ceiling() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    let config = "schema-version = 2\n[resources]\nmax-files = 1\nmax-total-bytes = 1024\nmax-resource-bytes = 4\n";
+    write(root.join(".adocweave.toml"), config);
+    write(root.join("large.adoc"), &"x".repeat(64 * 1024));
+    let mut request = request(root, vec![ProjectTarget::Path(PathBuf::from("large.adoc"))]);
+    request.config = ConfigSelection::Explicit(PathBuf::from(".adocweave.toml"));
+
+    let result = process(request).expect("configured limit remains target-local");
+    assert!(matches!(
+        result.targets[0].outcome,
+        Err(ProjectTargetError::Incomplete(ProjectLimit::ReadBytes {
+            limit: 4
+        }))
+    ));
+    assert_eq!(result.usage.filesystem.read_bytes, config.len() as u64 + 5);
+}
+
+#[test]
+fn request_total_limit_is_reported_when_it_has_less_read_capacity() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    let config = "schema-version = 2\n[resources]\nmax-files = 2\nmax-total-bytes = 1024\nmax-resource-bytes = 1024\n";
+    write(root.join(".adocweave.toml"), config);
+    write(root.join("large.adoc"), &"x".repeat(64 * 1024));
+    let mut request = request(root, vec![ProjectTarget::Path(PathBuf::from("large.adoc"))]);
+    request.config = ConfigSelection::Explicit(PathBuf::from(".adocweave.toml"));
+    let request_limit = config.len() as u64 + 4;
+    request.limits.filesystem_reads.max_total_bytes = request_limit;
+
+    assert!(matches!(
+        process(request),
+        Err(ProjectError::Limit(ProjectLimit::ReadBytes { limit }))
+            if limit == request_limit
+    ));
+}
+
+#[test]
+fn one_large_config_is_shared_by_one_thousand_target_results() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    let urls = (0..1_000)
+        .map(|index| format!("\"https://example.test/styles/{index:04}.css\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let config = format!(
+        "schema-version = 2\n[resources]\nmax-files = 2000\nmax-total-bytes = 1048576\nmax-resource-bytes = 1024\n[html]\nstylesheet-urls = [{urls}]\n"
+    );
+    write(root.join(".adocweave.toml"), &config);
+    let targets = (0..1_000)
+        .map(|index| {
+            let name = format!("document-{index:04}.adoc");
+            write(root.join(&name), "text\n");
+            ProjectTarget::Path(PathBuf::from(name))
+        })
+        .collect();
+    let mut request = request(root, targets);
+    request.config = ConfigSelection::Explicit(PathBuf::from(".adocweave.toml"));
+    request.limits.output.max_output_bytes = 128 * 1024 * 1024;
+
+    let result = process(request).expect("large shared configuration remains bounded");
+    assert_eq!(result.targets.len(), 1_000);
+    assert!(result.usage.output_bytes >= config.len() as u64);
+    assert!(result.usage.output_bytes < (config.len() * 2) as u64);
+    let first_config = result.targets[0].config.as_ref().expect("configuration");
+    let first_resolved = &result.targets[0].resolved_config;
+    assert!(result.targets.iter().all(|target| {
+        target
+            .config
+            .as_ref()
+            .is_some_and(|config| Arc::ptr_eq(config, first_config))
+            && Arc::ptr_eq(&target.resolved_config, first_resolved)
+    }));
+}
+
+#[test]
+fn distinct_configuration_scopes_share_the_output_limit() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    fs::create_dir(root.join("first")).expect("first scope");
+    fs::create_dir(root.join("second")).expect("second scope");
+    let urls = (0..100)
+        .map(|index| format!("\"https://example.test/styles/{index:04}.css\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let config = format!("schema-version = 2\n[html]\nstylesheet-urls = [{urls}]\n");
+    for scope in ["first", "second"] {
+        write(root.join(scope).join(".adocweave.toml"), &config);
+        write(root.join(scope).join("guide.adoc"), "text\n");
+    }
+    let mut request = request(
+        root,
+        vec![
+            ProjectTarget::Path(PathBuf::from("first/guide.adoc")),
+            ProjectTarget::Path(PathBuf::from("second/guide.adoc")),
+        ],
+    );
+    request.limits.output.max_output_bytes =
+        u32::try_from(config.len() * 2 - 1).expect("small fixture");
+
+    assert!(matches!(
+        process(request),
+        Err(ProjectError::Limit(ProjectLimit::OutputBytes { .. }))
     ));
 }
 
@@ -775,21 +918,20 @@ fn returned_resource_text_is_bounded_by_the_output_limit() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let root = directory.path();
     fs::create_dir(root.join("styles")).expect("stylesheet directory");
-    write(
-        root.join(".adocweave.toml"),
-        "schema-version = 2\n[html]\nstylesheet-files = [\"styles/large.css\"]\n",
-    );
+    let config = "schema-version = 2\n[html]\nstylesheet-files = [\"styles/large.css\"]\n";
+    write(root.join(".adocweave.toml"), config);
     write(root.join("guide.adoc"), "text\n");
     write(root.join("styles/large.css"), &"x".repeat(100));
     let mut request = request(root, vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))]);
-    request.limits.output.max_output_bytes = 64;
+    let output_limit = u32::try_from(config.len() + 64).expect("small fixture");
+    request.limits.output.max_output_bytes = output_limit;
 
     let result = process(request).expect("request remains coherent");
     assert!(matches!(
         result.targets[0].outcome,
         Err(ProjectTargetError::Incomplete(ProjectLimit::OutputBytes {
-            limit: 64
-        }))
+            limit
+        })) if limit == output_limit
     ));
     assert!(
         result.targets[0]
@@ -800,8 +942,8 @@ fn returned_resource_text_is_bounded_by_the_output_limit() {
     assert!(result.targets[0].resources.iter().any(|resource| matches!(
         resource.outcome,
         ProjectResourceOutcome::LoadedOmitted {
-            limit: ProjectLimit::OutputBytes { limit: 64 }
-        }
+            limit: ProjectLimit::OutputBytes { limit }
+        } if limit == output_limit
     )));
 }
 

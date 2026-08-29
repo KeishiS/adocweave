@@ -7,7 +7,10 @@ use adocweave_host::{
     DerivedFilesystemRoots, IncludeFilesystemJob, LocalFilesystemPolicy, ResourceError,
 };
 
-use crate::{ProjectError, ProjectLimits, ProjectTarget, ProjectWarning, TargetSelectionError};
+use crate::{
+    MAX_DISTINCT_GLOB_SELECTORS, MAX_TOTAL_GLOB_PATTERN_BYTES, ProjectError, ProjectLimits,
+    ProjectTarget, ProjectWarning, TargetSelectionError,
+};
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) enum NormalizedSelector {
@@ -36,7 +39,39 @@ pub(crate) fn normalize_selectors(
     project_root: &Path,
     selectors: &[ProjectTarget],
 ) -> Result<Vec<NormalizedSelector>, ProjectError> {
-    let mut authored = selectors.iter().collect::<Vec<_>>();
+    let distinct_globs = selectors
+        .iter()
+        .filter_map(|selector| match selector {
+            ProjectTarget::Glob(pattern) => Some(pattern.as_str()),
+            _ => None,
+        })
+        .collect::<BTreeSet<_>>();
+    if distinct_globs.len() > MAX_DISTINCT_GLOB_SELECTORS {
+        return Err(ProjectError::TargetSelection(
+            TargetSelectionError::TooManyGlobs {
+                limit: MAX_DISTINCT_GLOB_SELECTORS,
+            },
+        ));
+    }
+    let pattern_bytes = distinct_globs
+        .iter()
+        .try_fold(0_usize, |total, pattern| total.checked_add(pattern.len()))
+        .unwrap_or(usize::MAX);
+    if pattern_bytes > MAX_TOTAL_GLOB_PATTERN_BYTES {
+        return Err(ProjectError::TargetSelection(
+            TargetSelectionError::GlobPatternBytes {
+                limit: MAX_TOTAL_GLOB_PATTERN_BYTES,
+            },
+        ));
+    }
+    let mut seen_globs = BTreeSet::new();
+    let mut authored = selectors
+        .iter()
+        .filter(|selector| match selector {
+            ProjectTarget::Glob(pattern) => seen_globs.insert(pattern.as_str()),
+            _ => true,
+        })
+        .collect::<Vec<_>>();
     authored.sort_by_key(|selector| selector_sort_key(selector));
     let mut normalized = authored
         .into_iter()
