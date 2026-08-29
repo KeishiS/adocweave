@@ -1,5 +1,5 @@
 = ADR 0023: 公開先と配布方法
-:status: accepted; amended by ADR 0027, 0028, 0030, 0031, 0032, 0033, and 0036
+:status: accepted; amended by ADR 0027, 0028, 0030, 0031, 0032, 0033, 0036, and 0040
 
 == 文脈
 

@@ -1,6 +1,6 @@
 = ADR 0035: Nix flakeの公開出力と検査を最小化
 
-:status: accepted; development shell boundary superseded by ADR 0039
+:status: accepted; development shell boundary superseded by ADR 0039; native executable amended by ADR 0040
 
 == 文脈
 
