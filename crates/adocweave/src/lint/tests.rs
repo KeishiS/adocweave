@@ -5,8 +5,7 @@ use super::{
     DUPLICATE_ANCHOR, DUPLICATE_HEADING_ID, INVALID_ANCHOR, INVALID_CATALOG, INVALID_TABLE,
     LINE_TOO_LONG, LINT_RULES, LintConfig, LintContext, LintDiagnosticBody, LintDiagnosticSink,
     LintError, LintRuleId, MACRO_BOUNDARY, PROTECTED_ATTRIBUTE, RuleSettings, TRAILING_WHITESPACE,
-    UNUSED_ATTRIBUTE, lint, lint_analysis, lint_rule, lint_with_analysis_limits,
-    render_lint_rule_catalog_json, text_range,
+    UNUSED_ATTRIBUTE, lint, lint_analysis, lint_rule, lint_with_analysis_limits, text_range,
 };
 use crate::core::{AnalysisOptions, CancellationCheck, Engine};
 use crate::diagnostic::{Applicability, RelatedInformation, Severity, TextEdit};
@@ -183,7 +182,7 @@ fn never_cancel_lint_api_preserves_diagnostics() {
 }
 
 #[test]
-fn lint_rule_catalog_is_unique_resolvable_and_sorted_in_json() {
+fn lint_rule_catalog_is_unique_and_resolvable() {
     let mut codes = LINT_RULES
         .iter()
         .map(|descriptor| descriptor.id.as_str())
@@ -197,27 +196,6 @@ fn lint_rule_catalog_is_unique_resolvable_and_sorted_in_json() {
             .iter()
             .all(|descriptor| lint_rule(descriptor.id.as_str()) == Some(descriptor))
     );
-
-    let value: serde_json::Value =
-        serde_json::from_str(&render_lint_rule_catalog_json()).expect("catalog JSON");
-    let mut descriptors = LINT_RULES.iter().collect::<Vec<_>>();
-    descriptors.sort_by_key(|descriptor| descriptor.id.as_str());
-    let expected = serde_json::json!({
-        "schemaVersion": 1,
-        "packageVersion": crate::VERSION,
-        "rules": descriptors
-            .into_iter()
-            .map(|descriptor| serde_json::json!({
-                "code": descriptor.id.as_str(),
-                "defaultSeverity": descriptor.default_severity.as_str(),
-                "enabledByDefault": descriptor.default_enabled,
-                "description": descriptor.description,
-                "fixable": descriptor.fixable,
-                "userConfigurable": descriptor.user_configurable,
-            }))
-            .collect::<Vec<_>>(),
-    });
-    assert_eq!(value, expected);
 }
 
 #[test]

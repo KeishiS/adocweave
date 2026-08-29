@@ -15,7 +15,6 @@ mod caption;
 mod catalog;
 mod citation;
 mod cjk;
-mod conformance;
 mod core;
 mod delimiter;
 mod diagnostic;
@@ -112,18 +111,10 @@ pub mod semantic {
 
 /// Deterministic document output and serialization backends.
 pub mod output {
-    /// Stable textual representations used by public host protocols.
-    pub mod canonical {
-        pub use crate::conformance::{canonical_ast, canonical_syntax};
-    }
-    pub mod conformance {
-        pub use crate::conformance::{ConformanceSnapshot, fixture_source, snapshot};
-    }
     pub mod diagnostics {
         pub use crate::diagnostic::{
             Applicability, CoreErrorCode, Diagnostic, DiagnosticCode, DiagnosticId, EditConflict,
-            EditConflictKind, Fix, RelatedInformation, Severity, TextEdit, render_human,
-            render_json, sort_diagnostics,
+            EditConflictKind, Fix, RelatedInformation, Severity, TextEdit, sort_diagnostics,
         };
         pub use crate::lint::{
             ASCIIDOC_FILE_LINK, ATTRIBUTE_EXPANSION, DUPLICATE_ANCHOR, DUPLICATE_HEADING_ID,
@@ -135,7 +126,7 @@ pub mod output {
             MONOSPACE_BOUNDARY, NESTING_LIMIT_EXCEEDED, NON_ASCIIDOC_XREF, PROTECTED_ATTRIBUTE,
             RuleSettings, TRAILING_WHITESPACE, UNCLOSED_BLOCK, UNCLOSED_INLINE,
             UNDEFINED_ATTRIBUTE, UNPROCESSED_DIRECTIVE, UNRESOLVED_CROSS_REFERENCE,
-            UNUSED_ATTRIBUTE, lint_analysis, lint_rule, render_lint_rule_catalog_json,
+            UNUSED_ATTRIBUTE, lint_analysis, lint_rule,
         };
     }
     pub mod formatter {
@@ -145,9 +136,8 @@ pub mod output {
     }
     pub mod html {
         pub use crate::html::{
-            ALLOWED_ATTRIBUTES, ALLOWED_CLASSES, ALLOWED_ELEMENTS, ExternalLinkPresentation,
-            HtmlDocumentMode, HtmlOutput, MathLanguagePolicy, RenderPolicy, ResolvedReference,
-            ResourceCapabilities, RolePolicy, SourceLanguagePolicy, StylesheetPolicy,
+            ExternalLinkPresentation, HtmlDocumentMode, HtmlOutput, MathLanguagePolicy,
+            RenderPolicy, ResourceCapabilities, RolePolicy, SourceLanguagePolicy, StylesheetPolicy,
             StylesheetSource, UnknownRole, UnknownSourceLanguage, UnresolvedReferencePresentation,
             is_role_name, render, render_with_inputs,
         };
@@ -160,9 +150,7 @@ pub mod output {
             SourceBlockProjection, block_presentations, document_title, external_links, formulas,
             ordered_lists, reference_edges, rendering_features, searchable_text, source_blocks,
         };
-        pub use crate::text_role::{
-            BlockTextRole, block_text_role, delimited_text_role, table_cell_text_role,
-        };
+        pub use crate::text_role::{BlockTextRole, delimited_text_role};
     }
 }
 

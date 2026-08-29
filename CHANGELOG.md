@@ -50,6 +50,7 @@ const result = await analyze({
 ### Rust API
 
 - `adocweave-wasm` now accepts the public Serde `AnalyzeRequest` directly and returns `AnalyzeResult`. The old `Wasm*` request types, normalization layer, and separate preprocessing request have been removed.
-- Other Rust crates keep their existing public API. Rust crate versions now follow the repository-wide version.
+- The core `adocweave::output` API no longer exports the WASM-only canonical AST and syntax serializers, test-only conformance snapshot helpers, CLI-only diagnostic renderers, HTML allowlists, internal text-role classifiers, or a duplicate HTML-path `ResolvedReference`. Use `adocweave::resolution::ResolvedReference` for resolved references; canonical products remain available through `adocweave-wasm`, while diagnostic display and lint-catalog JSON belong to the CLI.
+- Rust crate versions now follow the repository-wide version.
 
 [0.51.0]: https://github.com/KeishiS/adocweave/releases/tag/v0.51.0

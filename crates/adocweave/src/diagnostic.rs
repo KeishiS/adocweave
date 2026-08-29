@@ -1,11 +1,11 @@
 //! Diagnostics and safe source edits shared by all front ends.
 
 use std::error::Error;
-use std::fmt::{self, Write as _};
+use std::fmt;
 
 use serde::Serialize;
 
-use crate::source::{PositionEncoding, PositionError, SourceDocument, TextRange};
+use crate::source::TextRange;
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(transparent)]
@@ -216,38 +216,6 @@ impl CoreErrorCode {
     }
 }
 
-pub fn render_human(
-    diagnostics: &[Diagnostic],
-    source_document: &SourceDocument,
-    encoding: PositionEncoding,
-) -> Result<String, PositionError> {
-    let mut diagnostics = diagnostics.to_vec();
-    sort_diagnostics(&mut diagnostics);
-    let mut output = String::new();
-
-    for diagnostic in diagnostics {
-        let start = source_document.offset_to_position(diagnostic.range.start(), encoding)?;
-        writeln!(
-            output,
-            "{}:{}: {}[{}]: {}",
-            start.line + 1,
-            start.character + 1,
-            diagnostic.severity.as_str(),
-            diagnostic.code.as_str(),
-            diagnostic.message
-        )
-        .expect("writing to a String cannot fail");
-    }
-
-    Ok(output)
-}
-
-pub fn render_json(diagnostics: &[Diagnostic]) -> String {
-    let mut diagnostics = diagnostics.to_vec();
-    sort_diagnostics(&mut diagnostics);
-    serde_json::to_string(&diagnostics).expect("diagnostics are serializable")
-}
-
 fn serialize_range<S>(range: &TextRange, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
@@ -369,65 +337,6 @@ mod tests {
                 second: range(3, 5),
                 kind: EditConflictKind::Overlap,
             })
-        );
-    }
-
-    #[test]
-    fn diagnostic_human_output_uses_one_based_line_and_column() {
-        let source = "日本語\nproblem\n";
-        let source_document = SourceDocument::new(source).expect("valid source");
-        let diagnostics = [Diagnostic {
-            message: "問題です".to_owned(),
-            ..diagnostic("parse-1", "parse-error", Severity::Error, range(10, 17))
-        }];
-
-        assert_eq!(
-            render_human(&diagnostics, &source_document, PositionEncoding::Utf16),
-            Ok("2:1: error[parse-error]: 問題です\n".to_owned())
-        );
-    }
-
-    #[test]
-    fn diagnostic_json_is_escaped_and_deterministic() {
-        let diagnostics = [
-            Diagnostic {
-                message: "quote: \" and newline\n".to_owned(),
-                related: vec![RelatedInformation {
-                    message: "関連".to_owned(),
-                    range: range(0, 1),
-                }],
-                fixes: vec![
-                    Fix::new(
-                        "replace",
-                        Applicability::Always,
-                        vec![TextEdit {
-                            range: range(3, 4),
-                            replacement: "\"".to_owned(),
-                        }],
-                    )
-                    .expect("valid fix"),
-                ],
-                ..diagnostic("second", "b", Severity::Hint, range(3, 4))
-            },
-            diagnostic("first", "a", Severity::Warning, range(1, 2)),
-        ];
-
-        assert_eq!(
-            render_json(&diagnostics),
-            concat!(
-                "[",
-                "{\"id\":\"first\",\"code\":\"a\",\"severity\":\"warning\",",
-                "\"range\":{\"start\":1,\"end\":2},\"message\":\"message for first\",",
-                "\"related\":[],\"fixes\":[]},",
-                "{\"id\":\"second\",\"code\":\"b\",\"severity\":\"hint\",",
-                "\"range\":{\"start\":3,\"end\":4},",
-                "\"message\":\"quote: \\\" and newline\\n\",",
-                "\"related\":[{\"range\":{\"start\":0,\"end\":1},\"message\":\"関連\"}],",
-                "\"fixes\":[{\"title\":\"replace\",\"applicability\":\"always\",",
-                "\"edits\":[{\"range\":{\"start\":3,\"end\":4},",
-                "\"replacement\":\"\\\"\"}]}]}",
-                "]"
-            )
         );
     }
 

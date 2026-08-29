@@ -1,5 +1,5 @@
 use crate::url::{ActiveUrlPolicy, UrlDecision, UrlProvenance};
-pub const ALLOWED_ELEMENTS: &[&str] = &[
+pub(super) const ALLOWED_ELEMENTS: &[&str] = &[
     "a",
     "audio",
     "body",
@@ -50,7 +50,7 @@ pub const ALLOWED_ELEMENTS: &[&str] = &[
     "ul",
     "video",
 ];
-pub const ALLOWED_ATTRIBUTES: &[&str] = &[
+pub(super) const ALLOWED_ATTRIBUTES: &[&str] = &[
     "alt",
     "charset",
     "class",
@@ -74,7 +74,7 @@ pub const ALLOWED_ATTRIBUTES: &[&str] = &[
     "title",
     "width",
 ];
-pub const ALLOWED_CLASSES: &[&str] = &[
+pub(super) const ALLOWED_CLASSES: &[&str] = &[
     "author",
     "admonition",
     "admonition-caution",

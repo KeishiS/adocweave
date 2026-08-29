@@ -515,7 +515,7 @@ mod tests {
         ];
 
         let expected: serde_json::Value =
-            serde_json::from_str(&diagnostics::render_json(&diagnostics))
+            serde_json::from_str(&crate::diagnostic_output::render_json(&diagnostics))
                 .expect("core diagnostics JSON");
         let actual: serde_json::Value = serde_json::from_str(&serialize_diagnostics(
             &PreviewDiagnostic::analysis(&diagnostics),

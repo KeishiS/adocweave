@@ -22,7 +22,8 @@ use crate::url::{ActiveUrlPolicy, UrlProvenance};
 use blocks::*;
 use body::{BlockWriter, RenderScope, classes, passive, source_language_class};
 
-pub use safe::{ALLOWED_ATTRIBUTES, ALLOWED_CLASSES, ALLOWED_ELEMENTS};
+#[cfg(test)]
+use safe::{ALLOWED_ATTRIBUTES, ALLOWED_CLASSES, ALLOWED_ELEMENTS};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HtmlDocumentMode {
@@ -237,8 +238,6 @@ pub struct HtmlOutput {
 pub fn render(document: &crate::document::Document, policy: &RenderPolicy) -> HtmlOutput {
     render_with_inputs(document, policy, &RenderInputs::default())
 }
-
-pub use crate::reference::ResolvedReference;
 
 pub fn render_with_inputs(
     document: &crate::document::Document,

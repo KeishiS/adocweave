@@ -108,8 +108,10 @@ fn grammar_ambiguous_fixture_has_normative_ast_and_recovery() {
         &adocweave::NeverCancel,
     )
     .expect("fixture lints");
+    let mut sorted_diagnostics = diagnostics.clone();
+    adocweave::output::diagnostics::sort_diagnostics(&mut sorted_diagnostics);
     assert_eq!(
-        adocweave::output::diagnostics::render_json(&diagnostics),
+        serde_json::to_string(&sorted_diagnostics).expect("diagnostics JSON"),
         include_str!("../../../fixtures/grammar/ambiguous.diagnostics.json").trim_end()
     );
     let codes = diagnostics
