@@ -1,37 +1,36 @@
-# AdocWeave zed v0.47.0
+# AdocWeave vscode v0.47.0
 
 ## 主な変更
 
-- **Language Serverを自動で取得します。** これまでは拡張を導入しても、別途`adocweave-lsp`を導入して`PATH`または設定へ登録するまで文書解析が動きませんでした。どちらにも見つからない場合、拡張がGitHub Releaseから最新のLanguage Serverを取得して起動します。
-- **探索順は設定の絶対path、`PATH`、自動取得の三段です。** 導入済みの実行ファイルがあれば常にそちらが選ばれ、自動取得は行われません。
-- **自動取得にはchecksumとattestationの検証がありません。** Zedの拡張APIに検証手段がないためです。検証したうえで導入したい場合は、これまでどおり`adocweave-lsp`を自分で導入し、`lsp.adocweave.binary.path`または`PATH`で指定してください。
+- **Visual Studio Marketplaceから導入できます。** これまでVisual Studio Code本体では、GitHub ReleaseのVSIXを取得して手動で導入する必要がありました。拡張画面から`adocweave.adocweave-vscode`を検索して導入、更新および削除できます。公式の発行者はpublisher`adocweave`です。
+- **拡張はLanguage Serverを取得しなくなりました。** 以前の版は`adocweave-lsp`をeditorの保存領域へdownloadして管理していましたが、この処理を削除しました。利用者が導入した実行ファイルを、設定の絶対pathまたは`PATH`から探します。見つからない場合は導入案内を表示し、起動しません。
+- **拡張とLanguage Serverの版を一致させる必要がなくなりました。** 利用できる機能は、接続時に交換する標準LSP capabilityから決まります。`lspApiVersion`の一致を要求しません。
+
+Open VSX Registryへも同じVSIXを公開します。どちらのregistryから導入しても、GitHub Releaseへ添付したfileと同一です。
 
 ## 対応環境
 
-自動取得はLinuxのx86-64とARM64、macOSのARM64、Windowsのx86-64に対応します。Intel macOSとWindows ARM64向けのnative archiveは配布していないため、これらの環境では自動取得へ進まず、対応環境を示して起動に失敗します。手動で導入した実行ファイルの指定は、この制限を受けません。
-
-Zed Extension Galleryへ公開していないため、展開したディレクトリをdev extensionとして導入します。
+Visual Studio Code 1.125.0以降が必要です。拡張自体はplatformを選びませんが、別途導入するLanguage Serverは配布対象のtargetに従います。対応はlinuxのx86-64とARM64、macOSのARM64、Windowsのx86-64です。
 
 ## 対応関係
 
-拡張とLanguage Serverの製品バージョンを一致させる必要はありません。利用できる機能は、接続時に交換する標準LSP capabilityから決まります。自動取得では、公開済みの`adocweave-lsp`のうち最新の安定版を選びます。
+拡張とLanguage Serverは独立した製品で、版を揃える必要はありません。診断、補完および定義への移動などの利用可否は、Language Serverが返す標準LSP capabilityから判断します。標準capabilityがない機能は、editorのLSP clientが有効にしません。
 
 ## v0.47.0への移行
 
-- 利用者の作業は不要です。すでに`adocweave-lsp`を導入している場合、その実行ファイルが引き続き優先されます。
-- 自動取得を使いたくない場合は、`adocweave-lsp`を導入して`lsp.adocweave.binary.path`または`PATH`で指定してください。拡張側に自動取得を止める設定は設けていません。
+- 以前の版が自動取得したLanguage Serverを使っていた場合は、`adocweave-lsp`を自分で導入し、`PATH`へ通すか`adocweave.server.path`へ絶対pathを設定してください。導入手順は利用者向けの配布物導入文書を参照してください。
+- 更新前に、旧版で`adocweave.server.download`を`false`にしてから`AdocWeave: Remove Managed Language Server`を実行すると、使われなくなるキャッシュを確実に削除できます。更新後に気付いた場合の削除手順も同じ文書にあります。
+- Marketplaceから導入し直す場合は、手動で入れたVSIXを先に削除してください。同じ識別子のため、二重には入りません。
 
 ## 更新とロールバック
 
-新しいバージョンのZedディレクトリを別に展開し、dev extensionをそのディレクトリへ再設定します。以前の版へ戻す場合は、同じ手順で古いディレクトリを指定し直します。旧ディレクトリは、新しい版で編集機能を確認するまで保持してください。
-
-自動取得したLanguage Serverは、Zedが拡張へ割り当てるworkingディレクトリの`adocweave-lsp-<version>`へ置きます。拡張は取得した版だけを残し、以前の版を削除します。取得する版を固定したい場合は、`lsp.adocweave.binary.path`または`PATH`で指定してください。
+Marketplaceまたは Open VSXから導入した場合は、editorの拡張画面から更新および以前の版への切り替えができます。VSIXを手動で導入した場合は、新しいVSIXを`code --install-extension <file> --force`で導入し、Windowを再読込します。rollbackでは以前のReleaseの検証済みVSIXを同じ方法で導入します。
 
 ## 既知の制約
 
-- 自動取得の完全性はTLSだけに依存します。checksumとattestationは検証しません。
-- 自動取得するLanguage Serverの版を拡張の設定から固定できません。常に最新の安定版を取得します。
-- Zed Extension Galleryへ公開していないため、dev extensionとして導入します。拡張自体の更新は自動化されません。
+- 拡張はLanguage Serverを同梱せず、取得もしません。別途導入が必要です。
+- 未信頼ワークスペースでは拡張を起動しません。設定はmachine scopeに限定します。
+- Marketplaceの索引更新には遅れがあり、公開直後は拡張画面へ現れないことがあります。
 
 ## 配布物の検証
 
