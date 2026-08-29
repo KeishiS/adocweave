@@ -13,6 +13,9 @@ const options: SelectionOptions = {};
 function dependencies(overrides: Partial<SelectionDependencies> = {}): SelectionDependencies {
   return {
     findOnPath: async () => undefined,
+    downloadServer: async () => {
+      throw new Error("downloadServerを呼んではいけません");
+    },
     ...overrides,
   };
 }
@@ -51,4 +54,40 @@ test("相対設定pathと候補不在を区別して拒否します", async () =
     selectServer(options, dependencies({ findOnPath: async () => "relative/adocweave-lsp" })),
     /language-server-not-found/,
   );
+});
+
+test("導入済みの実行ファイルがある間は自動取得を行いません", async () => {
+  const storageDirectory = resolve("storage");
+  const configuredPath = resolve("explicit-adocweave-lsp");
+  const pathCandidate = resolve("path-adocweave-lsp");
+  const failing = dependencies({ findOnPath: async () => pathCandidate });
+
+  assert.deepEqual(await selectServer({ configuredPath, storageDirectory }, failing), {
+    command: configuredPath,
+    source: "configured",
+  });
+  assert.deepEqual(await selectServer({ storageDirectory }, failing), {
+    command: pathCandidate,
+    source: "path",
+  });
+});
+
+test("どちらにも見つからない場合だけ自動取得へ進みます", async () => {
+  const storageDirectory = resolve("storage");
+  const downloaded = resolve("storage", "adocweave-lsp-0.47.0-target", "adocweave-lsp");
+  let requested: string | undefined;
+
+  assert.deepEqual(
+    await selectServer(
+      { storageDirectory },
+      dependencies({
+        downloadServer: async (directory) => {
+          requested = directory;
+          return downloaded;
+        },
+      }),
+    ),
+    { command: downloaded, source: "downloaded" },
+  );
+  assert.equal(requested, storageDirectory);
 });
