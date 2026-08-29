@@ -41,7 +41,6 @@ fn install_preview_signal_handlers() {}
 use check_output::{CheckOutcome, DiagnosticCounts, DiagnosticFormat, sarif_log, sarif_results};
 use commands::check::Options as CheckOptions;
 use commands::format::Options as FormatOptions;
-use commands::model::CommandId;
 use file_workflow::{PendingWrite, atomic_write_all, colorize_lines};
 const DEFAULT_PREVIEW_PORT: u16 = 4000;
 const DEFAULT_PREVIEW_DEBOUNCE_MS: u64 = 100;
@@ -49,7 +48,9 @@ const DEFAULT_PREVIEW_DEBOUNCE_MS: u64 = 100;
 use adocweave_config::ProjectScopeId;
 use adocweave_host::ExitStatus;
 
-use arguments::{Action, Arguments, ColorChoice, CommandOptions, CompletionShell, parse_arguments};
+use arguments::{
+    Action, Arguments, ColorChoice, CommandOptions, CompletionShell, command, parse_arguments,
+};
 use cli_error::{CliError, check_error, convert_error, format_error, preview_error};
 
 fn read_input(
@@ -1218,7 +1219,12 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
 }
 
 fn completion_script(shell: CompletionShell) -> String {
-    commands::completion::render_completion_script(shell, &commands::model::completion_tree())
+    let mut command = command();
+    let name = command.get_name().to_owned();
+    let mut output = Vec::new();
+    let shell = clap_complete::Shell::from(shell);
+    clap_complete::generate(shell, &mut command, name, &mut output);
+    String::from_utf8(output).expect("clap completion output is UTF-8")
 }
 
 fn render_rules_human() -> String {
@@ -1243,13 +1249,11 @@ fn render_rules_human() -> String {
 }
 
 fn run() -> Result<ExitCode, CliError> {
-    match parse_arguments(env::args().skip(1))? {
-        Action::Help { command } => {
-            let help = command.map_or_else(commands::model::root_help, |id| {
-                commands::model::command_help(id).expect("document commands have command help")
-            });
-            print!("{help}");
-            Ok(ExitCode::SUCCESS)
+    match parse_arguments(env::args_os().skip(1))? {
+        Action::Help(help) => {
+            let exit_code = u8::try_from(help.exit_code()).unwrap_or(2);
+            help.print().map_err(CliError::Write)?;
+            Ok(ExitCode::from(exit_code))
         }
         Action::Version { json } => {
             if json {
@@ -1320,7 +1324,6 @@ fn run() -> Result<ExitCode, CliError> {
                 adocweave_config::ResolvedProjectConfig::default,
                 |snapshot| snapshot.config.clone(),
             );
-            let command_id = arguments.command.command_id();
             let include = include_selected(&arguments, project_config.resources.include);
             if !include && (arguments.stdin_base.is_some() || !arguments.allowed_roots.is_empty()) {
                 return Err(CliError::Usage(
@@ -1344,7 +1347,7 @@ fn run() -> Result<ExitCode, CliError> {
                 &boundary_policy,
                 include && arguments.allowed_roots.is_empty(),
                 project_root.is_some() && arguments.project_root.is_none(),
-                matches!(command_id, CommandId::Convert | CommandId::Preview),
+                arguments.command.uses_stylesheets(),
             )?;
             if let CommandOptions::Preview {
                 css,
@@ -1545,7 +1548,7 @@ fn run() -> Result<ExitCode, CliError> {
                         .map(|(id, bytes)| (id.to_owned(), bytes)),
                     retained_limits,
                 )?;
-                let processed = if command_id == CommandId::Format {
+                let processed = if arguments.command.is_format() {
                     input.clone()
                 } else {
                     include_input
@@ -1686,6 +1689,13 @@ fn check_preprocessed(
 fn main() -> ExitCode {
     match run() {
         Ok(exit_code) => exit_code,
+        Err(CliError::Arguments(source)) => {
+            let exit_code = u8::try_from(source.exit_code()).unwrap_or(2);
+            if source.print().is_err() {
+                return ExitStatus::InputOutput.into();
+            }
+            ExitCode::from(exit_code)
+        }
         Err(error) => {
             let status = error.exit_status();
             eprintln!("adocweave: {error}");
@@ -1702,186 +1712,58 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        Action, CliError, CommandOptions, CompletionShell, DEFAULT_PREVIEW_DEBOUNCE_MS,
-        DEFAULT_PREVIEW_PORT, FormatOptions, MAX_SCAN_ENTRIES, charge_retained, charge_scan_entry,
-        cli_project_scope, configuration_stylesheet_session, filesystem_authority,
-        filesystem_from_authority, load_project_config_at, parse_arguments,
-        read_primary_in_session, resolve_input_path_scopes_with_hook,
-        validate_project_config_authority,
+        Action, CliError, CommandOptions, DEFAULT_PREVIEW_DEBOUNCE_MS, DEFAULT_PREVIEW_PORT,
+        FormatOptions, MAX_SCAN_ENTRIES, charge_retained, charge_scan_entry, cli_project_scope,
+        command, configuration_stylesheet_session, filesystem_authority, filesystem_from_authority,
+        load_project_config_at, parse_arguments, read_primary_in_session,
+        resolve_input_path_scopes_with_hook, validate_project_config_authority,
     };
-    use crate::commands::completion::render_completion_script;
-    use crate::commands::model::{self, CommandId};
 
-    fn arguments(values: &[&str]) -> impl Iterator<Item = String> {
-        values.iter().map(ToString::to_string)
+    fn arguments(values: &[&str]) -> impl Iterator<Item = std::ffi::OsString> {
+        values.iter().map(std::ffi::OsString::from)
     }
 
     #[test]
-    fn completion_renderers_use_the_model_command_tree() {
-        fn assert_tree(shell: CompletionShell, tree: &model::CompletionTree) {
-            let output = render_completion_script(shell, tree);
-            let expected_contract = std::iter::once(format!(
-                "# adocweave-command-tree root={}",
-                tree.roots.join(",")
-            ))
-            .chain(tree.nested.iter().map(|group| {
-                format!(
-                    "# adocweave-command-tree parent={} children={}",
-                    group.parent.join("/"),
-                    group.children.join(",")
-                )
-            }))
-            .collect::<Vec<_>>();
-            assert_eq!(
-                output
-                    .lines()
-                    .take(expected_contract.len())
-                    .collect::<Vec<_>>(),
-                expected_contract
+    fn clap_definition_is_valid_and_every_public_item_has_help() {
+        fn assert_documented(command: &clap::Command) {
+            assert!(
+                command.get_about().is_some() || command.get_long_about().is_some(),
+                "{} has no description",
+                command.get_name()
             );
-            for group in &tree.nested {
-                for token in group.parent.iter().chain(&group.children) {
-                    assert!(
-                        output.matches(token).count() >= 2,
-                        "{shell:?} did not render nested token {token}"
-                    );
-                }
+            for argument in command.get_arguments() {
+                assert!(
+                    argument.get_help().is_some() || argument.get_long_help().is_some(),
+                    "{}:{} has no help",
+                    command.get_name(),
+                    argument.get_id()
+                );
+            }
+            for subcommand in command.get_subcommands() {
+                assert_documented(subcommand);
             }
         }
 
-        const ALTERNATE: &[model::CommandSpec] = &[
-            model::CommandSpec {
-                id: CommandId::ConfigShow,
-                path: &["workspace", "inspect", "show"],
-                root_usage: "",
-                summary: "inspect workspace",
-                help: None,
-                help_options: &[],
-            },
-            model::CommandSpec {
-                id: CommandId::Help,
-                path: &["project", "status"],
-                root_usage: "",
-                summary: "show project status",
-                help: None,
-                help_options: &[],
-            },
-        ];
-        let trees = [
-            model::completion_tree(),
-            model::completion_tree_for_tests(ALTERNATE),
-        ];
-        for tree in &trees {
-            for shell in [
-                CompletionShell::Bash,
-                CompletionShell::Zsh,
-                CompletionShell::Fish,
-                CompletionShell::PowerShell,
-            ] {
-                assert_tree(shell, tree);
-            }
-        }
-
-        let powershell = render_completion_script(CompletionShell::PowerShell, &trees[1]);
-        let deep = "$words[1] -eq 'workspace' -and $words[2] -eq 'inspect' -and ($words.Count -eq 3 -or ($words.Count -eq 4 -and $wordToComplete -ne ''))";
-        let shallow = "$words[1] -eq 'workspace' -and ($words.Count -eq 2 -or ($words.Count -eq 3 -and $wordToComplete -ne ''))";
-        let deep_position = powershell.find(deep).expect("deep PowerShell branch");
-        let shallow_position = powershell.find(shallow).expect("shallow PowerShell branch");
-        assert!(
-            deep_position < shallow_position,
-            "PowerShell must test the deepest parent first"
-        );
-        assert!(
-            powershell[deep_position..shallow_position].contains("@('show')"),
-            "the deepest parent must offer its child"
-        );
-
-        let repository_powershell =
-            render_completion_script(CompletionShell::PowerShell, &trees[0]);
-        let config = "$words[1] -eq 'config' -and ($words.Count -eq 2 -or ($words.Count -eq 3 -and $wordToComplete -ne ''))";
-        assert!(
-            repository_powershell.contains(config),
-            "config show must use the parent/partial-child guard"
-        );
-
-        let nested_position_matches =
-            |parent_len: usize, words_count: usize, partial_child: bool| {
-                words_count == parent_len + 1 || (words_count == parent_len + 2 && partial_child)
-            };
-        for parent_len in [1, 2] {
-            assert!(nested_position_matches(parent_len, parent_len + 1, false));
-            assert!(nested_position_matches(parent_len, parent_len + 2, true));
-            assert!(!nested_position_matches(parent_len, parent_len + 2, false));
-        }
-    }
-
-    #[test]
-    fn completion_renderers_use_every_model_option_and_value_candidate() {
-        let tree = model::completion_tree();
-        for shell in [
-            CompletionShell::Bash,
-            CompletionShell::Zsh,
-            CompletionShell::Fish,
-            CompletionShell::PowerShell,
-        ] {
-            let output = render_completion_script(shell, &tree);
-            let body_marker = match shell {
-                CompletionShell::Bash => "_adocweave() {",
-                CompletionShell::Zsh => "#compdef adocweave",
-                CompletionShell::Fish => "function __adocweave_at_path",
-                CompletionShell::PowerShell => {
-                    "Register-ArgumentCompleter -Native -CommandName adocweave"
-                }
-            };
-            let body = output
-                .split_once(body_marker)
-                .map(|(_, body)| body)
-                .expect("completion output contains its shell-specific body");
-            for (command, path) in &tree.commands {
-                for option in model::options_for_command(*command) {
-                    let contract = format!(
-                        "# adocweave-option command={} names={} metavar={} values={}",
-                        path.join("/"),
-                        option.names.join(","),
-                        option.metavar().unwrap_or("-"),
-                        option.candidates().join(","),
-                    );
-                    assert!(output.contains(&contract), "{shell:?}: {contract}");
-                    for token in option.names.iter().chain(option.candidates()) {
-                        let rendered = match shell {
-                            CompletionShell::Fish if token.starts_with("--") => {
-                                format!("-l {}", &token[2..])
-                            }
-                            CompletionShell::Fish if token.starts_with('-') => {
-                                format!("-s {}", &token[1..])
-                            }
-                            _ => (*token).to_owned(),
-                        };
-                        assert!(
-                            body.contains(&rendered),
-                            "{shell:?} did not render {token} from {command:?} as {rendered}"
-                        );
-                    }
-                }
-            }
-        }
+        let definition = command();
+        definition.clone().debug_assert();
+        assert_documented(&definition);
     }
 
     #[test]
     fn parser_accepts_every_typed_value_candidate() {
-        for candidate in model::option(model::OptionId::DiagnosticFormat).candidates() {
+        for candidate in ["human", "json", "github", "sarif"] {
             assert!(
                 parse_arguments(arguments(&["check", "--format", candidate])).is_ok(),
                 "diagnostic format {candidate}"
             );
         }
-        for candidate in model::option(model::OptionId::FailOn).candidates() {
+        for candidate in ["error", "warning", "never"] {
             assert!(
                 parse_arguments(arguments(&["check", "--fail-on", candidate])).is_ok(),
                 "failure level {candidate}"
             );
         }
-        for candidate in model::option(model::OptionId::Color).candidates() {
+        for candidate in ["auto", "always", "never"] {
             assert!(
                 parse_arguments(arguments(&["symbols", "--color", candidate])).is_ok(),
                 "color choice {candidate}"
@@ -1897,7 +1779,7 @@ mod tests {
             panic!("expected run action");
         };
 
-        assert_eq!(parsed.command.command_id(), CommandId::Convert);
+        assert!(matches!(parsed.command, CommandOptions::Convert { .. }));
         assert_eq!(
             parsed.input.as_deref(),
             Some(std::path::Path::new("document.adoc"))
@@ -1912,7 +1794,7 @@ mod tests {
             panic!("expected run action");
         };
 
-        assert_eq!(parsed.command.command_id(), CommandId::Check);
+        assert!(matches!(parsed.command, CommandOptions::Check(_)));
         assert!(parsed.input.is_none());
     }
 
@@ -1929,48 +1811,51 @@ mod tests {
         ] {
             assert!(matches!(
                 parse_arguments(arguments(&[command, "--help"])),
-                Ok(Action::Help { .. })
+                Ok(Action::Help(_))
             ));
         }
         assert!(matches!(
             parse_arguments(arguments(&["config", "show", "--help"])),
-            Ok(Action::Help {
-                command: Some(CommandId::ConfigShow)
-            })
+            Ok(Action::Help(_))
         ));
     }
 
     #[test]
     fn preview_help_explains_options_defaults_and_external_access() {
-        let help = model::command_help(CommandId::Preview).expect("preview has command help");
+        let Action::Help(help) =
+            parse_arguments(arguments(&["preview", "--help"])).expect("preview help")
+        else {
+            panic!("expected help action");
+        };
         let port = DEFAULT_PREVIEW_PORT.to_string();
         let debounce = DEFAULT_PREVIEW_DEBOUNCE_MS.to_string();
+        let help = help.to_string();
         for expected in [
-            "--bind ADDRESS",
+            "--bind <ADDRESS>",
             "127.0.0.1",
-            "--port PORT",
-            "--debounce-ms MILLISECONDS",
+            "--port <PORT>",
+            "--debounce-ms <MILLISECONDS>",
             "--allow-external",
             "--include",
-            "--allow-root DIR",
-            "--css FILE",
-            "--css-url URL",
-            "--config FILE",
+            "--allow-root <DIR>",
+            "--css <FILE>",
+            "--css-url <URL>",
+            "--config <FILE>",
             "--no-config",
-            "--color WHEN",
+            "--color <WHEN>",
             "auto",
             "authentication",
             "TLS",
         ] {
             assert!(
                 help.contains(expected),
-                "preview helpに{expected}がありません"
+                "preview help is missing {expected}"
             );
         }
         for (name, value) in [("port", port), ("debounce", debounce)] {
             assert!(
                 help.contains(&value),
-                "preview helpの{name}既定値が実装と異なります"
+                "preview help has the wrong {name} default"
             );
         }
 

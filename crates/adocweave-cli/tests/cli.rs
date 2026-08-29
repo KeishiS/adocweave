@@ -834,22 +834,33 @@ fn every_subcommand_displays_help() {
 }
 
 #[test]
+fn missing_command_displays_usage_and_fails() {
+    let output = adocweave().output().expect("missing command");
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Usage: adocweave"));
+}
+
+#[test]
 fn unknown_options_are_rejected_and_double_dash_accepts_hyphenated_paths() {
     let unknown_root = adocweave()
         .arg("--unknown")
         .output()
         .expect("unknown root option");
-    assert!(!unknown_root.status.success());
+    assert_eq!(unknown_root.status.code(), Some(2));
     assert!(unknown_root.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&unknown_root.stderr).contains("unknown option: --unknown"));
+    assert!(
+        String::from_utf8_lossy(&unknown_root.stderr).contains("unexpected argument '--unknown'")
+    );
 
     let unknown = adocweave()
         .args(["check", "--unknown"])
         .output()
         .expect("unknown option");
-    assert!(!unknown.status.success());
+    assert_eq!(unknown.status.code(), Some(2));
     assert!(unknown.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&unknown.stderr).contains("unknown option: --unknown"));
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("unexpected argument '--unknown'"));
 
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -881,44 +892,204 @@ fn unknown_options_are_rejected_and_double_dash_accepts_hyphenated_paths() {
 }
 
 #[test]
-fn public_help_paths_match_the_command_model_snapshots() {
-    let expected_root = include_bytes!("snapshots/help-root.txt");
-    for arguments in [&["--help"][..], &["help"][..]] {
+fn invalid_argument_forms_use_the_standard_argument_error_exit() {
+    for arguments in [
+        &["unknown-command"][..],
+        &["check", "--format", "xml"][..],
+        &["check", "--diff", "document.adoc"][..],
+        &["format", "--check", "--write", "document.adoc"][..],
+        &["completion"][..],
+        &["--json"][..],
+    ] {
+        let output = adocweave()
+            .args(arguments)
+            .output()
+            .expect("invalid arguments");
+
+        assert_eq!(output.status.code(), Some(2), "{arguments:?}");
+        assert!(output.stdout.is_empty(), "{arguments:?}");
+        assert!(!output.stderr.is_empty(), "{arguments:?}");
+        assert!(output.stderr.is_ascii(), "{arguments:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).starts_with("error:"),
+            "{arguments:?}"
+        );
+    }
+}
+
+#[test]
+fn public_help_paths_describe_every_command() {
+    let mut root_help = None;
+    for arguments in [&["--help"][..], &["-h"][..], &["help"][..]] {
         let output = adocweave().args(arguments).output().expect("root help");
         assert!(output.status.success(), "{arguments:?}");
-        assert_eq!(output.stdout, expected_root, "{arguments:?}");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains("Usage: adocweave"), "{arguments:?}");
+        for command in [
+            "convert",
+            "preview",
+            "check",
+            "format",
+            "symbols",
+            "rules",
+            "config",
+            "completion",
+        ] {
+            assert!(stdout.contains(command), "{arguments:?}: {command}");
+        }
         assert!(output.stderr.is_empty(), "{arguments:?}");
+        if let Some(expected) = &root_help {
+            assert_eq!(&output.stdout, expected, "{arguments:?}");
+        } else {
+            root_help = Some(output.stdout);
+        }
     }
 
-    let mut expected_commands = include_str!("snapshots/help-commands.txt");
-    for path in [
-        &["convert"][..],
-        &["preview"][..],
-        &["check"][..],
-        &["format"][..],
-        &["symbols"][..],
-        &["rules"][..],
-        &["config", "show"][..],
-        &["completion"][..],
+    for (path, expected) in [
+        (
+            &["convert"][..],
+            &[
+                "[FILE]",
+                "--complete",
+                "--css <FILE>",
+                "--css-url <URL>",
+                "--include",
+                "--no-include",
+                "--stdin-base <DIR>",
+                "--allow-root <DIR>",
+                "--config <FILE>",
+                "--no-config",
+                "--color <WHEN>",
+                "Example:",
+            ][..],
+        ),
+        (
+            &["preview"][..],
+            &[
+                "<FILE>",
+                "--bind <ADDRESS>",
+                "--port <PORT>",
+                "--debounce-ms <MILLISECONDS>",
+                "--allow-external",
+                "--css <FILE>",
+                "--css-url <URL>",
+                "--include",
+                "--no-include",
+                "--allow-root <DIR>",
+                "--config <FILE>",
+                "--no-config",
+                "--color <WHEN>",
+                "Security:",
+                "authentication",
+                "TLS",
+                "Example:",
+            ][..],
+        ),
+        (
+            &["check"][..],
+            &[
+                "[FILE]...",
+                "--format <FORMAT>",
+                "human",
+                "json",
+                "github",
+                "sarif",
+                "--fail-on <LEVEL>",
+                "error",
+                "warning",
+                "never",
+                "--summary",
+                "--fix",
+                "--diff",
+                "--enable-rule <CODE>",
+                "--glob <PATTERN>",
+                "--project-root <DIR>",
+                "--include",
+                "--no-include",
+                "--stdin-base <DIR>",
+                "--allow-root <DIR>",
+                "--config <FILE>",
+                "--no-config",
+                "--color <WHEN>",
+                "Examples:",
+            ][..],
+        ),
+        (
+            &["format"][..],
+            &[
+                "[FILE]...",
+                "--check",
+                "--write",
+                "--diff",
+                "--summary",
+                "--glob <PATTERN>",
+                "--include",
+                "--no-include",
+                "--stdin-base <DIR>",
+                "--allow-root <DIR>",
+                "--config <FILE>",
+                "--no-config",
+                "--color <WHEN>",
+                "Examples:",
+            ][..],
+        ),
+        (
+            &["symbols"][..],
+            &[
+                "[FILE]",
+                "--include",
+                "--no-include",
+                "--stdin-base <DIR>",
+                "--allow-root <DIR>",
+                "--config <FILE>",
+                "--no-config",
+                "--color <WHEN>",
+                "Example:",
+            ][..],
+        ),
+        (
+            &["rules"][..],
+            &["--format <FORMAT>", "human", "json", "Examples:"][..],
+        ),
+        (
+            &["config", "show"][..],
+            &["--config <FILE>", "--no-config", "Example:"][..],
+        ),
+        (
+            &["completion"][..],
+            &["<SHELL>", "bash", "zsh", "fish", "powershell", "Example:"][..],
+        ),
     ] {
-        let marker = format!("=== {} ===\n", path.join(" "));
-        let section = expected_commands
-            .strip_prefix(&marker)
-            .unwrap_or_else(|| panic!("missing snapshot for {}", path.join(" ")));
-        let next = section.find("=== ").unwrap_or(section.len());
-        let expected = &section[..next];
         let output = adocweave()
             .args(path.iter().copied().chain(["--help"]))
             .output()
             .expect("command help");
         assert!(output.status.success(), "{path:?}");
-        assert_eq!(
-            String::from_utf8_lossy(&output.stdout),
-            expected,
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains(&format!("Usage: adocweave {}", path.join(" "))),
             "{path:?}"
         );
+        assert!(stdout.contains("-h, --help"), "{path:?}");
+        for item in expected {
+            assert!(stdout.contains(item), "{path:?}: {item}");
+        }
         assert!(output.stderr.is_empty(), "{path:?}");
-        expected_commands = &section[next..];
+
+        for help_arguments in [
+            path.iter().copied().chain(["-h"]).collect::<Vec<_>>(),
+            std::iter::once("help")
+                .chain(path.iter().copied())
+                .collect::<Vec<_>>(),
+        ] {
+            let equivalent = adocweave()
+                .args(help_arguments)
+                .output()
+                .expect("equivalent help path");
+            assert!(equivalent.status.success(), "{path:?}");
+            assert_eq!(equivalent.stdout, output.stdout, "{path:?}");
+            assert!(equivalent.stderr.is_empty(), "{path:?}");
+        }
     }
 }
 
@@ -940,6 +1111,57 @@ fn completion_scripts_cover_every_supported_shell() {
         assert!(stdout.contains("config"), "{shell}");
         assert!(stdout.contains("show"), "{shell}");
         assert!(output.stderr.is_empty());
+    }
+
+    let bash = adocweave()
+        .args(["completion", "bash"])
+        .output()
+        .expect("bash completion");
+    let stdout = String::from_utf8_lossy(&bash.stdout);
+    for token in [
+        "convert",
+        "preview",
+        "check",
+        "format",
+        "symbols",
+        "rules",
+        "config",
+        "show",
+        "completion",
+        "--version",
+        "--json",
+        "--complete",
+        "--css",
+        "--css-url",
+        "--bind",
+        "--port",
+        "--debounce-ms",
+        "--allow-external",
+        "--format",
+        "--fail-on",
+        "--summary",
+        "--fix",
+        "--diff",
+        "--enable-rule",
+        "--glob",
+        "--project-root",
+        "--include",
+        "--no-include",
+        "--stdin-base",
+        "--allow-root",
+        "--config",
+        "--no-config",
+        "--color",
+        "human",
+        "json",
+        "github",
+        "sarif",
+        "error",
+        "warning",
+        "never",
+        "powershell",
+    ] {
+        assert!(stdout.contains(token), "bash: {token}");
     }
 }
 
@@ -972,6 +1194,20 @@ fn cli_reports_machine_readable_release_contracts() {
 }
 
 #[test]
+fn version_options_cannot_be_combined_with_a_command() {
+    let output = adocweave()
+        .args(["--version", "check"])
+        .output()
+        .expect("conflicting version and command");
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--version"));
+    assert!(stderr.contains("check"));
+}
+
+#[test]
 fn convert_reads_a_file() {
     let fixture = concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -988,6 +1224,32 @@ fn convert_reads_a_file() {
         b"<h1 class=\"document-title\" id=\"_adocweave\">AdocWeave</h1>\n<p>Small steps produce reliable software.</p>\n"
     );
     assert!(output.stderr.is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn file_arguments_accept_non_utf8_paths() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let root = tempfile::tempdir().expect("project");
+    let path = root
+        .path()
+        .join(OsString::from_vec(b"document-\xff.adoc".to_vec()));
+    std::fs::write(&path, "paragraph\n").expect("document");
+
+    let output = adocweave()
+        .args(["check", "--format", "json"])
+        .arg(path)
+        .output()
+        .expect("non-UTF-8 path");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, b"[]");
 }
 
 #[test]
@@ -2383,10 +2645,9 @@ fn local_includes_resolve_by_default_and_are_deterministic() {
         .output()
         .expect("conflicting options");
     assert_eq!(conflicting.status.code(), Some(2));
-    assert!(
-        String::from_utf8_lossy(&conflicting.stderr)
-            .contains("--no-include cannot be combined with --include")
-    );
+    let stderr = String::from_utf8_lossy(&conflicting.stderr);
+    assert!(stderr.contains("--include"));
+    assert!(stderr.contains("--no-include"));
 }
 
 #[test]

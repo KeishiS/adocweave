@@ -4,48 +4,21 @@ use std::process::ExitCode;
 
 use adocweave::output::diagnostics as diagnostic;
 
-use super::CliError;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, clap::ValueEnum)]
 pub(crate) enum DiagnosticFormat {
+    #[default]
     Human,
     Json,
     Github,
     Sarif,
 }
 
-impl DiagnosticFormat {
-    pub(crate) fn parse(value: &str) -> Result<Self, CliError> {
-        match value {
-            "human" => Ok(Self::Human),
-            "json" => Ok(Self::Json),
-            "github" => Ok(Self::Github),
-            "sarif" => Ok(Self::Sarif),
-            _ => Err(CliError::Usage(format!(
-                "unknown diagnostic format: {value}"
-            ))),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, clap::ValueEnum)]
 pub(crate) enum FailOn {
+    #[default]
     Error,
     Warning,
     Never,
-}
-
-impl FailOn {
-    pub(crate) fn parse(value: &str) -> Result<Self, CliError> {
-        match value {
-            "error" => Ok(Self::Error),
-            "warning" => Ok(Self::Warning),
-            "never" => Ok(Self::Never),
-            _ => Err(CliError::Usage(format!(
-                "unknown failure threshold: {value}"
-            ))),
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
