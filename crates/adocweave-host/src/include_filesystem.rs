@@ -204,7 +204,10 @@ pub enum IncludeFilesystemOutcome {
 pub enum IncludeFilesystemBudgetedOutcome {
     Found(IncludeFilesystemSource),
     NotFound(MissingIncludeFilesystemSource),
-    BudgetExhausted { source_id: LogicalSourceId },
+    BudgetExhausted {
+        source_id: LogicalSourceId,
+        error: FilesystemDraftError,
+    },
     Failed(FailedIncludeFilesystemSource),
 }
 
@@ -422,9 +425,9 @@ impl IncludeFilesystemTransaction {
         let IncludeFilesystemPathRequest { source_id, path } = request;
         match self
             .draft_mut()
-            .read_utf8_within_budget(source_id.clone(), &path)
+            .read_utf8_with_limit_outcome(source_id.clone(), &path)
         {
-            Ok(Some(outcome)) => match map_read(outcome) {
+            Ok(FilesystemLimitedReadOutcome::Read(outcome)) => match map_read(outcome) {
                 IncludeFilesystemOutcome::Found(found) => {
                     IncludeFilesystemBudgetedOutcome::Found(found)
                 }
@@ -433,7 +436,12 @@ impl IncludeFilesystemTransaction {
                 }
                 IncludeFilesystemOutcome::Failed(_) => unreachable!("successful read mapping"),
             },
-            Ok(None) => IncludeFilesystemBudgetedOutcome::BudgetExhausted { source_id },
+            Ok(FilesystemLimitedReadOutcome::EstablishedLimit(error)) => {
+                IncludeFilesystemBudgetedOutcome::BudgetExhausted { source_id, error }
+            }
+            Ok(FilesystemLimitedReadOutcome::AdditionalLimit) => {
+                unreachable!("a read without an additional limit cannot exhaust one")
+            }
             Err(error) => IncludeFilesystemBudgetedOutcome::Failed(FailedIncludeFilesystemSource {
                 source_id,
                 error,
@@ -492,9 +500,9 @@ impl IncludeFilesystemTransaction {
         let IncludeFilesystemPathRequest { source_id, path } = request;
         match self
             .draft_mut()
-            .read_utf8_no_symlinks_within_budget(source_id.clone(), &path)
+            .read_utf8_no_symlinks_with_limit_outcome(source_id.clone(), &path)
         {
-            Ok(Some(outcome)) => match map_read(outcome) {
+            Ok(FilesystemLimitedReadOutcome::Read(outcome)) => match map_read(outcome) {
                 IncludeFilesystemOutcome::Found(found) => {
                     IncludeFilesystemBudgetedOutcome::Found(found)
                 }
@@ -503,7 +511,12 @@ impl IncludeFilesystemTransaction {
                 }
                 IncludeFilesystemOutcome::Failed(_) => unreachable!("successful read mapping"),
             },
-            Ok(None) => IncludeFilesystemBudgetedOutcome::BudgetExhausted { source_id },
+            Ok(FilesystemLimitedReadOutcome::EstablishedLimit(error)) => {
+                IncludeFilesystemBudgetedOutcome::BudgetExhausted { source_id, error }
+            }
+            Ok(FilesystemLimitedReadOutcome::AdditionalLimit) => {
+                unreachable!("a read without an additional limit cannot exhaust one")
+            }
             Err(error) => IncludeFilesystemBudgetedOutcome::Failed(FailedIncludeFilesystemSource {
                 source_id,
                 error,

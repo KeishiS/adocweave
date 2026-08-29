@@ -775,6 +775,58 @@ fn request_resource_limit_reports_its_resource_ceiling() {
 }
 
 #[test]
+fn config_total_limit_wins_when_its_read_also_reaches_the_file_count() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    write(root.join(".adocweave.toml"), "schema-version = 2\n");
+    write(root.join("guide.adoc"), "text\n");
+    let mut request = request(root, vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))]);
+    request.config = ConfigSelection::Explicit(PathBuf::from(".adocweave.toml"));
+    request.limits.filesystem_reads.max_files = 1;
+    request.limits.filesystem_reads.max_total_bytes = 4;
+    request.limits.filesystem_reads.max_resource_bytes = 1024;
+
+    assert!(matches!(
+        process(request),
+        Err(ProjectError::Limit(ProjectLimit::ReadBytes { limit: 4 }))
+    ));
+}
+
+#[test]
+fn config_resource_limit_wins_when_its_read_also_reaches_the_file_count() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    write(root.join(".adocweave.toml"), "schema-version = 2\n");
+    write(root.join("guide.adoc"), "text\n");
+    let mut request = request(root, vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))]);
+    request.config = ConfigSelection::Explicit(PathBuf::from(".adocweave.toml"));
+    request.limits.filesystem_reads.max_files = 1;
+    request.limits.filesystem_reads.max_total_bytes = 1024;
+    request.limits.filesystem_reads.max_resource_bytes = 4;
+
+    assert!(matches!(
+        process(request),
+        Err(ProjectError::Limit(ProjectLimit::ReadBytes { limit: 4 }))
+    ));
+}
+
+#[test]
+fn config_file_limit_keeps_its_file_ceiling() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    write(root.join(".adocweave.toml"), "schema-version = 2\n");
+    write(root.join("guide.adoc"), "text\n");
+    let mut request = request(root, vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))]);
+    request.config = ConfigSelection::Explicit(PathBuf::from(".adocweave.toml"));
+    request.limits.filesystem_reads.max_files = 0;
+
+    assert!(matches!(
+        process(request),
+        Err(ProjectError::Limit(ProjectLimit::Files { limit: 0 }))
+    ));
+}
+
+#[test]
 fn one_large_config_is_shared_by_one_thousand_target_results() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let root = directory.path();

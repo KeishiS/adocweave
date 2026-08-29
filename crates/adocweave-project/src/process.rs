@@ -631,11 +631,11 @@ impl Processor {
                         ProjectResourceOutcome::Missing,
                     ))
                 }
-                IncludeFilesystemBudgetedOutcome::BudgetExhausted { .. } => Ok((
+                IncludeFilesystemBudgetedOutcome::BudgetExhausted { error, .. } => Ok((
                     path.clone(),
                     None,
                     ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(
-                        self.current_read_limit(),
+                        established_read_limit(error, self.limits),
                     )),
                 )),
                 IncludeFilesystemBudgetedOutcome::Failed(failed) => {
@@ -1257,21 +1257,6 @@ impl Processor {
         Ok(())
     }
 
-    fn current_read_limit(&self) -> ProjectLimit {
-        let usage = self.job.usage().unwrap_or_default();
-        if usage.read_operations
-            >= u64::try_from(self.limits.filesystem_reads.max_files).unwrap_or(u64::MAX)
-        {
-            ProjectLimit::Files {
-                limit: self.limits.filesystem_reads.max_files,
-            }
-        } else {
-            ProjectLimit::ReadBytes {
-                limit: self.limits.filesystem_reads.max_total_bytes,
-            }
-        }
-    }
-
     fn confined_session(
         &mut self,
         roots: &[PathBuf],
@@ -1417,11 +1402,11 @@ fn read_fixed_from(
                         .map_err(ResourceError::from)?;
                     Ok((candidate, None, ProjectResourceOutcome::Missing))
                 }
-                Ok(IncludeFilesystemBudgetedOutcome::BudgetExhausted { .. }) => Ok((
+                Ok(IncludeFilesystemBudgetedOutcome::BudgetExhausted { error, .. }) => Ok((
                     path.clone(),
                     None,
                     ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(
-                        current_read_limit(job, limits),
+                        established_read_limit(error, limits),
                     )),
                 )),
                 Ok(IncludeFilesystemBudgetedOutcome::Failed(failed)) => {
@@ -1614,20 +1599,6 @@ fn validate_cached_authority(
         return Err(ResourceError::OutsideRoots(requested_path.to_owned()));
     }
     Ok(())
-}
-
-fn current_read_limit(job: &IncludeFilesystemJob, limits: crate::ProjectLimits) -> ProjectLimit {
-    let usage = job.usage().unwrap_or_default();
-    if usage.read_operations >= u64::try_from(limits.filesystem_reads.max_files).unwrap_or(u64::MAX)
-    {
-        ProjectLimit::Files {
-            limit: limits.filesystem_reads.max_files,
-        }
-    } else {
-        ProjectLimit::ReadBytes {
-            limit: limits.filesystem_reads.max_total_bytes,
-        }
-    }
 }
 
 fn established_read_limit(

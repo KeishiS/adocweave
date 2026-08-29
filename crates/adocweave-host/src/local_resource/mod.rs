@@ -1135,6 +1135,9 @@ impl LocalFilesystemMutationCursor<'_> {
             path,
             || {},
             FilesystemReadOptions {
+                // An additional ceiling belongs only to this operation. Do
+                // not reuse or publish LocalTargetSession text entries under
+                // that narrower policy.
                 reuse_cached_text: false,
                 follow_symlinks: true,
                 missing: MissingDisposition::ApplyNotFound,
@@ -1863,13 +1866,35 @@ impl LocalFilesystemDraft {
         source_id: LogicalSourceId,
         path: &Path,
     ) -> Result<Option<FilesystemReadOutcome>, FilesystemDraftError> {
+        match self.read_utf8_with_limit_outcome(source_id, path)? {
+            FilesystemLimitedReadOutcome::Read(outcome) => Ok(Some(outcome)),
+            FilesystemLimitedReadOutcome::EstablishedLimit(error)
+                if is_legacy_soft_read_limit(&error) =>
+            {
+                Ok(None)
+            }
+            FilesystemLimitedReadOutcome::EstablishedLimit(error) => {
+                self.poisoned = true;
+                Err(error)
+            }
+            FilesystemLimitedReadOutcome::AdditionalLimit => {
+                unreachable!("a read without an additional limit cannot exhaust one")
+            }
+        }
+    }
+
+    pub(crate) fn read_utf8_with_limit_outcome(
+        &mut self,
+        source_id: LogicalSourceId,
+        path: &Path,
+    ) -> Result<FilesystemLimitedReadOutcome, FilesystemDraftError> {
         self.ensure_operation_can_start()?;
         let result = self.mutation_cursor().read_utf8(source_id, path);
         match result {
-            Ok(outcome) => Ok(Some(outcome)),
-            Err(FilesystemDraftError::Resource(
-                ResourceError::FileLimit { .. } | ResourceError::ByteLimit,
-            )) => Ok(None),
+            Ok(outcome) => Ok(FilesystemLimitedReadOutcome::Read(outcome)),
+            Err(error) if is_read_limit_error(&error) => {
+                Ok(FilesystemLimitedReadOutcome::EstablishedLimit(error))
+            }
             Err(error) => {
                 self.poisoned = true;
                 Err(error)
@@ -1930,15 +1955,37 @@ impl LocalFilesystemDraft {
         source_id: LogicalSourceId,
         path: &Path,
     ) -> Result<Option<FilesystemReadOutcome>, FilesystemDraftError> {
+        match self.read_utf8_no_symlinks_with_limit_outcome(source_id, path)? {
+            FilesystemLimitedReadOutcome::Read(outcome) => Ok(Some(outcome)),
+            FilesystemLimitedReadOutcome::EstablishedLimit(error)
+                if is_legacy_soft_read_limit(&error) =>
+            {
+                Ok(None)
+            }
+            FilesystemLimitedReadOutcome::EstablishedLimit(error) => {
+                self.poisoned = true;
+                Err(error)
+            }
+            FilesystemLimitedReadOutcome::AdditionalLimit => {
+                unreachable!("a read without an additional limit cannot exhaust one")
+            }
+        }
+    }
+
+    pub(crate) fn read_utf8_no_symlinks_with_limit_outcome(
+        &mut self,
+        source_id: LogicalSourceId,
+        path: &Path,
+    ) -> Result<FilesystemLimitedReadOutcome, FilesystemDraftError> {
         self.ensure_operation_can_start()?;
         let result = self
             .mutation_cursor()
             .read_utf8_no_symlinks(source_id, path);
         match result {
-            Ok(outcome) => Ok(Some(outcome)),
-            Err(FilesystemDraftError::Resource(
-                ResourceError::FileLimit { .. } | ResourceError::ByteLimit,
-            )) => Ok(None),
+            Ok(outcome) => Ok(FilesystemLimitedReadOutcome::Read(outcome)),
+            Err(error) if is_read_limit_error(&error) => {
+                Ok(FilesystemLimitedReadOutcome::EstablishedLimit(error))
+            }
             Err(error) => {
                 self.poisoned = true;
                 Err(error)
@@ -2259,6 +2306,13 @@ fn is_read_limit_error(error: &FilesystemDraftError) -> bool {
                 | crate::FilesystemJobLimit::ReadBytes { .. }
                 | crate::FilesystemJobLimit::ReadProbeBytes { .. }
         ))
+    )
+}
+
+fn is_legacy_soft_read_limit(error: &FilesystemDraftError) -> bool {
+    matches!(
+        error,
+        FilesystemDraftError::Resource(ResourceError::FileLimit { .. } | ResourceError::ByteLimit)
     )
 }
 
