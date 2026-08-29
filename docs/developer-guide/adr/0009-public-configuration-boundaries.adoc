@@ -2,7 +2,8 @@
 
 == 状態
 
-採用
+採用。WASM protocolで解析設定と描画設定を別のトップレベルobjectにする決定は、
+xref:0042-wasm-public-contract.adoc[ADR 0042]で改訂しました。
 
 == 背景
 
@@ -36,7 +37,8 @@ URL検査は次の責務へ分けます。
 
 解析cache keyは入力本文、``SourceId``および``AnalysisOptions``から生成します。HTMLの表示設定と
 ``ActiveUrlPolicy``は含めません。
-WASM protocolでは解析設定と描画設定を別のobjectとして表し、同じ責務分担を維持します。
+WASM protocolでは解析設定と描画設定を別のobjectとして表し、同じ責務分担を維持します。この配置は
+xref:0042-wasm-public-contract.adoc[ADR 0042]で改訂しました。
 
 設定型はRustでの直接構築と補完を優先して公開fieldを維持します。このためfield追加や型変更は互換変更ではなく、
 v0.xのminor releaseで移行手順とともに行います。継続的な追加が見込まれるLintルールだけは

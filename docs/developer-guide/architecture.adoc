@@ -50,7 +50,7 @@ adocweave-workspace ──> adocweave
 |``adocweave lsp``から呼び出すLSPの通信、URIと位置の変換、通知順序、並行実行およびクライアントへの結果公開
 
 |``adocweave-wasm``
-|WebAssemblyの要求・応答の検証と、公開する通信型とコア型の相互変換
+|WebAssemblyの要求・応答・errorの検証と、公開する通信型とコア型の相互変換
 
 |``adocweave-textlint``
 |解析結果からtextlint用TxtASTへの変換と、コア解析およびTxtAST変換をNode.jsへ公開する
@@ -65,6 +65,10 @@ WebAssemblyインターフェイス
 
 crateとpackageの正確な構成、依存先および版は各manifestを基準とします。この図は実装の直接依存を示します。
 配布成果物と公開方法はxref:release-distribution.adoc[配布仕様]を基準とし、この文書へ複製しません。
+
+BrowserのWorker入口とNode.jsのdirect入口は、同じWebAssembly要求、応答およびerrorの公開仕様を使います。
+公開仕様は利用側が渡す文書、必要な結果および外部リソースを表し、前処理、正規化、出力変換などの内部段階を
+含めません。具体的な設計判断はxref:adr/0042-wasm-public-contract.adoc[ADR 0042]を参照してください。
 
 [#single-analysis]
 == 単一解析
