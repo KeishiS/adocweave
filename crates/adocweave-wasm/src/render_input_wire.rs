@@ -20,7 +20,7 @@ where
 )]
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
-pub enum WasmReferenceNotice {
+pub enum ReferenceNotice {
     Fallback,
 }
 
@@ -31,7 +31,7 @@ pub enum WasmReferenceNotice {
 )]
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
-pub enum WasmReferenceFailureKind {
+pub enum ReferenceFailureKind {
     MissingTarget,
     MissingAnchor,
     AmbiguousTarget,
@@ -46,7 +46,7 @@ pub enum WasmReferenceFailureKind {
 )]
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
-pub enum WasmResourceFailureKind {
+pub enum ResourceFailureKind {
     Missing,
     OutsideRoot,
     SchemeDenied,
@@ -67,16 +67,16 @@ pub enum WasmResourceFailureKind {
     derive(ts_rs::TS),
     ts(export, export_to = "protocol.d.mts")
 )]
-pub enum WasmReferenceOutcome {
+pub enum ReferenceOutcome {
     Resolved {
         href: String,
         #[serde(default)]
         display_text: Option<String>,
         #[serde(default)]
-        notices: Vec<WasmReferenceNotice>,
+        notices: Vec<ReferenceNotice>,
     },
     Failed {
-        kind: WasmReferenceFailureKind,
+        kind: ReferenceFailureKind,
     },
 }
 
@@ -92,7 +92,7 @@ pub enum WasmReferenceOutcome {
     derive(ts_rs::TS),
     ts(export, export_to = "protocol.d.mts")
 )]
-pub enum WasmResourceOutcome {
+pub enum ResourceOutcome {
     Resolved {
         href: String,
         media_type: String,
@@ -100,7 +100,7 @@ pub enum WasmResourceOutcome {
         byte_length: Option<u64>,
     },
     Failed {
-        kind: WasmResourceFailureKind,
+        kind: ResourceFailureKind,
     },
 }
 
@@ -116,13 +116,13 @@ pub enum WasmResourceOutcome {
     derive(ts_rs::TS),
     ts(export, export_to = "protocol.d.mts")
 )]
-pub enum WasmCitationOutcome {
+pub enum CitationOutcome {
     Resolved {
         #[serde(default)]
-        segments: Vec<WasmCitationSegment>,
+        segments: Vec<CitationSegment>,
     },
     Failed {
-        kind: WasmReferenceFailureKind,
+        kind: ReferenceFailureKind,
     },
 }
 
@@ -133,7 +133,7 @@ pub enum WasmCitationOutcome {
 )]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmCitationSegment {
+pub struct CitationSegment {
     pub text: String,
     #[serde(default)]
     pub anchor: Option<String>,
@@ -146,7 +146,7 @@ pub struct WasmCitationSegment {
 )]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmGeneratedBibliographyEntry {
+pub struct GeneratedBibliographyEntry {
     pub citation_key: String,
     pub text: String,
     #[serde(default)]
@@ -162,10 +162,10 @@ pub struct WasmGeneratedBibliographyEntry {
 )]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmGeneratedBibliography {
+pub struct GeneratedBibliography {
     pub title: String,
     #[serde(default)]
-    pub entries: Vec<WasmGeneratedBibliographyEntry>,
+    pub entries: Vec<GeneratedBibliographyEntry>,
 }
 
 #[cfg_attr(
@@ -175,10 +175,10 @@ pub struct WasmGeneratedBibliography {
 )]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmResolvedCitation {
+pub struct ResolvedCitation {
     pub source_start: u32,
     pub source_end: u32,
-    pub outcome: WasmCitationOutcome,
+    pub outcome: CitationOutcome,
 }
 
 #[cfg_attr(
@@ -188,10 +188,10 @@ pub struct WasmResolvedCitation {
 )]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmResolvedReference {
+pub struct ResolvedReference {
     pub source_start: u32,
     pub source_end: u32,
-    pub outcome: WasmReferenceOutcome,
+    pub outcome: ReferenceOutcome,
 }
 
 #[cfg_attr(
@@ -201,26 +201,21 @@ pub struct WasmResolvedReference {
 )]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmResolvedResource {
+pub struct ResolvedResource {
     pub source_start: u32,
     pub source_end: u32,
-    pub outcome: WasmResourceOutcome,
+    pub outcome: ResourceOutcome,
 }
 
-#[cfg_attr(
-    feature = "ts-rs",
-    derive(ts_rs::TS),
-    ts(export, export_to = "protocol.d.mts")
-)]
 #[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmRenderInputs {
+pub(crate) struct RenderInputs {
     #[serde(default)]
-    pub references: Vec<WasmResolvedReference>,
+    pub references: Vec<ResolvedReference>,
     #[serde(default)]
-    pub resources: Vec<WasmResolvedResource>,
+    pub resources: Vec<ResolvedResource>,
     #[serde(default)]
-    pub citations: Vec<WasmResolvedCitation>,
+    pub citations: Vec<ResolvedCitation>,
     #[serde(default)]
-    pub generated_bibliography: Option<WasmGeneratedBibliography>,
+    pub generated_bibliography: Option<GeneratedBibliography>,
 }

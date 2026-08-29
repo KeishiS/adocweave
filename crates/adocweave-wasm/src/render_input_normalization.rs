@@ -1,23 +1,21 @@
 //! Analysis-independent render-input validation.
 
+use crate::AdocWeaveError;
 use crate::render_input_wire::MAX_SAFE_INTEGER;
-use crate::render_input_wire::{
-    WasmCitationOutcome, WasmReferenceOutcome, WasmRenderInputs, WasmResourceOutcome,
-};
-use crate::{WasmError, WasmLimits, WasmOutputLimits};
+use crate::render_input_wire::{CitationOutcome, ReferenceOutcome, RenderInputs, ResourceOutcome};
 
 /// Render inputs whose count and allocation limits were validated.
 ///
 /// The inner wire value is private so meaning conversion cannot consume an
 /// unnormalized public value.
 #[derive(Debug)]
-pub(crate) struct NormalizedRenderInputs(WasmRenderInputs);
+pub(crate) struct NormalizedRenderInputs(RenderInputs);
 
 pub(crate) fn normalize(
-    inputs: WasmRenderInputs,
-    analysis_limits: &WasmLimits,
-    output_limits: &WasmOutputLimits,
-) -> Result<NormalizedRenderInputs, WasmError> {
+    inputs: RenderInputs,
+    analysis_limits: &adocweave::AnalysisLimits,
+    output_limits: &adocweave::OutputLimits,
+) -> Result<NormalizedRenderInputs, AdocWeaveError> {
     let count = inputs.references.len() as u64
         + inputs.resources.len() as u64
         + inputs.citations.len() as u64
@@ -29,27 +27,27 @@ pub(crate) fn normalize(
         return Err(limit_error("render input count"));
     }
     let reference_bytes = inputs.references.iter().map(|input| match &input.outcome {
-        WasmReferenceOutcome::Resolved {
+        ReferenceOutcome::Resolved {
             href, display_text, ..
         } => href.len() as u64 + display_text.as_ref().map_or(0, |text| text.len()) as u64,
-        WasmReferenceOutcome::Failed { .. } => 0,
+        ReferenceOutcome::Failed { .. } => 0,
     });
     let resource_bytes = inputs.resources.iter().map(|input| match &input.outcome {
-        WasmResourceOutcome::Resolved {
+        ResourceOutcome::Resolved {
             href, media_type, ..
         } => href.len() as u64 + media_type.len() as u64,
-        WasmResourceOutcome::Failed { .. } => 0,
+        ResourceOutcome::Failed { .. } => 0,
     });
     // A citation carries the text the host wants shown, so its segments count
     // against the same output budget as a resolved href.
     let citation_bytes = inputs.citations.iter().map(|input| match &input.outcome {
-        WasmCitationOutcome::Resolved { segments } => segments
+        CitationOutcome::Resolved { segments } => segments
             .iter()
             .map(|segment| {
                 segment.text.len() as u64 + segment.anchor.as_ref().map_or(0, String::len) as u64
             })
             .fold(0_u64, u64::saturating_add),
-        WasmCitationOutcome::Failed { .. } => 0,
+        CitationOutcome::Failed { .. } => 0,
     });
     let bibliography_bytes = inputs
         .generated_bibliography
@@ -74,7 +72,7 @@ pub(crate) fn normalize(
     if inputs.resources.iter().any(|input| {
         matches!(
             input.outcome,
-            WasmResourceOutcome::Resolved {
+            ResourceOutcome::Resolved {
                 byte_length: Some(value),
                 ..
             } if value > MAX_SAFE_INTEGER
@@ -86,79 +84,80 @@ pub(crate) fn normalize(
 }
 
 impl NormalizedRenderInputs {
-    pub(super) fn into_wire(self) -> WasmRenderInputs {
+    pub(super) fn into_wire(self) -> RenderInputs {
         self.0
     }
 }
 
-fn limit_error(resource: &str) -> WasmError {
-    WasmError {
-        code: "limit-exceeded".to_owned(),
+fn limit_error(resource: &str) -> AdocWeaveError {
+    AdocWeaveError {
+        code: "input-limit-exceeded".to_owned(),
         message: format!("{resource} exceeds the configured processing limit"),
     }
 }
 
-fn invalid_input() -> WasmError {
-    WasmError {
-        code: "invalid-render-input".to_owned(),
+fn invalid_input() -> AdocWeaveError {
+    AdocWeaveError {
+        code: "invalid-request".to_owned(),
         message: "render input is invalid".to_owned(),
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use adocweave::OutputLimits;
+
     use super::*;
     use crate::render_input_wire::{
-        WasmGeneratedBibliography, WasmGeneratedBibliographyEntry, WasmReferenceFailureKind,
-        WasmReferenceOutcome, WasmResolvedReference, WasmResolvedResource, WasmResourceFailureKind,
-        WasmResourceOutcome,
+        GeneratedBibliography, GeneratedBibliographyEntry, ReferenceFailureKind, ReferenceOutcome,
+        ResolvedReference, ResolvedResource, ResourceFailureKind, ResourceOutcome,
     };
 
-    fn limits(max_references: u32) -> WasmLimits {
-        WasmLimits {
+    fn limits(max_references: u32) -> adocweave::AnalysisLimits {
+        adocweave::AnalysisLimits {
             max_references,
-            ..WasmLimits::default()
+            ..adocweave::AnalysisLimits::default()
         }
     }
 
-    fn output_limits(max_output_bytes: u32) -> WasmOutputLimits {
-        WasmOutputLimits { max_output_bytes }
+    fn output_limits(max_output_bytes: u32) -> adocweave::OutputLimits {
+        adocweave::OutputLimits { max_output_bytes }
     }
 
     #[test]
     fn count_limit_accepts_the_exact_boundary_and_rejects_one_more() {
-        let reference = WasmResolvedReference {
+        let reference = ResolvedReference {
             source_start: 0,
             source_end: 0,
-            outcome: WasmReferenceOutcome::Failed {
-                kind: WasmReferenceFailureKind::MissingTarget,
+            outcome: ReferenceOutcome::Failed {
+                kind: ReferenceFailureKind::MissingTarget,
             },
         };
-        let inputs = WasmRenderInputs {
+        let inputs = RenderInputs {
             references: vec![reference.clone(), reference.clone()],
             resources: Vec::new(),
             citations: Vec::new(),
             generated_bibliography: None,
         };
-        assert!(normalize(inputs, &limits(2), &WasmOutputLimits::default()).is_ok());
+        assert!(normalize(inputs, &limits(2), &adocweave::OutputLimits::default()).is_ok());
 
-        let inputs = WasmRenderInputs {
+        let inputs = RenderInputs {
             references: vec![reference.clone(), reference.clone(), reference],
             resources: Vec::new(),
             citations: Vec::new(),
             generated_bibliography: None,
         };
-        let error = normalize(inputs, &limits(2), &WasmOutputLimits::default()).unwrap_err();
-        assert_eq!(error.code, "limit-exceeded");
+        let error = normalize(inputs, &limits(2), &adocweave::OutputLimits::default()).unwrap_err();
+        assert_eq!(error.code, "input-limit-exceeded");
     }
 
     #[test]
     fn byte_limit_accepts_the_exact_boundary_and_rejects_one_more() {
-        let inputs = |href: &str| WasmRenderInputs {
-            references: vec![WasmResolvedReference {
+        let inputs = |href: &str| RenderInputs {
+            references: vec![ResolvedReference {
                 source_start: 0,
                 source_end: 0,
-                outcome: WasmReferenceOutcome::Resolved {
+                outcome: ReferenceOutcome::Resolved {
                     href: href.to_owned(),
                     display_text: Some("xy".to_owned()),
                     notices: Vec::new(),
@@ -170,22 +169,22 @@ mod tests {
         };
         assert!(normalize(inputs("abc"), &limits(1), &output_limits(5)).is_ok());
         let error = normalize(inputs("abcd"), &limits(1), &output_limits(5)).unwrap_err();
-        assert_eq!(error.code, "limit-exceeded");
+        assert_eq!(error.code, "input-limit-exceeded");
     }
 
     #[test]
     fn bibliography_entries_share_the_count_and_output_budgets() {
-        let inputs = |text: &str| WasmRenderInputs {
-            generated_bibliography: Some(WasmGeneratedBibliography {
+        let inputs = |text: &str| RenderInputs {
+            generated_bibliography: Some(GeneratedBibliography {
                 title: "R".to_owned(),
-                entries: vec![WasmGeneratedBibliographyEntry {
+                entries: vec![GeneratedBibliographyEntry {
                     citation_key: "k".to_owned(),
                     text: text.to_owned(),
                     label: Some("l".to_owned()),
                     number: Some(1),
                 }],
             }),
-            ..WasmRenderInputs::default()
+            ..RenderInputs::default()
         };
 
         assert!(normalize(inputs("x"), &limits(1), &output_limits(4)).is_ok());
@@ -193,41 +192,41 @@ mod tests {
             normalize(inputs("xx"), &limits(1), &output_limits(4))
                 .expect_err("one extra byte exceeds the output limit")
                 .code,
-            "limit-exceeded"
+            "input-limit-exceeded"
         );
         assert_eq!(
             normalize(inputs("x"), &limits(0), &output_limits(4))
                 .expect_err("one bibliography entry consumes one input slot")
                 .code,
-            "limit-exceeded"
+            "input-limit-exceeded"
         );
     }
 
     #[test]
     fn duplicates_and_failed_outcomes_are_preserved() {
-        let reference = WasmResolvedReference {
+        let reference = ResolvedReference {
             source_start: 1,
             source_end: 2,
-            outcome: WasmReferenceOutcome::Failed {
-                kind: WasmReferenceFailureKind::MissingAnchor,
+            outcome: ReferenceOutcome::Failed {
+                kind: ReferenceFailureKind::MissingAnchor,
             },
         };
-        let resource = WasmResolvedResource {
+        let resource = ResolvedResource {
             source_start: 3,
             source_end: 4,
-            outcome: WasmResourceOutcome::Failed {
-                kind: WasmResourceFailureKind::PermissionDenied,
+            outcome: ResourceOutcome::Failed {
+                kind: ResourceFailureKind::PermissionDenied,
             },
         };
         let normalized = normalize(
-            WasmRenderInputs {
+            RenderInputs {
                 references: vec![reference.clone(), reference],
                 resources: vec![resource.clone(), resource],
                 citations: Vec::new(),
                 generated_bibliography: None,
             },
             &limits(4),
-            &WasmOutputLimits::default(),
+            &OutputLimits::default(),
         )
         .unwrap()
         .into_wire();
@@ -236,26 +235,26 @@ mod tests {
         assert_eq!(normalized.resources.len(), 2);
         assert!(matches!(
             normalized.references[0].outcome,
-            WasmReferenceOutcome::Failed {
-                kind: WasmReferenceFailureKind::MissingAnchor
+            ReferenceOutcome::Failed {
+                kind: ReferenceFailureKind::MissingAnchor
             }
         ));
         assert!(matches!(
             normalized.resources[0].outcome,
-            WasmResourceOutcome::Failed {
-                kind: WasmResourceFailureKind::PermissionDenied
+            ResourceOutcome::Failed {
+                kind: ResourceFailureKind::PermissionDenied
             }
         ));
     }
 
     #[test]
     fn resource_byte_length_rejects_values_beyond_the_schema_safe_integer() {
-        let inputs = |byte_length| WasmRenderInputs {
+        let inputs = |byte_length| RenderInputs {
             references: Vec::new(),
-            resources: vec![WasmResolvedResource {
+            resources: vec![ResolvedResource {
                 source_start: 0,
                 source_end: 0,
-                outcome: WasmResourceOutcome::Resolved {
+                outcome: ResourceOutcome::Resolved {
                     href: String::new(),
                     media_type: "image/png".to_owned(),
                     byte_length: Some(byte_length),
@@ -268,16 +267,16 @@ mod tests {
             normalize(
                 inputs(MAX_SAFE_INTEGER),
                 &limits(1),
-                &WasmOutputLimits::default()
+                &OutputLimits::default()
             )
             .is_ok()
         );
         let error = normalize(
             inputs(MAX_SAFE_INTEGER + 1),
             &limits(1),
-            &WasmOutputLimits::default(),
+            &OutputLimits::default(),
         )
         .unwrap_err();
-        assert_eq!(error.code, "invalid-render-input");
+        assert_eq!(error.code, "invalid-request");
     }
 }

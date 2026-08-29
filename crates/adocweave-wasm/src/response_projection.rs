@@ -2,12 +2,11 @@ use adocweave::SourceId;
 
 use crate::response_conversion::{wasm_diagnostics, wasm_document_symbols, wasm_text_range};
 use crate::{
-    ParseSummary, WasmAttributeBindingQuery, WasmAttributeExpansionError,
-    WasmAttributeQueryProduct, WasmAttributeReferenceQuery, WasmAttributeValueContinuation,
-    WasmDocumentAttributeContinuation, WasmDocumentAttributeOccurrence,
-    WasmDocumentAttributeOperation, WasmDocumentAttributeValue, WasmDocumentAttributeValueLine,
-    WasmError, WasmMacroForm, WasmProductSet, WasmResourcePurpose, WasmResourceQuery, WasmResponse,
-    WasmTextRange, serialization_error,
+    AdocWeaveError, AnalyzeResult, AttributeBindingQuery, AttributeExpansionError,
+    AttributeQueryResult, AttributeReferenceQuery, AttributeValueContinuation,
+    DocumentAttributeContinuation, DocumentAttributeOccurrence, DocumentAttributeOperation,
+    DocumentAttributeValue, DocumentAttributeValueLine, MacroForm, ResourcePurpose, ResourceQuery,
+    TextRange, serialization_error,
 };
 
 pub(crate) struct ResponseProducts {
@@ -19,92 +18,76 @@ pub(crate) struct ResponseProducts {
     pub(crate) resource_queries: Option<Vec<adocweave::resolution::ResourceQuery>>,
     pub(crate) diagnostics: Option<Vec<adocweave::output::diagnostics::Diagnostic>>,
     pub(crate) symbols: Option<Vec<adocweave::semantic::DocumentSymbol>>,
-    pub(crate) projection: Option<crate::WasmDocumentProjection>,
+    pub(crate) document: Option<crate::DocumentView>,
 }
 
 pub(crate) fn project_response(
     products: ResponseProducts,
-    requested_products: WasmProductSet,
-    analysis: &adocweave::Analysis,
     source_id: Option<&SourceId>,
     attribute_projection: Option<&adocweave::preprocess::AnalysisProjection>,
-) -> Result<WasmResponse, WasmError> {
-    let render_diagnostics = products
-        .html
-        .as_ref()
-        .map(|output| wasm_diagnostics(&output.diagnostics))
-        .unwrap_or_default();
-    Ok(WasmResponse {
-        products: requested_products,
-        parse: ParseSummary {
-            block_count: response_count("blockCount", analysis.document().blocks().len())?,
-            node_count: response_count("nodeCount", analysis.document().node_count())?,
-            reference_count: response_count("referenceCount", analysis.references().len())?,
-        },
-        syntax: products.syntax.unwrap_or_default(),
-        ast: products.canonical_ast.unwrap_or_default(),
-        html: products.html.map(|output| output.html).unwrap_or_default(),
-        attribute_occurrences: products
-            .attribute_occurrences
-            .unwrap_or_default()
-            .iter()
-            .map(wasm_document_attribute_occurrence)
-            .collect(),
+) -> Result<AnalyzeResult, AdocWeaveError> {
+    let diagnostics = products.diagnostics.map(|mut diagnostics| {
+        if let Some(html) = &products.html {
+            diagnostics.extend(html.diagnostics.iter().cloned());
+        }
+        wasm_diagnostics(&diagnostics)
+    });
+    Ok(AnalyzeResult {
+        syntax: products.syntax,
+        canonical_ast: products.canonical_ast,
+        html: products.html.map(|output| output.html),
+        attribute_occurrences: products.attribute_occurrences.map(|occurrences| {
+            occurrences
+                .iter()
+                .map(wasm_document_attribute_occurrence)
+                .collect()
+        }),
         attribute_queries: products
             .attribute_queries
-            .map(|queries| wasm_attribute_query_product(&queries, source_id, attribute_projection))
-            .unwrap_or_default(),
-        resource_queries: products
-            .resource_queries
-            .unwrap_or_default()
-            .into_iter()
-            .map(|query| {
-                let reference = query.reference;
-                WasmResourceQuery {
-                    purpose: match reference.purpose() {
-                        adocweave::resolution::ResourcePurpose::Image => WasmResourcePurpose::Image,
-                        adocweave::resolution::ResourcePurpose::Icon => WasmResourcePurpose::Icon,
-                        adocweave::resolution::ResourcePurpose::Audio => WasmResourcePurpose::Audio,
-                        adocweave::resolution::ResourcePurpose::Video => WasmResourcePurpose::Video,
-                        adocweave::resolution::ResourcePurpose::VideoPoster => {
-                            WasmResourcePurpose::VideoPoster
-                        }
-                    },
-                    form: match reference.form() {
-                        adocweave::semantic::MacroForm::Inline => WasmMacroForm::Inline,
-                        adocweave::semantic::MacroForm::Block => WasmMacroForm::Block,
-                    },
-                    owner_range: wasm_text_range(reference.owner_range()),
-                    range: wasm_text_range(reference.range()),
-                    target_range: wasm_text_range(reference.target_range()),
-                    target: reference.target().to_owned(),
-                }
-            })
-            .collect(),
-        diagnostics: products
-            .diagnostics
-            .as_deref()
-            .map(wasm_diagnostics)
-            .unwrap_or_default(),
-        render_diagnostics,
-        symbols: products
-            .symbols
-            .map(wasm_document_symbols)
-            .unwrap_or_default(),
-        projection: products.projection,
+            .map(|queries| wasm_attribute_query_product(&queries, source_id, attribute_projection)),
+        resource_queries: products.resource_queries.map(|queries| {
+            queries
+                .into_iter()
+                .map(|query| {
+                    let reference = query.reference;
+                    ResourceQuery {
+                        purpose: match reference.purpose() {
+                            adocweave::resolution::ResourcePurpose::Image => ResourcePurpose::Image,
+                            adocweave::resolution::ResourcePurpose::Icon => ResourcePurpose::Icon,
+                            adocweave::resolution::ResourcePurpose::Audio => ResourcePurpose::Audio,
+                            adocweave::resolution::ResourcePurpose::Video => ResourcePurpose::Video,
+                            adocweave::resolution::ResourcePurpose::VideoPoster => {
+                                ResourcePurpose::VideoPoster
+                            }
+                        },
+                        form: match reference.form() {
+                            adocweave::semantic::MacroForm::Inline => MacroForm::Inline,
+                            adocweave::semantic::MacroForm::Block => MacroForm::Block,
+                        },
+                        owner_range: wasm_text_range(reference.owner_range()),
+                        range: wasm_text_range(reference.range()),
+                        target_range: wasm_text_range(reference.target_range()),
+                        target: reference.target().to_owned(),
+                    }
+                })
+                .collect()
+        }),
+        diagnostics,
+        symbols: products.symbols.map(wasm_document_symbols),
+        document: products.document.map(Some),
     })
 }
 
 pub(crate) fn enforce_output_limit(
-    response: &WasmResponse,
+    response: &AnalyzeResult,
     max_output_bytes: usize,
-) -> Result<(), WasmError> {
+) -> Result<(), AdocWeaveError> {
     let output_bytes = serde_json::to_vec(&response)
         .map_err(serialization_error)?
         .len();
     if output_bytes > max_output_bytes {
-        return Err(WasmError {
-            code: "limit-exceeded".to_owned(),
+        return Err(AdocWeaveError {
+            code: "output-limit-exceeded".to_owned(),
             message: format!(
                 "output bytes limit exceeded (limit {max_output_bytes}, actual {output_bytes})"
             ),
@@ -113,19 +96,14 @@ pub(crate) fn enforce_output_limit(
     Ok(())
 }
 
-fn response_count(name: &str, value: usize) -> Result<u32, WasmError> {
-    u32::try_from(value)
-        .map_err(|_| serialization_error(format!("{name} does not fit the response schema")))
-}
-
 fn wasm_document_attribute_occurrence(
     occurrence: &adocweave::semantic::DocumentAttributeOccurrence,
-) -> WasmDocumentAttributeOccurrence {
-    WasmDocumentAttributeOccurrence {
+) -> DocumentAttributeOccurrence {
+    DocumentAttributeOccurrence {
         range: wasm_text_range(occurrence.range),
         name_range: wasm_text_range(occurrence.name_range),
         name: occurrence.name.clone(),
-        value: WasmDocumentAttributeValue {
+        value: DocumentAttributeValue {
             source_range: wasm_text_range(occurrence.value.source_range),
             source_text: occurrence.value.source_text.clone(),
             folded_text: occurrence.value.folded_text.clone(),
@@ -133,19 +111,19 @@ fn wasm_document_attribute_occurrence(
                 .value
                 .lines
                 .iter()
-                .map(|line| WasmDocumentAttributeValueLine {
+                .map(|line| DocumentAttributeValueLine {
                     range: wasm_text_range(line.range),
                     indent_range: wasm_text_range(line.indent_range),
                     content_range: wasm_text_range(line.content_range),
                     ending_range: wasm_text_range(line.ending_range),
                     continuation: line.continuation.map(|continuation| {
-                        WasmDocumentAttributeContinuation {
+                        DocumentAttributeContinuation {
                             kind: match continuation.kind {
                                 adocweave::semantic::AttributeValueContinuation::Soft => {
-                                    WasmAttributeValueContinuation::Soft
+                                    AttributeValueContinuation::Soft
                                 }
                                 adocweave::semantic::AttributeValueContinuation::Hard => {
-                                    WasmAttributeValueContinuation::Hard
+                                    AttributeValueContinuation::Hard
                                 }
                             },
                             range: wasm_text_range(continuation.range),
@@ -155,14 +133,12 @@ fn wasm_document_attribute_occurrence(
                 .collect(),
         },
         operation: match occurrence.operation {
-            adocweave::semantic::DocumentAttributeOperation::Set => {
-                WasmDocumentAttributeOperation::Set
-            }
+            adocweave::semantic::DocumentAttributeOperation::Set => DocumentAttributeOperation::Set,
             adocweave::semantic::DocumentAttributeOperation::Unset => {
-                WasmDocumentAttributeOperation::Unset
+                DocumentAttributeOperation::Unset
             }
             adocweave::semantic::DocumentAttributeOperation::Counter => {
-                WasmDocumentAttributeOperation::Counter
+                DocumentAttributeOperation::Counter
             }
         },
         valid: occurrence.valid,
@@ -173,9 +149,9 @@ fn wasm_attribute_query_product(
     product: &adocweave::semantic::AttributeQueryProduct,
     source_id: Option<&SourceId>,
     projection: Option<&adocweave::preprocess::AnalysisProjection>,
-) -> WasmAttributeQueryProduct {
+) -> AttributeQueryResult {
     let source_id = source_id.map(|source_id| source_id.as_str().to_owned());
-    WasmAttributeQueryProduct {
+    AttributeQueryResult {
         bindings: product
             .bindings
             .iter()
@@ -217,18 +193,18 @@ fn wasm_attribute_query_product(
                     binding.occurrence().value.source_range,
                 )
                 .1;
-                WasmAttributeBindingQuery {
+                AttributeBindingQuery {
                     id: binding.id().get(),
                     source_id: binding_source_id,
                     operation: match binding.operation() {
                         adocweave::semantic::DocumentAttributeOperation::Set => {
-                            WasmDocumentAttributeOperation::Set
+                            DocumentAttributeOperation::Set
                         }
                         adocweave::semantic::DocumentAttributeOperation::Unset => {
-                            WasmDocumentAttributeOperation::Unset
+                            DocumentAttributeOperation::Unset
                         }
                         adocweave::semantic::DocumentAttributeOperation::Counter => {
-                            WasmDocumentAttributeOperation::Counter
+                            DocumentAttributeOperation::Counter
                         }
                     },
                     effective_value,
@@ -256,7 +232,7 @@ fn wasm_attribute_query_product(
                     source_id.clone(),
                     reference.range,
                 );
-                WasmAttributeReferenceQuery {
+                AttributeReferenceQuery {
                     source_id: reference_source_id.clone(),
                     range,
                     name_range: wasm_projected_range(
@@ -276,7 +252,7 @@ fn wasm_attribute_query_product(
 }
 
 fn wasm_project_document_attribute_occurrence(
-    output: &mut WasmDocumentAttributeOccurrence,
+    output: &mut DocumentAttributeOccurrence,
     projected: &adocweave::preprocess::ProjectedDocumentAttribute,
 ) {
     output.range = wasm_first_origin_range(&projected.origins, output.range);
@@ -300,9 +276,9 @@ fn wasm_project_document_attribute_occurrence(
 
 fn wasm_first_origin_range(
     origins: &[adocweave::preprocess::SourceOrigin],
-    fallback: WasmTextRange,
-) -> WasmTextRange {
-    origins.first().map_or(fallback, |origin| WasmTextRange {
+    fallback: TextRange,
+) -> TextRange {
+    origins.first().map_or(fallback, |origin| TextRange {
         start: origin.range.start().to_u32(),
         end: origin.range.end().to_u32(),
     })
@@ -312,7 +288,7 @@ fn wasm_projected_range(
     origins: Option<&[adocweave::preprocess::SourceOrigin]>,
     fallback_source_id: Option<String>,
     fallback_range: adocweave::text::TextRange,
-) -> (Option<String>, WasmTextRange) {
+) -> (Option<String>, TextRange) {
     origins.and_then(|origins| origins.first()).map_or_else(
         || (fallback_source_id, wasm_text_range(fallback_range)),
         |origin| {
@@ -329,23 +305,23 @@ fn wasm_projected_range(
 
 fn wasm_attribute_resolution(
     value: Result<Option<&str>, adocweave::semantic::AttributeExpansionError>,
-) -> (Option<String>, Option<WasmAttributeExpansionError>) {
+) -> (Option<String>, Option<AttributeExpansionError>) {
     match value {
         Ok(value) => (value.map(str::to_owned), None),
         Err(error) => (
             None,
             Some(match error {
                 adocweave::semantic::AttributeExpansionError::Undefined => {
-                    WasmAttributeExpansionError::Undefined
+                    AttributeExpansionError::Undefined
                 }
                 adocweave::semantic::AttributeExpansionError::Cycle => {
-                    WasmAttributeExpansionError::Cycle
+                    AttributeExpansionError::Cycle
                 }
                 adocweave::semantic::AttributeExpansionError::DepthLimitExceeded => {
-                    WasmAttributeExpansionError::DepthLimitExceeded
+                    AttributeExpansionError::DepthLimitExceeded
                 }
                 adocweave::semantic::AttributeExpansionError::SizeLimitExceeded => {
-                    WasmAttributeExpansionError::SizeLimitExceeded
+                    AttributeExpansionError::SizeLimitExceeded
                 }
             }),
         ),
@@ -354,14 +330,19 @@ fn wasm_attribute_resolution(
 
 #[cfg(test)]
 mod tests {
-    use super::response_count;
+    use super::*;
 
     #[test]
-    #[cfg(target_pointer_width = "64")]
-    fn response_count_rejects_values_beyond_the_schema_range() {
-        let value = usize::try_from(u64::from(u32::MAX) + 1).expect("64-bit usize");
-        let error = response_count("nodeCount", value).expect_err("out-of-range count");
-        assert_eq!(error.code, "serialization-failed");
-        assert!(error.message.contains("nodeCount"));
+    fn output_limit_uses_the_public_error_code() {
+        let response = AnalyzeResult {
+            html: Some("text".to_owned()),
+            ..AnalyzeResult::default()
+        };
+        assert_eq!(
+            enforce_output_limit(&response, 1)
+                .expect_err("response exceeds one byte")
+                .code,
+            "output-limit-exceeded"
+        );
     }
 }

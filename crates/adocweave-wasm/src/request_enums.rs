@@ -5,7 +5,7 @@
 )]
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
-pub enum WasmDocumentMode {
+pub enum DocumentMode {
     #[default]
     Fragment,
     Complete,
@@ -18,7 +18,7 @@ pub enum WasmDocumentMode {
 )]
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
-pub enum WasmSyntaxMode {
+pub enum SyntaxMode {
     #[default]
     Permissive,
     Strict,
@@ -31,7 +31,7 @@ pub enum WasmSyntaxMode {
 )]
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
-pub enum WasmUnknownRole {
+pub enum UnknownRole {
     #[default]
     Silent,
     Diagnostic,
@@ -44,7 +44,7 @@ pub enum WasmUnknownRole {
 )]
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
-pub enum WasmUnknownSourceLanguage {
+pub enum UnknownSourceLanguage {
     #[default]
     PreserveSanitized,
     OmitClass,
@@ -58,7 +58,7 @@ pub enum WasmUnknownSourceLanguage {
 )]
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
-pub enum WasmUnresolvedReferencePresentation {
+pub enum UnresolvedReferencePresentation {
     #[default]
     Target,
     LabelOnly,

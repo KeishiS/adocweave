@@ -1,35 +1,82 @@
 use std::collections::BTreeMap;
 
+use serde::Deserialize;
+
 use crate::{
-    WasmAnalysisPreprocessInput, WasmDocumentMode, WasmMathLanguage, WasmProductSet,
-    WasmRenderInputs, WasmSeverity, WasmSyntaxMode, WasmUnknownRole, WasmUnknownSourceLanguage,
-    WasmUnresolvedReferencePresentation,
+    DocumentMode, GeneratedBibliography, MathLanguage, ResolvedCitation, ResolvedReference,
+    ResolvedResource, SafeMode, Severity, SyntaxMode, UnknownRole, UnknownSourceLanguage,
+    UnresolvedReferencePresentation,
 };
 
-#[cfg_attr(
-    feature = "ts-rs",
-    derive(ts_rs::TS),
-    ts(export, export_to = "protocol.d.mts")
-)]
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmActiveUrlPolicy {
-    pub allowed_schemes: Vec<String>,
-    pub allow_authored_relative: bool,
-    pub allow_resolved_relative: bool,
-    pub allow_resolved_root_relative: bool,
-    pub allow_data_uris: bool,
+type UnknownFields = BTreeMap<String, UnknownField>;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct UnknownField;
+
+impl<'de> Deserialize<'de> for UnknownField {
+    fn deserialize<D>(_: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Err(serde::de::Error::custom("unknown field"))
+    }
 }
 
-impl Default for WasmActiveUrlPolicy {
-    fn default() -> Self {
-        Self {
-            allowed_schemes: vec!["http".to_owned(), "https".to_owned()],
-            allow_authored_relative: false,
-            allow_resolved_relative: false,
-            allow_resolved_root_relative: false,
-            allow_data_uris: false,
+fn present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
+
+fn requested<'de, D>(deserializer: D) -> Result<Option<()>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match bool::deserialize(deserializer)? {
+        true => Ok(Some(())),
+        false => Err(serde::de::Error::custom("product value must be true")),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum HtmlSelection {
+    Enabled(bool),
+    Options(HtmlOptions),
+}
+
+fn html_product<'de, D>(deserializer: D) -> Result<Option<HtmlOptions>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match HtmlSelection::deserialize(deserializer)? {
+        HtmlSelection::Enabled(true) => Ok(Some(HtmlOptions::default())),
+        HtmlSelection::Enabled(false) => {
+            Err(serde::de::Error::custom("product value must be true"))
         }
+        HtmlSelection::Options(options) => Ok(Some(options)),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum DiagnosticSelection {
+    Enabled(bool),
+    Options(DiagnosticOptions),
+}
+
+fn diagnostic_product<'de, D>(deserializer: D) -> Result<Option<DiagnosticOptions>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match DiagnosticSelection::deserialize(deserializer)? {
+        DiagnosticSelection::Enabled(true) => Ok(Some(DiagnosticOptions::default())),
+        DiagnosticSelection::Enabled(false) => {
+            Err(serde::de::Error::custom("product value must be true"))
+        }
+        DiagnosticSelection::Options(options) => Ok(Some(options)),
     }
 }
 
@@ -38,53 +85,96 @@ impl Default for WasmActiveUrlPolicy {
     derive(ts_rs::TS),
     ts(export, export_to = "protocol.d.mts")
 )]
-#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmLimits {
-    pub max_input_bytes: u32,
-    pub max_line_bytes: u32,
-    pub max_list_depth: u32,
-    pub max_list_continuations: u32,
-    pub max_block_depth: u32,
-    pub max_inline_depth: u32,
-    pub max_formula_bytes: u32,
-    pub max_table_bytes: u32,
-    pub max_table_cells: u32,
-    pub max_table_columns: u32,
-    pub max_table_depth: u32,
-    pub max_catalog_entries: u32,
-    pub max_catalog_bytes: u32,
-    pub max_blocks: u32,
-    pub max_nodes: u32,
-    pub max_references: u32,
-    pub max_attributes: u32,
-    pub max_attribute_expansion_depth: u32,
-    pub max_attribute_expansion_bytes: u32,
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyzeRequest {
+    #[serde(flatten)]
+    #[cfg_attr(feature = "ts-rs", ts(skip))]
+    unknown_fields: UnknownFields,
+    pub source: SourceInput,
+    pub products: ProductRequest,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "ResourceInput"))]
+    pub resources: Option<ResourceInput>,
 }
 
-impl Default for WasmLimits {
-    fn default() -> Self {
-        Self {
-            max_input_bytes: 10485760,
-            max_line_bytes: 1048576,
-            max_list_depth: 8,
-            max_list_continuations: 10000,
-            max_block_depth: 32,
-            max_inline_depth: 32,
-            max_formula_bytes: 1048576,
-            max_table_bytes: 5242880,
-            max_table_cells: 100000,
-            max_table_columns: 1000,
-            max_table_depth: 8,
-            max_catalog_entries: 100000,
-            max_catalog_bytes: 5242880,
-            max_blocks: 100000,
-            max_nodes: 1000000,
-            max_references: 100000,
-            max_attributes: 1000,
-            max_attribute_expansion_depth: 32,
-            max_attribute_expansion_bytes: 1048576,
-        }
+#[cfg_attr(
+    feature = "ts-rs",
+    derive(ts_rs::TS),
+    ts(export, export_to = "protocol.d.mts")
+)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceInput {
+    #[serde(flatten)]
+    #[cfg_attr(feature = "ts-rs", ts(skip))]
+    unknown_fields: UnknownFields,
+    pub text: String,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "string"))]
+    pub id: Option<String>,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(
+        feature = "ts-rs",
+        ts(optional, type = "{ [key in string]: string | null }")
+    )]
+    pub attributes: Option<BTreeMap<String, Option<String>>>,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "SyntaxMode"))]
+    pub syntax_mode: Option<SyntaxMode>,
+}
+
+#[cfg_attr(
+    feature = "ts-rs",
+    derive(ts_rs::TS),
+    ts(export, export_to = "protocol.d.mts")
+)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ProductRequest {
+    #[serde(flatten)]
+    #[cfg_attr(feature = "ts-rs", ts(skip))]
+    unknown_fields: UnknownFields,
+    #[serde(default, deserialize_with = "requested")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "true"))]
+    pub syntax: Option<()>,
+    #[serde(default, deserialize_with = "requested")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "true"))]
+    pub canonical_ast: Option<()>,
+    #[serde(default, deserialize_with = "html_product")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "true | HtmlOptions"))]
+    pub html: Option<HtmlOptions>,
+    #[serde(default, deserialize_with = "requested")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "true"))]
+    pub attribute_occurrences: Option<()>,
+    #[serde(default, deserialize_with = "requested")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "true"))]
+    pub attribute_queries: Option<()>,
+    #[serde(default, deserialize_with = "requested")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "true"))]
+    pub resource_queries: Option<()>,
+    #[serde(default, deserialize_with = "diagnostic_product")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "true | DiagnosticOptions"))]
+    pub diagnostics: Option<DiagnosticOptions>,
+    #[serde(default, deserialize_with = "requested")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "true"))]
+    pub symbols: Option<()>,
+    #[serde(default, deserialize_with = "requested")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "true"))]
+    pub document: Option<()>,
+}
+
+impl ProductRequest {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.syntax.is_none()
+            && self.canonical_ast.is_none()
+            && self.html.is_none()
+            && self.attribute_occurrences.is_none()
+            && self.attribute_queries.is_none()
+            && self.resource_queries.is_none()
+            && self.diagnostics.is_none()
+            && self.symbols.is_none()
+            && self.document.is_none()
     }
 }
 
@@ -93,12 +183,30 @@ impl Default for WasmLimits {
     derive(ts_rs::TS),
     ts(export, export_to = "protocol.d.mts")
 )]
-#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmAnalysisOptions {
-    pub syntax: WasmSyntaxOptions,
-    pub diagnostics: WasmDiagnosticProfile,
-    pub attributes: BTreeMap<String, Option<String>>,
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(default, rename_all = "camelCase")]
+pub struct DiagnosticOptions {
+    #[serde(flatten)]
+    #[cfg_attr(feature = "ts-rs", ts(skip))]
+    unknown_fields: UnknownFields,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(
+        feature = "ts-rs",
+        ts(optional, type = "{ [key in string]: string | null }")
+    )]
+    pub protected_attributes: Option<BTreeMap<String, Option<String>>>,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "AuthoredUrlOptions"))]
+    pub authored_urls: Option<AuthoredUrlOptions>,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(
+        feature = "ts-rs",
+        ts(optional, type = "{ [key in string]: RuleOptions }")
+    )]
+    pub rules: Option<BTreeMap<String, RuleOptions>>,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "number"))]
+    pub max_diagnostics: Option<u32>,
 }
 
 #[cfg_attr(
@@ -106,45 +214,18 @@ pub struct WasmAnalysisOptions {
     derive(ts_rs::TS),
     ts(export, export_to = "protocol.d.mts")
 )]
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmAuthoredUrlPolicy {
-    pub allowed_schemes: Vec<String>,
-    pub allow_relative: bool,
-}
-
-impl Default for WasmAuthoredUrlPolicy {
-    fn default() -> Self {
-        Self {
-            allowed_schemes: vec!["http".to_owned(), "https".to_owned()],
-            allow_relative: true,
-        }
-    }
-}
-
-#[cfg_attr(
-    feature = "ts-rs",
-    derive(ts_rs::TS),
-    ts(export, export_to = "protocol.d.mts")
-)]
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmDiagnosticProfile {
-    pub protected_attributes: BTreeMap<String, Option<String>>,
-    pub authored_urls: WasmAuthoredUrlPolicy,
-    pub max_diagnostics: u32,
-    pub rules: BTreeMap<String, WasmRuleSettings>,
-}
-
-impl Default for WasmDiagnosticProfile {
-    fn default() -> Self {
-        Self {
-            protected_attributes: BTreeMap::new(),
-            authored_urls: Default::default(),
-            max_diagnostics: 1000,
-            rules: BTreeMap::new(),
-        }
-    }
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(default, rename_all = "camelCase")]
+pub struct AuthoredUrlOptions {
+    #[serde(flatten)]
+    #[cfg_attr(feature = "ts-rs", ts(skip))]
+    unknown_fields: UnknownFields,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "Array<string>"))]
+    pub allowed_schemes: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "boolean"))]
+    pub allow_relative: Option<bool>,
 }
 
 #[cfg_attr(
@@ -152,11 +233,18 @@ impl Default for WasmDiagnosticProfile {
     derive(ts_rs::TS),
     ts(export, export_to = "protocol.d.mts")
 )]
-#[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmExternalLinkPolicy {
-    pub open_in_new_context: bool,
-    pub noreferrer: bool,
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(default, rename_all = "camelCase")]
+pub struct RuleOptions {
+    #[serde(flatten)]
+    #[cfg_attr(feature = "ts-rs", ts(skip))]
+    unknown_fields: UnknownFields,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "boolean"))]
+    pub enabled: Option<bool>,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "Severity"))]
+    pub severity: Option<Severity>,
 }
 
 #[cfg_attr(
@@ -164,53 +252,42 @@ pub struct WasmExternalLinkPolicy {
     derive(ts_rs::TS),
     ts(export, export_to = "protocol.d.mts")
 )]
-#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmOutputLimits {
-    pub max_output_bytes: u32,
-}
-
-impl Default for WasmOutputLimits {
-    fn default() -> Self {
-        Self {
-            max_output_bytes: 52428800,
-        }
-    }
-}
-
-#[cfg_attr(
-    feature = "ts-rs",
-    derive(ts_rs::TS),
-    ts(export, export_to = "protocol.d.mts")
-)]
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmRenderPolicy {
-    pub active_urls: WasmActiveUrlPolicy,
-    pub external_links: WasmExternalLinkPolicy,
-    pub source_languages: WasmSourceLanguagePolicy,
-    pub roles: WasmRolePolicy,
-    pub math_languages: Vec<WasmMathLanguage>,
-    pub unresolved_references: WasmUnresolvedReferencePresentation,
-    pub resources: WasmResourceCapabilities,
-    pub document_mode: WasmDocumentMode,
-    pub stylesheets: Vec<WasmStylesheet>,
-}
-
-impl Default for WasmRenderPolicy {
-    fn default() -> Self {
-        Self {
-            active_urls: Default::default(),
-            external_links: Default::default(),
-            source_languages: Default::default(),
-            roles: Default::default(),
-            math_languages: vec![WasmMathLanguage::Latex, WasmMathLanguage::Typst],
-            unresolved_references: WasmUnresolvedReferencePresentation::Target,
-            resources: Default::default(),
-            document_mode: WasmDocumentMode::Fragment,
-            stylesheets: vec![],
-        }
-    }
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(default, rename_all = "camelCase")]
+pub struct HtmlOptions {
+    #[serde(flatten)]
+    #[cfg_attr(feature = "ts-rs", ts(skip))]
+    unknown_fields: UnknownFields,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "DocumentMode"))]
+    pub document_mode: Option<DocumentMode>,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "ActiveUrlOptions"))]
+    pub active_urls: Option<ActiveUrlOptions>,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "ExternalLinkOptions"))]
+    pub external_links: Option<ExternalLinkOptions>,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "SourceLanguageOptions"))]
+    pub source_languages: Option<SourceLanguageOptions>,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "RoleOptions"))]
+    pub roles: Option<RoleOptions>,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "Array<MathLanguage>"))]
+    pub math_languages: Option<Vec<MathLanguage>>,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(
+        feature = "ts-rs",
+        ts(optional, type = "UnresolvedReferencePresentation")
+    )]
+    pub unresolved_references: Option<UnresolvedReferencePresentation>,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "ResourceCapabilities"))]
+    pub resource_capabilities: Option<ResourceCapabilities>,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "Array<Stylesheet>"))]
+    pub stylesheets: Option<Vec<Stylesheet>>,
 }
 
 #[cfg_attr(
@@ -218,41 +295,27 @@ impl Default for WasmRenderPolicy {
     derive(ts_rs::TS),
     ts(export, export_to = "protocol.d.mts")
 )]
-#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmResourceCapabilities {
-    pub images: bool,
-    pub media: bool,
-}
-
-impl Default for WasmResourceCapabilities {
-    fn default() -> Self {
-        Self {
-            images: true,
-            media: true,
-        }
-    }
-}
-
-#[cfg_attr(
-    feature = "ts-rs",
-    derive(ts_rs::TS),
-    ts(export, export_to = "protocol.d.mts")
-)]
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmRolePolicy {
-    pub allowed: Vec<String>,
-    pub unknown: WasmUnknownRole,
-}
-
-impl Default for WasmRolePolicy {
-    fn default() -> Self {
-        Self {
-            allowed: vec![],
-            unknown: WasmUnknownRole::Silent,
-        }
-    }
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ActiveUrlOptions {
+    #[serde(flatten)]
+    #[cfg_attr(feature = "ts-rs", ts(skip))]
+    unknown_fields: UnknownFields,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "Array<string>"))]
+    pub allowed_schemes: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "boolean"))]
+    pub allow_authored_relative: Option<bool>,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "boolean"))]
+    pub allow_resolved_relative: Option<bool>,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "boolean"))]
+    pub allow_resolved_root_relative: Option<bool>,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "boolean"))]
+    pub allow_data_uris: Option<bool>,
 }
 
 #[cfg_attr(
@@ -260,20 +323,18 @@ impl Default for WasmRolePolicy {
     derive(ts_rs::TS),
     ts(export, export_to = "protocol.d.mts")
 )]
-#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmRuleSettings {
-    pub enabled: bool,
-    pub severity: WasmSeverity,
-}
-
-impl Default for WasmRuleSettings {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            severity: WasmSeverity::Warning,
-        }
-    }
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ExternalLinkOptions {
+    #[serde(flatten)]
+    #[cfg_attr(feature = "ts-rs", ts(skip))]
+    unknown_fields: UnknownFields,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "boolean"))]
+    pub open_in_new_context: Option<bool>,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "boolean"))]
+    pub noreferrer: Option<bool>,
 }
 
 #[cfg_attr(
@@ -281,23 +342,59 @@ impl Default for WasmRuleSettings {
     derive(ts_rs::TS),
     ts(export, export_to = "protocol.d.mts")
 )]
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmSourceLanguagePolicy {
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(default, rename_all = "camelCase")]
+pub struct SourceLanguageOptions {
+    #[serde(flatten)]
+    #[cfg_attr(feature = "ts-rs", ts(skip))]
+    unknown_fields: UnknownFields,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "Array<string>"))]
     pub allowed: Option<Vec<String>>,
-    pub unknown: WasmUnknownSourceLanguage,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "UnknownSourceLanguage"))]
+    pub unknown: Option<UnknownSourceLanguage>,
 }
 
-impl Default for WasmSourceLanguagePolicy {
-    fn default() -> Self {
-        Self {
-            allowed: None,
-            unknown: WasmUnknownSourceLanguage::PreserveSanitized,
-        }
-    }
+#[cfg_attr(
+    feature = "ts-rs",
+    derive(ts_rs::TS),
+    ts(export, export_to = "protocol.d.mts")
+)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(default, rename_all = "camelCase")]
+pub struct RoleOptions {
+    #[serde(flatten)]
+    #[cfg_attr(feature = "ts-rs", ts(skip))]
+    unknown_fields: UnknownFields,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "Array<string>"))]
+    pub allowed: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "UnknownRole"))]
+    pub unknown: Option<UnknownRole>,
 }
 
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[cfg_attr(
+    feature = "ts-rs",
+    derive(ts_rs::TS),
+    ts(export, export_to = "protocol.d.mts")
+)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ResourceCapabilities {
+    #[serde(flatten)]
+    #[cfg_attr(feature = "ts-rs", ts(skip))]
+    unknown_fields: UnknownFields,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "boolean"))]
+    pub images: Option<bool>,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "boolean"))]
+    pub media: Option<bool>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(
     tag = "kind",
     rename_all = "kebab-case",
@@ -309,7 +406,7 @@ impl Default for WasmSourceLanguagePolicy {
     derive(ts_rs::TS),
     ts(export, export_to = "protocol.d.mts")
 )]
-pub enum WasmStylesheet {
+pub enum Stylesheet {
     External { url: String },
     Inline { css: String },
 }
@@ -319,48 +416,38 @@ pub enum WasmStylesheet {
     derive(ts_rs::TS),
     ts(export, export_to = "protocol.d.mts")
 )]
-#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmSyntaxOptions {
-    pub syntax_mode: WasmSyntaxMode,
-    pub limits: WasmLimits,
-}
-
-impl Default for WasmSyntaxOptions {
-    fn default() -> Self {
-        Self {
-            syntax_mode: WasmSyntaxMode::Permissive,
-            limits: Default::default(),
-        }
-    }
-}
-
-fn default_wasm_request_source_id() -> Option<String> {
-    None
-}
-
-fn default_wasm_request_preprocess() -> Option<WasmAnalysisPreprocessInput> {
-    None
-}
-
-fn default_wasm_request_products() -> WasmProductSet {
-    Default::default()
-}
-
-fn default_wasm_request_render_inputs() -> WasmRenderInputs {
-    Default::default()
-}
-
-fn default_wasm_request_analysis_options() -> WasmAnalysisOptions {
-    Default::default()
-}
-
-fn default_wasm_request_render_policy() -> WasmRenderPolicy {
-    Default::default()
-}
-
-fn default_wasm_request_output_limits() -> WasmOutputLimits {
-    Default::default()
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ResourceInput {
+    #[serde(flatten)]
+    #[cfg_attr(feature = "ts-rs", ts(skip))]
+    unknown_fields: UnknownFields,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "{ [key in string]: string }"))]
+    pub documents: Option<BTreeMap<String, String>>,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "string"))]
+    pub base_uri: Option<String>,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "SafeMode"))]
+    pub safe_mode: Option<SafeMode>,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "Array<string>"))]
+    pub allowed_schemes: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "IncludeHandling"))]
+    pub includes: Option<IncludeHandling>,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "Array<ResolvedReference>"))]
+    pub references: Option<Vec<ResolvedReference>>,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "Array<ResolvedResource>"))]
+    pub assets: Option<Vec<ResolvedResource>>,
+    #[serde(default, deserialize_with = "present")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "Array<ResolvedCitation>"))]
+    pub citations: Option<Vec<ResolvedCitation>>,
+    #[cfg_attr(feature = "ts-rs", ts(optional = nullable))]
+    pub bibliography: Option<GeneratedBibliography>,
 }
 
 #[cfg_attr(
@@ -368,22 +455,10 @@ fn default_wasm_request_output_limits() -> WasmOutputLimits {
     derive(ts_rs::TS),
     ts(export, export_to = "protocol.d.mts")
 )]
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmRequest {
-    #[serde(default = "default_wasm_request_source_id")]
-    pub source_id: Option<String>,
-    pub source: String,
-    #[serde(default = "default_wasm_request_preprocess")]
-    pub preprocess: Option<WasmAnalysisPreprocessInput>,
-    #[serde(default = "default_wasm_request_products")]
-    pub products: WasmProductSet,
-    #[serde(default = "default_wasm_request_render_inputs")]
-    pub render_inputs: WasmRenderInputs,
-    #[serde(default = "default_wasm_request_analysis_options")]
-    pub analysis_options: WasmAnalysisOptions,
-    #[serde(default = "default_wasm_request_render_policy")]
-    pub render_policy: WasmRenderPolicy,
-    #[serde(default = "default_wasm_request_output_limits")]
-    pub output_limits: WasmOutputLimits,
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum IncludeHandling {
+    #[default]
+    Expand,
+    Preserve,
 }

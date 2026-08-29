@@ -8,7 +8,7 @@ fn main() {
         println!("{}", json!({ "ok": false, "error": error.to_string() }));
         return;
     }
-    let result = match adocweave_wasm::process_json(&request) {
+    let result = match adocweave_wasm::analyze_json(&request) {
         Ok(response) => json!({
             "ok": true,
             "value": serde_json::from_str::<Value>(&response)
