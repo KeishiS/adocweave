@@ -1237,15 +1237,25 @@ fn validate_cached_authority(
     acquired_path_is_verified: bool,
     filesystem: &LocalFilesystemSession,
 ) -> Result<(), ResourceError> {
-    let roots = filesystem.roots();
-    let allowed = |path: &Path| roots.iter().any(|root| path.starts_with(root));
-    if !allowed(requested_path)
-        || !allowed(acquired_requested_path)
-        || (acquired_path_is_verified && !allowed(acquired_path))
+    let requested_root = authority_root_for_path(requested_path, filesystem);
+    let acquired_requested_root = authority_root_for_path(acquired_requested_path, filesystem);
+    let acquired_path_root = acquired_path_is_verified
+        .then(|| authority_root_for_path(acquired_path, filesystem))
+        .flatten();
+    if requested_root.is_none()
+        || requested_root != acquired_requested_root
+        || (acquired_path_is_verified && requested_root != acquired_path_root)
     {
         return Err(ResourceError::OutsideRoots(requested_path.to_owned()));
     }
     Ok(())
+}
+
+fn authority_root_for_path<'path>(
+    path: &Path,
+    filesystem: &'path LocalFilesystemSession,
+) -> Option<&'path Path> {
+    filesystem.policy_for_path(path).map(|policy| policy.root())
 }
 
 fn current_read_limit(job: &IncludeFilesystemJob, limits: crate::ProjectLimits) -> ProjectLimit {
@@ -1449,15 +1459,213 @@ fn observe_fixed(_: &FixedResource) {}
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
+    use std::sync::Arc;
 
     use adocweave::OutputLimits;
-    use adocweave_host::{FilesystemReadLimits, LocalFilesystemPolicy};
-
-    use super::FIXED_OBSERVER;
-    use crate::{
-        ConfigSelection, ProjectLimits, ProjectOverrides, ProjectRequest, ProjectTarget, process,
+    use adocweave_host::{
+        FilesystemReadLimits, LocalFilesystemPolicy, LocalFilesystemSession, LogicalSourceId,
+        ResourceError,
     };
+
+    use super::{
+        FIXED_OBSERVER, FixedInspection, FixedResource, cached_for_session,
+        cached_inspection_for_session,
+    };
+    use crate::{
+        ConfigSelection, ProjectLimits, ProjectOverrides, ProjectRequest, ProjectResourceFailure,
+        ProjectResourceOutcome, ProjectTarget, process,
+    };
+
+    fn filesystem_session(roots: impl IntoIterator<Item = PathBuf>) -> LocalFilesystemSession {
+        LocalFilesystemPolicy::new(roots, FilesystemReadLimits::default())
+            .expect("filesystem policy")
+            .session()
+            .expect("filesystem session")
+    }
+
+    fn source_id() -> LogicalSourceId {
+        LogicalSourceId::new("project:cached").expect("logical source ID")
+    }
+
+    fn failed_outcome() -> ProjectResourceOutcome {
+        ProjectResourceOutcome::Failed(ProjectResourceFailure::Rejected(
+            ResourceError::Unverifiable("fixed failure".to_owned()),
+        ))
+    }
+
+    fn assert_rejected(outcome: &ProjectResourceOutcome) {
+        assert!(matches!(
+            outcome,
+            ProjectResourceOutcome::Failed(ProjectResourceFailure::Rejected(
+                ResourceError::OutsideRoots(_)
+            ))
+        ));
+    }
+
+    fn loaded_resource(requested_path: PathBuf, path: PathBuf) -> FixedResource {
+        FixedResource {
+            source_id: source_id(),
+            requested_path,
+            base: path.parent().map(Path::to_owned),
+            path,
+            no_symlinks: false,
+            outcome: ProjectResourceOutcome::Loaded {
+                source: Arc::from("loaded"),
+            },
+        }
+    }
+
+    fn present_inspection(requested_path: PathBuf, path: PathBuf) -> FixedInspection {
+        FixedInspection {
+            source_id: source_id(),
+            requested_path,
+            path,
+            outcome: ProjectResourceOutcome::Present,
+        }
+    }
+
+    #[test]
+    fn cached_authority_rejects_both_directions_between_independent_roots() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let first = directory.path().join("first");
+        let second = directory.path().join("second");
+        fs::create_dir(&first).expect("first root");
+        fs::create_dir(&second).expect("second root");
+        let filesystem = filesystem_session([first.clone(), second.clone()]);
+
+        for (acquired_root, other_root) in [(&first, &second), (&second, &first)] {
+            let acquired_request = acquired_root.join("resource");
+            let other_request = other_root.join("resource");
+            let loaded = loaded_resource(acquired_request.clone(), other_request.clone());
+            assert_rejected(
+                &cached_for_session(&loaded, &acquired_request, &filesystem, false).outcome,
+            );
+
+            let present = present_inspection(acquired_request.clone(), other_request.clone());
+            assert_rejected(
+                &cached_inspection_for_session(&present, &acquired_request, &filesystem).outcome,
+            );
+
+            for outcome in [ProjectResourceOutcome::Missing, failed_outcome()] {
+                let fixed = FixedResource {
+                    source_id: source_id(),
+                    requested_path: acquired_request.clone(),
+                    path: acquired_request.clone(),
+                    base: None,
+                    no_symlinks: false,
+                    outcome,
+                };
+                assert_rejected(
+                    &cached_for_session(&fixed, &other_request, &filesystem, false).outcome,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn cached_authority_rejects_both_directions_between_parent_and_child_roots() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let parent = directory.path().to_owned();
+        let child = parent.join("child");
+        fs::create_dir(&child).expect("child root");
+        let filesystem = filesystem_session([parent.clone(), child.clone()]);
+
+        for (acquired_root, other_root) in [(&parent, &child), (&child, &parent)] {
+            let acquired_request = acquired_root.join("resource");
+            let other_request = other_root.join("resource");
+            let loaded = loaded_resource(acquired_request.clone(), other_request.clone());
+            assert_rejected(
+                &cached_for_session(&loaded, &acquired_request, &filesystem, false).outcome,
+            );
+
+            let present = present_inspection(acquired_request.clone(), other_request.clone());
+            assert_rejected(
+                &cached_inspection_for_session(&present, &acquired_request, &filesystem).outcome,
+            );
+
+            for outcome in [ProjectResourceOutcome::Missing, failed_outcome()] {
+                let fixed = FixedResource {
+                    source_id: source_id(),
+                    requested_path: acquired_request.clone(),
+                    path: acquired_request.clone(),
+                    base: None,
+                    no_symlinks: false,
+                    outcome,
+                };
+                assert_rejected(
+                    &cached_for_session(&fixed, &other_request, &filesystem, false).outcome,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn cached_authority_allows_loaded_and_present_after_narrowing_to_the_same_path() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let child = directory.path().join("child");
+        fs::create_dir(&child).expect("child root");
+        let path = child.join("resource");
+        let filesystem = filesystem_session([child]);
+
+        let loaded = loaded_resource(path.clone(), path.clone());
+        assert!(matches!(
+            cached_for_session(&loaded, &path, &filesystem, false).outcome,
+            ProjectResourceOutcome::Loaded { .. }
+        ));
+        let present = present_inspection(path.clone(), path.clone());
+        assert_eq!(
+            cached_inspection_for_session(&present, &path, &filesystem).outcome,
+            ProjectResourceOutcome::Present
+        );
+    }
+
+    #[test]
+    fn same_root_reuses_body_and_inspection_outcomes() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let root = directory.path().to_owned();
+        let path = root.join("resource");
+        let filesystem = filesystem_session([root.clone()]);
+
+        for outcome in [
+            ProjectResourceOutcome::Loaded {
+                source: Arc::from("loaded"),
+            },
+            ProjectResourceOutcome::Present,
+            ProjectResourceOutcome::Missing,
+            failed_outcome(),
+        ] {
+            let fixed = FixedResource {
+                source_id: source_id(),
+                requested_path: path.clone(),
+                path: path.clone(),
+                base: path.parent().map(Path::to_owned),
+                no_symlinks: false,
+                outcome: outcome.clone(),
+            };
+            assert_eq!(
+                cached_for_session(&fixed, &path, &filesystem, false).outcome,
+                outcome
+            );
+        }
+
+        for outcome in [
+            ProjectResourceOutcome::Present,
+            ProjectResourceOutcome::Missing,
+            failed_outcome(),
+        ] {
+            let fixed = FixedInspection {
+                source_id: source_id(),
+                requested_path: path.clone(),
+                path: path.clone(),
+                outcome: outcome.clone(),
+            };
+            assert_eq!(
+                cached_inspection_for_session(&fixed, &path, &filesystem).outcome,
+                outcome
+            );
+        }
+    }
 
     #[test]
     fn first_observation_is_fixed_when_an_include_changes_during_processing() {

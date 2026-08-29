@@ -805,6 +805,80 @@ fn broad_cached_local_target_cannot_bypass_a_later_confined_root() {
     }));
 }
 
+#[test]
+fn parent_root_body_can_be_reused_for_the_same_child_path() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    fs::create_dir(root.join("child")).expect("child directory");
+    write(
+        root.join("child/.adocweave.toml"),
+        "schema-version = 2\n[local-targets]\nenabled = true\nproject-root = \".\"\n",
+    );
+    write(root.join("child/a-resource.adoc"), "resource\n");
+    write(
+        root.join("child/z-guide.adoc"),
+        "image::a-resource.adoc[]\n",
+    );
+
+    let result = process(request(
+        root,
+        vec![
+            ProjectTarget::Path(PathBuf::from("child/a-resource.adoc")),
+            ProjectTarget::Path(PathBuf::from("child/z-guide.adoc")),
+        ],
+    ))
+    .expect("request remains coherent");
+    let guide = result
+        .targets
+        .iter()
+        .find(|target| target.path.ends_with("z-guide.adoc"))
+        .expect("guide result");
+    assert!(guide.resources.iter().any(|resource| {
+        resource.kind == ProjectResourceKind::LocalTarget
+            && resource.path.ends_with("a-resource.adoc")
+            && resource.outcome == ProjectResourceOutcome::Present
+    }));
+}
+
+#[test]
+fn child_root_body_can_be_reused_for_the_same_path_under_a_parent_root() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    let child = root.join("child");
+    fs::create_dir(&child).expect("child directory");
+    write(
+        root.join(".adocweave.toml"),
+        "schema-version = 2\n[local-targets]\nenabled = true\nproject-root = \".\"\n",
+    );
+    write(child.join("a-resource.adoc"), "resource\n");
+    write(
+        root.join("z-guide.adoc"),
+        "image::child/a-resource.adoc[]\n",
+    );
+    let mut request = request(
+        root,
+        vec![
+            ProjectTarget::Path(PathBuf::from("child/a-resource.adoc")),
+            ProjectTarget::Path(PathBuf::from("z-guide.adoc")),
+        ],
+    );
+    request.authority =
+        LocalFilesystemPolicy::new([root.to_owned(), child], request.limits.filesystem_reads)
+            .expect("nested roots are retained");
+
+    let result = process(request).expect("request remains coherent");
+    let guide = result
+        .targets
+        .iter()
+        .find(|target| target.path.ends_with("z-guide.adoc"))
+        .expect("guide result");
+    assert!(guide.resources.iter().any(|resource| {
+        resource.kind == ProjectResourceKind::LocalTarget
+            && resource.path.ends_with("a-resource.adoc")
+            && resource.outcome == ProjectResourceOutcome::Present
+    }));
+}
+
 #[cfg(unix)]
 #[test]
 fn canonical_cached_body_cannot_hide_an_outside_local_target_request() {
