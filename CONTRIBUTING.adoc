@@ -333,12 +333,13 @@ npm publish PACKAGE-X.Y.Z.tgz
 登録します。登録後は``npm-publish.yml``がOIDCで公開できるため、初回公開に使った資格情報を失効させます。
 Trusted Publishing経由の公開にはprovenanceが自動で付きます。
 
-npmへの公開は、GitHub Releaseを公開したあとに次を実行します。``release.yml``からは呼びません。
+npmへの公開は、GitHub Releaseを公開したあとに次を実行します。一回の実行で二つのpackageを処理し、
+公開済みのpackageはReleaseのarchiveと同じ内容であることを確認して送信を省略します。
+``release.yml``からは呼びません。
 
 [source,console]
 ----
-gh workflow run npm-publish.yml -f tag=vX.Y.Z -f package=wasm
-gh workflow run npm-publish.yml -f tag=vX.Y.Z -f package=textlint
+gh workflow run npm-publish.yml -f tag=vX.Y.Z
 ----
 
 再利用workflowとして呼び出すと、npmは実際に``npm publish``を実行するworkflowではなく、呼び出し元の
@@ -346,8 +347,8 @@ workflow file名で公開元を照合します。Trusted Publisherはpackageご�
 ``release.yml``を登録すると、送信だけが失敗したときにRelease全体を再実行しなければ回復できません。
 ``npm-publish.yml``を登録して単独で実行すれば、通常の公開と復旧が同じ操作になります。
 
-npmへの送信だけが失敗した場合は、同じtagとpackageを指定して``npm-publish.yml``を実行します。公開済みversionの
-上書きはnpmが拒否するため、再実行しても公開済みの版は変わりません。公開後に問題が見つかった場合は
+npmへの送信だけが失敗した場合は、同じtagを指定して``npm-publish.yml``を再実行します。公開済みversionは
+integrityを確認し、未公開のpackageだけを送信します。公開後に問題が見つかった場合は
 ``npm deprecate``で警告を表示し、修正は新しいversionで行います。``unpublish``は安全上必要な場合に限ります。
 一度``unpublish``したversion番号は再利用できません。
 

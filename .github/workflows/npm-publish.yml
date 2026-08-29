@@ -9,10 +9,10 @@ name: npm publication
 # 初回公開だけは、公開済みReleaseのarchiveを手元からnpmへ送る。手順はコントリビューション
 # ガイドを参照する。
 #
-# stable releaseの公開workflowから呼び出すほか、tagとpackageを指定して単独で実行できる。
-# npmへの送信だけが失敗した場合、GitHub Releaseは公開済みで作り直せないため、このworkflowを
-# 同じtagで実行して回復する。同じversionの再公開はnpmが拒否するため、公開済みの版を
-# 上書きしない。
+# stable releaseの公開workflowから呼び出すほか、tagを指定して単独で実行できる。
+# 二つのpackageは固定したmatrixで処理する。npmへの送信だけが失敗した場合は、このworkflowを
+# 同じtagで実行して回復する。同じversionが既に存在する場合はRegistryのintegrityを確認し、
+# Releaseのarchiveと同じであれば送信せずに完了する。
 
 on:
   workflow_call:
@@ -21,23 +21,12 @@ on:
         description: Published stable tag whose package archive is sent to npm
         required: true
         type: string
-      package:
-        description: npm package to publish
-        required: true
-        type: string
   workflow_dispatch:
     inputs:
       tag:
         description: Published stable tag whose package archive is sent to npm
         required: true
         type: string
-      package:
-        description: npm package to publish
-        required: true
-        type: choice
-        options:
-          - textlint
-          - wasm
 
 permissions:
   contents: read
@@ -48,8 +37,15 @@ concurrency:
 
 jobs:
   publish:
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - textlint
+          - wasm
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    environment: npm-publish
     permissions:
       id-token: write
     steps:
@@ -67,11 +63,12 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ steps.node-version.outputs.value }}
-      - name: Published package download and verification
+      - name: Release package download and verification
+        id: candidate
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
-          RELEASE_PACKAGE: ${{ inputs.package }}
+          RELEASE_PACKAGE: ${{ matrix.package }}
         run: |
           test -n "$RELEASE_TAG"
           test -n "$RELEASE_PACKAGE"
@@ -116,7 +113,22 @@ jobs:
           gh attestation verify "$tarball" --repo "$GITHUB_REPOSITORY"
           gh attestation verify npm-candidate/sha256.sum --repo "$GITHUB_REPOSITORY"
           echo "tarball=$tarball" >> "$GITHUB_ENV"
+          echo "name=$(jq -er .name <<<"$archive_manifest")" >> "$GITHUB_OUTPUT"
+          echo "version=$workspace_version" >> "$GITHUB_OUTPUT"
+      - name: Existing npm publication verification
+        id: registry
+        env:
+          PACKAGE_NAME: ${{ steps.candidate.outputs.name }}
+          PACKAGE_VERSION: ${{ steps.candidate.outputs.version }}
+        run: |
+          state="$(node tools/npm-publication.mjs \
+            --candidate "$tarball" --name "$PACKAGE_NAME" --version "$PACKAGE_VERSION")"
+          case "$state" in
+            missing|published) echo "state=$state" >> "$GITHUB_OUTPUT" ;;
+            *) exit 1 ;;
+          esac
       - name: npm publication
+        if: steps.registry.outputs.state == 'missing'
         run: |
           # Trusted Publishingはid-token以外の資格情報を使わない代わりに、対応する
           # npmを必要とする。満たさない場合は分かりにくい認証失敗として現れるため、
@@ -128,21 +140,28 @@ jobs:
             exit 1
           fi
           npm publish "$tarball"
-          # 公開したbyte列がGitHub Releaseの成果物と同じであることを、registryが
-          # 記録したintegrityと突き合わせて確かめる。
-          manifest="$(tar -xzOf "$tarball" package/package.json)"
-          name="$(jq -er .name <<<"$manifest")"
-          version="$(jq -er .version <<<"$manifest")"
-          integrity="sha512-$(openssl dgst -sha512 -binary "$tarball" | base64 -w0)"
-          published="$(curl --silent --show-error --fail-with-body --max-time 120 \
-            "https://registry.npmjs.org/$name/$version")"
-          test "$(jq -er .dist.integrity <<<"$published")" = "$integrity"
-          echo "Published $name $version to npm"
+      - name: Published npm package verification
+        env:
+          PACKAGE_NAME: ${{ steps.candidate.outputs.name }}
+          PACKAGE_VERSION: ${{ steps.candidate.outputs.version }}
+        run: |
+          for _attempt in {1..12}; do
+            state="$(node tools/npm-publication.mjs \
+              --candidate "$tarball" --name "$PACKAGE_NAME" --version "$PACKAGE_VERSION")"
+            if [ "$state" = published ]; then
+              echo "Published and verified $PACKAGE_NAME $PACKAGE_VERSION on npm"
+              exit 0
+            fi
+            test "$state" = missing
+            sleep 5
+          done
+          echo "npm did not make $PACKAGE_NAME $PACKAGE_VERSION available within 60 seconds" >&2
+          exit 1
       # 公開そのものは終わっているため、ここから先の失敗はRelease、tagおよびnpm上の
       # packageを変えない。公開後の観測は、そのversionを定義したtag時点のtoolで行う。
       - name: Published package smoke from the npm Registry
         env:
-          RELEASE_PACKAGE: ${{ inputs.package }}
+          RELEASE_PACKAGE: ${{ matrix.package }}
         run: |
           case "$RELEASE_PACKAGE" in
             textlint) node tools/textlint-plugin-npm-smoke.mjs ;;
