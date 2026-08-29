@@ -134,7 +134,7 @@ ${table(vscodePackages, "npm packageとversion")}
 }
 
 export function renderTextlintPluginNotices(rootMetadata, selectedPackages) {
-  const packages = reachableThirdPartyPackages(rootMetadata, "adocweave-textlint-wasm")
+  const packages = reachableThirdPartyPackages(rootMetadata, "adocweave-textlint")
     .filter((pkg) => !selectedPackages || selectedPackages.has(`${pkg.name}\0${pkg.version}`));
   return `= Third-party notices
 
@@ -184,7 +184,7 @@ export function generateTextlintPluginNotices(outputPath) {
     output,
     renderTextlintPluginNotices(
       cargoMetadata(["--filter-platform", "wasm32-unknown-unknown"]),
-      cargoTreePackageKeys("adocweave-textlint-wasm", "wasm32-unknown-unknown"),
+      cargoTreePackageKeys("adocweave-textlint", "wasm32-unknown-unknown"),
     ),
   );
 }

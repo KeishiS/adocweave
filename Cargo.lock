@@ -77,15 +77,6 @@ version = "0.51.0"
 dependencies = [
  "adocweave",
  "serde",
-]
-
-[[package]]
-name = "adocweave-textlint-wasm"
-version = "0.51.0"
-dependencies = [
- "adocweave",
- "adocweave-textlint",
- "serde",
  "serde-wasm-bindgen",
  "serde_json",
  "wasm-bindgen",
