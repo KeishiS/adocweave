@@ -19,6 +19,7 @@ try {
     "adocweave-config",
     "adocweave-host",
     "adocweave-lsp",
+    "adocweave-project",
     "adocweave-textlint",
     "adocweave-wasm",
     "adocweave-workspace",
