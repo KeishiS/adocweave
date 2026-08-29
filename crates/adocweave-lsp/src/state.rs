@@ -29,7 +29,19 @@ pub struct DocumentState {
     pub request: AnalysisRequest,
     pub view: Option<Arc<DocumentView>>,
     pub workspace_problem: Option<WorkspaceProblem>,
+    workspace_input: WorkspaceInputState,
     cancellation: Arc<CancellationToken>,
+}
+
+/// Whether the current LSP text is safe to combine with a workspace snapshot.
+///
+/// This is input state, not an analysis result: unrelated reanalysis must not
+/// turn a rejected request back into an apparently valid one.
+#[derive(Clone, Debug)]
+enum WorkspaceInputState {
+    Synchronized,
+    PendingRebuild,
+    Rejected(WorkspaceProblem),
 }
 
 #[derive(Debug)]
@@ -47,6 +59,22 @@ impl DocumentState {
 
     pub fn workspace_analysis(&self) -> Option<&WorkspaceAnalysis> {
         self.view.as_ref()?.expanded.as_deref()
+    }
+}
+
+impl DocumentState {
+    pub(crate) fn workspace_input_problem(&self) -> Option<&WorkspaceProblem> {
+        match &self.workspace_input {
+            WorkspaceInputState::Rejected(problem) => Some(problem),
+            WorkspaceInputState::Synchronized | WorkspaceInputState::PendingRebuild => self
+                .workspace_problem
+                .as_ref()
+                .filter(|problem| problem.code == "workspace-input-error"),
+        }
+    }
+
+    fn workspace_input_is_synchronized(&self) -> bool {
+        matches!(self.workspace_input, WorkspaceInputState::Synchronized)
     }
 }
 
@@ -94,10 +122,8 @@ impl DocumentStore {
 
     pub fn snapshot(&self, uri: &str) -> Option<DocumentSnapshot> {
         let document = self.documents.get(uri)?;
-        if document
-            .workspace_problem
-            .as_ref()
-            .is_some_and(|problem| problem.code == "workspace-input-error")
+        if !document.workspace_input_is_synchronized()
+            || document.workspace_input_problem().is_some()
         {
             return None;
         }
@@ -130,9 +156,11 @@ impl DocumentStore {
     }
 
     pub fn workspace_analyses(&self) -> impl Iterator<Item = &WorkspaceAnalysis> {
-        self.documents
-            .values()
-            .filter_map(|document| document.view.as_ref()?.expanded.as_deref())
+        self.documents.values().filter_map(|document| {
+            document
+                .workspace_input_is_synchronized()
+                .then(|| document.view.as_ref()?.expanded.as_deref())?
+        })
     }
 
     pub fn workspace_problems(&self) -> impl Iterator<Item = &WorkspaceProblem> {
@@ -188,6 +216,7 @@ impl DocumentStore {
                 request: job.request.clone(),
                 view: None,
                 workspace_problem: None,
+                workspace_input: WorkspaceInputState::Synchronized,
                 cancellation: job.cancellation.clone(),
             },
         );
@@ -217,6 +246,13 @@ impl DocumentStore {
             input_revision,
         );
         self.install_job(uri, &job);
+        // A newer protocol input starts the document-scoped retry. The Session
+        // immediately records Rejected or PendingRebuild if it cannot install
+        // this text in WorkspaceResources.
+        Arc::make_mut(&mut self.documents)
+            .get_mut(uri)
+            .expect("document existence checked")
+            .workspace_input = WorkspaceInputState::Synchronized;
         Some(job)
     }
 
@@ -235,6 +271,9 @@ impl DocumentStore {
 
     pub fn begin_reanalysis(&mut self, uri: &str, input_revision: u64) -> Option<AnalysisJob> {
         let current = self.documents.get(uri)?;
+        if !current.workspace_input_is_synchronized() {
+            return None;
+        }
         current.cancellation.cancel();
         let version = i32::try_from(current.request.revision.version).ok()?;
         let text = current.request.source.to_string();
@@ -259,6 +298,9 @@ impl DocumentStore {
         input_revision: u64,
     ) -> Option<AnalysisJob> {
         let current = self.documents.get(uri)?;
+        if !current.workspace_input_is_synchronized() {
+            return None;
+        }
         current.cancellation.cancel();
         let version = i32::try_from(current.request.revision.version).ok()?;
         let text = current.request.source.to_string();
@@ -276,7 +318,8 @@ impl DocumentStore {
     }
 
     /// Replaces an existing document's pending request with `job`, clearing the
-    /// prior analysis view and workspace problem.
+    /// prior analysis view and workspace problem while preserving whether its
+    /// current LSP text is synchronized with WorkspaceResources.
     fn install_job(&mut self, uri: &str, job: &AnalysisJob) {
         let current = Arc::make_mut(&mut self.documents)
             .get_mut(uri)
@@ -397,6 +440,39 @@ impl DocumentStore {
             document.cancellation.cancel();
             document.view = None;
             document.workspace_problem = None;
+            document.workspace_input = WorkspaceInputState::PendingRebuild;
+        }
+    }
+
+    pub fn mark_workspace_input_pending(&mut self, job: &AnalysisJob) {
+        assert!(
+            self.job_is_current(job),
+            "only the current input may be marked pending"
+        );
+        Arc::make_mut(&mut self.documents)
+            .get_mut(&job.uri)
+            .expect("current document exists")
+            .workspace_input = WorkspaceInputState::PendingRebuild;
+    }
+
+    pub fn reject_workspace_input(&mut self, job: &AnalysisJob) {
+        assert!(
+            self.job_is_current(job),
+            "only the current input may be rejected"
+        );
+        let problem = job
+            .workspace_problem
+            .clone()
+            .expect("a rejected workspace input has a problem");
+        Arc::make_mut(&mut self.documents)
+            .get_mut(&job.uri)
+            .expect("current document exists")
+            .workspace_input = WorkspaceInputState::Rejected(problem);
+    }
+
+    pub fn synchronize_all_workspace_inputs(&mut self) {
+        for document in Arc::make_mut(&mut self.documents).values_mut() {
+            document.workspace_input = WorkspaceInputState::Synchronized;
         }
     }
 

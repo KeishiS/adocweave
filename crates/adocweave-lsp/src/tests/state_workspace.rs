@@ -1219,6 +1219,193 @@ fn rejected_change_keeps_protocol_input_for_the_next_incremental_change() {
 }
 
 #[test]
+fn rejected_overlay_survives_dependent_and_configuration_reanalysis_until_retry() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-rejected-overlay-{unique}"));
+    fs::create_dir_all(&root).expect("workspace");
+    fs::write(
+        root.join(adocweave_config::FILE_NAME),
+        "schema-version = 2\n[resources]\ninclude = true\nmax-files = 8\nmax-total-bytes = 1024\nmax-resource-bytes = 32\n",
+    )
+    .expect("configuration");
+    let document_path = root.join("root.adoc");
+    let include_path = root.join("part.adoc");
+    let initial = "include::part.adoc[]\n";
+    fs::write(&document_path, initial).expect("document");
+    fs::write(&include_path, "old\n").expect("include");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
+    let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
+    let include_uri = lsp::Url::from_file_path(&include_path).expect("include URI");
+    let mut service = Session::default();
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "capabilities": {}
+        })),
+    );
+    open(&mut service, document_uri.as_str(), 1, initial);
+
+    let rejected = service
+        .begin_change(typed(json!({
+            "textDocument": {"uri": document_uri, "version": 2},
+            "contentChanges": [{"text": "x".repeat(64)}]
+        })))
+        .expect("rejected document change")
+        .pop()
+        .expect("rejected analysis job");
+    assert!(rejected.workspace_problem.is_some());
+    assert!(!rejected.cancellation.is_cancelled());
+
+    fs::write(&include_path, "changed\n").expect("changed include");
+    let dependent = service.workspace_files_changed_with_journal(typed(json!({
+        "changes": [{"uri": include_uri, "type": 2}]
+    })));
+    assert!(dependent.jobs.is_empty());
+    assert!(
+        service
+            .update_configuration(json!({"enabledRules": ["macro-boundary"]}))
+            .expect("configuration update")
+            .is_empty()
+    );
+    assert!(
+        !rejected.cancellation.is_cancelled(),
+        "unrelated inputs must not supersede the rejected document job"
+    );
+    let current = service
+        .documents
+        .get(document_uri.as_str())
+        .expect("rejected document");
+    assert_eq!(current.request.revision.version, 2);
+    assert_eq!(current.request.source.len(), 64);
+    assert!(service.begin_reanalysis_for_test(&document_uri).is_none());
+    assert!(
+        service
+            .diagnostics(&document_uri)
+            .expect("diagnostics")
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code
+                == Some(lsp::NumberOrString::String(
+                    "workspace-input-error".to_owned()
+                )))
+    );
+    adopt(&mut service, rejected);
+    assert!(
+        service
+            .diagnostics(&document_uri)
+            .expect("diagnostics")
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code
+                == Some(lsp::NumberOrString::String(
+                    "workspace-input-error".to_owned()
+                )))
+    );
+
+    let recovered = service
+        .begin_change(typed(json!({
+            "textDocument": {"uri": document_uri, "version": 3},
+            "contentChanges": [{"text": initial}]
+        })))
+        .expect("recovered document change");
+    assert_eq!(recovered.len(), 1);
+    assert!(recovered[0].workspace.is_some());
+    assert!(recovered[0].workspace_problem.is_none());
+    for job in recovered {
+        adopt(&mut service, job);
+    }
+    assert!(
+        service
+            .diagnostics(&document_uri)
+            .expect("diagnostics")
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code
+                != Some(lsp::NumberOrString::String(
+                    "workspace-input-error".to_owned()
+                )))
+    );
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn valid_open_and_change_use_the_coherent_workspace_during_a_scan_error() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-open-after-scan-error-{unique}"));
+    fs::create_dir_all(&root).expect("workspace");
+    let document_path = root.join("root.adoc");
+    fs::write(&document_path, "disk\n").expect("document");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
+    let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
+    let mut service = Session::default();
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "capabilities": {}
+        })),
+    );
+    assert!(
+        service
+            .workspace_scan_failed("workspace scan worker failed".to_owned())
+            .is_empty()
+    );
+
+    let opened = service.begin_open(typed(json!({
+        "textDocument": {
+            "uri": document_uri,
+            "languageId": "asciidoc",
+            "version": 1,
+            "text": "opened\n"
+        }
+    })));
+    assert_eq!(opened.len(), 1);
+    assert!(opened[0].workspace.is_some());
+    assert!(opened[0].workspace_problem.is_none());
+    for job in opened {
+        adopt(&mut service, job);
+    }
+
+    let changed = service
+        .begin_change(typed(json!({
+            "textDocument": {"uri": document_uri, "version": 2},
+            "contentChanges": [{"text": "changed\n"}]
+        })))
+        .expect("document change");
+    assert_eq!(changed.len(), 1);
+    assert!(changed[0].workspace.is_some());
+    assert!(changed[0].workspace_problem.is_none());
+    for job in changed {
+        adopt(&mut service, job);
+    }
+    assert_eq!(
+        service
+            .workspace_resource(&document_uri)
+            .expect("current overlay")
+            .as_ref(),
+        "changed\n"
+    );
+    let failures = service
+        .diagnostics(&document_uri)
+        .expect("diagnostics")
+        .diagnostics
+        .into_iter()
+        .filter(|diagnostic| diagnostic.message.contains("workspace scan worker failed"))
+        .count();
+    assert_eq!(failures, 1);
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
 fn did_open_outside_configured_roots_keeps_input_until_close() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1725,6 +1912,7 @@ fn configuration_watch_does_not_restore_open_overlay_outside_resource_roots() {
         "workspace-input-error"
     );
     adopt(&mut service, jobs.into_iter().next().expect("reanalysis"));
+    assert!(service.begin_reanalysis_for_test(&document_uri).is_none());
     let diagnostics = service.diagnostics(&document_uri).expect("diagnostics");
     assert!(diagnostics.diagnostics.iter().any(|diagnostic| {
         diagnostic.code

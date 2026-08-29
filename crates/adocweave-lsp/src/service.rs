@@ -368,6 +368,17 @@ fn parse_open_sources(sources: &[(String, i32, String)]) -> Vec<(lsp::Url, i64, 
 }
 
 impl Session {
+    fn attach_workspace_input(
+        &mut self,
+        job: &mut AnalysisJob,
+        input: Result<crate::workspace::WorkspaceInput, String>,
+    ) {
+        attach_workspace(job, input);
+        if job.workspace_problem.is_some() {
+            self.documents.reject_workspace_input(job);
+        }
+    }
+
     fn advance_input_revision(&mut self) {
         self.input_revision = self
             .input_revision
@@ -563,27 +574,15 @@ impl Session {
         let document = params.text_document;
         if self.workspace_input_status == WorkspaceInputStatus::Rebuilding {
             self.advance_input_revision();
-            let _ = self.documents.begin_open_with_options(
+            let job = self.documents.begin_open_with_options(
                 document.uri.to_string(),
                 document.version,
                 document.text,
                 self.analysis_options_for(None),
                 self.input_revision,
             );
+            self.documents.mark_workspace_input_pending(&job);
             return Vec::new();
-        }
-        if let Some(error) = self.current_workspace_error().map(str::to_owned) {
-            self.advance_input_revision();
-            let options = self.analysis_options_for(None);
-            let mut job = self.documents.begin_open_with_options(
-                document.uri.to_string(),
-                document.version,
-                document.text,
-                options,
-                self.input_revision,
-            );
-            attach_workspace(&mut job, Err(error));
-            return vec![job];
         }
         self.advance_input_revision();
         let mut job = self.documents.begin_open_with_options(
@@ -600,14 +599,14 @@ impl Session {
         ) {
             Ok(affected) => affected,
             Err(error) => {
-                attach_workspace(&mut job, Err(error));
+                self.attach_workspace_input(&mut job, Err(error));
                 return vec![job];
             }
         };
         let workspace = self.workspace.input(&document.uri);
         let options = self.analysis_options_for(workspace.as_ref().ok());
         self.documents.update_job_options(&mut job, options);
-        attach_workspace(&mut job, workspace);
+        self.attach_workspace_input(&mut job, workspace);
         let mut jobs = vec![job];
         self.append_dependent_jobs(&affected, document.uri.as_str(), &mut jobs);
         jobs
@@ -652,12 +651,15 @@ impl Session {
         }
         if self.workspace_input_status == WorkspaceInputStatus::Rebuilding {
             self.advance_input_revision();
-            let _ = self.documents.begin_change(
+            let job = self.documents.begin_change(
                 params.text_document.uri.as_str(),
                 params.text_document.version,
                 source,
                 self.input_revision,
             );
+            if let Some(job) = &job {
+                self.documents.mark_workspace_input_pending(job);
+            }
             return Ok(Vec::new());
         }
         self.advance_input_revision();
@@ -676,14 +678,14 @@ impl Session {
         ) {
             Ok(affected) => affected,
             Err(error) => {
-                attach_workspace(&mut job, Err(error));
+                self.attach_workspace_input(&mut job, Err(error));
                 return Ok(vec![job]);
             }
         };
         let workspace = self.workspace.input(&params.text_document.uri);
         let options = self.analysis_options_for(workspace.as_ref().ok());
         self.documents.update_job_options(&mut job, options);
-        attach_workspace(&mut job, workspace);
+        self.attach_workspace_input(&mut job, workspace);
         let mut jobs = vec![job];
         self.append_dependent_jobs(&affected, params.text_document.uri.as_str(), &mut jobs);
         Ok(jobs)
@@ -702,7 +704,8 @@ impl Session {
             let Some(mut job) = self.documents.begin_reanalysis(uri, self.input_revision) else {
                 continue;
             };
-            attach_workspace(&mut job, self.workspace.input(&parsed));
+            let workspace = self.workspace.input(&parsed);
+            self.attach_workspace_input(&mut job, workspace);
             jobs.push(job);
         }
     }
@@ -909,7 +912,7 @@ impl Session {
                     self.documents
                         .reconfigure(&uri, options, self.input_revision)
                 {
-                    attach_workspace(&mut job, workspace);
+                    self.attach_workspace_input(&mut job, workspace);
                     jobs.push(job);
                 }
             }
@@ -1094,6 +1097,9 @@ impl Session {
             .workspace
             .apply_loaded_roots(scan.loaded, &parsed_open_sources);
         let installed = outcome.is_ok();
+        if installed {
+            self.documents.synchronize_all_workspace_inputs();
+        }
         self.workspace_input_status = WorkspaceInputStatus::Ready;
         self.advance_input_revision();
         let jobs = self.finish_reload(outcome, open_sources);
@@ -1138,7 +1144,7 @@ impl Session {
                 let mut job = self
                     .documents
                     .reconfigure(&uri, options, self.input_revision)?;
-                attach_workspace(&mut job, workspace);
+                self.attach_workspace_input(&mut job, workspace);
                 Some(job)
             })
             .collect()
@@ -1168,7 +1174,7 @@ impl Session {
                     let mut job = self
                         .documents
                         .reconfigure(&uri, options, self.input_revision)?;
-                    attach_workspace(&mut job, workspace);
+                    self.attach_workspace_input(&mut job, workspace);
                     Some(job)
                 })
                 .collect();
@@ -1184,7 +1190,7 @@ impl Session {
                 let mut job = self
                     .documents
                     .reconfigure(&uri, options, self.input_revision)?;
-                attach_workspace(&mut job, workspace);
+                self.attach_workspace_input(&mut job, workspace);
                 Some(job)
             })
             .collect()
@@ -1359,7 +1365,7 @@ impl Session {
         let mut retry = self
             .documents
             .reconfigure(&job.uri, options, self.input_revision)?;
-        attach_workspace(&mut retry, workspace);
+        self.attach_workspace_input(&mut retry, workspace);
         Some(retry)
     }
 
@@ -1423,7 +1429,8 @@ impl Session {
         let mut job = self
             .documents
             .begin_reanalysis(uri.as_str(), self.input_revision)?;
-        attach_workspace(&mut job, self.workspace.input(uri));
+        let workspace = self.workspace.input(uri);
+        self.attach_workspace_input(&mut job, workspace);
         Some(job)
     }
 
@@ -1465,7 +1472,7 @@ impl Session {
                 let mut job = self
                     .documents
                     .reconfigure(&uri, options, self.input_revision)?;
-                attach_workspace(&mut job, workspace);
+                self.attach_workspace_input(&mut job, workspace);
                 Some(job)
             })
             .collect())
@@ -1501,11 +1508,7 @@ impl Session {
             .flatten();
         let mut diagnostics = document
             .and_then(|document| {
-                if document
-                    .workspace_problem
-                    .as_ref()
-                    .is_some_and(|problem| problem.code == "workspace-input-error")
-                {
+                if document.workspace_input_problem().is_some() {
                     None
                 } else {
                     document.view.as_ref().map(|view| view.root.as_ref())
@@ -1527,6 +1530,15 @@ impl Session {
         }
         if let Some(error) = &workspace_watch_error {
             diagnostics.push(crate::diagnostics::workspace_error(error));
+        }
+        if let Some(problem) = document.and_then(|document| document.workspace_input_problem()) {
+            diagnostics.push(crate::diagnostics::project_problem(
+                problem.range,
+                &problem.code,
+                &problem.message,
+                &source_document,
+                self.position_encoding,
+            )?);
         }
         for workspace in self.documents.workspace_analyses() {
             let current_version = workspace.resource_versions.get(uri.as_str()).copied();
