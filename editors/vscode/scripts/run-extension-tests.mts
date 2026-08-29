@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 
 import { runTests } from "@vscode/test-electron";
 
+import { type ExtensionManifest, readJson, supportedVSCodeFloor } from "./manifests.mts";
+
 if (process.platform === "linux" && process.env.GITHUB_ACTIONS === "true") {
   delete process.env.LD_LIBRARY_PATH;
 }
@@ -64,7 +66,8 @@ try {
       userData,
       join(extensionRoot, "test", "fixtures", "adocweave.code-workspace"),
     ],
-    version: "1.91.0",
+    // 対応範囲として宣言した下限で検査する。engines.vscodeから導く理由はmanifests.mtsを参照。
+    version: supportedVSCodeFloor(readJson<ExtensionManifest>("package.json")),
   });
   const serverNeedle = server.toLocaleLowerCase("en-US");
   if (
