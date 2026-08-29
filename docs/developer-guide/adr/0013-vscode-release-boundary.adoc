@@ -1,6 +1,6 @@
-= ADR 0013: VSIXとLanguage Serverの同一release境界
+= ADR 0013: VSIXとLanguage Serverの同一release単位
 :status: superseded
 
 この判断は、公開先と権限をxref:0023-publication-boundary.adoc[ADR 0023]、製品ごとの公開単位を
-xref:0027-product-release-trains.adoc[ADR 0027]、エディターとLanguage Serverの境界を
+xref:0027-product-release-trains.adoc[ADR 0027]、エディタとLanguage Serverの分担を
 xref:0028-editor-language-server-boundary.adoc[ADR 0028]に置き換えました。

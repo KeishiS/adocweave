@@ -82,7 +82,7 @@ Language Serverはsemantic tokensやdocument linksの処理で必要なlinkやra
 Source block、catalogなどを同時に生成しません。
 
 数式の``FormulaProjection.kind``は表示形式を表す``inline``または``block``です。Rust APIの
-``MathLanguage::Latex``は``as_asciidoc_name()``で``latexmath``を返します。JSON／WASM protocolの既存enum値は
+``MathLanguage::Latex``は``as_asciidoc_name()``で``latexmath``を返します。JSON/WASM protocolの既存enum値は
 互換性のため``latex``を維持し、AsciiDoc構文名やHTMLの``data-math-language``と混同しません。
 
 Source blockの``sourceRange``は、開始区切り行の行頭から終了区切り行の行末までを表します。
@@ -95,7 +95,7 @@ native APIの``VerbatimBlock.metadata.range``またはsyntax treeの先行する
 TOC出力の有無を``RenderingFeatures``として返します。言語は重複を除きます。数式言語は固定順の
 ``latexmath``、``typst``で返し、将来の言語はこの順序表へ追加します。Source block言語はHTMLの言語classと
 同じ規則でASCII英字を小文字化し、ASCII英数字、``-``および``_``以外を``-``へ置き換えてから文字列の
-昇順で返します。言語指定のないSource blockは含めません。TOCは有効化され、かつ実際の投影結果に
+昇順で返します。言語指定のないSource blockは含めません。TOCは有効化され、かつ実際の取得結果に
 一つ以上の項目がある場合にだけ``true``です。
 
 このqueryは``Analysis``を直接受け取り、preprocessで展開されたincludeの内容も反映します。
@@ -227,7 +227,7 @@ fn convert() -> Result<String, ParseError> {
 }
 ----
 
-``:toc:``と``:sectnums:``はRust側のflagではなく、文書ヘッダーの属性によって有効になります。
+``:toc:``と``:sectnums:``はRust側のflagではなく、文書ヘッダの属性によって有効になります。
 ``:toclevels:``は1から5までの整数であり、省略時はlevel 1から5までを目次候補とします。不正な値は
 ``invalid-attribute``診断となります。
 
@@ -257,7 +257,7 @@ unset後の参照は``undefined-attribute``、循環と展開上限超過は``at
 
 JSONの要求、前処理の入出力、応答およびエラーのwire型は``crates/adocweave-wasm``のRust定義が正本です。
 TypeScript宣言``web-worker/protocol.d.mts``はここから生成します。wire型はコアの型へ依存しません。要求はwire型のfield間制約を検査してからコアの設定へ変換し、
-未検査の値を実行処理へ渡しません。前処理と通常の応答では、コアの結果を生成されたwire型へ投影する処理だけを
+未検査の値を実行処理へ渡しません。前処理と通常の応答では、コアの結果を生成されたwire型へ変換する処理だけを
 WASM adapterに置きます。field、列挙値またはtag付きunionを変更する場合は、schemaを更新して生成物と
 protocol検査を同時に更新します。
 

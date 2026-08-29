@@ -8,7 +8,7 @@
       "sourceFile": "../release/core.adoc",
       "expectedHtmlFile": "../release/core.html",
       "compatibility": "supported-subset",
-      "rationale": "基本ブロックとconstrainedインラインはAsciidoctorと同じ意味構造を期待する",
+      "rationale": "基本ブロックとconstrainedインラインは他実装と同じ意味構造を期待する",
       "contractImpact": "none"
     },
     {
@@ -36,7 +36,7 @@
       "sourceFile": "../lists/asciidoctor-compatible.adoc",
       "expectedHtmlFile": "../lists/asciidoctor-compatible.html",
       "compatibility": "supported-subset",
-      "rationale": "対応するリストとblock continuationのHTMLは承認済みAsciidoctor互換fixtureに一致する",
+      "rationale": "対応するリストとblock continuationのHTMLは承認済みの他実装互換fixtureに一致する",
       "contractImpact": "none"
     },
     {
@@ -70,7 +70,7 @@
       "sourceFile": "unconstrained.adoc",
       "expectedHtmlFile": "unconstrained.html",
       "compatibility": "supported-subset",
-      "rationale": "二重マーカーは単語、CJKおよびemoji境界に依存せずstrong、emphasis、monospaceを表す",
+      "rationale": "二重マーカーは単語、日本語の文字およびemojiとの隣接関係に依存せずstrong、emphasis、monospaceを表す",
       "contractImpact": "core-profile"
     },
     {
@@ -78,7 +78,7 @@
       "sourceFile": "monospace-boundaries.adoc",
       "expectedHtmlFile": "monospace-boundaries.html",
       "compatibility": "supported-subset",
-      "rationale": "単一backtickは標準の語境界と開始punctuation境界に従い、二重backtickは単語、CJKおよびemoji境界に依存しない",
+      "rationale": "単一backtickは標準の単語区切りと開始記号の条件に従い、二重backtickは単語、日本語の文字およびemojiとの隣接関係に依存しない",
       "contractImpact": "core-profile,core-api,html,conformance,wasm-api"
     },
     {
@@ -86,7 +86,7 @@
       "source": "before *strong\r\n日本語* and ``mono\r\ncode`` https://example.org[label\r\n続き]",
       "expectedHtmlFile": "multiline.html",
       "compatibility": "supported-subset",
-      "rationale": "段落inline列はCRLFとUnicodeのsource rangeを保持し、書式とmacro labelを行境界越しに解析する",
+      "rationale": "段落inline列はCRLFとUnicodeのsource rangeを保持し、書式とmacro labelを改行を越えて解析する",
       "contractImpact": "core-api,projection,conformance"
     },
     {
@@ -499,7 +499,7 @@
         "unresolvedReferences": "label-only"
       },
       "compatibility": "host-safety-contract",
-      "rationale": "解決失敗は安定kindだけを保持し、自由形式のACL・DB・非公開タイトル情報をruntime境界へ渡さない",
+      "rationale": "解決失敗は安定kindだけを保持し、自由形式のACL・DB・非公開タイトル情報をruntime間で渡さない",
       "contractImpact": "core-api,projection,conformance,wasm-api"
     },
     {

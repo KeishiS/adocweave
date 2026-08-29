@@ -1,5 +1,5 @@
-= ADR 0030: textlint境界と配布検査の最小化
-:status: accepted; pull request gate amended by ADR 0031; release metadata amended by ADR 0036
+= ADR 0030: textlintの責務分担と配布検査の最小化
+:status: accepted; pull request gate amended by ADR 0031; releaseメタデータ amended by ADR 0036
 
 == 文脈
 
@@ -30,7 +30,7 @@ Pull Requestのgateには含めません。
 == 検討した代替案
 
 **OSごとの導入matrixを維持する。** パッケージのJavaScriptとNode.js向けWebAssemblyは固定consumerが同じ公開入口から
-実行します。OS別の処理を持たないため、runnerを増やさず一つの環境で境界を検査します。
+実行します。OS別の処理を持たないため、runnerを増やさず一つの環境でコンポーネント間の接続を検査します。
 
 **candidateと公開後の両方で``npx``を実行する。** 公開前の固定consumerがパッケージの動作を検査します。
 ``npx``はGitHub Releaseの実URLから取得できることを確認する公開後の経路に限定します。

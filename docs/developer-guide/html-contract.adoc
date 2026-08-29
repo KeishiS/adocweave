@@ -1,6 +1,6 @@
 = HTML出力の仕様
 
-この文書では、生成HTMLの構造、出力規則および安全性の境界を定義します。CLIの操作方法は
+この文書では、生成HTMLの構造、出力規則および安全性を保証する範囲を定義します。CLIの操作方法は
 xref:../user-guide/command-line.adoc[コマンドライン]、参照先やresourceの解決結果を渡す方法は
 xref:server-execution.adoc#render-inputs[変換入力]を参照してください。
 
@@ -34,11 +34,11 @@ UTF-8 encodingと非空タイトルを持つ``head``および``body``を常に�
 最初の一件だけを採用します。``Fragment``では出力せず、診断を返します。
 
 埋め込みCSSでは、``style``要素を終了できる文字列、HTML comment開始文字列および不正な制御文字を拒否します。
-外部URLは``ActiveUrlPolicy``で検査してから属性値としてescapeします。件数とbyte数には``StylesheetPolicy``を適用し、
+外部URLは``ActiveUrlPolicy``で検査してから属性値としてescapeします。件数とバイト数には``StylesheetPolicy``を適用し、
 拒否した値をHTMLや診断messageへ出力しません。
 
 文書入力に由来する任意の``style``、classまたはraw HTMLは、stylesheet設定の有無にかかわらず拒否します。
-この境界を採用した理由はxref:adr/0007-host-supplied-stylesheets.adoc[ADR 0007]に記録しています。
+この分担を採用した理由はxref:adr/0007-host-supplied-stylesheets.adoc[ADR 0007]に記録しています。
 
 == 許可するHTML
 
@@ -103,11 +103,11 @@ HTMLとして再解析しません。詳しいfallback規則はxref:server-execu
 ``ResourceCapabilities``がある場合だけactive要素として出力します。MIME typeはASCIIの大文字と小文字を
 区別せず、parameterを除いたtypeとsubtypeを検査します。拡張子からMIME typeを推測しません。
 
-Imageとiconには``image/*``、audioには``audio/*``、videoには``video/*``を要求します。Imageはalt、寸法、title、
-iconはaltとtitle、audioはtitle、videoは寸法、poster、titleを出力できます。寸法には10進整数だけを使用します。
-``controls``はaudioとvideoへ常に付与し、入力から無効化しません。Video posterは独立した``image/*`` resourceとして
-URLとMIME typeを検査します。posterだけを利用できない場合は診断を返してposterを省略し、安全なvideo本体は
-維持します。Mediaのlink化、icon set固有の要素・classおよびその他の再生属性には対応しません。
+画像とアイコンには``image/*``、音声には``audio/*``、動画には``video/*``を要求します。画像はalt、寸法、title、
+アイコンはaltとtitle、音声はtitle、動画は寸法、poster、titleを出力できます。寸法には10進整数だけを使用します。
+``controls``は音声と動画へ常に付与し、入力から無効化しません。動画のposterは独立した``image/*`` resourceとして
+URLとMIME typeを検査します。posterだけを利用できない場合は診断を返してposterを省略し、安全な動画本体は
+維持します。Mediaのlink化、アイコンset固有の要素・classおよびその他の再生属性には対応しません。
 
 == HTML5標準適合性検査
 
@@ -166,7 +166,7 @@ projectionと同じ言語、行番号指定および開始行を表します。�
 ``data-math-display``を付け、内容は常にescapeします。LaTeXは``latexmath``、表示形式は``inline``または
 ``block``です。Inline数式は``code``、block数式は``pre``内の``code``として出力します。利用側は要素名や
 親子関係を推測せず、この二つの属性とescape済みのtext contentを数式描画adapterへ渡せます。
-JSON／WASM protocolでは既存の言語enum値``latex``を維持し、``latexmath``はAsciiDoc構文とHTML属性の名前に
+JSON/WASM protocolでは既存の言語enum値``latex``を維持し、``latexmath``はAsciiDoc構文とHTML属性の名前に
 限定します。
 
 == 決定性
@@ -178,7 +178,7 @@ JSON／WASM protocolでは既存の言語enum値``latex``を維持し、``latexm
 == 公開適合性fixture
 
 利用側はlink:../../crates/adocweave/conformance/cases.json[適合性manifest]から``publicContract``を持つcaseを
-選び、入力AsciiDoc、投影、HTML、解析診断および描画診断の対応を検査できます。caseに記録した解析条件と
+選び、入力AsciiDoc、解析結果、HTML、解析診断および描画診断の対応を検査できます。caseに記録した解析条件と
 描画条件を適用し、``publicContract``のJSON pointer、HTML断片および診断codeを比較します。
 
 公開fixtureは次の構文を分離して扱います。
@@ -192,7 +192,7 @@ JSON／WASM protocolでは既存の言語enum値``latex``を維持し、``latexm
 
 公開仕様は``publicContract``に列挙した意味上の値とHTML構造だけです。公開caseの入力はmanifestへ直接記録し、
 実行結果を意味上のassertionと比較します。JSONのkey順と空白、HTMLの属性順、字下げ、空白、末尾改行および
-未選択の投影fieldは利用側の安定APIではありません。利用側はこれらのbyte列を固定せず、必要な項目だけを
+未選択の構造情報fieldは利用側の安定APIではありません。利用側はこれらのbyte列を固定せず、必要な項目だけを
 選択して検査します。
 
 Source blockではtitle、language、option、linenums、開始行およびsource本文と、対応する安全なHTML構造を

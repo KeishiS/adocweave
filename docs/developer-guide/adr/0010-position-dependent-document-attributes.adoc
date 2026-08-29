@@ -21,7 +21,7 @@ preprocessorのincludeとconditional directiveが異なる属性状態を参照�
 == 決定
 
 属性の意味上の順序は、preprocessorが生成するexpanded sourceの読込順とします。
-元のソースの``SourceId``とrangeは順序の決定には使用せず、診断と公開queryへ投影する
+元のソースの``SourceId``とrangeは順序の決定には使用せず、診断と公開queryで参照できる形に変換する
 provenanceとして保持します。
 
 解析結果は文書ごとに一つの``AttributeEnvironment``を所有します。environmentは属性名ごとの
@@ -81,7 +81,7 @@ delimited block内部の属性エントリはAsciiDoc pre-specで動作が定義
 
 属性検索は名前ごとの履歴に対する検索となり、保存量はnode数ではなく属性binding数に
 比例します。include元の同じsourceが複数回展開された場合も、expanded source上のbindingを
-別の出来事として扱い、元source occurrenceへ投影できます。
+別の出来事として扱い、元source occurrenceへ対応付けられます。
 
 ``ResolvedDocumentAttributes``を中心とする公開APIと、属性queryを追加するWASM protocolには
 破壊的変更が発生します。v0.xではpackage versionの完全一致を要求しているため、v0.12.0の
