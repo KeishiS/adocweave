@@ -840,10 +840,6 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
     })?;
     let mut filesystem_authority = filesystem_authority(boundary)?;
     let authority_root = filesystem_authority.roots()[0].clone();
-    let cli_base_dir = arguments
-        .base_dir
-        .as_ref()
-        .map(|path| absolute_lexical_path(&authority_root, path));
     let cli_allowed_roots = arguments
         .allowed_roots
         .iter()
@@ -902,10 +898,9 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                     .expect("every collected input has a resolved project");
                 let config = &resolved.config;
                 let include = include_selected(arguments, config.resources.include);
-                if !include && (arguments.base_dir.is_some() || !arguments.allowed_roots.is_empty())
-                {
+                if !include && !arguments.allowed_roots.is_empty() {
                     return Err(CliError::Usage(
-                        "--base-dir and --allow-root require include processing".to_owned(),
+                        "--allow-root requires include processing".to_owned(),
                     ));
                 }
                 if include {
@@ -918,7 +913,7 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                     )?;
                 }
                 let source_base = path.parent().expect("canonical input path has a parent");
-                let base_dir = cli_base_dir.as_deref().unwrap_or(source_base);
+                let base_dir = source_base;
                 let allowed_roots = if arguments.allowed_roots.is_empty() {
                     &config.resources.roots
                 } else {
@@ -1051,10 +1046,9 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                         .flatten()
                 });
                 let include = include_selected(arguments, config.resources.include);
-                if !include && (arguments.base_dir.is_some() || !arguments.allowed_roots.is_empty())
-                {
+                if !include && !arguments.allowed_roots.is_empty() {
                     return Err(CliError::Usage(
-                        "--base-dir and --allow-root require include processing".to_owned(),
+                        "--allow-root requires include processing".to_owned(),
                     ));
                 }
                 validate_project_config_authority(
@@ -1111,7 +1105,13 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                 };
                 if check.fix && checked != original {
                     changed += 1;
-                    if !check.dry_run {
+                    if check.diff {
+                        output.push_str(&commands::format::unified_diff(
+                            path,
+                            decode_input(&original)?,
+                            decode_input(&checked)?,
+                        ));
+                    } else {
                         pending.push(PendingWrite {
                             path: path.clone(),
                             original,
@@ -1125,7 +1125,7 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                     .map(|root| (root.as_path(), source_base.as_path(), source_id.as_ref()));
                 let outcome = if include {
                     let source = decode_input(&checked)?;
-                    let base_dir = cli_base_dir.as_deref().unwrap_or(source_base.as_path());
+                    let base_dir = source_base.as_path();
                     let mut prepared = prepare_includes(IncludePreparation {
                         source,
                         source_id: source_id.to_string(),
@@ -1221,6 +1221,27 @@ fn completion_script(shell: CompletionShell) -> String {
     commands::completion::render_completion_script(shell, &commands::model::completion_tree())
 }
 
+fn render_rules_human() -> String {
+    let mut rules = diagnostic::LINT_RULES.iter().collect::<Vec<_>>();
+    rules.sort_by_key(|rule| rule.id.as_str());
+    let mut output = String::from("CODE\tDEFAULT\tSEVERITY\tFIXABLE\tDESCRIPTION\n");
+    for rule in rules {
+        output.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\n",
+            rule.id.as_str(),
+            if rule.default_enabled {
+                "enabled"
+            } else {
+                "disabled"
+            },
+            rule.default_severity.as_str(),
+            if rule.fixable { "yes" } else { "no" },
+            rule.description,
+        ));
+    }
+    output
+}
+
 fn run() -> Result<ExitCode, CliError> {
     match parse_arguments(env::args().skip(1))? {
         Action::Help { command } => {
@@ -1248,6 +1269,14 @@ fn run() -> Result<ExitCode, CliError> {
             print!("{}", completion_script(shell));
             Ok(ExitCode::SUCCESS)
         }
+        Action::Rules { json } => {
+            if json {
+                println!("{}", diagnostic::render_lint_rule_catalog_json());
+            } else {
+                print!("{}", render_rules_human());
+            }
+            Ok(ExitCode::SUCCESS)
+        }
         Action::Run(arguments) => {
             if let Some(exit_code) = run_multi_path(&arguments)? {
                 return Ok(exit_code);
@@ -1258,8 +1287,8 @@ fn run() -> Result<ExitCode, CliError> {
             })?;
             let mut filesystem_authority = filesystem_authority(boundary)?;
             let authority_root = filesystem_authority.roots()[0].clone();
-            let cli_base_dir = arguments
-                .base_dir
+            let cli_stdin_base = arguments
+                .stdin_base
                 .as_ref()
                 .map(|path| absolute_lexical_path(&authority_root, path));
             let cli_allowed_roots = arguments
@@ -1293,9 +1322,9 @@ fn run() -> Result<ExitCode, CliError> {
             );
             let command_id = arguments.command.command_id();
             let include = include_selected(&arguments, project_config.resources.include);
-            if !include && (arguments.base_dir.is_some() || !arguments.allowed_roots.is_empty()) {
+            if !include && (arguments.stdin_base.is_some() || !arguments.allowed_roots.is_empty()) {
                 return Err(CliError::Usage(
-                    "--base-dir and --allow-root require include processing".to_owned(),
+                    "--stdin-base and --allow-root require include processing".to_owned(),
                 ));
             }
             let allowed_roots = if arguments.allowed_roots.is_empty() {
@@ -1317,19 +1346,6 @@ fn run() -> Result<ExitCode, CliError> {
                 project_root.is_some() && arguments.project_root.is_none(),
                 matches!(command_id, CommandId::Convert | CommandId::Preview),
             )?;
-            if matches!(
-                &arguments.command,
-                CommandOptions::Check(CheckOptions {
-                    list_rules: true,
-                    ..
-                })
-            ) {
-                let output = diagnostic::render_lint_rule_catalog_json();
-                io::stdout()
-                    .write_all(output.as_bytes())
-                    .map_err(CliError::Write)?;
-                return Ok(ExitCode::SUCCESS);
-            }
             if let CommandOptions::Preview {
                 css,
                 bind,
@@ -1365,7 +1381,7 @@ fn run() -> Result<ExitCode, CliError> {
                     commands::preview::RunRequest {
                         input_path,
                         include,
-                        base_dir: cli_base_dir.as_deref(),
+                        base_dir: cli_stdin_base.as_deref(),
                         allowed_roots: &allowed_roots,
                         project_root: project_root.as_deref(),
                         project: &project_config,
@@ -1464,10 +1480,10 @@ fn run() -> Result<ExitCode, CliError> {
             // guess one. Asking for includes explicitly is still an error, since
             // the caller wanted something the input cannot supply. Includes that
             // are merely the default stay quiet and leave the directives alone.
-            let include_base = cli_base_dir.clone().or_else(|| primary_base.clone());
+            let include_base = cli_stdin_base.clone().or_else(|| primary_base.clone());
             if include && include_base.is_none() && arguments.include {
                 return Err(CliError::Usage(
-                    "--include with standard input requires --base-dir".to_owned(),
+                    "--include with standard input requires --stdin-base".to_owned(),
                 ));
             }
             let include = include && include_base.is_some();
@@ -1687,9 +1703,9 @@ fn main() -> ExitCode {
 mod tests {
     use super::{
         Action, CliError, CommandOptions, CompletionShell, DEFAULT_PREVIEW_DEBOUNCE_MS,
-        DEFAULT_PREVIEW_PORT, DiagnosticFormat, FormatOptions, MAX_SCAN_ENTRIES, charge_retained,
-        charge_scan_entry, cli_project_scope, configuration_stylesheet_session,
-        filesystem_authority, filesystem_from_authority, load_project_config_at, parse_arguments,
+        DEFAULT_PREVIEW_PORT, FormatOptions, MAX_SCAN_ENTRIES, charge_retained, charge_scan_entry,
+        cli_project_scope, configuration_stylesheet_session, filesystem_authority,
+        filesystem_from_authority, load_project_config_at, parse_arguments,
         read_primary_in_session, resolve_input_path_scopes_with_hook,
         validate_project_config_authority,
     };
@@ -1902,7 +1918,15 @@ mod tests {
 
     #[test]
     fn all_commands_support_help() {
-        for command in ["convert", "preview", "check", "format", "symbols"] {
+        for command in [
+            "convert",
+            "preview",
+            "check",
+            "format",
+            "symbols",
+            "rules",
+            "completion",
+        ] {
             assert!(matches!(
                 parse_arguments(arguments(&[command, "--help"])),
                 Ok(Action::Help { .. })
@@ -1919,7 +1943,6 @@ mod tests {
     #[test]
     fn preview_help_explains_options_defaults_and_external_access() {
         let help = model::command_help(CommandId::Preview).expect("preview has command help");
-        let root_help = model::root_help();
         let port = DEFAULT_PREVIEW_PORT.to_string();
         let debounce = DEFAULT_PREVIEW_DEBOUNCE_MS.to_string();
         for expected in [
@@ -1929,7 +1952,6 @@ mod tests {
             "--debounce-ms MILLISECONDS",
             "--allow-external",
             "--include",
-            "--base-dir DIR",
             "--allow-root DIR",
             "--css FILE",
             "--css-url URL",
@@ -1937,7 +1959,7 @@ mod tests {
             "--no-config",
             "--color WHEN",
             "auto",
-            "利用者認証",
+            "authentication",
             "TLS",
         ] {
             assert!(
@@ -1949,10 +1971,6 @@ mod tests {
             assert!(
                 help.contains(&value),
                 "preview helpの{name}既定値が実装と異なります"
-            );
-            assert!(
-                root_help.contains(&value),
-                "全体helpの{name}既定値が実装と異なります"
             );
         }
 
@@ -2010,23 +2028,12 @@ mod tests {
     }
 
     #[test]
-    fn check_accepts_json_before_or_after_input() {
+    fn check_rejects_the_removed_json_alias() {
         for values in [
             ["check", "--json", "document.adoc"],
             ["check", "document.adoc", "--json"],
         ] {
-            let Action::Run(parsed) = parse_arguments(arguments(&values)).expect("valid arguments")
-            else {
-                panic!("expected run action");
-            };
-            assert!(matches!(
-                parsed.command,
-                CommandOptions::Check(options) if options.format == DiagnosticFormat::Json
-            ));
-            assert_eq!(
-                parsed.input.as_deref(),
-                Some(std::path::Path::new("document.adoc"))
-            );
+            assert!(parse_arguments(arguments(&values)).is_err());
         }
     }
 
@@ -2049,20 +2056,20 @@ mod tests {
         let Action::Run(parsed) = parse_arguments(arguments(&[
             "convert",
             "--include",
-            "--base-dir",
+            "--stdin-base",
             "docs",
             "--allow-root",
             ".",
             "--allow-root",
             "vendor",
-            "manual.adoc",
+            "-",
         ]))
         .expect("valid arguments") else {
             panic!("expected run action");
         };
         assert!(parsed.include);
         assert_eq!(
-            parsed.base_dir.as_deref(),
+            parsed.stdin_base.as_deref(),
             Some(std::path::Path::new("docs"))
         );
         assert_eq!(parsed.allowed_roots.len(), 2);

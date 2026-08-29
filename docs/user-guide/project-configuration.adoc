@@ -105,7 +105,7 @@ roles = ["definition", "theorem"]
 
 |``lint.rules.<CODE>.enabled``
 |``true``または``false``（既定値は規則ごとに異なります）
-|診断規則を有効性を指定します。``<CODE>``には``adocweave check --list-rules --format json``で表示されるcodeを指定します。
+|診断規則の有効/無効を指定します。``<CODE>``には``adocweave rules --format json``で表示されるcodeを指定します。
 
 |``lint.rules.<CODE>.severity``
 |``error``、``warning``、``information``または``hint``（既定値は規則ごとに異なります）
@@ -204,7 +204,7 @@ severity = "error"
 
 [source,console]
 ----
-adocweave check --list-rules --format json
+adocweave rules --format json
 ----
 
 設定例の``analysis.attributes.release``は、文書属性``release``の値を``draft``にします。

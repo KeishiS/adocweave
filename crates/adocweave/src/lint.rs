@@ -125,169 +125,174 @@ lint_rule_catalog!(
     (
         TRAILING_WHITESPACE,
         "trailing-whitespace",
-        "行末の不要な空白",
+        "Trailing whitespace",
         true
     ),
     (
         EXCESSIVE_BLANK_LINES,
         "excessive-blank-lines",
-        "連続する空行の上限超過",
+        "Too many consecutive blank lines",
         true
     ),
-    (LINE_TOO_LONG, "line-too-long", "行長の上限超過", false),
+    (
+        LINE_TOO_LONG,
+        "line-too-long",
+        "Line exceeds the configured length",
+        false
+    ),
     (
         INVALID_HEADING_LEVEL,
         "invalid-heading-level",
-        "不正な見出しレベル",
+        "Invalid heading level",
         false
     ),
     (
         DUPLICATE_HEADING_ID,
         "duplicate-heading-id",
-        "重複する見出しID",
+        "Duplicate heading ID",
         false
     ),
     (
         HEADING_MARKER_SPACE,
         "heading-marker-space",
-        "見出し記号の後の空白不足",
+        "Missing space after a heading marker",
         true
     ),
     (
         MONOSPACE_BOUNDARY,
         "monospace-boundary",
-        "制約付き等幅表記の境界違反",
+        "Invalid constrained monospace delimiter placement",
         false
     ),
     (
         UNCLOSED_INLINE,
         "unclosed-inline",
-        "閉じられていないインライン構文",
+        "Unclosed inline syntax",
         false
     ),
     (
         NESTING_LIMIT_EXCEEDED,
         "nesting-limit-exceeded",
-        "構文の入れ子上限超過",
+        "Syntax nesting limit exceeded",
         false
     ),
-    (
-        UNCLOSED_BLOCK,
-        "unclosed-block",
-        "閉じられていないブロック",
-        false
-    ),
+    (UNCLOSED_BLOCK, "unclosed-block", "Unclosed block", false),
     (
         MISSING_SOURCE_LANGUAGE,
         "missing-source-language",
-        "ソースブロックの言語指定不足",
+        "Missing source block language",
         false
     ),
     (
         INVALID_ATTRIBUTE,
         "invalid-attribute",
-        "不正な文書属性",
+        "Invalid document attribute",
         false
     ),
     (
         UNDEFINED_ATTRIBUTE,
         "undefined-attribute",
-        "未定義の文書属性参照",
+        "Undefined document attribute reference",
         false
     ),
     (
         ATTRIBUTE_EXPANSION,
         "attribute-expansion",
-        "不正な文書属性展開",
+        "Invalid document attribute expansion",
         false
     ),
     (
         UNUSED_ATTRIBUTE,
         "unused-attribute",
-        "使用されていない文書属性",
+        "Unused document attribute",
         false,
         false
     ),
     (
         PROTECTED_ATTRIBUTE,
         "protected-attribute",
-        "保護された文書属性の変更",
+        "Protected document attribute modification",
         false
     ),
-    (INVALID_ANCHOR, "invalid-anchor", "不正なアンカー", false),
+    (INVALID_ANCHOR, "invalid-anchor", "Invalid anchor", false),
     (
         DUPLICATE_ANCHOR,
         "duplicate-anchor",
-        "重複するアンカー",
+        "Duplicate anchor",
         false
     ),
     (
         INVALID_URL_SCHEME,
         "invalid-url-scheme",
-        "許可されていないURL",
+        "Disallowed URL",
         false
     ),
     (
         UNPROCESSED_DIRECTIVE,
         "unprocessed-directive",
-        "前処理されていないpreprocessor directive",
+        "Unprocessed preprocessor directive",
         false
     ),
     (
         INVALID_CROSS_REFERENCE,
         "invalid-cross-reference",
-        "不正な相互参照",
+        "Invalid cross-reference",
         false
     ),
     (
         UNRESOLVED_CROSS_REFERENCE,
         "unresolved-cross-reference",
-        "未解決の相互参照",
+        "Unresolved cross-reference",
         false
     ),
     (
         ASCIIDOC_FILE_LINK,
         "asciidoc-file-link",
-        "AsciiDoc文書への通常リンク",
+        "Regular link to an AsciiDoc document",
         true
     ),
     (
         NON_ASCIIDOC_XREF,
         "non-asciidoc-xref",
-        "AsciiDoc以外のファイルへの相互参照",
+        "Cross-reference to a non-AsciiDoc file",
         true
     ),
     (
         MACRO_BOUNDARY,
         "macro-boundary",
-        "inline macroの開始境界違反",
+        "Invalid inline macro delimiter placement",
         true,
         false
     ),
     (
         INCONSISTENT_LIST,
         "inconsistent-list",
-        "一貫しないリスト構造",
+        "Inconsistent list structure",
         true
     ),
     (
         INVALID_LIST_PRESENTATION,
         "invalid-list-presentation",
-        "不正なリスト表示指定",
+        "Invalid list presentation",
         false
     ),
-    (INVALID_STEM, "invalid-stem", "不正な数式構文", false),
-    (INVALID_TABLE, "invalid-table", "不正な表", false),
+    (
+        INVALID_STEM,
+        "invalid-stem",
+        "Invalid mathematical syntax",
+        false
+    ),
+    (INVALID_TABLE, "invalid-table", "Invalid table", false),
     (
         INVALID_CATALOG,
         "invalid-catalog",
-        "不正な文書カタログ",
+        "Invalid document catalog",
         false
     ),
     (
         INVALID_DOCUMENT_STRUCTURE,
         "invalid-document-structure",
-        "不正な文書構造",
+        "Invalid document structure",
         false
     ),
 );

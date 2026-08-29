@@ -215,6 +215,12 @@ Nix入力はDependabotの対象外であり、``flake.lock``を手動で更新�
 * 利用者から見える変更では、関連文書を同じpull requestで更新します。
 * 文書内のcommand例は、可能な限りCIまたは自動testで実行できる形にします。
 
+== CLIの表示言語
+
+CLIが端末へ表示するhelp、診断、進捗、要約およびerrorは英語で記述します。JSON、SARIFなどの
+機械可読な出力に含める説明文も英語とします。設定名、option名、診断codeおよび出力schemaと同様に、
+表示言語を実行環境や文書の言語によって切り替えません。
+
 == Pull request
 
 pull requestを作成するときは、link:.github/pull_request_template.md[Pull Request template]を使用します。

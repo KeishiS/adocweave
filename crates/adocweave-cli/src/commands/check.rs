@@ -17,8 +17,7 @@ pub(crate) struct Options {
     pub(crate) fail_on: FailOn,
     pub(crate) summary: bool,
     pub(crate) fix: bool,
-    pub(crate) dry_run: bool,
-    pub(crate) list_rules: bool,
+    pub(crate) diff: bool,
     pub(crate) enabled_rules: Vec<diagnostic::LintRuleId>,
 }
 
@@ -566,8 +565,7 @@ mod tests {
             fail_on: FailOn::Error,
             summary: false,
             fix: false,
-            dry_run: false,
-            list_rules: false,
+            diff: false,
             enabled_rules: Vec::new(),
         }
     }

@@ -8,7 +8,6 @@ pub(crate) struct Options {
     pub(crate) check: bool,
     pub(crate) write: bool,
     pub(crate) diff: bool,
-    pub(crate) dry_run: bool,
     pub(crate) summary: bool,
 }
 
@@ -144,7 +143,7 @@ impl BatchWorkflow {
                 decode_input(&formatted)?,
             ));
         }
-        if self.options.write && !self.options.dry_run {
+        if self.options.write {
             self.pending_writes.push(WriteRequest {
                 path,
                 original,
@@ -194,7 +193,7 @@ fn stable_format_config(
     format
 }
 
-fn unified_diff(path: &Path, original: &str, formatted: &str) -> String {
+pub(crate) fn unified_diff(path: &Path, original: &str, formatted: &str) -> String {
     similar::TextDiff::from_lines(original, formatted)
         .unified_diff()
         .header(
@@ -277,7 +276,6 @@ mod tests {
         let mut workflow = BatchWorkflow::new(
             Options {
                 check: true,
-                dry_run: true,
                 ..Options::default()
             },
             1,

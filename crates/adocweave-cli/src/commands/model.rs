@@ -5,6 +5,7 @@ pub(crate) enum CommandId {
     Check,
     Format,
     Symbols,
+    Rules,
     ConfigShow,
     Completion,
     Help,
@@ -25,33 +26,49 @@ const INPUT_COMMANDS: &[CommandId] = &[
     CommandId::Format,
     CommandId::Symbols,
 ];
+const STDIN_COMMANDS: &[CommandId] = &[
+    CommandId::Convert,
+    CommandId::Check,
+    CommandId::Format,
+    CommandId::Symbols,
+];
+const HELP_COMMANDS: &[CommandId] = &[
+    CommandId::Convert,
+    CommandId::Preview,
+    CommandId::Check,
+    CommandId::Format,
+    CommandId::Symbols,
+    CommandId::Rules,
+    CommandId::ConfigShow,
+    CommandId::Completion,
+];
 const CHECK_AND_FORMAT: &[CommandId] = &[CommandId::Check, CommandId::Format];
 const CONVERT_AND_PREVIEW: &[CommandId] = &[CommandId::Convert, CommandId::Preview];
 
 const DIAGNOSTIC_FORMATS: &[&str] = &["human", "json", "github", "sarif"];
+const RULE_FORMATS: &[&str] = &["human", "json"];
 const FAILURE_LEVELS: &[&str] = &["error", "warning", "never"];
 const COLOR_CHOICES: &[&str] = &["auto", "always", "never"];
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) enum OptionId {
     DiagnosticFormat,
+    RuleFormat,
     Json,
     FailOn,
     Summary,
     Fix,
     Config,
     NoConfig,
-    ListRules,
     EnableRule,
     FormatCheck,
     FormatWrite,
-    FormatDiff,
-    DryRun,
+    Diff,
     Glob,
     Color,
     Include,
     NoInclude,
-    BaseDir,
+    StdinBase,
     AllowRoot,
     ProjectRoot,
     Complete,
@@ -83,8 +100,7 @@ pub(crate) struct OptionSpec {
     pub(crate) commands: &'static [CommandId],
     pub(crate) root: bool,
     pub(crate) version: bool,
-    pub(crate) root_help_line: &'static str,
-    pub(crate) command_help_line: Option<&'static str>,
+    pub(crate) help_line: &'static str,
 }
 
 impl OptionSpec {
@@ -134,18 +150,29 @@ pub(crate) const OPTIONS: &[OptionSpec] = &[
         commands: &[CommandId::Check],
         root: false,
         version: false,
-        root_help_line: "  --format FORMAT  Emit check diagnostics as human, json, github, or sarif\n",
-        command_help_line: None,
+        help_line: "  --format FORMAT  Output format: human, json, github, or sarif (default: human)\n",
+    },
+    OptionSpec {
+        id: OptionId::RuleFormat,
+        names: &["--format"],
+        value: OptionValue::Required {
+            metavar: "FORMAT",
+            missing: "a value",
+            candidates: RULE_FORMATS,
+        },
+        commands: &[CommandId::Rules],
+        root: false,
+        version: false,
+        help_line: "  --format FORMAT  Output format: human or json (default: human)\n",
     },
     OptionSpec {
         id: OptionId::Json,
         names: &["--json"],
         value: OptionValue::Flag,
-        commands: &[CommandId::Check],
+        commands: &[],
         root: false,
         version: true,
-        root_help_line: "  --json      Emit check diagnostics as JSON (deprecated alias)\n",
-        command_help_line: None,
+        help_line: "  --json  Print version information as JSON\n",
     },
     OptionSpec {
         id: OptionId::FailOn,
@@ -158,8 +185,7 @@ pub(crate) const OPTIONS: &[OptionSpec] = &[
         commands: &[CommandId::Check],
         root: false,
         version: false,
-        root_help_line: "  --fail-on LEVEL  Fail check on error, warning, or never (default: error)\n",
-        command_help_line: None,
+        help_line: "  --fail-on LEVEL  Fail on error, warning, or never (default: error)\n",
     },
     OptionSpec {
         id: OptionId::Summary,
@@ -168,8 +194,7 @@ pub(crate) const OPTIONS: &[OptionSpec] = &[
         commands: CHECK_AND_FORMAT,
         root: false,
         version: false,
-        root_help_line: "  --summary   Emit check diagnostic counts to standard error\n",
-        command_help_line: None,
+        help_line: "  --summary  Print counts to standard error\n",
     },
     OptionSpec {
         id: OptionId::Fix,
@@ -178,8 +203,7 @@ pub(crate) const OPTIONS: &[OptionSpec] = &[
         commands: &[CommandId::Check],
         root: false,
         version: false,
-        root_help_line: "  --fix       Apply non-conflicting, always-safe check fixes\n",
-        command_help_line: None,
+        help_line: "  --fix  Write fixes that are always safe to apply\n",
     },
     OptionSpec {
         id: OptionId::Config,
@@ -192,8 +216,7 @@ pub(crate) const OPTIONS: &[OptionSpec] = &[
         commands: DOCUMENT_COMMANDS,
         root: false,
         version: false,
-        root_help_line: "  --config FILE  Use an explicit project configuration\n",
-        command_help_line: Some("  --config FILE  指定したプロジェクト設定を使用\n"),
+        help_line: "  --config FILE  Use the specified project configuration\n",
     },
     OptionSpec {
         id: OptionId::NoConfig,
@@ -202,18 +225,7 @@ pub(crate) const OPTIONS: &[OptionSpec] = &[
         commands: DOCUMENT_COMMANDS,
         root: false,
         version: false,
-        root_help_line: "  --no-config    Disable project configuration discovery\n",
-        command_help_line: Some("  --no-config  プロジェクト設定の探索を無効化\n"),
-    },
-    OptionSpec {
-        id: OptionId::ListRules,
-        names: &["--list-rules"],
-        value: OptionValue::Flag,
-        commands: &[CommandId::Check],
-        root: false,
-        version: false,
-        root_help_line: "  --list-rules  List available check rules; requires --format json\n",
-        command_help_line: None,
+        help_line: "  --no-config  Disable project configuration discovery\n",
     },
     OptionSpec {
         id: OptionId::EnableRule,
@@ -226,8 +238,7 @@ pub(crate) const OPTIONS: &[OptionSpec] = &[
         commands: &[CommandId::Check],
         root: false,
         version: false,
-        root_help_line: "  --enable-rule CODE  Enable an opt-in check rule; repeatable\n",
-        command_help_line: None,
+        help_line: "  --enable-rule CODE  Enable an opt-in rule; repeatable\n",
     },
     OptionSpec {
         id: OptionId::FormatCheck,
@@ -236,8 +247,7 @@ pub(crate) const OPTIONS: &[OptionSpec] = &[
         commands: &[CommandId::Format],
         root: false,
         version: false,
-        root_help_line: "  --check     Check formatting without writing formatted text\n",
-        command_help_line: None,
+        help_line: "  --check  Check whether formatting changes are required\n",
     },
     OptionSpec {
         id: OptionId::FormatWrite,
@@ -246,28 +256,16 @@ pub(crate) const OPTIONS: &[OptionSpec] = &[
         commands: &[CommandId::Format],
         root: false,
         version: false,
-        root_help_line: "  --write     Atomically replace formatted input files\n",
-        command_help_line: None,
+        help_line: "  --write  Write formatted output to files\n",
     },
     OptionSpec {
-        id: OptionId::FormatDiff,
+        id: OptionId::Diff,
         names: &["--diff"],
-        value: OptionValue::Flag,
-        commands: &[CommandId::Format],
-        root: false,
-        version: false,
-        root_help_line: "  --diff      Print unified formatting differences\n",
-        command_help_line: None,
-    },
-    OptionSpec {
-        id: OptionId::DryRun,
-        names: &["--dry-run"],
         value: OptionValue::Flag,
         commands: CHECK_AND_FORMAT,
         root: false,
         version: false,
-        root_help_line: "  --dry-run   Report changes without writing them\n",
-        command_help_line: None,
+        help_line: "  --diff  Print changes as a unified diff\n",
     },
     OptionSpec {
         id: OptionId::Glob,
@@ -280,8 +278,7 @@ pub(crate) const OPTIONS: &[OptionSpec] = &[
         commands: CHECK_AND_FORMAT,
         root: false,
         version: false,
-        root_help_line: "  --glob PATTERN  Add files matching a glob pattern\n",
-        command_help_line: None,
+        help_line: "  --glob PATTERN  Add matching files; repeatable\n",
     },
     OptionSpec {
         id: OptionId::Color,
@@ -294,10 +291,7 @@ pub(crate) const OPTIONS: &[OptionSpec] = &[
         commands: INPUT_COMMANDS,
         root: false,
         version: false,
-        root_help_line: "  --color WHEN  Use auto, always, or never for terminal colors\n",
-        command_help_line: Some(
-            "  --color WHEN  端末表示の色をauto、always、neverから選択（既定値: auto）\n",
-        ),
+        help_line: "  --color WHEN  Color output: auto, always, or never (default: auto)\n",
     },
     OptionSpec {
         id: OptionId::Include,
@@ -306,8 +300,7 @@ pub(crate) const OPTIONS: &[OptionSpec] = &[
         commands: INPUT_COMMANDS,
         root: false,
         version: false,
-        root_help_line: "  --include   Process local includes even when configuration disables them\n",
-        command_help_line: Some("  --include  設定で無効にしていてもローカルincludeを展開\n"),
+        help_line: "  --include  Process local includes even if disabled by configuration\n",
     },
     OptionSpec {
         id: OptionId::NoInclude,
@@ -316,22 +309,20 @@ pub(crate) const OPTIONS: &[OptionSpec] = &[
         commands: INPUT_COMMANDS,
         root: false,
         version: false,
-        root_help_line: "  --no-include  Leave include directives unresolved\n",
-        command_help_line: Some("  --no-include  include指示を展開しない\n"),
+        help_line: "  --no-include  Leave include directives unresolved\n",
     },
     OptionSpec {
-        id: OptionId::BaseDir,
-        names: &["--base-dir"],
+        id: OptionId::StdinBase,
+        names: &["--stdin-base"],
         value: OptionValue::Required {
             metavar: "DIR",
             missing: "a directory",
             candidates: &[],
         },
-        commands: INPUT_COMMANDS,
+        commands: STDIN_COMMANDS,
         root: false,
         version: false,
-        root_help_line: "  --base-dir DIR    Resolve root document includes from DIR\n",
-        command_help_line: Some("  --base-dir DIR  起点文書のincludeをDIRから解決\n"),
+        help_line: "  --stdin-base DIR  Resolve standard-input includes from DIR\n",
     },
     OptionSpec {
         id: OptionId::AllowRoot,
@@ -344,8 +335,7 @@ pub(crate) const OPTIONS: &[OptionSpec] = &[
         commands: INPUT_COMMANDS,
         root: false,
         version: false,
-        root_help_line: "  --allow-root DIR  Permit include resources below DIR; repeatable\n",
-        command_help_line: Some("  --allow-root DIR  includeを許可する範囲（複数指定可）\n"),
+        help_line: "  --allow-root DIR  Permit includes below DIR; repeatable\n",
     },
     OptionSpec {
         id: OptionId::ProjectRoot,
@@ -358,8 +348,7 @@ pub(crate) const OPTIONS: &[OptionSpec] = &[
         commands: &[CommandId::Check],
         root: false,
         version: false,
-        root_help_line: "  --project-root DIR  Check local file targets below DIR; check only\n",
-        command_help_line: None,
+        help_line: "  --project-root DIR  Check local file targets below DIR\n",
     },
     OptionSpec {
         id: OptionId::Complete,
@@ -368,8 +357,7 @@ pub(crate) const OPTIONS: &[OptionSpec] = &[
         commands: &[CommandId::Convert],
         root: false,
         version: false,
-        root_help_line: "  --complete  Convert to a complete HTML document instead of a fragment\n",
-        command_help_line: None,
+        help_line: "  --complete  Output a complete HTML document\n",
     },
     OptionSpec {
         id: OptionId::Css,
@@ -382,8 +370,7 @@ pub(crate) const OPTIONS: &[OptionSpec] = &[
         commands: CONVERT_AND_PREVIEW,
         root: false,
         version: false,
-        root_help_line: "  --css FILE      Embed CSS from FILE into the complete document; repeatable\n",
-        command_help_line: Some("  --css FILE  完全なHTML文書へCSSを埋め込み（複数指定可）\n"),
+        help_line: "  --css FILE  Embed CSS from FILE; repeatable\n",
     },
     OptionSpec {
         id: OptionId::CssUrl,
@@ -396,8 +383,7 @@ pub(crate) const OPTIONS: &[OptionSpec] = &[
         commands: CONVERT_AND_PREVIEW,
         root: false,
         version: false,
-        root_help_line: "  --css-url URL   Link an allowed stylesheet URL; repeatable\n",
-        command_help_line: Some("  --css-url URL  許可されたCSSのURLを追加（複数指定可）\n"),
+        help_line: "  --css-url URL  Link an allowed CSS URL; repeatable\n",
     },
     OptionSpec {
         id: OptionId::Bind,
@@ -410,8 +396,7 @@ pub(crate) const OPTIONS: &[OptionSpec] = &[
         commands: &[CommandId::Preview],
         root: false,
         version: false,
-        root_help_line: "  --bind ADDRESS  Preview listen address (default: 127.0.0.1)\n",
-        command_help_line: Some("  --bind ADDRESS  待ち受けるIPアドレス（既定値: 127.0.0.1）\n"),
+        help_line: "  --bind ADDRESS  Listen address (default: 127.0.0.1)\n",
     },
     OptionSpec {
         id: OptionId::Port,
@@ -424,8 +409,7 @@ pub(crate) const OPTIONS: &[OptionSpec] = &[
         commands: &[CommandId::Preview],
         root: false,
         version: false,
-        root_help_line: "  --port PORT     Preview listen port (default: 4000)\n",
-        command_help_line: Some("  --port PORT  待ち受けるポート（既定値: 4000）\n"),
+        help_line: "  --port PORT  Listen port (default: 4000)\n",
     },
     OptionSpec {
         id: OptionId::Debounce,
@@ -438,10 +422,7 @@ pub(crate) const OPTIONS: &[OptionSpec] = &[
         commands: &[CommandId::Preview],
         root: false,
         version: false,
-        root_help_line: "  --debounce-ms MILLISECONDS  Preview rebuild debounce (default: 100)\n",
-        command_help_line: Some(
-            "  --debounce-ms MILLISECONDS  連続した変更をまとめる待ち時間（既定値: 100）\n",
-        ),
+        help_line: "  --debounce-ms MILLISECONDS  Rebuild debounce interval (default: 100)\n",
     },
     OptionSpec {
         id: OptionId::AllowExternal,
@@ -450,10 +431,7 @@ pub(crate) const OPTIONS: &[OptionSpec] = &[
         commands: &[CommandId::Preview],
         root: false,
         version: false,
-        root_help_line: "  --allow-external  Permit an explicitly selected non-loopback address\n",
-        command_help_line: Some(
-            "  --allow-external  ループバック以外のIPアドレスでの待ち受けを許可\n",
-        ),
+        help_line: "  --allow-external  Permit an explicitly selected non-loopback address\n",
     },
     OptionSpec {
         id: OptionId::Version,
@@ -462,18 +440,16 @@ pub(crate) const OPTIONS: &[OptionSpec] = &[
         commands: &[],
         root: true,
         version: false,
-        root_help_line: "  -V, --version  Print version\n",
-        command_help_line: None,
+        help_line: "  -V, --version [--json]  Print version\n",
     },
     OptionSpec {
         id: OptionId::Help,
         names: &["-h", "--help"],
         value: OptionValue::Flag,
-        commands: DOCUMENT_COMMANDS,
+        commands: HELP_COMMANDS,
         root: true,
         version: false,
-        root_help_line: "  -h, --help  Print help\n",
-        command_help_line: Some("  -h, --help  この説明を表示\n"),
+        help_line: "  -h, --help  Print help\n",
     },
 ];
 
@@ -492,32 +468,44 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         id: CommandId::Convert,
         path: &["convert"],
         root_usage: "",
-        summary: "Convert an AsciiDoc document",
+        summary: "Convert an AsciiDoc document to HTML",
         help: Some(
-            "Usage:\n  adocweave convert [OPTIONS] [FILE]\n\nExample:\n  adocweave convert --complete manual.adoc\n",
+            "Usage:\n  adocweave convert [OPTIONS] [FILE]\n\nArguments:\n  FILE  Input file; omit or use - for standard input\n\nOptions:\n@OPTIONS@\nExample:\n  adocweave convert --complete manual.adoc\n",
         ),
-        help_options: &[],
+        help_options: &[
+            OptionId::Complete,
+            OptionId::Css,
+            OptionId::CssUrl,
+            OptionId::Include,
+            OptionId::NoInclude,
+            OptionId::StdinBase,
+            OptionId::AllowRoot,
+            OptionId::Config,
+            OptionId::NoConfig,
+            OptionId::Color,
+            OptionId::Help,
+        ],
     },
     CommandSpec {
         id: CommandId::Preview,
         path: &["preview"],
         root_usage: "",
-        summary: "Serve a live, loopback-only document preview",
+        summary: "Serve a live document preview",
         help: Some(
             "\
-使用法:
+Usage:
   adocweave preview [OPTIONS] FILE
 
-引数:
-  FILE  プレビューするAsciiDocファイル（標準入力とシンボリックリンクは使用不可）
+Arguments:
+  FILE  AsciiDoc file to preview; standard input and symbolic links are not supported
 
-オプション:
+Options:
 @OPTIONS@
-安全性:
-  ループバック以外のIPアドレスには--allow-externalが必要です。
-  このサーバーは利用者認証とTLSによる通信の暗号化を提供しません。
+Security:
+  A non-loopback address requires --allow-external.
+  The server does not provide authentication or TLS encryption.
 
-例:
+Example:
   adocweave preview --port 8080 manual.adoc
 ",
         ),
@@ -528,7 +516,6 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             OptionId::AllowExternal,
             OptionId::Include,
             OptionId::NoInclude,
-            OptionId::BaseDir,
             OptionId::AllowRoot,
             OptionId::Css,
             OptionId::CssUrl,
@@ -542,21 +529,52 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         id: CommandId::Check,
         path: &["check"],
         root_usage: "",
-        summary: "Check an AsciiDoc document",
+        summary: "Check AsciiDoc documents",
         help: Some(
-            "Usage:\n  adocweave check [OPTIONS] [FILE...]\n\nExamples:\n  adocweave check --fail-on warning docs\n  adocweave check --format github --summary manual.adoc\n  adocweave check --format sarif docs > adocweave.sarif\n  adocweave check --fix docs\n",
+            "Usage:\n  adocweave check [OPTIONS] [FILE...]\n\nArguments:\n  FILE  Input file or directory; omit or use - for standard input\n\nOptions:\n@OPTIONS@\nExamples:\n  adocweave check --fail-on warning docs\n  adocweave check --format sarif docs > adocweave.sarif\n  adocweave check --fix docs\n  adocweave check --fix --diff docs\n",
         ),
-        help_options: &[],
+        help_options: &[
+            OptionId::DiagnosticFormat,
+            OptionId::FailOn,
+            OptionId::Summary,
+            OptionId::Fix,
+            OptionId::Diff,
+            OptionId::EnableRule,
+            OptionId::Glob,
+            OptionId::ProjectRoot,
+            OptionId::Include,
+            OptionId::NoInclude,
+            OptionId::StdinBase,
+            OptionId::AllowRoot,
+            OptionId::Config,
+            OptionId::NoConfig,
+            OptionId::Color,
+            OptionId::Help,
+        ],
     },
     CommandSpec {
         id: CommandId::Format,
         path: &["format"],
         root_usage: "",
-        summary: "Format an AsciiDoc document",
+        summary: "Format AsciiDoc documents",
         help: Some(
-            "Usage:\n  adocweave format [OPTIONS] [FILE...]\n\nExamples:\n  adocweave format --check docs\n  adocweave format --diff manual.adoc\n  adocweave format --write docs\n",
+            "Usage:\n  adocweave format [OPTIONS] [FILE...]\n\nArguments:\n  FILE  Input file or directory; omit or use - for standard input\n\nOptions:\n@OPTIONS@\nExamples:\n  adocweave format --check docs\n  adocweave format --diff manual.adoc\n  adocweave format --write docs\n",
         ),
-        help_options: &[],
+        help_options: &[
+            OptionId::FormatCheck,
+            OptionId::Diff,
+            OptionId::FormatWrite,
+            OptionId::Summary,
+            OptionId::Glob,
+            OptionId::Include,
+            OptionId::NoInclude,
+            OptionId::StdinBase,
+            OptionId::AllowRoot,
+            OptionId::Config,
+            OptionId::NoConfig,
+            OptionId::Color,
+            OptionId::Help,
+        ],
     },
     CommandSpec {
         id: CommandId::Symbols,
@@ -564,9 +582,28 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         root_usage: "",
         summary: "Print document symbols as JSON",
         help: Some(
-            "Usage:\n  adocweave symbols [FILE]\n\nExample:\n  adocweave symbols manual.adoc\n",
+            "Usage:\n  adocweave symbols [OPTIONS] [FILE]\n\nArguments:\n  FILE  Input file; omit or use - for standard input\n\nOptions:\n@OPTIONS@\nExample:\n  adocweave symbols manual.adoc\n",
         ),
-        help_options: &[],
+        help_options: &[
+            OptionId::Include,
+            OptionId::NoInclude,
+            OptionId::StdinBase,
+            OptionId::AllowRoot,
+            OptionId::Config,
+            OptionId::NoConfig,
+            OptionId::Color,
+            OptionId::Help,
+        ],
+    },
+    CommandSpec {
+        id: CommandId::Rules,
+        path: &["rules"],
+        root_usage: "",
+        summary: "List diagnostic rules",
+        help: Some(
+            "Usage:\n  adocweave rules [OPTIONS]\n\nOptions:\n@OPTIONS@\nExamples:\n  adocweave rules\n  adocweave rules --format json\n",
+        ),
+        help_options: &[OptionId::RuleFormat, OptionId::Help],
     },
     CommandSpec {
         id: CommandId::ConfigShow,
@@ -574,23 +611,25 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         root_usage: "",
         summary: "Print the resolved project configuration as JSON",
         help: Some(
-            "Usage:\n  adocweave config show [--config FILE | --no-config]\n\nExample:\n  adocweave config show\n",
+            "Usage:\n  adocweave config show [OPTIONS]\n\nOptions:\n@OPTIONS@\nExample:\n  adocweave config show\n",
         ),
-        help_options: &[],
+        help_options: &[OptionId::Config, OptionId::NoConfig, OptionId::Help],
     },
     CommandSpec {
         id: CommandId::Completion,
         path: &["completion"],
         root_usage: " SHELL",
-        summary: "Print Bash, Zsh, Fish, or PowerShell completion",
-        help: None,
-        help_options: &[],
+        summary: "Print a shell completion script",
+        help: Some(
+            "Usage:\n  adocweave completion SHELL\n\nArguments:\n  SHELL  One of bash, zsh, fish, or powershell\n\nOptions:\n@OPTIONS@\nExample:\n  adocweave completion bash\n",
+        ),
+        help_options: &[OptionId::Help],
     },
     CommandSpec {
         id: CommandId::Help,
         path: &["help"],
         root_usage: "",
-        summary: "Print this message",
+        summary: "Print root help",
         help: None,
         help_options: &[],
     },
@@ -659,15 +698,24 @@ pub(crate) fn option_by_name(name: &str) -> Option<&'static OptionSpec> {
 }
 
 pub(crate) fn option_for_command(command: CommandId, name: &str) -> Option<&'static OptionSpec> {
-    option_by_name(name).filter(|option| option.applies_to(command))
+    validate_public_model();
+    OPTIONS
+        .iter()
+        .find(|option| option.names.contains(&name) && option.applies_to(command))
 }
 
 pub(crate) fn root_option(name: &str) -> Option<&'static OptionSpec> {
-    option_by_name(name).filter(|option| option.root)
+    validate_public_model();
+    OPTIONS
+        .iter()
+        .find(|option| option.names.contains(&name) && option.root)
 }
 
 pub(crate) fn version_option(name: &str) -> Option<&'static OptionSpec> {
-    option_by_name(name).filter(|option| option.version)
+    validate_public_model();
+    OPTIONS
+        .iter()
+        .find(|option| option.names.contains(&name) && option.version)
 }
 
 pub(crate) fn option(id: OptionId) -> &'static OptionSpec {
@@ -809,14 +857,14 @@ fn validate_options(options: &[OptionSpec], commands: &[CommandSpec]) -> Result<
         {
             return Err("options must have valid unique names including one long name");
         }
-        if option.root_help_line.is_empty()
-            || !option.root_help_line.ends_with('\n')
+        if option.help_line.is_empty()
+            || !option.help_line.ends_with('\n')
             || !option
                 .names
                 .iter()
-                .all(|name| option.root_help_line.contains(name))
+                .all(|name| option.help_line.contains(name))
         {
-            return Err("root help lines must contain every option name and end with a newline");
+            return Err("help lines must contain every option name and end with a newline");
         }
         match option.value {
             OptionValue::Flag => {}
@@ -827,7 +875,7 @@ fn validate_options(options: &[OptionSpec], commands: &[CommandSpec]) -> Result<
             } => {
                 if !valid_metavar(metavar)
                     || missing.is_empty()
-                    || !option.root_help_line.contains(metavar)
+                    || !option.help_line.contains(metavar)
                 {
                     return Err("valued options require a valid metavar and missing-value label");
                 }
@@ -858,7 +906,13 @@ fn validate_options(options: &[OptionSpec], commands: &[CommandSpec]) -> Result<
             if option.id == other.id {
                 return Err("option ids must be unique");
             }
-            if option.names.iter().any(|name| other.names.contains(name)) {
+            let overlapping_scope = option
+                .commands
+                .iter()
+                .any(|command| other.commands.contains(command))
+                || (option.root && other.root)
+                || (option.version && other.version);
+            if overlapping_scope && option.names.iter().any(|name| other.names.contains(name)) {
                 return Err("option names must be unique");
             }
         }
@@ -871,17 +925,21 @@ fn validate_options(options: &[OptionSpec], commands: &[CommandSpec]) -> Result<
             let Some(option) = options.iter().find(|option| option.id == *option_id) else {
                 return Err("command help options must exist");
             };
-            let Some(line) = option.command_help_line else {
-                return Err("command help options require a command help line");
-            };
-            if !option.applies_to(command.id)
-                || !line.contains(option.canonical_name())
-                || option
-                    .metavar()
-                    .is_some_and(|metavar| !line.contains(metavar))
-                || !line.ends_with('\n')
+            let line = option.help_line;
+            if !option.applies_to(command.id) {
+                return Err("command help options must apply to the command");
+            }
+            if !line.contains(option.canonical_name()) {
+                return Err("command help lines must contain the canonical option name");
+            }
+            if option
+                .metavar()
+                .is_some_and(|metavar| !line.contains(metavar))
             {
-                return Err("command help lines must match option applicability and syntax");
+                return Err("command help lines must contain the option metavar");
+            }
+            if !line.ends_with('\n') {
+                return Err("command help lines must end with a newline");
             }
         }
     }
@@ -895,11 +953,7 @@ pub(crate) fn command_help(id: CommandId) -> Option<String> {
         let options = command
             .help_options
             .iter()
-            .map(|id| {
-                option(*id)
-                    .command_help_line
-                    .expect("validated command help option")
-            })
+            .map(|id| option(*id).help_line)
             .collect::<String>();
         template.replace("@OPTIONS@", &options)
     })
@@ -918,20 +972,18 @@ pub(crate) fn root_help() -> String {
     }
     let options = OPTIONS
         .iter()
-        .map(|option| option.root_help_line)
+        .filter(|option| option.root)
+        .map(|option| option.help_line)
         .collect::<String>();
     format!(
         "\
 AdocWeave command-line interface
 
 Usage:
-  adocweave <COMMAND> [FILE]
+  adocweave <COMMAND> [ARGUMENTS]
 
 Commands:
 {commands}
-Arguments:
-  [FILE]   Input file; omit it or use '-' to read standard input
-
 Options:
 {options}\
 "
@@ -946,7 +998,7 @@ mod tests {
 
     #[test]
     fn command_model_has_unique_ids_and_paths() {
-        assert_eq!(COMMANDS.len(), 8);
+        assert_eq!(COMMANDS.len(), 9);
         assert_eq!(
             COMMANDS.iter().map(|spec| spec.id).collect::<BTreeSet<_>>(),
             BTreeSet::from([
@@ -955,6 +1007,7 @@ mod tests {
                 CommandId::Check,
                 CommandId::Format,
                 CommandId::Symbols,
+                CommandId::Rules,
                 CommandId::ConfigShow,
                 CommandId::Completion,
                 CommandId::Help,
@@ -975,7 +1028,7 @@ mod tests {
         }));
         assert_eq!(
             COMMANDS.iter().filter(|spec| spec.help.is_none()).count(),
-            2
+            1
         );
         assert_eq!(validate_model(COMMANDS), Ok(()));
     }
@@ -983,7 +1036,7 @@ mod tests {
     #[test]
     fn option_model_is_complete_and_has_exact_command_applicability() {
         assert_eq!(validate_options(OPTIONS, COMMANDS), Ok(()));
-        assert_eq!(OPTIONS.len(), 29);
+        assert_eq!(OPTIONS.len(), 28);
         assert_eq!(
             OPTIONS
                 .iter()
@@ -991,23 +1044,22 @@ mod tests {
                 .collect::<BTreeSet<_>>(),
             BTreeSet::from([
                 OptionId::DiagnosticFormat,
+                OptionId::RuleFormat,
                 OptionId::Json,
                 OptionId::FailOn,
                 OptionId::Summary,
                 OptionId::Fix,
                 OptionId::Config,
                 OptionId::NoConfig,
-                OptionId::ListRules,
                 OptionId::EnableRule,
                 OptionId::FormatCheck,
                 OptionId::FormatWrite,
-                OptionId::FormatDiff,
-                OptionId::DryRun,
+                OptionId::Diff,
                 OptionId::Glob,
                 OptionId::Color,
                 OptionId::Include,
                 OptionId::NoInclude,
-                OptionId::BaseDir,
+                OptionId::StdinBase,
                 OptionId::AllowRoot,
                 OptionId::ProjectRoot,
                 OptionId::Complete,
@@ -1035,7 +1087,7 @@ mod tests {
                 OptionId::Color,
                 OptionId::Include,
                 OptionId::NoInclude,
-                OptionId::BaseDir,
+                OptionId::StdinBase,
                 OptionId::AllowRoot,
                 OptionId::Complete,
                 OptionId::Css,
@@ -1051,7 +1103,6 @@ mod tests {
                 OptionId::Color,
                 OptionId::Include,
                 OptionId::NoInclude,
-                OptionId::BaseDir,
                 OptionId::AllowRoot,
                 OptionId::Css,
                 OptionId::CssUrl,
@@ -1066,20 +1117,18 @@ mod tests {
             ids(CommandId::Check),
             [
                 OptionId::DiagnosticFormat,
-                OptionId::Json,
                 OptionId::FailOn,
                 OptionId::Summary,
                 OptionId::Fix,
                 OptionId::Config,
                 OptionId::NoConfig,
-                OptionId::ListRules,
                 OptionId::EnableRule,
-                OptionId::DryRun,
+                OptionId::Diff,
                 OptionId::Glob,
                 OptionId::Color,
                 OptionId::Include,
                 OptionId::NoInclude,
-                OptionId::BaseDir,
+                OptionId::StdinBase,
                 OptionId::AllowRoot,
                 OptionId::ProjectRoot,
                 OptionId::Help,
@@ -1093,13 +1142,12 @@ mod tests {
                 OptionId::NoConfig,
                 OptionId::FormatCheck,
                 OptionId::FormatWrite,
-                OptionId::FormatDiff,
-                OptionId::DryRun,
+                OptionId::Diff,
                 OptionId::Glob,
                 OptionId::Color,
                 OptionId::Include,
                 OptionId::NoInclude,
-                OptionId::BaseDir,
+                OptionId::StdinBase,
                 OptionId::AllowRoot,
                 OptionId::Help,
             ]
@@ -1112,16 +1160,20 @@ mod tests {
                 OptionId::Color,
                 OptionId::Include,
                 OptionId::NoInclude,
-                OptionId::BaseDir,
+                OptionId::StdinBase,
                 OptionId::AllowRoot,
                 OptionId::Help,
             ]
         );
         assert_eq!(
+            ids(CommandId::Rules),
+            [OptionId::RuleFormat, OptionId::Help]
+        );
+        assert_eq!(
             ids(CommandId::ConfigShow),
             [OptionId::Config, OptionId::NoConfig, OptionId::Help]
         );
-        assert!(ids(CommandId::Completion).is_empty());
+        assert_eq!(ids(CommandId::Completion), [OptionId::Help]);
         assert!(ids(CommandId::Help).is_empty());
         assert_eq!(
             OPTIONS
@@ -1158,6 +1210,7 @@ mod tests {
     fn option_validation_rejects_contract_mutations() {
         let mut duplicate_name = OPTIONS.to_vec();
         duplicate_name[1].names = duplicate_name[0].names;
+        duplicate_name[1].commands = duplicate_name[0].commands;
         assert!(validate_options(&duplicate_name, COMMANDS).is_err());
 
         let mut unsafe_candidate = OPTIONS.to_vec();
@@ -1177,7 +1230,7 @@ mod tests {
             .iter_mut()
             .find(|option| option.id == OptionId::Help)
             .expect("help option");
-        help.command_help_line = None;
+        help.help_line = "";
         assert!(validate_options(&missing_help_line, COMMANDS).is_err());
     }
 
@@ -1242,6 +1295,7 @@ mod tests {
                 "check",
                 "format",
                 "symbols",
+                "rules",
                 "config",
                 "completion",
                 "help",
