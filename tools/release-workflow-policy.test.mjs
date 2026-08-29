@@ -13,6 +13,8 @@ import {
 } from "./release-workflow-policy.mjs";
 
 const pin = "actions/checkout@0000000000000000000000000000000000000000";
+const publicationTag =
+  "${{ github.event_name == 'repository_dispatch' && github.event.client_payload.tag || inputs.tag }}";
 
 function releaseWorkflow() {
   return {
@@ -42,6 +44,23 @@ function releaseWorkflow() {
           },
         ],
       },
+      "dispatch-publication": {
+        needs: ["plan", "host"],
+        if: "${{ always() && needs.host.result == 'success' }}",
+        permissions: { contents: "write" },
+        env: {
+          GH_TOKEN: "${{ github.token }}",
+          RELEASE_TAG: "${{ needs.plan.outputs.tag }}",
+        },
+        steps: [{
+          run: `
+gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" | jq .draft,.prerelease
+gh api --method POST "repos/$GITHUB_REPOSITORY/dispatches" \\
+  --field event_type=adocweave_release_published \\
+  --field "client_payload[tag]=$RELEASE_TAG"
+`,
+        }],
+      },
     },
   };
 }
@@ -61,26 +80,79 @@ function ciWorkflow() {
   };
 }
 
-function publicationWorkflow(oidc = false) {
+function validationJob() {
   return {
-    on: { workflow_call: {}, workflow_dispatch: {} },
+    outputs: {
+      tag: "${{ steps.input.outputs.tag }}",
+      commit: "${{ steps.candidate.outputs.commit }}",
+    },
+    steps: [
+      {
+        id: "input",
+        env: { REQUESTED_TAG: publicationTag },
+        run: `
+[[ "$REQUESTED_TAG" =~ ^v(0|[1-9][0-9]*) ]]
+gh api "repos/$GITHUB_REPOSITORY/releases/tags/$REQUESTED_TAG" | jq .draft,.prerelease
+gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$REQUESTED_TAG"
+`,
+      },
+      {
+        uses: pin,
+        with: {
+          ref: "refs/tags/${{ steps.input.outputs.tag }}",
+          "persist-credentials": false,
+        },
+      },
+      {
+        id: "candidate",
+        run: `
+git rev-parse "refs/tags/$RELEASE_TAG^{commit}"
+git merge-base --is-ancestor "$commit" refs/remotes/origin/main
+workspace_version=1.2.3
+test "$RELEASE_TAG" = "v$workspace_version"
+`,
+      },
+    ],
+  };
+}
+
+function publicationWorkflow(environment, oidc = false) {
+  return {
+    on: {
+      repository_dispatch: { types: ["adocweave_release_published"] },
+      workflow_dispatch: { inputs: { tag: { required: true, type: "string" } } },
+    },
     permissions: { contents: "read" },
-    jobs: { publish: { ...(oidc ? { permissions: { "id-token": "write" } } : {}), steps: [] } },
+    concurrency: { group: `publication-${publicationTag}`, "cancel-in-progress": false },
+    jobs: {
+      validate: validationJob(),
+      publish: {
+        needs: "validate",
+        environment,
+        ...(oidc ? { permissions: { contents: "read", "id-token": "write" } } : {}),
+        env: { RELEASE_COMMIT: "${{ needs.validate.outputs.commit }}" },
+        steps: [{
+          uses: pin,
+          with: { ref: "${{ needs.validate.outputs.commit }}" },
+        }],
+      },
+    },
   };
 }
 
 function npmPublicationWorkflow() {
-  const workflow = publicationWorkflow(true);
-  workflow.on.workflow_call.inputs = { tag: {} };
-  workflow.on.workflow_dispatch.inputs = { tag: {} };
+  const workflow = publicationWorkflow("npm-publish", true);
   workflow.jobs.publish.environment = "npm-publish";
   workflow.jobs.publish.strategy = {
     "fail-fast": false,
     matrix: { package: ["textlint", "wasm"] },
   };
   workflow.jobs.publish.steps = [{
+    uses: pin,
+    with: { ref: "${{ needs.validate.outputs.commit }}" },
+  }, {
     env: { RELEASE_PACKAGE: "${{ matrix.package }}" },
-    run: "node tools/npm-publication.mjs",
+    run: "test $RELEASE_COMMIT = ${{ needs.validate.outputs.commit }}\nnode tools/npm-publication.mjs",
   }];
   return workflow;
 }
@@ -96,16 +168,28 @@ function binaryCachePublicationWorkflow() {
     },
   };
   return {
-    on: { workflow_call: {}, workflow_dispatch: {} },
+    on: {
+      repository_dispatch: { types: ["adocweave_release_published"] },
+      workflow_dispatch: { inputs: { tag: { required: true, type: "string" } } },
+    },
     permissions: { contents: "read" },
+    concurrency: { group: `binary-cache-${publicationTag}`, "cancel-in-progress": false },
     jobs: {
+      validate: validationJob(),
       publish: {
+        needs: "validate",
+        environment: "binary-cache-publish",
+        env: { RELEASE_TAG: publicationTag },
         strategy: matrix,
         steps: [
           {
+            uses: pin,
+            with: { ref: "${{ needs.validate.outputs.commit }}" },
+          },
+          {
             run: `
 gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" | jq .draft,.prerelease
-git rev-parse "$RELEASE_TAG^{commit}"
+git rev-parse "refs/tags/$RELEASE_TAG^{commit}"
 git rev-parse HEAD
 workspace_version=1.2.3
 test "$RELEASE_TAG" = "v$workspace_version"
@@ -123,7 +207,7 @@ cachix push keishis "$package"
         ],
       },
       verify: {
-        needs: "publish",
+        needs: ["validate", "publish"],
         strategy: structuredClone(matrix),
         steps: [
           {
@@ -157,18 +241,28 @@ function workflows() {
     },
     "binary-cache-publish.yml": binaryCachePublicationWorkflow(),
     "marketplace-publish.yml": {
-      on: { workflow_call: {}, workflow_dispatch: {} },
+      on: {
+        repository_dispatch: { types: ["adocweave_release_published"] },
+        workflow_dispatch: { inputs: { tag: { required: true, type: "string" } } },
+      },
       permissions: { contents: "read" },
+      concurrency: { group: `marketplace-${publicationTag}`, "cancel-in-progress": false },
       jobs: {
+        validate: validationJob(),
         publish: {
+          needs: "validate",
           environment: "marketplace-publish",
           permissions: { contents: "read", "id-token": "write" },
-          steps: [{ run: "npx vsce publish --packagePath extension.vsix --oidc" }],
+          env: { RELEASE_COMMIT: "${{ needs.validate.outputs.commit }}" },
+          steps: [
+            { uses: pin, with: { ref: "${{ needs.validate.outputs.commit }}" } },
+            { run: "npx vsce publish --packagePath extension.vsix --oidc" },
+          ],
         },
       },
     },
     "npm-publish.yml": npmPublicationWorkflow(),
-    "open-vsx-publish.yml": publicationWorkflow(),
+    "open-vsx-publish.yml": publicationWorkflow("open-vsx-publish"),
   };
 }
 
@@ -231,6 +325,18 @@ test("hostは公開する全成果物をattestation対象にする", () => {
   );
 });
 
+test("Release成功後はtagだけを一つのrepository dispatchで通知する", () => {
+  const release = releaseWorkflow();
+  validateReleaseFlow({ "release.yml": release }, 'pr-run-mode = "plan"');
+
+  release.jobs["dispatch-publication"].steps[0].run +=
+    "\ngh workflow run npm-publish.yml -f tag=$RELEASE_TAG";
+  assert.throws(
+    () => validateReleaseFlow({ "release.yml": release }, 'pr-run-mode = "plan"'),
+    /must not enumerate workflows/u,
+  );
+});
+
 test("CIはPRのsource gateとmain専用gateを分離する", () => {
   const ci = ciWorkflow();
   validateCiGates({ "ci.yml": ci });
@@ -238,13 +344,36 @@ test("CIはPRのsource gateとmain専用gateを分離する", () => {
   assert.throws(() => validateCiGates({ "ci.yml": ci }), /main-integrations.*main-only/);
 });
 
-test("外部公開workflowは個別の再利用・手動入口だけを持つ", () => {
+test("外部公開workflowは共通通知とtagだけの手動入口を持つ", () => {
   const fixtures = workflows();
   validateExternalPublicationIsolation(fixtures);
   fixtures["npm-publish.yml"].on.push = { tags: ["v*"] };
   assert.throws(
     () => validateExternalPublicationIsolation(fixtures),
-    /npm-publish.*isolated/,
+    /npm-publish.*shared repository dispatch/u,
+  );
+
+  const called = workflows();
+  called["open-vsx-publish.yml"].on.workflow_call = {};
+  assert.throws(
+    () => validateExternalPublicationIsolation(called),
+    /open-vsx-publish.*shared repository dispatch/u,
+  );
+
+  const optional = workflows();
+  optional["binary-cache-publish.yml"].on.workflow_dispatch.inputs.tag.required = false;
+  assert.throws(
+    () => validateExternalPublicationIsolation(optional),
+    /binary-cache-publish.*manual recovery/u,
+  );
+
+  const extraSender = workflows();
+  extraSender["open-vsx-publish.yml"].jobs.publish.steps.push({
+    run: 'gh api "repos/$GITHUB_REPOSITORY/dispatches"',
+  });
+  assert.throws(
+    () => validateExternalPublicationIsolation(extraSender),
+    /sent once and only by the Release dispatch job/u,
   );
 });
 
@@ -272,7 +401,7 @@ test("Marketplace公開は専用environmentとOIDCだけを使う", () => {
   shared["npm-publish.yml"].jobs.publish.environment = "marketplace-publish";
   assert.throws(
     () => validateExternalPublicationIsolation(shared),
-    /isolated to marketplace-publish/u,
+    /credentials must stay in the npm-publish environment/u,
   );
 });
 

@@ -3,18 +3,14 @@ name: Open VSX publication
 # 公開済みGitHub ReleaseのVSIXをOpen VSX Registryへ公開する。成果物は作り直さず、
 # Releaseのassetをdownloadしてchecksumとattestationを検証してから送信する。
 #
-# stable releaseの公開workflowから呼び出すほか、tagを指定して単独で実行できる。
+# stable Releaseの通知で自動起動するほか、tagを指定して単独で実行できる。
 # Open VSXへの送信だけが失敗した場合は、このworkflowを同じtagで実行して回復する。
 # 同じversionが既に存在する場合は公開済みVSIXを取得し、ReleaseのVSIXと同じであれば
 # 送信せずに完了する。内容が異なる場合は停止し、公開済みの版を上書きしない。
 
 on:
-  workflow_call:
-    inputs:
-      tag:
-        description: Published stable tag whose VSIX is sent to Open VSX
-        required: true
-        type: string
+  repository_dispatch:
+    types: [adocweave_release_published]
   workflow_dispatch:
     inputs:
       tag:
@@ -26,32 +22,76 @@ permissions:
   contents: read
 
 concurrency:
-  group: open-vsx-publish-${{ inputs.tag }}
+  group: open-vsx-publish-${{ github.event_name == 'repository_dispatch' && github.event.client_payload.tag || inputs.tag }}
   cancel-in-progress: false
 
 jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.input.outputs.tag }}
+      commit: ${{ steps.candidate.outputs.commit }}
+    steps:
+      - name: Stable Release input verification
+        id: input
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_TAG: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.tag || inputs.tag }}
+        run: |
+          [[ "$REQUESTED_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          release="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$REQUESTED_TAG")"
+          test "$(jq -r .tag_name <<<"$release")" = "$REQUESTED_TAG"
+          test "$(jq -r .draft <<<"$release")" = false
+          test "$(jq -r .prerelease <<<"$release")" = false
+          tag_ref="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$REQUESTED_TAG")"
+          test "$(jq -r .ref <<<"$tag_ref")" = "refs/tags/$REQUESTED_TAG"
+          echo "tag=$REQUESTED_TAG" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ steps.input.outputs.tag }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - name: Release commit and version verification
+        id: candidate
+        env:
+          RELEASE_TAG: ${{ steps.input.outputs.tag }}
+        run: |
+          commit="$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")"
+          test "$commit" = "$(git rev-parse HEAD)"
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$commit" refs/remotes/origin/main
+          workspace_version="$(sed -n '/^\[workspace\.package\]/,/^\[/ s/^version = "\([^"]*\)"/\1/p' Cargo.toml)"
+          [[ "$workspace_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          test "$RELEASE_TAG" = "v$workspace_version"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
   publish:
+    needs: validate
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: open-vsx-publish
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ needs.validate.outputs.commit }}
           fetch-depth: 0
           fetch-tags: true
           persist-credentials: false
       - name: Published VSIX download and verification
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
         run: |
           test -n "$RELEASE_TAG"
           release="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")"
           test "$(jq -r .tag_name <<<"$release")" = "$RELEASE_TAG"
           test "$(jq -r .draft <<<"$release")" = false
           test "$(jq -r .prerelease <<<"$release")" = false
-          test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)"
+          test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$RELEASE_COMMIT"
+          test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
 
           workspace_version="$(sed -n '/^\[workspace\.package\]/,/^\[/ s/^version = "\([^"]*\)"/\1/p' Cargo.toml)"
           [[ "$workspace_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]

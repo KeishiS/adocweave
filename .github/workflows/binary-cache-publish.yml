@@ -4,12 +4,8 @@ name: Binary cache publication
 # 送信後は別のrunnerでローカルでの構築を禁止し、Cachixから取得したpackageを検査する。
 # Nix store pathは内容から決まるため、同じtagを指定した再実行でも既存の内容を変更しない。
 on:
-  workflow_call:
-    inputs:
-      tag:
-        description: Published stable tag
-        required: true
-        type: string
+  repository_dispatch:
+    types: [adocweave_release_published]
   workflow_dispatch:
     inputs:
       tag:
@@ -21,11 +17,54 @@ permissions:
   contents: read
 
 concurrency:
-  group: binary-cache-publish-${{ inputs.tag }}
+  group: binary-cache-publish-${{ github.event_name == 'repository_dispatch' && github.event.client_payload.tag || inputs.tag }}
   cancel-in-progress: false
 
 jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.input.outputs.tag }}
+      commit: ${{ steps.candidate.outputs.commit }}
+    steps:
+      - name: Stable Release input verification
+        id: input
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_TAG: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.tag || inputs.tag }}
+        run: |
+          [[ "$REQUESTED_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          release="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$REQUESTED_TAG")"
+          test "$(jq -r .tag_name <<<"$release")" = "$REQUESTED_TAG"
+          test "$(jq -r .draft <<<"$release")" = false
+          test "$(jq -r .prerelease <<<"$release")" = false
+          tag_ref="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$REQUESTED_TAG")"
+          test "$(jq -r .ref <<<"$tag_ref")" = "refs/tags/$REQUESTED_TAG"
+          echo "tag=$REQUESTED_TAG" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ steps.input.outputs.tag }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - name: Release commit and version verification
+        id: candidate
+        env:
+          RELEASE_TAG: ${{ steps.input.outputs.tag }}
+        run: |
+          commit="$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")"
+          test "$commit" = "$(git rev-parse HEAD)"
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$commit" refs/remotes/origin/main
+          workspace_version="$(sed -n '/^\[workspace\.package\]/,/^\[/ s/^version = "\([^"]*\)"/\1/p' Cargo.toml)"
+          [[ "$workspace_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          test "$RELEASE_TAG" = "v$workspace_version"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
   publish:
+    needs: validate
+    environment: binary-cache-publish
     strategy:
       fail-fast: false
       matrix:
@@ -39,20 +78,22 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ needs.validate.outputs.commit }}
           fetch-depth: 0
           fetch-tags: true
           persist-credentials: false
       - name: Published release verification
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
         run: |
           release="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")"
           test "$(jq -r .tag_name <<<"$release")" = "$RELEASE_TAG"
           test "$(jq -r .draft <<<"$release")" = false
           test "$(jq -r .prerelease <<<"$release")" = false
-          test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)"
+          test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$RELEASE_COMMIT"
+          test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
 
           workspace_version="$(sed -n '/^\[workspace\.package\]/,/^\[/ s/^version = "\([^"]*\)"/\1/p' Cargo.toml)"
           [[ "$workspace_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
@@ -73,7 +114,9 @@ jobs:
           cachix push keishis "$package"
 
   verify:
-    needs: publish
+    needs:
+      - validate
+      - publish
     strategy:
       fail-fast: false
       matrix:
@@ -87,8 +130,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ needs.validate.outputs.commit }}
           persist-credentials: false
+      - name: Verified commit check
+        env:
+          RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
+        run: test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
       - uses: DeterminateSystems/determinate-nix-action@527f17dd63d2d60d3e5552934bc84b9a33a14d11 # v3.22.2
       - uses: cachix/cachix-action@5f2d7c5294214f71b873db4b969586b980625e71 # v17
         with:
