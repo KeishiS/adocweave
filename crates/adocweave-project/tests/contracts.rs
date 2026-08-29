@@ -2,7 +2,7 @@ use adocweave::{NeverCancel, SourceId};
 use adocweave_project::{
     ConfigSelection, ProjectAuthority, ProjectConfigRequest, ProjectError, ProjectLimit,
     ProjectLimits, ProjectOverrides, ProjectRequest, ProjectResourceKind, ProjectResourceOrigin,
-    ProjectSource, ProjectTarget, process, resolve_config,
+    ProjectResourceSelection, ProjectSource, ProjectTarget, process, resolve_config,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -17,13 +17,15 @@ fn request_with(targets: Vec<ProjectTarget>) -> ProjectRequest {
         sources: Vec::new(),
         config: ConfigSelection::Discover,
         overrides: ProjectOverrides::default(),
+        apply_safe_fixes: false,
+        resource_selection: Default::default(),
         authority,
         limits: ProjectLimits {
-            max_files: 10_000,
+            max_files: 100_000,
             max_resource_bytes: 10 * 1024 * 1024,
             max_read_bytes: 50 * 1024 * 1024,
             max_directory_entries: 100_000,
-            max_processing_iterations: 10_000,
+            max_processing_iterations: 100_000,
             max_output_bytes: u32::MAX,
         },
     }
@@ -65,6 +67,78 @@ fn in_memory_source_is_owned_by_the_request() {
     assert_eq!(
         result.targets[0].source.as_deref(),
         Some("= Standard input\n")
+    );
+    assert!(result.targets[0].write.is_none());
+}
+
+#[test]
+fn file_write_capability_is_bound_to_the_observed_contents() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let path = directory.path().join("guide.adoc");
+    fs::write(&path, "original\n").expect("source");
+    let request = || ProjectRequest {
+        targets: vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
+        sources: Vec::new(),
+        config: ConfigSelection::Disabled,
+        overrides: ProjectOverrides::default(),
+        apply_safe_fixes: false,
+        resource_selection: Default::default(),
+        authority: ProjectAuthority::open(
+            directory.path().to_owned(),
+            [directory.path().to_owned()],
+        )
+        .expect("project authority"),
+        limits: ProjectLimits::default(),
+    };
+
+    let result = process(request(), &NeverCancel).expect("project processing");
+    let capability = result.targets.into_iter().next().unwrap().write.unwrap();
+    assert_eq!(capability.contents_match(), Ok(true));
+    assert_eq!(capability.replace_after_recheck(b"updated\n"), Ok(true));
+    assert_eq!(fs::read_to_string(&path).unwrap(), "updated\n");
+
+    let result = process(request(), &NeverCancel).expect("second project processing");
+    let capability = result.targets.into_iter().next().unwrap().write.unwrap();
+    fs::write(&path, "concurrent\n").expect("concurrent update");
+    assert_eq!(capability.replace_after_recheck(b"rejected\n"), Ok(false));
+    assert_eq!(fs::read_to_string(&path).unwrap(), "concurrent\n");
+}
+
+#[test]
+fn safe_fixes_return_the_original_and_reanalyze_the_replacement() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    fs::write(directory.path().join("guide.adoc"), "text  \n").expect("source");
+    let make_request = |apply_safe_fixes| ProjectRequest {
+        targets: vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
+        sources: Vec::new(),
+        config: ConfigSelection::Disabled,
+        overrides: ProjectOverrides::default(),
+        apply_safe_fixes,
+        resource_selection: Default::default(),
+        authority: ProjectAuthority::open(
+            directory.path().to_owned(),
+            [directory.path().to_owned()],
+        )
+        .expect("project authority"),
+        limits: ProjectLimits::default(),
+    };
+
+    let unchanged = process(make_request(false), &NeverCancel).expect("project processing");
+    assert!(unchanged.targets[0].replacement_source.is_none());
+
+    let fixed = process(make_request(true), &NeverCancel).expect("fixed project processing");
+    let target = &fixed.targets[0];
+    assert_eq!(target.source.as_deref(), Some("text  \n"));
+    assert_eq!(target.replacement_source.as_deref(), Some("text\n"));
+    assert!(
+        target
+            .outcome
+            .as_ref()
+            .expect("fixed analysis")
+            .source
+            .diagnostics()
+            .iter()
+            .all(|diagnostic| diagnostic.code.as_str() != "trailing-whitespace")
     );
 }
 
@@ -116,6 +190,8 @@ fn symlinked_project_root_uses_the_opened_canonical_identity() {
             sources: Vec::new(),
             config: ConfigSelection::Disabled,
             overrides: ProjectOverrides::default(),
+            apply_safe_fixes: false,
+            resource_selection: Default::default(),
             authority,
             limits: request_with(Vec::new()).limits,
         },
@@ -180,6 +256,8 @@ fn request_lint_overrides_apply_to_configuration_and_analysis() {
             enable_lint_rules: vec![rule],
             ..ProjectOverrides::default()
         },
+        apply_safe_fixes: false,
+        resource_selection: Default::default(),
         authority: ProjectAuthority::open(
             directory.path().to_owned(),
             [directory.path().to_owned()],
@@ -284,6 +362,11 @@ fn pathless_input_keeps_include_and_local_target_bases_separate() {
             local_target_project_root: Some(directory.path().to_owned()),
             ..ProjectOverrides::default()
         },
+        apply_safe_fixes: false,
+        resource_selection: ProjectResourceSelection {
+            local_targets: true,
+            stylesheets: false,
+        },
         authority: ProjectAuthority::open(
             directory.path().to_owned(),
             [directory.path().to_owned()],
@@ -354,6 +437,11 @@ fn pathless_input_checks_same_relative_target_against_each_base() {
                 local_target_project_root: Some(directory.path().to_owned()),
                 ..ProjectOverrides::default()
             },
+            apply_safe_fixes: false,
+            resource_selection: ProjectResourceSelection {
+                local_targets: true,
+                stylesheets: false,
+            },
             authority: ProjectAuthority::open(
                 directory.path().to_owned(),
                 [directory.path().to_owned()],
@@ -400,6 +488,8 @@ fn pathless_bases_must_both_be_inside_the_request_authority() {
                 local_target_project_root: Some(local_root),
                 ..ProjectOverrides::default()
             },
+            apply_safe_fixes: false,
+            resource_selection: Default::default(),
             authority: ProjectAuthority::open(
                 project.path().to_owned(),
                 [project.path().to_owned()],
@@ -449,6 +539,8 @@ fn pathless_input_does_not_replace_a_real_file_with_a_synthetic_name() {
             include: Some(true),
             ..ProjectOverrides::default()
         },
+        apply_safe_fixes: false,
+        resource_selection: Default::default(),
         authority,
         limits: request_with(Vec::new()).limits,
     };
@@ -486,6 +578,8 @@ fn file_overlay_is_identified_as_input_and_is_not_watched() {
         sources: vec![ProjectSource::new(id, path, "overlay\n")],
         config: ConfigSelection::Disabled,
         overrides: ProjectOverrides::default(),
+        apply_safe_fixes: false,
+        resource_selection: Default::default(),
         authority: ProjectAuthority::open(
             directory.path().to_owned(),
             [directory.path().to_owned()],
@@ -551,6 +645,24 @@ fn unrepresentable_caller_source_id_is_invalid_input() {
 }
 
 #[test]
+fn caller_sources_cannot_use_generated_local_target_ids() {
+    let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut request = request_with(vec![ProjectTarget::Source(SourceId::new(
+        "local-target:caller",
+    ))]);
+    request.sources.push(ProjectSource::memory(
+        SourceId::new("local-target:caller"),
+        project_root,
+        "text\n",
+    ));
+
+    assert!(matches!(
+        process(request, &NeverCancel),
+        Err(ProjectError::InvalidInput(error)) if error.code == "reserved-source-id"
+    ));
+}
+
+#[test]
 fn file_overlay_is_reused_inside_a_narrow_include_authority() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let narrow = directory.path().join("narrow");
@@ -567,6 +679,8 @@ fn file_overlay_is_reused_inside_a_narrow_include_authority() {
         )],
         config: ConfigSelection::Disabled,
         overrides: ProjectOverrides::default(),
+        apply_safe_fixes: false,
+        resource_selection: Default::default(),
         authority: ProjectAuthority::open(
             directory.path().to_owned(),
             [directory.path().to_owned()],
@@ -616,6 +730,8 @@ fn project_authority_keeps_the_opened_child_identity() {
             sources: Vec::new(),
             config: ConfigSelection::Disabled,
             overrides: ProjectOverrides::default(),
+            apply_safe_fixes: false,
+            resource_selection: Default::default(),
             authority: authority.clone(),
             limits: request_with(Vec::new()).limits,
         },
@@ -630,6 +746,8 @@ fn project_authority_keeps_the_opened_child_identity() {
             sources: Vec::new(),
             config: ConfigSelection::Disabled,
             overrides: ProjectOverrides::default(),
+            apply_safe_fixes: false,
+            resource_selection: Default::default(),
             authority,
             limits: request_with(Vec::new()).limits,
         },
@@ -735,6 +853,8 @@ fn pathless_input_obeys_scope_and_output_limits() {
         )],
         config: ConfigSelection::Discover,
         overrides: ProjectOverrides::default(),
+        apply_safe_fixes: false,
+        resource_selection: Default::default(),
         authority: ProjectAuthority::open(
             directory.path().to_owned(),
             [directory.path().to_owned()],
@@ -788,6 +908,11 @@ fn memory_sources_cannot_replace_configuration_or_stylesheets() {
         ],
         config: ConfigSelection::Discover,
         overrides: ProjectOverrides::default(),
+        apply_safe_fixes: false,
+        resource_selection: ProjectResourceSelection {
+            local_targets: false,
+            stylesheets: true,
+        },
         authority: ProjectAuthority::open(
             directory.path().to_owned(),
             [directory.path().to_owned()],
@@ -856,6 +981,8 @@ fn directory_scan_observes_cancellation_during_the_walk() {
         sources: Vec::new(),
         config: ConfigSelection::Disabled,
         overrides: ProjectOverrides::default(),
+        apply_safe_fixes: false,
+        resource_selection: Default::default(),
         authority: ProjectAuthority::open(
             directory.path().to_owned(),
             [directory.path().to_owned()],

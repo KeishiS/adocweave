@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 use adocweave::ParseError;
 use adocweave_host::ExitStatus;
+use adocweave_project::{ProjectLimit, ProjectResourceErrorCode, ProjectTargetError};
 
 use crate::{commands, local_include, preview};
 
@@ -30,16 +31,23 @@ pub(crate) enum CliError {
     },
     ResourceLimit(String),
     Include(local_include::LocalIncludeError),
-    LocalTarget(adocweave_host::LocalTargetError),
     FormattingRequired,
     Stylesheet(String),
     Config(adocweave_config::ConfigError),
     ConfigAuthority(PathBuf),
     Path(String),
-    ConcurrentModification(PathBuf),
-    FixConflict(adocweave::output::diagnostics::EditConflict),
+    PartialWrite {
+        files: usize,
+        changed: usize,
+        updated: usize,
+        unchanged: usize,
+        failed: usize,
+    },
     Preview(preview::Error),
     LanguageServer(adocweave_lsp::StdioError),
+    Project(adocweave_project::ProjectError),
+    ProjectPrimary(adocweave_project::ProjectTargetError),
+    ProjectTarget(adocweave_project::ProjectTargetError),
     Serialize(String),
 }
 
@@ -67,7 +75,6 @@ impl fmt::Display for CliError {
             }
             Self::ResourceLimit(message) => formatter.write_str(message),
             Self::Include(source) => source.fmt(formatter),
-            Self::LocalTarget(source) => source.fmt(formatter),
             Self::FormattingRequired => formatter.write_str("document is not formatted"),
             Self::Stylesheet(message) => formatter.write_str(message),
             Self::Config(source) => source.fmt(formatter),
@@ -77,14 +84,71 @@ impl fmt::Display for CliError {
                 path.display()
             ),
             Self::Path(message) => formatter.write_str(message),
-            Self::ConcurrentModification(path) => write!(
+            Self::PartialWrite {
+                files,
+                changed,
+                updated,
+                unchanged,
+                failed,
+            } => write!(
                 formatter,
-                "input changed while preparing an atomic write: {}",
-                path.display()
+                "file updates completed with failures: files={files}, changed={changed}, updated={updated}, unchanged={unchanged}, failed={failed}"
             ),
-            Self::FixConflict(source) => write!(formatter, "conflicting automatic fixes: {source}"),
             Self::Preview(source) => source.fmt(formatter),
             Self::LanguageServer(source) => source.fmt(formatter),
+            Self::Project(adocweave_project::ProjectError::Limit(ProjectLimit::Files {
+                limit,
+            })) => write!(
+                formatter,
+                "filesystem resource count limit exceeded: {limit}"
+            ),
+            Self::Project(adocweave_project::ProjectError::Limit(ProjectLimit::ReadBytes {
+                ..
+            })) => formatter.write_str("analysis snapshot total byte limit exceeded"),
+            Self::Project(source) => source.fmt(formatter),
+            Self::ProjectPrimary(ProjectTargetError::Read(source)) => write!(
+                formatter,
+                "could not read input: {source}; symbolic links and non-regular files are not accepted"
+            ),
+            Self::ProjectPrimary(ProjectTargetError::Incomplete(ProjectLimit::ResourceBytes {
+                ..
+            })) => formatter.write_str("analysis snapshot total byte limit exceeded"),
+            Self::ProjectPrimary(ProjectTargetError::Incomplete(ProjectLimit::ReadBytes {
+                ..
+            })) => formatter.write_str("analysis snapshot total byte limit exceeded"),
+            Self::ProjectPrimary(ProjectTargetError::Incomplete(ProjectLimit::Files { limit })) => {
+                write!(
+                    formatter,
+                    "filesystem resource count limit exceeded: {limit}"
+                )
+            }
+            Self::ProjectPrimary(source) => source.fmt(formatter),
+            Self::ProjectTarget(ProjectTargetError::Read(source)) => match source.code {
+                ProjectResourceErrorCode::Missing => {
+                    write!(formatter, "could not read input: {source}")
+                }
+                ProjectResourceErrorCode::OutsideAuthority => {
+                    write!(formatter, "unsafe include target: {source}")
+                }
+                ProjectResourceErrorCode::ReadFailed => write!(
+                    formatter,
+                    "could not read input: {source}; symbolic links and non-regular files are not accepted"
+                ),
+                _ => write!(formatter, "could not read input: {source}"),
+            },
+            Self::ProjectTarget(ProjectTargetError::Incomplete(limit)) => match limit {
+                ProjectLimit::Files { limit } => {
+                    write!(formatter, "filesystem file limit exceeded: {limit}")
+                }
+                ProjectLimit::ResourceBytes { .. } => {
+                    formatter.write_str("analysis snapshot single-resource byte limit exceeded")
+                }
+                ProjectLimit::ReadBytes { .. } => {
+                    formatter.write_str("analysis snapshot total byte limit exceeded")
+                }
+                _ => limit.fmt(formatter),
+            },
+            Self::ProjectTarget(source) => source.fmt(formatter),
             Self::Serialize(message) => {
                 write!(formatter, "cannot serialize diagnostics: {message}")
             }
@@ -100,11 +164,12 @@ impl Error for CliError {
             Self::Analysis(source) => Some(source),
             Self::Position(source) => Some(source),
             Self::Include(source) => Some(source),
-            Self::LocalTarget(source) => Some(source),
             Self::Config(source) => Some(source),
-            Self::FixConflict(source) => Some(source),
             Self::Preview(source) => Some(source),
             Self::LanguageServer(source) => Some(source),
+            Self::Project(source) => Some(source),
+            Self::ProjectPrimary(source) => Some(source),
+            Self::ProjectTarget(source) => Some(source),
             Self::Usage(_)
             | Self::Serialize(_)
             | Self::InvalidUtf8 { .. }
@@ -114,7 +179,7 @@ impl Error for CliError {
             | Self::Stylesheet(_)
             | Self::ConfigAuthority(_)
             | Self::Path(_)
-            | Self::ConcurrentModification(_) => None,
+            | Self::PartialWrite { .. } => None,
         }
     }
 }
@@ -134,14 +199,27 @@ impl CliError {
             Self::Read { .. }
             | Self::Write(_)
             | Self::Include(_)
-            | Self::LocalTarget(_)
             | Self::Config(_)
-            | Self::ConcurrentModification(_)
+            | Self::PartialWrite { .. }
             | Self::Preview(_) => ExitStatus::InputOutput,
             Self::LanguageServer(source) => source.exit_status(),
+            Self::Project(adocweave_project::ProjectError::Config(_))
+            | Self::Project(adocweave_project::ProjectError::Authority(_))
+            | Self::ProjectPrimary(adocweave_project::ProjectTargetError::Read(_))
+            | Self::ProjectTarget(adocweave_project::ProjectTargetError::Read(_)) => {
+                ExitStatus::InputOutput
+            }
+            Self::Project(adocweave_project::ProjectError::TargetSelection(_))
+            | Self::Project(adocweave_project::ProjectError::InvalidInput(_)) => ExitStatus::Usage,
             // A configured bound was reached, so the work stopped rather than
             // grew without limit.
-            Self::OutputLimit { .. } | Self::ResourceLimit(_) => ExitStatus::LimitExceeded,
+            Self::OutputLimit { .. }
+            | Self::ResourceLimit(_)
+            | Self::Project(adocweave_project::ProjectError::Limit(_))
+            | Self::ProjectPrimary(adocweave_project::ProjectTargetError::Incomplete(_))
+            | Self::ProjectTarget(adocweave_project::ProjectTargetError::Incomplete(_)) => {
+                ExitStatus::LimitExceeded
+            }
             // The document itself is the problem, which is what a diagnostic
             // reports. Everything left describes the document or the analysis of
             // it, so it shares the status diagnostics use.
@@ -149,31 +227,27 @@ impl CliError {
             | Self::Analysis(_)
             | Self::Position(_)
             | Self::FormattingRequired
-            | Self::FixConflict(_)
-            | Self::Serialize(_) => ExitStatus::Diagnostics,
+            | Self::Serialize(_)
+            | Self::Project(adocweave_project::ProjectError::Cancelled)
+            | Self::ProjectPrimary(adocweave_project::ProjectTargetError::Analysis(_))
+            | Self::ProjectPrimary(adocweave_project::ProjectTargetError::EditConflict(_))
+            | Self::ProjectTarget(adocweave_project::ProjectTargetError::Analysis(_))
+            | Self::ProjectTarget(adocweave_project::ProjectTargetError::EditConflict(_)) => {
+                ExitStatus::Diagnostics
+            }
         }
     }
 }
 
 pub(crate) fn convert_error(error: commands::convert::Error) -> CliError {
     match error {
-        commands::convert::Error::InvalidUtf8 { valid_up_to } => {
-            CliError::InvalidUtf8 { valid_up_to }
-        }
-        commands::convert::Error::Analysis(source) => CliError::Analysis(source),
         commands::convert::Error::Html(source) => html_policy_error(source),
     }
 }
 
 pub(crate) fn check_error(error: commands::check::Error) -> CliError {
     match error {
-        commands::check::Error::InvalidUtf8 { valid_up_to } => {
-            CliError::InvalidUtf8 { valid_up_to }
-        }
-        commands::check::Error::Analysis(source) => CliError::Analysis(source),
         commands::check::Error::Position(source) => CliError::Position(source),
-        commands::check::Error::Include(source) => CliError::Include(source),
-        commands::check::Error::FixConflict(source) => CliError::FixConflict(source),
         commands::check::Error::Serialize(message) => CliError::Serialize(message),
     }
 }
@@ -183,9 +257,7 @@ pub(crate) fn format_error(error: commands::format::Error) -> CliError {
         commands::format::Error::InvalidUtf8 { valid_up_to } => {
             CliError::InvalidUtf8 { valid_up_to }
         }
-        commands::format::Error::Analysis(source) => CliError::Analysis(source),
         commands::format::Error::Position(source) => CliError::Position(source),
-        commands::format::Error::FormattingRequired => CliError::FormattingRequired,
     }
 }
 
@@ -214,5 +286,27 @@ pub(crate) fn html_policy_error(error: commands::html_policy::Error) -> CliError
         },
         commands::html_policy::Error::Stylesheet(message) => CliError::Stylesheet(message),
         commands::html_policy::Error::Usage(message) => CliError::Usage(message),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn partial_write_reports_counts_and_an_input_output_exit() {
+        let error = CliError::PartialWrite {
+            files: 3,
+            changed: 2,
+            updated: 1,
+            unchanged: 1,
+            failed: 1,
+        };
+
+        assert_eq!(error.exit_status(), ExitStatus::InputOutput);
+        assert_eq!(
+            error.to_string(),
+            "file updates completed with failures: files=3, changed=2, updated=1, unchanged=1, failed=1"
+        );
     }
 }

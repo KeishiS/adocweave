@@ -8,6 +8,7 @@
 - All artifacts now share one version, one `vX.Y.Z` tag, and one GitHub Release.
 - The Browser Worker and Node.js direct entry now use one WebAssembly request, result, and `AdocWeaveError` contract.
 - WebAssembly results contain only the products selected by the request.
+- Multi-file `format --write` and `check --fix` prepare every change before replacing files. Each file is replaced without leaving partial contents; if a later replacement fails, earlier replacements are not rolled back.
 
 ### Migration
 

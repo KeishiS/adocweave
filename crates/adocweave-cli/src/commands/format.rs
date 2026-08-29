@@ -1,7 +1,6 @@
 use std::path::{Path, PathBuf};
 
 use adocweave::output::formatter::{FormatConfig, FormatError, NewlineStyle, format_analysis};
-use adocweave::{AnalysisOptions, Engine, ParseError};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct Options {
@@ -12,10 +11,6 @@ pub(crate) struct Options {
 }
 
 impl Options {
-    pub(crate) const fn uses_explicit_path_mode(self) -> bool {
-        self.write || self.diff
-    }
-
     pub(crate) const fn supports_multiple_inputs(self) -> bool {
         self.check || self.write || self.diff
     }
@@ -28,14 +23,7 @@ impl Options {
 #[derive(Debug)]
 pub(crate) enum Error {
     InvalidUtf8 { valid_up_to: usize },
-    Analysis(ParseError),
     Position(adocweave::text::PositionError),
-    FormattingRequired,
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) struct SingleOutcome {
-    pub(crate) output: String,
 }
 
 pub(crate) struct BatchOutcome {
@@ -48,7 +36,6 @@ pub(crate) struct BatchOutcome {
 
 pub(crate) struct WriteRequest {
     pub(crate) path: PathBuf,
-    pub(crate) original: Vec<u8>,
     pub(crate) replacement: Vec<u8>,
 }
 
@@ -61,50 +48,37 @@ impl BatchOutcome {
     }
 }
 
-pub(crate) fn format_config(
+pub(crate) fn project_format_config(
     options: Options,
-    input: &[u8],
-    project: &adocweave_config::ResolvedProjectConfig,
+    input: &str,
+    project: &adocweave_project::ProjectConfig,
 ) -> FormatConfig {
-    if options.uses_stable_line_endings() {
-        stable_format_config(input, project)
-    } else {
-        project.format
+    let mut format = *project.format();
+    if options.uses_stable_line_endings() && !project.format_newline_explicit() {
+        let bytes = input.as_bytes();
+        let crlf = bytes.windows(2).filter(|window| *window == b"\r\n").count();
+        let lf = bytes.iter().filter(|byte| **byte == b'\n').count();
+        format.newline = if crlf > 0 && crlf.saturating_mul(2) >= lf {
+            NewlineStyle::CrLf
+        } else {
+            NewlineStyle::Lf
+        };
     }
+    if options.uses_stable_line_endings() && !project.format_final_newline_explicit() {
+        format.final_newline = input.ends_with('\n');
+    }
+    format
 }
 
-pub(crate) fn process(
-    input: &[u8],
-    analysis_options: &AnalysisOptions,
+pub(crate) fn process_analysis(
+    analysis: &adocweave::Analysis,
     format_config: &FormatConfig,
 ) -> Result<String, Error> {
-    let source = decode_input(input)?;
-    let analysis = Engine::new(analysis_options.clone())
-        .analyze(source)
-        .map_err(Error::Analysis)?;
-    match format_analysis(&analysis, format_config, &adocweave::NeverCancel) {
+    match format_analysis(analysis, format_config, &adocweave::NeverCancel) {
         Ok(output) => Ok(output.formatted),
         Err(FormatError::Position(error)) => Err(Error::Position(error)),
         Err(FormatError::Cancelled) => unreachable!("NeverCancel cannot cancel formatting"),
     }
-}
-
-pub(crate) fn run_single(
-    input: &[u8],
-    options: Options,
-    project: &adocweave_config::ResolvedProjectConfig,
-) -> Result<SingleOutcome, Error> {
-    let output = process(
-        input,
-        &project.analysis,
-        &format_config(options, input, project),
-    )?;
-    if options.check && output.as_bytes() != input {
-        return Err(Error::FormattingRequired);
-    }
-    Ok(SingleOutcome {
-        output: if options.check { String::new() } else { output },
-    })
 }
 
 pub(crate) struct BatchWorkflow {
@@ -146,7 +120,6 @@ impl BatchWorkflow {
         if self.options.write {
             self.pending_writes.push(WriteRequest {
                 path,
-                original,
                 replacement: formatted,
             });
         }
@@ -170,29 +143,6 @@ fn decode_input(input: &[u8]) -> Result<&str, Error> {
     })
 }
 
-fn stable_format_config(
-    original: &[u8],
-    project: &adocweave_config::ResolvedProjectConfig,
-) -> FormatConfig {
-    let mut format = project.format;
-    if !project.format_newline_explicit {
-        let crlf = original
-            .windows(2)
-            .filter(|window| *window == b"\r\n")
-            .count();
-        let lf = original.iter().filter(|byte| **byte == b'\n').count();
-        format.newline = if crlf > 0 && crlf.saturating_mul(2) >= lf {
-            NewlineStyle::CrLf
-        } else {
-            NewlineStyle::Lf
-        };
-    }
-    if !project.format_final_newline_explicit {
-        format.final_newline = original.ends_with(b"\n");
-    }
-    format
-}
-
 pub(crate) fn unified_diff(path: &Path, original: &str, formatted: &str) -> String {
     similar::TextDiff::from_lines(original, formatted)
         .unified_diff()
@@ -205,48 +155,7 @@ pub(crate) fn unified_diff(path: &Path, original: &str, formatted: &str) -> Stri
 
 #[cfg(test)]
 mod tests {
-    use super::{BatchWorkflow, Error, Options, format_config, run_single};
-
-    #[test]
-    fn single_check_is_empty_on_success_and_reports_a_difference() {
-        let project = adocweave_config::ResolvedProjectConfig::default();
-        let clean = run_single(
-            b"clean\n",
-            Options {
-                check: true,
-                ..Options::default()
-            },
-            &project,
-        )
-        .expect("formatted input");
-        assert!(clean.output.is_empty());
-
-        let dirty = run_single(
-            b"dirty  \n",
-            Options {
-                check: true,
-                ..Options::default()
-            },
-            &project,
-        );
-        assert!(matches!(dirty, Err(Error::FormattingRequired)));
-    }
-
-    #[test]
-    fn stable_modes_preserve_the_input_line_ending() {
-        let project = adocweave_config::ResolvedProjectConfig::default();
-        let stable = format_config(
-            Options {
-                write: true,
-                ..Options::default()
-            },
-            b"text\r\n",
-            &project,
-        );
-        let stdout = format_config(Options::default(), b"text\r\n", &project);
-
-        assert_ne!(stable.newline, stdout.newline);
-    }
+    use super::{BatchWorkflow, Options};
 
     #[test]
     fn batch_collects_diff_and_write_decisions_without_touching_files() {

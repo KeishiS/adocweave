@@ -6,35 +6,21 @@
 //! set. Consumers that read one shape broke when a document gained an include.
 //! Building every record here keeps the emitted keys identical.
 
-use adocweave::SourceId;
-use adocweave::output::diagnostics::{Diagnostic, RelatedInformation, TextEdit};
+use adocweave::output::diagnostics::Diagnostic;
 use adocweave::preprocess::{ProjectedDiagnostic, SourceOrigin};
 use adocweave::text::TextRange;
 use serde_json::{Map, Value, json};
-
-/// Serializes a diagnostic of a document that was analyzed directly.
-pub(crate) fn record(diagnostic: &Diagnostic, source_id: Option<&str>) -> Value {
-    let related = diagnostic.related.iter().map(related_value).collect();
-    let fixes = diagnostic
-        .fixes
-        .iter()
-        .map(|fix| {
-            fix_value(
-                &fix.title,
-                fix.applicability.as_str(),
-                fix.edits().iter().map(edit_value).collect(),
-            )
-        })
-        .collect();
-    build(diagnostic, source_id, diagnostic.range, related, fixes)
-}
 
 /// Serializes one origin of a diagnostic that came through include expansion.
 ///
 /// The related information and the fixes are taken from the projection so that
 /// every range refers to the including document, not to the expanded text.
 /// `source_id` is `None` only when the projected origin has no identifier.
-pub(crate) fn projected_record(projected: &ProjectedDiagnostic, origin: &SourceOrigin) -> Value {
+pub(crate) fn projected_record_with_source(
+    projected: &ProjectedDiagnostic,
+    origin: &SourceOrigin,
+    source_id: Option<&str>,
+) -> Value {
     let related = projected
         .related
         .iter()
@@ -68,7 +54,7 @@ pub(crate) fn projected_record(projected: &ProjectedDiagnostic, origin: &SourceO
         .collect();
     build(
         &projected.diagnostic,
-        origin.source_id.as_ref().map(SourceId::as_str),
+        source_id,
         origin.range.text_range(),
         related,
         fixes,
@@ -110,12 +96,4 @@ pub(crate) fn with_common_keys(mut object: Map<String, Value>) -> Value {
 
 pub(crate) fn range_value(range: TextRange) -> Value {
     json!({ "start": range.start().to_u32(), "end": range.end().to_u32() })
-}
-
-fn related_value(related: &RelatedInformation) -> Value {
-    json!({ "range": range_value(related.range), "message": related.message })
-}
-
-fn edit_value(edit: &TextEdit) -> Value {
-    json!({ "range": range_value(edit.range), "replacement": edit.replacement })
 }

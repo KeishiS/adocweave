@@ -2,7 +2,6 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
 use std::io::Read;
-#[cfg(target_os = "linux")]
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -482,6 +481,61 @@ impl LocalTargetPolicy {
         temporary.committed = true;
         directory
             .sync_all()
+            .map_err(|source| classify_io(candidate, source))?;
+        Ok(true)
+    }
+
+    /// Compares a regular file after rejecting symbolic links in its path.
+    #[cfg(not(target_os = "linux"))]
+    pub fn candidate_contents_match(
+        &self,
+        candidate: &Path,
+        expected: &[u8],
+    ) -> Result<bool, LocalTargetError> {
+        let candidate = self.inspect_candidate_no_symlinks(candidate)?;
+        Ok(read_for_comparison(&candidate, expected.len(), &candidate)? == expected)
+    }
+
+    /// Rechecks and replaces a regular file through a temporary file in the
+    /// same directory.
+    ///
+    /// Platforms without handle-relative path resolution reject symbolic links
+    /// immediately before each comparison. This cannot prevent every path race,
+    /// which is reflected by [`FilesystemRaceResistance::StaticSnapshotOnly`].
+    #[cfg(not(target_os = "linux"))]
+    pub fn replace_candidate_after_recheck(
+        &self,
+        candidate: &Path,
+        original: &[u8],
+        replacement: &[u8],
+    ) -> Result<bool, LocalTargetError> {
+        let candidate = self.inspect_candidate_no_symlinks(candidate)?;
+        let metadata = fs::symlink_metadata(&candidate)
+            .map_err(|source| classify_io(candidate.clone(), source))?;
+        if read_for_comparison(&candidate, original.len(), &candidate)? != original {
+            return Ok(false);
+        }
+        let parent = candidate.parent().ok_or_else(|| {
+            LocalTargetError::Unverifiable("write target has no parent directory".to_owned())
+        })?;
+        let mut temporary = tempfile::NamedTempFile::new_in(parent)
+            .map_err(|source| classify_io(candidate.clone(), source))?;
+        temporary
+            .as_file()
+            .set_permissions(metadata.permissions())
+            .and_then(|_| temporary.write_all(replacement))
+            .and_then(|_| temporary.as_file().sync_all())
+            .map_err(|source| classify_io(candidate.clone(), source))?;
+        let rechecked = self.inspect_candidate_no_symlinks(&candidate)?;
+        if read_for_comparison(&rechecked, original.len(), &candidate)? != original {
+            return Ok(false);
+        }
+        temporary
+            .persist(&candidate)
+            .map_err(|error| classify_io(candidate.clone(), error.error))?;
+        #[cfg(unix)]
+        fs::File::open(parent)
+            .and_then(|directory| directory.sync_all())
             .map_err(|source| classify_io(candidate, source))?;
         Ok(true)
     }
@@ -1098,6 +1152,31 @@ fn read_for_comparison(
     )
     .map(fs::File::from)
     .map_err(|error| classify_errno(logical_path, error))?;
+    if !file
+        .metadata()
+        .map_err(|source| classify_io(logical_path.to_owned(), source))?
+        .is_file()
+    {
+        return Err(LocalTargetError::NotFile(logical_path.to_owned()));
+    }
+    let limit = u64::try_from(expected_len)
+        .unwrap_or(u64::MAX)
+        .saturating_add(1);
+    let mut current = Vec::with_capacity(expected_len.saturating_add(1));
+    file.take(limit)
+        .read_to_end(&mut current)
+        .map_err(|source| classify_io(logical_path.to_owned(), source))?;
+    Ok(current)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn read_for_comparison(
+    path: &Path,
+    expected_len: usize,
+    logical_path: &Path,
+) -> Result<Vec<u8>, LocalTargetError> {
+    let file =
+        fs::File::open(path).map_err(|source| classify_io(logical_path.to_owned(), source))?;
     if !file
         .metadata()
         .map_err(|source| classify_io(logical_path.to_owned(), source))?

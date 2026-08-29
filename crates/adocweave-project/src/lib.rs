@@ -30,7 +30,8 @@ use adocweave::preprocess::{AnalysisProjection, PreprocessedAnalysis, Preprocess
 use adocweave::{Analysis, AnalysisOptions, SourceId};
 use adocweave_config::{ConfigError, ConfigErrorCode, ConfigSnapshot, ResolvedProjectConfig};
 use adocweave_host::{
-    DerivedFilesystemRoots, FilesystemReadLimits, LocalFilesystemPolicy, ResourceError,
+    DerivedFilesystemRoots, FilesystemReadLimits, LocalFilesystemPolicy, LocalTargetPolicy,
+    ResourceError,
 };
 
 pub use process::{process, resolve_config};
@@ -73,8 +74,23 @@ pub struct ProjectRequest {
     pub sources: Vec<ProjectSource>,
     pub config: ConfigSelection,
     pub overrides: ProjectOverrides,
+    /// Applies diagnostics edits marked as always safe before project analysis.
+    pub apply_safe_fixes: bool,
+    /// Related resources which this caller needs in the returned result.
+    pub resource_selection: ProjectResourceSelection,
     pub authority: ProjectAuthority,
     pub limits: ProjectLimits,
+}
+
+/// Related resources and checks required by the caller.
+///
+/// Includes remain controlled by the resolved configuration. Local-target
+/// selection also allows include failures to be reported as local-target
+/// diagnostics while analysis continues.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ProjectResourceSelection {
+    pub local_targets: bool,
+    pub stylesheets: bool,
 }
 
 /// Verified filesystem authority for one project request.
@@ -99,7 +115,8 @@ impl ProjectAuthority {
                 ResourceError::PathNotAbsolute(project_root),
             ));
         }
-        let mut policy = LocalFilesystemPolicy::new(roots, FilesystemReadLimits::default())
+        let filesystem_limits = ProjectLimits::default().filesystem_reads();
+        let mut policy = LocalFilesystemPolicy::new(roots, filesystem_limits)
             .map_err(ProjectResourceError::from_host)?;
         let project_root = project_root.canonicalize().map_err(|error| {
             ProjectResourceError::from_host(ResourceError::Inspect {
@@ -123,7 +140,7 @@ impl ProjectAuthority {
                         confined: vec![project_root.clone()],
                         independent: Vec::new(),
                     },
-                    FilesystemReadLimits::default(),
+                    filesystem_limits,
                 )
                 .map_err(ProjectResourceError::from_host)?;
         }
@@ -242,6 +259,23 @@ pub struct ProjectLimits {
     pub max_output_bytes: u32,
 }
 
+impl Default for ProjectLimits {
+    fn default() -> Self {
+        let filesystem = FilesystemReadLimits::default();
+        Self {
+            // A request can span several independently configured projects.
+            // Keep the request-wide ceiling above the per-project default so
+            // each resolved configuration remains the practical limit.
+            max_files: filesystem.max_files.saturating_mul(10),
+            max_resource_bytes: filesystem.max_resource_bytes,
+            max_read_bytes: filesystem.max_total_bytes,
+            max_directory_entries: 100_000,
+            max_processing_iterations: 100_000,
+            max_output_bytes: adocweave::OutputLimits::default().max_output_bytes,
+        }
+    }
+}
+
 impl ProjectLimits {
     pub(crate) const fn filesystem_reads(self) -> FilesystemReadLimits {
         FilesystemReadLimits {
@@ -302,11 +336,58 @@ pub struct ProjectTargetResult {
     pub path: Option<PathBuf>,
     /// Original main-document text when it fits the result limit.
     pub source: Option<Arc<str>>,
+    /// Complete replacement text after safe fixes, when the source changed.
+    pub replacement_source: Option<Arc<str>>,
+    /// Authority retained from the successful primary read for a later safe
+    /// replacement. In-memory inputs and failed reads do not provide it.
+    pub write: Option<ProjectWriteCapability>,
     /// Effective configuration and its optional source identity.
     pub config: Arc<ProjectConfigSnapshot>,
     /// Files read or inspected on behalf of this target.
     pub resources: Vec<ProjectResourceResult>,
     pub outcome: Result<ProjectAnalysis, ProjectTargetError>,
+}
+
+/// Opaque authority for replacing one file observed by project processing.
+#[derive(Debug)]
+pub struct ProjectWriteCapability {
+    path: PathBuf,
+    policy: LocalTargetPolicy,
+    original: Arc<str>,
+}
+
+impl ProjectWriteCapability {
+    pub(crate) fn new(path: PathBuf, policy: LocalTargetPolicy, original: Arc<str>) -> Self {
+        Self {
+            path,
+            policy,
+            original,
+        }
+    }
+
+    /// Returns the file path bound to this capability.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Returns whether the file still has the contents observed by processing.
+    pub fn contents_match(&self) -> Result<bool, ProjectResourceError> {
+        self.policy
+            .candidate_contents_match(&self.path, self.original.as_bytes())
+            .map_err(ResourceError::from)
+            .map_err(ProjectResourceError::from_host)
+    }
+
+    /// Rechecks and replaces the observed file, consuming the capability.
+    ///
+    /// `Ok(false)` means that the file changed after project processing and was
+    /// not replaced.
+    pub fn replace_after_recheck(self, replacement: &[u8]) -> Result<bool, ProjectResourceError> {
+        self.policy
+            .replace_candidate_after_recheck(&self.path, self.original.as_bytes(), replacement)
+            .map_err(ResourceError::from)
+            .map_err(ProjectResourceError::from_host)
+    }
 }
 
 /// Analyses derived once from one fixed set of project inputs.
@@ -318,6 +399,16 @@ pub struct ProjectAnalysis {
     pub preprocessed: PreprocessedAnalysis,
     /// Editor-facing facts mapped back to positions in the original sources.
     pub source_mapping: AnalysisProjection,
+    /// Local-reference failures mapped to each original source occurrence.
+    pub local_target_diagnostics: Vec<ProjectLocalTargetDiagnostic>,
+}
+
+/// One local-reference diagnostic ready for caller-specific presentation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectLocalTargetDiagnostic {
+    pub diagnostic: adocweave::output::diagnostics::Diagnostic,
+    pub source_id: SourceId,
+    pub target: String,
 }
 
 /// Why one filesystem resource was acquired.
@@ -568,6 +659,8 @@ impl std::error::Error for ProjectInputError {}
 pub enum ProjectTargetError {
     Read(ProjectResourceError),
     Analysis(PreprocessedAnalysisError),
+    /// Safe edits selected from one source overlap or otherwise conflict.
+    EditConflict(String),
     /// The result is incomplete and must not be presented as fully analyzed.
     Incomplete(ProjectLimit),
 }
@@ -800,6 +893,7 @@ impl fmt::Display for ProjectTargetError {
         match self {
             Self::Read(error) => error.fmt(formatter),
             Self::Analysis(error) => error.fmt(formatter),
+            Self::EditConflict(message) => formatter.write_str(message),
             Self::Incomplete(error) => error.fmt(formatter),
         }
     }
@@ -810,6 +904,7 @@ impl std::error::Error for ProjectTargetError {
         match self {
             Self::Read(error) => Some(error),
             Self::Analysis(error) => Some(error),
+            Self::EditConflict(_) => None,
             Self::Incomplete(error) => Some(error),
         }
     }

@@ -44,10 +44,6 @@ impl CommandOptions {
     pub(crate) const fn uses_stylesheets(&self) -> bool {
         matches!(self, Self::Convert { .. } | Self::Preview { .. })
     }
-
-    pub(crate) const fn is_format(&self) -> bool {
-        matches!(self, Self::Format(_))
-    }
 }
 
 pub(crate) struct Arguments {

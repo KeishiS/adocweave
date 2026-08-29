@@ -7,7 +7,8 @@ use adocweave_host::FilesystemReadLimits;
 use adocweave_project::{
     ConfigSelection, ProjectAuthority, ProjectError, ProjectLimit, ProjectLimits, ProjectOverrides,
     ProjectRequest, ProjectResourceFailure, ProjectResourceKind, ProjectResourceOutcome,
-    ProjectTarget, ProjectTargetError, TargetSelectionError, process as process_project,
+    ProjectResourceSelection, ProjectTarget, ProjectTargetError, TargetSelectionError,
+    process as process_project,
 };
 
 fn process(request: ProjectRequest) -> adocweave_project::ProjectOutcome {
@@ -21,6 +22,11 @@ fn request(root: &Path, targets: Vec<ProjectTarget>) -> ProjectRequest {
         sources: Vec::new(),
         config: ConfigSelection::Discover,
         overrides: ProjectOverrides::default(),
+        apply_safe_fixes: false,
+        resource_selection: ProjectResourceSelection {
+            local_targets: true,
+            stylesheets: true,
+        },
         authority: ProjectAuthority::open(root.to_owned(), [root.to_owned()])
             .expect("temporary project is valid authority"),
         limits: ProjectLimits {
@@ -135,6 +141,73 @@ stylesheet-files = ["styles/manual.css"]
     assert!(include_edges.contains(&("project:guide.adoc", "project:part.adoc")));
     assert!(include_edges.contains(&("project:part.adoc", "project:nested.adoc")));
     assert!(result.targets.iter().all(|target| target.outcome.is_ok()));
+}
+
+#[test]
+fn unselected_local_targets_do_not_expand_the_include_roots() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    fs::create_dir(root.join("docs")).expect("document directory");
+    write(
+        root.join(".adocweave.toml"),
+        "schema-version = 2\n[local-targets]\nenabled = true\nproject-root = \".\"\n",
+    );
+    write(root.join("docs/guide.adoc"), "include::../part.adoc[]\n");
+    write(root.join("part.adoc"), "part\n");
+
+    let mut unselected = request(
+        root,
+        vec![ProjectTarget::Path(PathBuf::from("docs/guide.adoc"))],
+    );
+    unselected.resource_selection.local_targets = false;
+    let result = process(unselected).expect("project processing remains target-local");
+    assert!(matches!(
+        result.targets[0].outcome,
+        Err(ProjectTargetError::Read(_))
+    ));
+
+    let selected = process(request(
+        root,
+        vec![ProjectTarget::Path(PathBuf::from("docs/guide.adoc"))],
+    ))
+    .expect("local-target checking may use its configured root");
+    assert!(selected.targets[0].outcome.is_ok());
+}
+
+#[test]
+fn rejected_local_targets_from_different_sources_have_distinct_ids() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    for name in ["one", "two"] {
+        fs::create_dir(root.join(name)).expect("document directory");
+        write(
+            root.join(name).join("guide.adoc"),
+            "xref:../../outside.adoc[Outside]\n",
+        );
+    }
+    write(
+        root.join(".adocweave.toml"),
+        "schema-version = 2\n[local-targets]\nenabled = true\nproject-root = \".\"\n",
+    );
+
+    let result = process(request(
+        root,
+        vec![
+            ProjectTarget::Path(PathBuf::from("one/guide.adoc")),
+            ProjectTarget::Path(PathBuf::from("two/guide.adoc")),
+        ],
+    ))
+    .expect("outside targets remain target-local");
+    let ids = result
+        .targets
+        .iter()
+        .flat_map(|target| &target.resources)
+        .filter(|resource| resource.kind == ProjectResourceKind::LocalTarget)
+        .map(|resource| resource.source_id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(ids.len(), 2);
+    assert_ne!(ids[0], ids[1]);
+    assert!(ids.iter().all(|id| id.starts_with("local-target:")));
 }
 
 #[test]
@@ -1054,7 +1127,7 @@ fn include_and_local_target_limits_mark_the_target_incomplete() {
 }
 
 #[test]
-fn local_target_limit_alone_marks_the_target_incomplete() {
+fn local_target_limit_remains_a_projected_diagnostic() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let root = directory.path();
     write(
@@ -1069,12 +1142,16 @@ fn local_target_limit_alone_marks_the_target_incomplete() {
         vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
     ))
     .expect("configured limit remains target-local");
-    assert!(matches!(
-        result.targets[0].outcome,
-        Err(ProjectTargetError::Incomplete(ProjectLimit::Files {
-            limit: 1
-        }))
-    ));
+    assert!(result.targets[0].outcome.is_ok());
+    assert!(
+        result.targets[0]
+            .outcome
+            .as_ref()
+            .expect("local-target limit keeps the analysis usable")
+            .local_target_diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.diagnostic.code.as_str() == "local-target-limit-exceeded")
+    );
     assert!(result.targets[0].resources.iter().any(|resource| {
         resource.kind == ProjectResourceKind::LocalTarget
             && matches!(
@@ -1083,6 +1160,36 @@ fn local_target_limit_alone_marks_the_target_incomplete() {
                     ProjectLimit::Files { limit: 1 }
                 ))
             )
+    }));
+}
+
+#[test]
+fn include_observations_share_the_local_target_inspection_limit() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    write(
+        root.join(".adocweave.toml"),
+        "schema-version = 2\n[resources]\ninclude = true\nmax-files = 2\nmax-total-bytes = 1024\nmax-resource-bytes = 1024\n[local-targets]\nenabled = true\nproject-root = \".\"\n",
+    );
+    write(
+        root.join("guide.adoc"),
+        "include::part.adoc[]\n\nimage::asset.dat[]\n",
+    );
+    write(root.join("part.adoc"), "part\n");
+    write(root.join("asset.dat"), "asset\n");
+
+    let result = process(request(
+        root,
+        vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
+    ))
+    .expect("include and inspection limits remain target-local");
+    let analysis = result.targets[0]
+        .outcome
+        .as_ref()
+        .expect("include remains within the document-processing limit");
+    assert!(analysis.local_target_diagnostics.iter().any(|diagnostic| {
+        diagnostic.diagnostic.code.as_str() == "local-target-limit-exceeded"
+            && diagnostic.target == "asset.dat"
     }));
 }
 

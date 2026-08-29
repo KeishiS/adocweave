@@ -1708,7 +1708,7 @@ fn format_write_recurses_deterministically_and_preserves_file_mode() {
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stderr),
-        "adocweave format: files=2, changed=2\n"
+        "adocweave format: files=2, changed=2, updated=2, unchanged=0, failed=0\n"
     );
     #[cfg(unix)]
     {
@@ -1755,6 +1755,32 @@ fn format_diff_does_not_modify_inputs_and_dry_run_is_rejected() {
 }
 
 #[test]
+fn format_write_rejects_standard_input() {
+    let output = adocweave()
+        .args(["format", "--write", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write as _;
+
+            child
+                .stdin
+                .as_mut()
+                .expect("standard input")
+                .write_all(b"text  \n")?;
+            child.wait_with_output()
+        })
+        .expect("format standard input");
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("format --write requires file inputs")
+    );
+}
+
+#[test]
 fn check_fix_applies_only_always_safe_non_conflicting_edits() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1794,7 +1820,7 @@ fn check_fix_applies_only_always_safe_non_conflicting_edits() {
     assert_eq!(std::fs::read_to_string(&second).unwrap(), "second\n");
     assert_eq!(
         String::from_utf8_lossy(&output.stderr),
-        "adocweave check: errors=0, warnings=0, information=0, hints=0, changed=2\n"
+        "adocweave check: errors=0, warnings=0, information=0, hints=0, files=2, changed=2, updated=2, unchanged=0, failed=0\n"
     );
     std::fs::remove_dir_all(root).expect("cleanup");
 }

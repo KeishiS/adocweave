@@ -6,26 +6,10 @@ pub(crate) struct Outcome {
     pub(crate) output: String,
 }
 
-pub(crate) fn run(snapshot: Option<&adocweave_config::ConfigSnapshot>) -> Outcome {
-    let default_config;
-    let config = if let Some(snapshot) = snapshot {
-        &snapshot.config
-    } else {
-        default_config = adocweave_config::ResolvedProjectConfig::default();
-        &default_config
-    };
-    Outcome {
-        output: serde_json::to_string_pretty(&resolved_config_json(snapshot, config))
-            .expect("resolved configuration is serializable"),
-    }
-}
-
-fn resolved_config_json(
-    snapshot: Option<&adocweave_config::ConfigSnapshot>,
-    config: &adocweave_config::ResolvedProjectConfig,
-) -> serde_json::Value {
-    let attributes = config
-        .analysis
+pub(crate) fn run_project(snapshot: &adocweave_project::ProjectConfigSnapshot) -> Outcome {
+    let config = &snapshot.config;
+    let analysis = config.analysis();
+    let attributes = analysis
         .attributes
         .iter()
         .map(|(name, value)| {
@@ -38,7 +22,7 @@ fn resolved_config_json(
     let rules = diagnostic::LINT_RULES
         .iter()
         .map(|descriptor| {
-            let settings = config.analysis.diagnostics.lint.rule(descriptor.id);
+            let settings = analysis.diagnostics.lint.rule(descriptor.id);
             (
                 descriptor.id.as_str().to_owned(),
                 serde_json::json!({
@@ -49,147 +33,55 @@ fn resolved_config_json(
         })
         .collect::<serde_json::Map<_, _>>();
     let path = |path: &std::path::Path| path.to_string_lossy().into_owned();
-    serde_json::json!({
-        "schemaVersion": config.schema_version,
-        "source": snapshot.map(|snapshot| path(&snapshot.path)),
-        "analysis": {
-            "syntaxMode": match config.analysis.syntax.syntax_mode {
-                adocweave::SyntaxMode::Permissive => "permissive",
-                adocweave::SyntaxMode::Strict => "strict",
+    let limits = config.resource_limits();
+    let format = config.format();
+    Outcome {
+        output: serde_json::to_string_pretty(&serde_json::json!({
+            "schemaVersion": config.schema_version(),
+            "source": snapshot.path.as_deref().map(path),
+            "analysis": {
+                "syntaxMode": match analysis.syntax.syntax_mode {
+                    adocweave::SyntaxMode::Permissive => "permissive",
+                    adocweave::SyntaxMode::Strict => "strict",
+                },
+                "attributes": attributes,
             },
-            "attributes": attributes,
-        },
-        "lint": {
-            "rules": rules,
-            "maxLineLength": config.analysis.diagnostics.lint.max_line_length,
-            "maxConsecutiveBlankLines":
-                config.analysis.diagnostics.lint.max_consecutive_blank_lines,
-            "maxDiagnostics": config.analysis.diagnostics.lint.max_diagnostics,
-        },
-        "resources": {
-            "include": config.resources.include,
-            "roots": config.resources.roots.iter().map(|value| path(value)).collect::<Vec<_>>(),
-            "maxFiles": config.resources.limit_plan.filesystem_reads.max_files,
-            "maxTotalBytes": config.resources.limit_plan.filesystem_reads.max_total_bytes,
-            "maxResourceBytes": config.resources.limit_plan.filesystem_reads.max_resource_bytes,
-        },
-        "workspace": {
-            "scan": {
-                "exclude": config.workspace.scan.exclude_patterns().collect::<Vec<_>>(),
+            "lint": {
+                "rules": rules,
+                "maxLineLength": analysis.diagnostics.lint.max_line_length,
+                "maxConsecutiveBlankLines": analysis.diagnostics.lint.max_consecutive_blank_lines,
+                "maxDiagnostics": analysis.diagnostics.lint.max_diagnostics,
             },
-        },
-        "localTargets": {
-            "enabled": config.local_targets.enabled,
-            "projectRoot": config.local_targets.project_root.as_deref().map(path),
-        },
-        "format": {
-            "newline": match config.format.newline {
-                adocweave::output::formatter::NewlineStyle::Lf => "lf",
-                adocweave::output::formatter::NewlineStyle::CrLf => "cr-lf",
+            "resources": {
+                "include": config.include_enabled(),
+                "roots": config.resource_roots().iter().map(|value| path(value)).collect::<Vec<_>>(),
+                "maxFiles": limits.max_files,
+                "maxTotalBytes": limits.max_total_bytes,
+                "maxResourceBytes": limits.max_resource_bytes,
             },
-            "finalNewline": config.format.final_newline,
-            "maxConsecutiveBlankLines": config.format.max_consecutive_blank_lines,
-        },
-        "html": {
-            "complete": config.html.policy.document_mode == HtmlDocumentMode::Complete,
-            "stylesheetFiles":
-                config.html.stylesheet_files.iter().map(|value| path(value)).collect::<Vec<_>>(),
-            "stylesheetUrls": config.html.stylesheet_urls,
-        }
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use std::path::PathBuf;
-
-    use super::*;
-
-    #[test]
-    fn missing_snapshot_uses_defaults_without_inventing_a_source() {
-        let outcome = run(None);
-        let value: serde_json::Value = serde_json::from_str(&outcome.output).expect("config JSON");
-
-        assert!(value["source"].is_null());
-        assert_eq!(value["schemaVersion"], 2);
-        assert_eq!(value["resources"]["include"], true);
-        assert_eq!(
-            value["workspace"]["scan"]["exclude"],
-            serde_json::json!(adocweave_config::DEFAULT_WORKSPACE_SCAN_EXCLUDES),
-        );
-        assert_eq!(value["analysis"]["attributes"], serde_json::json!({}));
-    }
-
-    #[test]
-    fn resolved_workspace_scan_patterns_include_defaults_and_unique_additions() {
-        let config = adocweave_config::ResolvedProjectConfig::parse(
-            "schema-version = 2\n[workspace.scan]\nexclude = [\"**/.git\", \"build\", \"build\"]\n",
-            std::path::Path::new("/project"),
-        )
-        .expect("configuration");
-        let snapshot = adocweave_config::ConfigSnapshot {
-            path: PathBuf::from("/project/.adocweave.toml"),
-            content_sha256: [0; 32],
-            config,
-        };
-
-        let value: serde_json::Value =
-            serde_json::from_str(&run(Some(&snapshot)).output).expect("config JSON");
-        assert_eq!(
-            value["workspace"]["scan"]["exclude"],
-            serde_json::json!([
-                "**/.git",
-                "**/.venv",
-                "**/node_modules",
-                "**/target",
-                "build"
-            ])
-        );
-    }
-
-    #[test]
-    fn snapshot_redacts_values_and_internal_content_identity() {
-        let mut config = adocweave_config::ResolvedProjectConfig::default();
-        config
-            .analysis
-            .attributes
-            .insert("token".to_owned(), Some("do-not-print".to_owned()));
-        config.analysis.attributes.insert("hidden".to_owned(), None);
-        let snapshot = adocweave_config::ConfigSnapshot {
-            path: PathBuf::from("/project/.adocweave.toml"),
-            content_sha256: [0xab; 32],
-            config,
-        };
-
-        let outcome = run(Some(&snapshot));
-        assert!(!outcome.output.contains("do-not-print"));
-        assert!(!outcome.output.contains("abababab"));
-        let value: serde_json::Value = serde_json::from_str(&outcome.output).expect("config JSON");
-        assert_eq!(value["analysis"]["attributes"]["token"]["state"], "set");
-        assert_eq!(value["analysis"]["attributes"]["hidden"]["state"], "unset");
-    }
-
-    #[test]
-    fn attribute_names_are_serialized_as_data() {
-        let hostile_name = "quote\"\nkey";
-        let mut config = adocweave_config::ResolvedProjectConfig::default();
-        config.analysis.attributes.insert(
-            hostile_name.to_owned(),
-            Some("still-do-not-print".to_owned()),
-        );
-        let snapshot = adocweave_config::ConfigSnapshot {
-            path: PathBuf::from("/project/.adocweave.toml"),
-            content_sha256: [0; 32],
-            config,
-        };
-
-        let outcome = run(Some(&snapshot));
-        let value: serde_json::Value = serde_json::from_str(&outcome.output).expect("config JSON");
-
-        assert_eq!(
-            value["analysis"]["attributes"][hostile_name]["state"],
-            "set"
-        );
-        assert!(!outcome.output.contains("still-do-not-print"));
+            "workspace": {
+                "scan": {
+                    "exclude": config.workspace_excludes().collect::<Vec<_>>(),
+                },
+            },
+            "localTargets": {
+                "enabled": config.local_targets_enabled(),
+                "projectRoot": config.local_target_root().map(path),
+            },
+            "format": {
+                "newline": match format.newline {
+                    adocweave::output::formatter::NewlineStyle::Lf => "lf",
+                    adocweave::output::formatter::NewlineStyle::CrLf => "cr-lf",
+                },
+                "finalNewline": format.final_newline,
+                "maxConsecutiveBlankLines": format.max_consecutive_blank_lines,
+            },
+            "html": {
+                "complete": config.html_policy().document_mode == HtmlDocumentMode::Complete,
+                "stylesheetFiles": config.stylesheet_files().iter().map(|value| path(value)).collect::<Vec<_>>(),
+                "stylesheetUrls": config.stylesheet_urls(),
+            }
+        }))
+        .expect("resolved configuration is serializable"),
     }
 }

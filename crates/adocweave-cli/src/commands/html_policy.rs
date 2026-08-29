@@ -193,6 +193,109 @@ pub(crate) fn build(
     })
 }
 
+pub(crate) fn build_project(
+    project: &adocweave_project::ProjectConfig,
+    resources: &[adocweave_project::ProjectResourceResult],
+    complete: bool,
+    stylesheets: &[StylesheetArgument],
+) -> Result<RenderPolicy, Error> {
+    let limits = StylesheetPolicy::default();
+    let command_file_count = stylesheets
+        .iter()
+        .filter(|value| matches!(value, StylesheetArgument::File(_)))
+        .count();
+    let configured_file_count = project
+        .stylesheet_files()
+        .len()
+        .checked_sub(command_file_count)
+        .ok_or_else(|| Error::Stylesheet("stylesheet result is incomplete".to_owned()))?;
+    let count = project
+        .stylesheet_files()
+        .len()
+        .saturating_add(project.stylesheet_urls().len())
+        .saturating_add(stylesheets.len().saturating_sub(command_file_count));
+    if count > usize::try_from(limits.max_sources).unwrap_or(usize::MAX) {
+        return Err(Error::Stylesheet(format!(
+            "stylesheet count exceeds the limit of {}",
+            limits.max_sources
+        )));
+    }
+    let inline = |path: &Path| -> Result<StylesheetSource, Error> {
+        let resource = resources
+            .iter()
+            .find(|resource| {
+                resource.kind == adocweave_project::ProjectResourceKind::Stylesheet
+                    && (resource.requested_path == path || resource.path == path)
+            })
+            .ok_or_else(|| Error::Read {
+                source_name: path.display().to_string(),
+                source: io::Error::other("stylesheet was not returned by project processing"),
+            })?;
+        let source = match &resource.outcome {
+            adocweave_project::ProjectResourceOutcome::Loaded { source } => source,
+            adocweave_project::ProjectResourceOutcome::LoadedOmitted { .. } => {
+                return Err(Error::Stylesheet(format!(
+                    "stylesheet {} exceeds the returned output limit",
+                    path.display()
+                )));
+            }
+            outcome => {
+                return Err(Error::Read {
+                    source_name: path.display().to_string(),
+                    source: io::Error::other(format!("stylesheet is unavailable: {outcome:?}")),
+                });
+            }
+        };
+        if source.len()
+            > usize::try_from(limits.max_inline_bytes).expect("u32 fits usize on supported targets")
+        {
+            return Err(Error::Stylesheet(format!(
+                "stylesheet {} exceeds the limit of {} bytes",
+                path.display(),
+                limits.max_inline_bytes
+            )));
+        }
+        Ok(StylesheetSource::Inline(source.to_string()))
+    };
+
+    let mut sources = project.stylesheet_files()[..configured_file_count]
+        .iter()
+        .map(|path| inline(path))
+        .collect::<Result<Vec<_>, _>>()?;
+    sources.extend(
+        project
+            .stylesheet_urls()
+            .iter()
+            .cloned()
+            .map(StylesheetSource::External),
+    );
+    let mut command_files = project.stylesheet_files()[configured_file_count..].iter();
+    for stylesheet in stylesheets {
+        match stylesheet {
+            StylesheetArgument::File(_) => {
+                let path = command_files.next().ok_or_else(|| {
+                    Error::Stylesheet("stylesheet result is incomplete".to_owned())
+                })?;
+                sources.push(inline(path)?);
+            }
+            StylesheetArgument::Url(url) => {
+                sources.push(StylesheetSource::External(url.clone()));
+            }
+        }
+    }
+    let mut policy = project.html_policy().clone();
+    if complete {
+        policy.document_mode = HtmlDocumentMode::Complete;
+    }
+    if policy.document_mode != HtmlDocumentMode::Complete && !sources.is_empty() {
+        return Err(Error::Usage(
+            "--css and --css-url require --complete".to_owned(),
+        ));
+    }
+    policy.stylesheets = StylesheetPolicy { sources, ..limits };
+    Ok(policy)
+}
+
 /// Rejects an input that would exceed the renderer's stylesheet count before
 /// any file is opened or read.
 pub(crate) fn validate_stylesheet_count(

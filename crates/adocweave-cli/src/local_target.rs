@@ -1,58 +1,15 @@
 //! Explicit filesystem validation for typed local targets.
 
-use std::path::Path;
-
 use adocweave::text::{PositionEncoding, SourceDocument};
-use adocweave::{LocalTargetReference, LocalTargetSyntax};
+#[cfg(test)]
 use adocweave_host::{
     IncludeFilesystem, IncludeFilesystemInspectionOutcome, IncludeFilesystemRequest,
     LocalFilesystemSession, LocalTargetError, LogicalSourceId, ResourceError,
 };
+#[cfg(test)]
+use std::path::Path;
 
-#[derive(Clone, Debug)]
-pub struct HostDiagnostic {
-    pub code: &'static str,
-    pub message: &'static str,
-    pub source_id: String,
-    pub range: adocweave::text::TextRange,
-    pub target: String,
-    pub line: u32,
-    pub column: u32,
-}
-
-pub fn validate_with_session(
-    targets: &[LocalTargetReference],
-    authority: &Path,
-    base: &Path,
-    source_id: &str,
-    source: &str,
-    session: &mut LocalFilesystemSession,
-) -> Vec<HostDiagnostic> {
-    targets
-        .iter()
-        .filter_map(|target| {
-            let error = if target.syntax == LocalTargetSyntax::Unverifiable {
-                LocalTargetError::Unverifiable(target.target.clone())
-            } else {
-                match inspect_with_session(source_id, authority, base, &target.path, session) {
-                    Ok(()) => return None,
-                    Err(error) => error,
-                }
-            };
-            let (line, column) = line_column(source, target.target_range.start().to_u32() as usize);
-            Some(HostDiagnostic {
-                code: error.diagnostic_code(),
-                message: message(&error),
-                source_id: source_id.to_owned(),
-                range: target.target_range,
-                target: target.target.clone(),
-                line,
-                column,
-            })
-        })
-        .collect()
-}
-
+#[cfg(test)]
 pub(crate) fn inspect_with_session(
     source_id: &str,
     authority: &Path,
@@ -77,19 +34,29 @@ pub(crate) fn inspect_with_session(
     }
 }
 
-pub fn diagnostic_from_error(
-    error: &LocalTargetError,
+#[derive(Clone, Debug)]
+pub struct HostDiagnostic {
+    pub code: String,
+    pub message: String,
+    pub source_id: String,
+    pub range: adocweave::text::TextRange,
+    pub target: String,
+    pub line: u32,
+    pub column: u32,
+}
+
+pub(crate) fn diagnostic_from_project(
+    diagnostic: &adocweave::output::diagnostics::Diagnostic,
     source_id: &str,
     source: &str,
-    range: adocweave::text::TextRange,
     target: &str,
 ) -> HostDiagnostic {
-    let (line, column) = line_column(source, range.start().to_u32() as usize);
+    let (line, column) = line_column(source, diagnostic.range.start().to_u32() as usize);
     HostDiagnostic {
-        code: error.diagnostic_code(),
-        message: message(error),
+        code: diagnostic.code.as_str().to_owned(),
+        message: diagnostic.message.clone(),
         source_id: source_id.to_owned(),
-        range,
+        range: diagnostic.range,
         target: target.to_owned(),
         line,
         column,
@@ -178,20 +145,4 @@ fn line_column(source: &str, offset: usize) -> (u32, u32) {
         .len() as u32
         + 1;
     (line, column)
-}
-
-const fn message(error: &LocalTargetError) -> &'static str {
-    match error {
-        LocalTargetError::Missing(_) => "local target does not exist",
-        LocalTargetError::OutsideRoot(_) => "local target is outside the project root",
-        LocalTargetError::NotFile(_) | LocalTargetError::NotDirectory(_) => {
-            "local target is not a regular file"
-        }
-        LocalTargetError::PermissionDenied(_) => "local target cannot be read",
-        LocalTargetError::LimitExceeded { .. } => "local target inspection limit exceeded",
-        LocalTargetError::InvalidUtf8(_)
-        | LocalTargetError::Unverifiable(_)
-        | LocalTargetError::ResourceTooLarge(_)
-        | LocalTargetError::ReadLimitExceeded => "local target cannot be verified",
-    }
 }
