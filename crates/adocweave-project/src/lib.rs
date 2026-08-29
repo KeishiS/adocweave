@@ -84,10 +84,12 @@ pub struct ProjectOverrides {
     pub include: Option<bool>,
 }
 
-/// Hard ceilings shared by every target in one request.
+/// Hard ceilings shared by every target and physical acquisition in one request.
 ///
 /// Include depth, include count and parser limits remain part of the resolved
-/// project configuration. They are deliberately not duplicated here.
+/// project configuration. Configured resource limits are narrower budgets
+/// shared by targets which resolve the same configuration snapshot; they do
+/// not replace these request-wide ceilings.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProjectLimits {
     pub filesystem_reads: FilesystemReadLimits,

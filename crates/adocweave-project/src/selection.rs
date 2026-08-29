@@ -9,6 +9,87 @@ use adocweave_host::{
 
 use crate::{ProjectError, ProjectLimits, ProjectTarget, ProjectWarning, TargetSelectionError};
 
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) enum NormalizedSelector {
+    Path(PathBuf),
+    Directory(PathBuf),
+    Glob { pattern: String, scan_root: PathBuf },
+    Workspace(PathBuf),
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum ScanMode {
+    Directory,
+    Glob,
+    Workspace,
+}
+
+struct ScanState<'request> {
+    authority: &'request mut LocalFilesystemPolicy,
+    limits: ProjectLimits,
+    job: &'request IncludeFilesystemJob,
+    warnings: &'request mut Vec<ProjectWarning>,
+    scans: BTreeMap<(ScanMode, PathBuf, Vec<String>), Vec<PathBuf>>,
+}
+
+pub(crate) fn normalize_selectors(
+    project_root: &Path,
+    selectors: &[ProjectTarget],
+) -> Result<Vec<NormalizedSelector>, ProjectError> {
+    let mut authored = selectors.iter().collect::<Vec<_>>();
+    authored.sort_by_key(|selector| selector_sort_key(selector));
+    let mut normalized = authored
+        .into_iter()
+        .map(|selector| normalize_selector(project_root, selector))
+        .collect::<Result<Vec<_>, _>>()?;
+    normalized.sort();
+    normalized.dedup();
+    Ok(normalized)
+}
+
+fn selector_sort_key(selector: &ProjectTarget) -> (u8, String) {
+    match selector {
+        ProjectTarget::Path(path) => (0, format!("{path:?}")),
+        ProjectTarget::Directory(path) => (1, format!("{path:?}")),
+        ProjectTarget::Glob(pattern) => (2, pattern.clone()),
+        ProjectTarget::Workspace(path) => (3, format!("{path:?}")),
+    }
+}
+
+fn normalize_selector(
+    project_root: &Path,
+    selector: &ProjectTarget,
+) -> Result<NormalizedSelector, ProjectError> {
+    match selector {
+        ProjectTarget::Path(path) => absolute_lexical(project_root, path)
+            .map(NormalizedSelector::Path)
+            .map_err(ProjectError::Authority),
+        ProjectTarget::Directory(path) => absolute_lexical(project_root, path)
+            .map(NormalizedSelector::Directory)
+            .map_err(ProjectError::Authority),
+        ProjectTarget::Workspace(path) => {
+            let path = absolute_lexical(project_root, path).map_err(ProjectError::Authority)?;
+            if !path.starts_with(project_root) {
+                return Err(ProjectError::Authority(ResourceError::OutsideRoots(path)));
+            }
+            Ok(NormalizedSelector::Workspace(path))
+        }
+        ProjectTarget::Glob(authored) => {
+            glob::Pattern::new(authored).map_err(|_| invalid_glob(authored))?;
+            let absolute_pattern = absolute_lexical(project_root, Path::new(authored))
+                .map_err(ProjectError::Authority)?;
+            let pattern = absolute_pattern
+                .to_str()
+                .ok_or_else(|| invalid_glob(authored))?
+                .to_owned();
+            glob::Pattern::new(&pattern).map_err(|_| invalid_glob(authored))?;
+            let scan_root = absolute_lexical(project_root, &glob_scan_root(authored))
+                .map_err(ProjectError::Authority)?;
+            Ok(NormalizedSelector::Glob { pattern, scan_root })
+        }
+    }
+}
+
 pub(crate) fn absolute_lexical(root: &Path, path: &Path) -> Result<PathBuf, ResourceError> {
     let input = if path.is_absolute() {
         path.to_owned()
@@ -86,8 +167,7 @@ fn encode_os_string(value: &std::ffi::OsStr) -> String {
 }
 
 pub(crate) fn select_targets(
-    project_root: &Path,
-    selectors: &[ProjectTarget],
+    selectors: &[NormalizedSelector],
     authority: &mut LocalFilesystemPolicy,
     limits: ProjectLimits,
     job: &IncludeFilesystemJob,
@@ -95,55 +175,39 @@ pub(crate) fn select_targets(
     warnings: &mut Vec<ProjectWarning>,
 ) -> Result<Vec<PathBuf>, ProjectError> {
     let mut selected = BTreeSet::new();
-    let mut scans = BTreeMap::<(PathBuf, Vec<String>), Vec<PathBuf>>::new();
+    let mut scans = ScanState {
+        authority,
+        limits,
+        job,
+        warnings,
+        scans: BTreeMap::new(),
+    };
     for selector in selectors {
         match selector {
-            ProjectTarget::Path(path) => {
-                let path = absolute_lexical(project_root, path).map_err(ProjectError::Authority)?;
-                require_authority(authority, &path)?;
-                selected.insert(path);
+            NormalizedSelector::Path(path) => {
+                require_authority(scans.authority, path)?;
+                selected.insert(path.clone());
             }
-            ProjectTarget::Directory(directory) => {
-                let directory =
-                    absolute_lexical(project_root, directory).map_err(ProjectError::Authority)?;
-                let paths = scan_once(
-                    &directory, authority, limits, job, None, warnings, &mut scans,
+            NormalizedSelector::Directory(directory) => {
+                let paths = scans.scan_once(directory, ScanMode::Directory, None)?;
+                selected.extend(paths.iter().cloned());
+            }
+            NormalizedSelector::Workspace(directory) => {
+                let paths = scans.scan_once(
+                    directory,
+                    ScanMode::Workspace,
+                    scan_settings.get(directory),
                 )?;
                 selected.extend(paths.iter().cloned());
             }
-            ProjectTarget::Workspace(directory) => {
-                let directory =
-                    absolute_lexical(project_root, directory).map_err(ProjectError::Authority)?;
-                let paths = scan_once(
-                    &directory,
-                    authority,
-                    limits,
-                    job,
-                    scan_settings.get(&directory),
-                    warnings,
-                    &mut scans,
-                )?;
-                selected.extend(paths.iter().cloned());
-            }
-            ProjectTarget::Glob(authored) => {
-                let pattern = glob::Pattern::new(authored).map_err(|_| invalid_glob(authored))?;
-                let scan_root = absolute_lexical(project_root, &glob_scan_root(authored))
-                    .map_err(ProjectError::Authority)?;
-                let absolute = Path::new(authored).is_absolute();
-                let paths = scan_once(
-                    &scan_root, authority, limits, job, None, warnings, &mut scans,
-                )?;
+            NormalizedSelector::Glob { pattern, scan_root } => {
+                let pattern = glob::Pattern::new(pattern)
+                    .expect("normalized selectors retain a valid glob pattern");
+                let paths = scans.scan_once(scan_root, ScanMode::Glob, None)?;
                 selected.extend(
                     paths
                         .iter()
-                        .filter(|path| {
-                            if absolute {
-                                pattern.matches_path(path)
-                            } else {
-                                path.strip_prefix(project_root)
-                                    .is_ok_and(|relative| pattern.matches_path(relative))
-                            }
-                        })
+                        .filter(|path| pattern.matches_path(path))
                         .cloned(),
                 );
             }
@@ -159,43 +223,48 @@ fn require_authority(authority: &LocalFilesystemPolicy, path: &Path) -> Result<(
         .ok_or_else(|| ProjectError::Authority(ResourceError::OutsideRoots(path.to_owned())))
 }
 
-fn scan_once<'scan>(
-    directory: &Path,
-    authority: &mut LocalFilesystemPolicy,
-    limits: ProjectLimits,
-    job: &IncludeFilesystemJob,
-    scan_settings: Option<&WorkspaceScanSettings>,
-    warnings: &mut Vec<ProjectWarning>,
-    scans: &'scan mut BTreeMap<(PathBuf, Vec<String>), Vec<PathBuf>>,
-) -> Result<&'scan [PathBuf], ProjectError> {
-    let patterns = scan_settings
-        .into_iter()
-        .flat_map(WorkspaceScanSettings::exclude_patterns)
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    let key = (directory.to_owned(), patterns);
-    if !scans.contains_key(&key) {
-        let anchor = authority
+impl ScanState<'_> {
+    fn scan_once(
+        &mut self,
+        directory: &Path,
+        mode: ScanMode,
+        scan_settings: Option<&WorkspaceScanSettings>,
+    ) -> Result<Vec<PathBuf>, ProjectError> {
+        let mut patterns = scan_settings
+            .into_iter()
+            .flat_map(WorkspaceScanSettings::exclude_patterns)
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        patterns.sort();
+        patterns.dedup();
+        let key = (mode, directory.to_owned(), patterns);
+        if let Some(paths) = self.scans.get(&key) {
+            return Ok(paths.clone());
+        }
+        let anchor = self
+            .authority
             .policy_for_path(directory)
             .map(|policy| policy.root().to_owned())
             .ok_or_else(|| {
                 ProjectError::Authority(ResourceError::OutsideRoots(directory.to_owned()))
             })?;
         let policy = if anchor == directory {
-            authority.access_existing([anchor], limits.filesystem_reads)
+            self.authority
+                .access_existing([anchor], self.limits.filesystem_reads)
         } else {
-            authority.access_derived(
+            self.authority.access_derived(
                 &anchor,
                 DerivedFilesystemRoots {
                     confined: vec![directory.to_owned()],
                     independent: Vec::new(),
                 },
-                limits.filesystem_reads,
+                self.limits.filesystem_reads,
             )
         }
         .map_err(ProjectError::Authority)?;
         let session = policy.session().map_err(ProjectError::Authority)?;
-        let transaction = job
+        let transaction = self
+            .job
             .transaction(&session)
             .map_err(|error| ProjectError::Authority(ResourceError::from(error)))?;
         let (paths, complete) = transaction
@@ -204,19 +273,18 @@ fn scan_once<'scan>(
             })
             .map_err(|error| ProjectError::Authority(ResourceError::from(error)))?;
         if !complete
-            && !warnings
+            && !self
+                .warnings
                 .iter()
                 .any(|warning| matches!(warning, ProjectWarning::ScanTruncated { .. }))
         {
-            warnings.push(ProjectWarning::ScanTruncated {
-                limit: limits.max_directory_entries,
+            self.warnings.push(ProjectWarning::ScanTruncated {
+                limit: self.limits.max_directory_entries,
             });
         }
-        scans.insert(key.clone(), paths);
+        self.scans.insert(key, paths.clone());
+        Ok(paths)
     }
-    Ok(scans
-        .get(&key)
-        .expect("a completed scan is retained for the request"))
 }
 
 fn invalid_glob(authored: &str) -> ProjectError {
@@ -226,18 +294,13 @@ fn invalid_glob(authored: &str) -> ProjectError {
 }
 
 pub(crate) fn scan_root_for_selector(
-    project_root: &Path,
-    selector: &ProjectTarget,
+    selector: &NormalizedSelector,
 ) -> Result<Option<PathBuf>, ProjectError> {
     match selector {
-        ProjectTarget::Workspace(path) => {
-            let root = absolute_lexical(project_root, path).map_err(ProjectError::Authority)?;
-            if !root.starts_with(project_root) {
-                return Err(ProjectError::Authority(ResourceError::OutsideRoots(root)));
-            }
-            Ok(Some(root))
-        }
-        ProjectTarget::Path(_) | ProjectTarget::Directory(_) | ProjectTarget::Glob(_) => Ok(None),
+        NormalizedSelector::Workspace(path) => Ok(Some(path.clone())),
+        NormalizedSelector::Path(_)
+        | NormalizedSelector::Directory(_)
+        | NormalizedSelector::Glob { .. } => Ok(None),
     }
 }
 

@@ -256,6 +256,94 @@ fn target_results_are_stable_across_selector_order() {
 }
 
 #[test]
+fn selector_permutations_duplicates_and_overlaps_have_one_stable_result_set() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    fs::create_dir(root.join("nested")).expect("nested directory");
+    write(root.join("a.adoc"), "a\n");
+    write(root.join("nested/b.adoc"), "b\n");
+    let selectors = vec![
+        ProjectTarget::Path(PathBuf::from("./a.adoc")),
+        ProjectTarget::Path(PathBuf::from("a.adoc")),
+        ProjectTarget::Directory(PathBuf::from("nested/..")),
+        ProjectTarget::Glob("./*.adoc".to_owned()),
+        ProjectTarget::Workspace(PathBuf::from(".")),
+    ];
+    let run = |mut selectors: Vec<ProjectTarget>| {
+        let first = process(request(root, selectors.clone())).expect("selectors are valid");
+        selectors.reverse();
+        let second = process(request(root, selectors)).expect("reversed selectors are valid");
+        let summarize = |result: adocweave_project::ProjectResult| {
+            (
+                result
+                    .targets
+                    .into_iter()
+                    .map(|target| target.path)
+                    .collect::<Vec<_>>(),
+                result.warnings,
+                result.usage.filesystem,
+            )
+        };
+        assert_eq!(summarize(first), summarize(second));
+    };
+    run(selectors);
+}
+
+#[test]
+fn selector_errors_are_stable_across_input_order() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    let selectors = vec![
+        ProjectTarget::Glob("[invalid".to_owned()),
+        ProjectTarget::Workspace(PathBuf::from("../outside")),
+    ];
+    let first = process(request(root, selectors.clone())).expect_err("selectors are invalid");
+    let second = process(request(root, selectors.into_iter().rev().collect()))
+        .expect_err("reversed selectors are invalid");
+    assert_eq!(first.to_string(), second.to_string());
+}
+
+#[test]
+fn directory_selectors_under_independent_roots_keep_stable_authority() {
+    let project = tempfile::tempdir().expect("project directory");
+    let external = tempfile::tempdir().expect("external directory");
+    write(project.path().join("a.adoc"), "project\n");
+    write(external.path().join("b.adoc"), "external\n");
+    let run = |mut targets: Vec<ProjectTarget>| {
+        let filesystem_reads = FilesystemReadLimits::default();
+        let mut first_request = request(project.path(), targets.clone());
+        first_request.config = ConfigSelection::Disabled;
+        first_request.authority = LocalFilesystemPolicy::new(
+            [project.path().to_owned(), external.path().to_owned()],
+            filesystem_reads,
+        )
+        .expect("independent roots are retained");
+        let first = process(first_request).expect("independent scans succeed");
+        targets.reverse();
+        let mut second_request = request(project.path(), targets);
+        second_request.config = ConfigSelection::Disabled;
+        second_request.authority = LocalFilesystemPolicy::new(
+            [project.path().to_owned(), external.path().to_owned()],
+            filesystem_reads,
+        )
+        .expect("independent roots are retained");
+        let second = process(second_request).expect("reversed independent scans succeed");
+        let ids = |result: adocweave_project::ProjectResult| {
+            result
+                .targets
+                .into_iter()
+                .map(|target| target.source_id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(first), ids(second));
+    };
+    run(vec![
+        ProjectTarget::Directory(PathBuf::from(".")),
+        ProjectTarget::Directory(external.path().to_owned()),
+    ]);
+}
+
+#[test]
 fn bounded_workspace_scan_reports_partial_results() {
     let directory = tempfile::tempdir().expect("temporary directory");
     fs::create_dir(directory.path().join("nested")).expect("nested directory");
@@ -274,6 +362,33 @@ fn bounded_workspace_scan_reports_partial_results() {
         [adocweave_project::ProjectWarning::ScanTruncated { limit: 2 }]
     );
     assert!(!result.targets.is_empty());
+}
+
+#[test]
+fn scan_limits_zero_and_one_are_stable_for_duplicate_selectors() {
+    for limit in [0, 1] {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        write(directory.path().join("a.adoc"), "a\n");
+        let mut project = request(
+            directory.path(),
+            vec![
+                ProjectTarget::Directory(PathBuf::from(".")),
+                ProjectTarget::Directory(PathBuf::from("./")),
+            ],
+        );
+        project.config = ConfigSelection::Disabled;
+        project.limits.max_directory_entries = limit;
+        let result = process(project).expect("bounded scan returns a stable partial result");
+        if limit == 0 {
+            assert_eq!(
+                result.warnings,
+                [adocweave_project::ProjectWarning::ScanTruncated { limit }]
+            );
+        } else {
+            assert!(result.warnings.is_empty());
+        }
+        assert!(result.targets.len() <= 1);
+    }
 }
 
 #[test]
@@ -410,6 +525,225 @@ fn local_target_observation_can_later_be_read_as_a_primary() {
     .expect("inspection and later read coexist");
     assert_eq!(result.targets.len(), 2);
     assert!(result.targets.iter().all(|target| target.outcome.is_ok()));
+}
+
+#[test]
+fn directory_selection_can_inspect_an_include_before_reading_it_as_a_target() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    write(
+        root.join(".adocweave.toml"),
+        "schema-version = 2\n[resources]\ninclude = true\nmax-files = 2\nmax-total-bytes = 1024\nmax-resource-bytes = 1024\n[local-targets]\nenabled = true\nproject-root = \".\"\n",
+    );
+    write(
+        root.join("a-guide.adoc"),
+        "include::z-part.adoc[]\n\nimage::z-part.adoc[]\n",
+    );
+    write(root.join("z-part.adoc"), "part body\n");
+
+    let result = process(request(
+        root,
+        vec![ProjectTarget::Directory(PathBuf::from("."))],
+    ))
+    .expect("directory processing succeeds");
+    assert_eq!(result.targets.len(), 2);
+    assert!(result.targets.iter().all(|target| target.outcome.is_ok()));
+    let part = result
+        .targets
+        .iter()
+        .find(|target| target.path.ends_with("z-part.adoc"))
+        .expect("included part is also a target");
+    assert!(part.resources.iter().any(|resource| {
+        resource.kind == ProjectResourceKind::Primary
+            && matches!(resource.outcome, ProjectResourceOutcome::Loaded { .. })
+    }));
+}
+
+#[test]
+fn one_config_scope_combines_resource_counts_across_targets() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    write(
+        root.join(".adocweave.toml"),
+        "schema-version = 2\n[resources]\nmax-files = 1\nmax-total-bytes = 1024\nmax-resource-bytes = 1024\n",
+    );
+    write(root.join("a.adoc"), "a\n");
+    write(root.join("b.adoc"), "b\n");
+
+    let result = process(request(
+        root,
+        vec![ProjectTarget::Directory(PathBuf::from("."))],
+    ))
+    .expect("request-wide authority remains available");
+    assert!(result.targets[0].outcome.is_ok());
+    assert!(matches!(
+        result.targets[1].outcome,
+        Err(ProjectTargetError::Incomplete(ProjectLimit::Files {
+            limit: 1
+        }))
+    ));
+    assert!(matches!(
+        result.targets[1]
+            .resources
+            .iter()
+            .find(|resource| resource.kind == ProjectResourceKind::Primary)
+            .expect("primary result")
+            .outcome,
+        ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(ProjectLimit::Files {
+            limit: 1
+        }))
+    ));
+}
+
+#[test]
+fn one_config_scope_combines_body_bytes_across_targets() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    write(
+        root.join(".adocweave.toml"),
+        "schema-version = 2\n[resources]\nmax-files = 2\nmax-total-bytes = 6\nmax-resource-bytes = 6\n",
+    );
+    write(root.join("a.adoc"), "aaaa");
+    write(root.join("b.adoc"), "bbbb");
+
+    let result = process(request(
+        root,
+        vec![ProjectTarget::Directory(PathBuf::from("."))],
+    ))
+    .expect("request-wide acquisition can exceed a configuration scope");
+    assert!(result.targets[0].outcome.is_ok());
+    assert!(matches!(
+        result.targets[1].outcome,
+        Err(ProjectTargetError::Incomplete(ProjectLimit::ReadBytes {
+            limit: 6
+        }))
+    ));
+}
+
+#[test]
+fn nested_config_has_an_independent_resource_scope() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    fs::create_dir(root.join("nested")).expect("nested directory");
+    let config = "schema-version = 2\n[resources]\nmax-files = 1\nmax-total-bytes = 1024\nmax-resource-bytes = 1024\n";
+    write(root.join(".adocweave.toml"), config);
+    write(root.join("nested/.adocweave.toml"), config);
+    write(root.join("a.adoc"), "a\n");
+    write(root.join("nested/b.adoc"), "b\n");
+
+    let result = process(request(
+        root,
+        vec![
+            ProjectTarget::Path(PathBuf::from("a.adoc")),
+            ProjectTarget::Path(PathBuf::from("nested/b.adoc")),
+        ],
+    ))
+    .expect("nested scopes are independent");
+    assert!(result.targets.iter().all(|target| target.outcome.is_ok()));
+}
+
+#[test]
+fn missing_resources_reserve_scope_capacity_before_acquisition() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    write(
+        root.join(".adocweave.toml"),
+        "schema-version = 2\n[resources]\nmax-files = 2\nmax-total-bytes = 1024\nmax-resource-bytes = 1024\n[html]\nstylesheet-files = [\"first.css\", \"second.css\"]\n",
+    );
+    write(root.join("guide.adoc"), "guide\n");
+
+    let result = process(request(
+        root,
+        vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
+    ))
+    .expect("resource failures remain target-local");
+    let styles = result.targets[0]
+        .resources
+        .iter()
+        .filter(|resource| resource.kind == ProjectResourceKind::Stylesheet)
+        .map(|resource| &resource.outcome)
+        .collect::<Vec<_>>();
+    assert_eq!(styles.len(), 2);
+    assert!(matches!(styles[0], ProjectResourceOutcome::Missing));
+    assert!(matches!(
+        styles[1],
+        ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(ProjectLimit::Files {
+            limit: 2
+        }))
+    ));
+    assert!(matches!(
+        result.targets[0].outcome,
+        Err(ProjectTargetError::Incomplete(ProjectLimit::Files {
+            limit: 2
+        }))
+    ));
+}
+
+#[test]
+fn include_and_local_target_limits_mark_the_target_incomplete() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    write(
+        root.join(".adocweave.toml"),
+        "schema-version = 2\n[resources]\ninclude = true\nmax-files = 1\nmax-total-bytes = 1024\nmax-resource-bytes = 1024\n[local-targets]\nenabled = true\nproject-root = \".\"\n",
+    );
+    write(
+        root.join("guide.adoc"),
+        "include::part.adoc[]\n\nimage::asset.dat[]\n",
+    );
+    write(root.join("part.adoc"), "part\n");
+    write(root.join("asset.dat"), "asset\n");
+
+    let result = process(request(
+        root,
+        vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
+    ))
+    .expect("configured limit remains target-local");
+    assert!(matches!(
+        result.targets[0].outcome,
+        Err(ProjectTargetError::Incomplete(ProjectLimit::Files {
+            limit: 1
+        }))
+    ));
+    assert!(result.targets[0].resources.iter().any(|resource| matches!(
+        resource.outcome,
+        ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(ProjectLimit::Files {
+            limit: 1
+        }))
+    )));
+}
+
+#[test]
+fn local_target_limit_alone_marks_the_target_incomplete() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    write(
+        root.join(".adocweave.toml"),
+        "schema-version = 2\n[resources]\nmax-files = 1\nmax-total-bytes = 1024\nmax-resource-bytes = 1024\n[local-targets]\nenabled = true\nproject-root = \".\"\n",
+    );
+    write(root.join("guide.adoc"), "image::asset.dat[]\n");
+    write(root.join("asset.dat"), "asset\n");
+
+    let result = process(request(
+        root,
+        vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
+    ))
+    .expect("configured limit remains target-local");
+    assert!(matches!(
+        result.targets[0].outcome,
+        Err(ProjectTargetError::Incomplete(ProjectLimit::Files {
+            limit: 1
+        }))
+    ));
+    assert!(result.targets[0].resources.iter().any(|resource| {
+        resource.kind == ProjectResourceKind::LocalTarget
+            && matches!(
+                resource.outcome,
+                ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(
+                    ProjectLimit::Files { limit: 1 }
+                ))
+            )
+    }));
 }
 
 #[test]

@@ -16,7 +16,10 @@ use adocweave_host::{
     LocalFilesystemSession, LocalTargetPolicy, LogicalSourceId, ResourceError,
 };
 
-use crate::selection::{absolute_lexical, identity_path, scan_root_for_selector, select_targets};
+use crate::selection::{
+    NormalizedSelector, absolute_lexical, identity_path, normalize_selectors,
+    scan_root_for_selector, select_targets,
+};
 use crate::{
     ConfigSelection, ProjectError, ProjectLimit, ProjectOutcome, ProjectRequest,
     ProjectResourceFailure, ProjectResourceKind, ProjectResourceOutcome, ProjectResourceResult,
@@ -32,14 +35,15 @@ struct Processor {
     config_selection: ConfigSelection,
     overrides: crate::ProjectOverrides,
     limits: crate::ProjectLimits,
-    selectors: Vec<crate::ProjectTarget>,
+    selectors: Vec<NormalizedSelector>,
     authority: LocalFilesystemPolicy,
     identity_roots: Vec<PathBuf>,
     filesystem: LocalFilesystemSession,
     job: IncludeFilesystemJob,
-    fixed: BTreeMap<LogicalSourceId, FixedResource>,
-    inspections: BTreeMap<LogicalSourceId, FixedInspection>,
+    fixed: BTreeMap<LogicalSourceId, Vec<FixedResource>>,
+    inspections: BTreeMap<LogicalSourceId, Vec<FixedInspection>>,
     configs: BTreeMap<PathBuf, ConfigSnapshot>,
+    scope_budgets: BTreeMap<PathBuf, ScopeBudget>,
     processing_iterations: u32,
     output_bytes: u64,
     warnings: Vec<ProjectWarning>,
@@ -70,11 +74,19 @@ struct TargetAnalysisContext<'target> {
     source: &'target Arc<str>,
     config: &'target ResolvedProjectConfig,
     allowed_roots: &'target [PathBuf],
-    budget: &'target mut TargetBudget,
+    scope: &'target Path,
     bases: &'target mut BTreeMap<String, PathBuf>,
     lookup_bases: &'target mut BTreeMap<String, PathBuf>,
     resources: &'target mut Vec<ProjectResourceResult>,
     filesystem: &'target mut LocalFilesystemSession,
+}
+
+struct InspectionRequest<'request> {
+    source_id: LogicalSourceId,
+    path: PathBuf,
+    authority: &'request Path,
+    base: &'request Path,
+    target: &'request str,
 }
 
 impl FixedInspection {
@@ -144,6 +156,7 @@ impl Processor {
         authority = authority
             .access_existing(retained_roots, limits.filesystem_reads)
             .map_err(ProjectError::Authority)?;
+        let selectors = normalize_selectors(&project_root, &targets)?;
         let filesystem = authority.session().map_err(ProjectError::Authority)?;
         let read_operations = u64::try_from(limits.filesystem_reads.max_files).unwrap_or(u64::MAX);
         // One scan session per selector, one common read session and at most one
@@ -152,7 +165,7 @@ impl Processor {
             .filesystem_reads
             .max_files
             .saturating_mul(2)
-            .saturating_add(targets.len())
+            .saturating_add(selectors.len())
             .saturating_add(1);
         let job = IncludeFilesystemJob::new(FilesystemJobLimits {
             max_read_operations: read_operations,
@@ -172,7 +185,7 @@ impl Processor {
             config_selection: config,
             overrides,
             limits,
-            selectors: targets,
+            selectors,
             authority,
             identity_roots,
             filesystem,
@@ -180,6 +193,7 @@ impl Processor {
             fixed: BTreeMap::new(),
             inspections: BTreeMap::new(),
             configs: BTreeMap::new(),
+            scope_budgets: BTreeMap::new(),
             processing_iterations: 0,
             output_bytes: 0,
             warnings: Vec::new(),
@@ -190,13 +204,12 @@ impl Processor {
         let selectors = self.selectors.clone();
         let mut scan_settings = BTreeMap::new();
         for selector in &selectors {
-            if let Some(root) = scan_root_for_selector(&self.project_root, selector)? {
+            if let Some(root) = scan_root_for_selector(selector)? {
                 let (_, config, _) = self.resolve_config_at(&root, true)?;
                 scan_settings.insert(root, config.workspace.scan);
             }
         }
         let paths = select_targets(
-            &self.project_root,
             &selectors,
             &mut self.authority,
             self.limits,
@@ -237,8 +250,15 @@ impl Processor {
             config.resources.include = include;
             config.preprocess.enable_includes = include;
         }
+        let scope = config_snapshot.as_ref().map_or_else(
+            || self.project_root.clone(),
+            |snapshot| snapshot.path.clone(),
+        );
+        self.scope_budgets
+            .entry(scope.clone())
+            .or_insert_with(|| ScopeBudget::new(config.resources.limit_plan.filesystem_reads));
         let source_id = self.source_id_for_path(&path)?;
-        let primary = self.read_fixed(source_id.clone(), path.clone());
+        let primary = self.read_fixed_scoped(&scope, source_id.clone(), path.clone());
         let mut resources = config_resource.into_iter().collect::<Vec<_>>();
         resources.push(primary.result(ProjectResourceKind::Primary, None));
         let source = match &primary.outcome {
@@ -278,17 +298,6 @@ impl Processor {
                 unreachable!("fixed primary resources retain acquired content")
             }
         };
-        let mut target_budget = TargetBudget::new(config.resources.limit_plan.filesystem_reads);
-        if let Err(limit) = target_budget.charge(&source_id, source.len()) {
-            return Ok(self.finish_target(
-                source_id,
-                path,
-                config_snapshot,
-                config,
-                resources,
-                Err(ProjectTargetError::Incomplete(limit)),
-            ));
-        }
         let mut bases = BTreeMap::from([(
             source_id.as_str().to_owned(),
             primary
@@ -322,21 +331,32 @@ impl Processor {
                 ));
             }
         };
-        let outcome = self.analyze_target(TargetAnalysisContext {
+        let mut outcome = self.analyze_target(TargetAnalysisContext {
             source_id: &source_id,
             source: &source,
             config: &config,
             allowed_roots: &allowed_roots,
-            budget: &mut target_budget,
+            scope: &scope,
             bases: &mut bases,
             lookup_bases: &mut lookup_bases,
             resources: &mut resources,
             filesystem: &mut include_filesystem,
         });
         if let Ok(analysis) = &outcome {
-            self.collect_local_targets(analysis, &config, &bases, &mut resources);
+            self.collect_local_targets(analysis, &config, &scope, &bases, &mut resources);
         }
-        self.collect_stylesheets(&source_id, &config, &mut resources);
+        self.collect_stylesheets(&source_id, &config, &scope, &mut resources);
+        if let Some(limit) = resources
+            .iter()
+            .find_map(|resource| match &resource.outcome {
+                ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(limit)) => {
+                    Some(*limit)
+                }
+                _ => None,
+            })
+        {
+            outcome = Err(ProjectTargetError::Incomplete(limit));
+        }
         Ok(self.finish_target(source_id, path, config_snapshot, config, resources, outcome))
     }
 
@@ -428,10 +448,10 @@ impl Processor {
             }
         }
         let source_id = self.source_id_for_path(&path)?;
-        let resource = self
-            .fixed
-            .get(&source_id)
-            .map(|fixed| fixed.result(ProjectResourceKind::Config, None));
+        let resource = self.fixed.get(&source_id).and_then(|fixed| {
+            reusable_resource(fixed, &path, &self.filesystem, true)
+                .map(|fixed| fixed.result(ProjectResourceKind::Config, None))
+        });
         Ok((Some(snapshot.clone()), snapshot.config.clone(), resource))
     }
 
@@ -515,8 +535,12 @@ impl Processor {
         source_id: LogicalSourceId,
         path: PathBuf,
     ) -> FixedResource {
-        if let Some(fixed) = self.fixed.get(&source_id) {
-            return cached_for_session(fixed, &path, &self.filesystem, true);
+        if let Some(fixed) = self
+            .fixed
+            .get(&source_id)
+            .and_then(|fixed| reusable_resource(fixed, &path, &self.filesystem, true))
+        {
+            return fixed;
         }
         let requested_path = path.clone();
         let authority = self.filesystem.policy_for_path(&path).cloned();
@@ -578,8 +602,10 @@ impl Processor {
             authority,
             outcome,
         };
-        self.fixed.insert(source_id, fixed.clone());
-        observe_fixed(&fixed);
+        if fixed.authority.is_some() {
+            self.fixed.entry(source_id).or_default().push(fixed.clone());
+            observe_fixed(&fixed);
+        }
         fixed
     }
 
@@ -592,7 +618,7 @@ impl Processor {
             source,
             config,
             allowed_roots,
-            budget,
+            scope,
             bases,
             lookup_bases,
             resources,
@@ -642,22 +668,12 @@ impl Processor {
                         resources.push(fixed.result(ProjectResourceKind::Include, requested_by));
                         return Err(ProjectTargetError::Read(error));
                     }
-                    let fixed = read_fixed_from(
-                        &self.job,
-                        &mut self.fixed,
-                        &self.inspections,
-                        self.limits,
-                        include_id.clone(),
-                        path,
-                        filesystem,
-                    );
+                    let fixed =
+                        self.read_fixed_from_scoped(scope, include_id.clone(), path, filesystem);
                     resources
                         .push(fixed.result(ProjectResourceKind::Include, requested_by.clone()));
                     let response = match &fixed.outcome {
                         ProjectResourceOutcome::Loaded { source } => {
-                            budget
-                                .charge(&include_id, source.len())
-                                .map_err(ProjectTargetError::Incomplete)?;
                             if let Some(base) = &fixed.base {
                                 bases.insert(include_id.as_str().to_owned(), base.clone());
                                 if let Some((lookup_base, _)) = target.rsplit_once('/') {
@@ -723,6 +739,7 @@ impl Processor {
         &mut self,
         requested_by: &LogicalSourceId,
         config: &ResolvedProjectConfig,
+        scope: &Path,
         resources: &mut Vec<ProjectResourceResult>,
     ) {
         for path in &config.html.stylesheet_files {
@@ -743,7 +760,7 @@ impl Processor {
                     continue;
                 }
             };
-            let fixed = self.read_fixed(source_id, path.clone());
+            let fixed = self.read_fixed_scoped(scope, source_id, path.clone());
             resources
                 .push(fixed.result(ProjectResourceKind::Stylesheet, Some(requested_by.clone())));
         }
@@ -753,6 +770,7 @@ impl Processor {
         &mut self,
         analysis: &PreprocessedAnalysis,
         config: &ResolvedProjectConfig,
+        scope: &Path,
         bases: &BTreeMap<String, PathBuf>,
         resources: &mut Vec<ProjectResourceResult>,
     ) {
@@ -870,11 +888,14 @@ impl Processor {
                 .result(ProjectResourceKind::LocalTarget, requested_by)
             } else {
                 self.inspect_fixed_in(
-                    source_id,
-                    path,
-                    authority,
-                    &base,
-                    &target.path,
+                    scope,
+                    InspectionRequest {
+                        source_id,
+                        path,
+                        authority,
+                        base: &base,
+                        target: &target.path,
+                    },
                     &mut local_filesystem,
                 )
                 .result(requested_by)
@@ -895,20 +916,121 @@ impl Processor {
         )
     }
 
-    fn inspect_fixed_in(
+    fn read_fixed_scoped(
         &mut self,
+        scope: &Path,
         source_id: LogicalSourceId,
         path: PathBuf,
-        authority: &Path,
-        base: &Path,
-        target: &str,
+    ) -> FixedResource {
+        let authority = self.filesystem.policy_for_path(&path).cloned();
+        if let Err(limit) = self.reserve_scope(scope, &source_id, authority.as_ref()) {
+            return limited_resource(source_id, path, false, authority, limit);
+        }
+        let fixed = self.read_fixed(source_id.clone(), path.clone());
+        self.apply_body_budget(scope, fixed, source_id, path)
+    }
+
+    fn read_fixed_from_scoped(
+        &mut self,
+        scope: &Path,
+        source_id: LogicalSourceId,
+        path: PathBuf,
+        filesystem: &mut LocalFilesystemSession,
+    ) -> FixedResource {
+        let authority = filesystem.policy_for_path(&path).cloned();
+        if let Err(limit) = self.reserve_scope(scope, &source_id, authority.as_ref()) {
+            return limited_resource(source_id, path, false, authority, limit);
+        }
+        let fixed = read_fixed_from(
+            &self.job,
+            &mut self.fixed,
+            &self.inspections,
+            self.limits,
+            source_id.clone(),
+            path.clone(),
+            filesystem,
+        );
+        self.apply_body_budget(scope, fixed, source_id, path)
+    }
+
+    fn apply_body_budget(
+        &mut self,
+        scope: &Path,
+        fixed: FixedResource,
+        source_id: LogicalSourceId,
+        requested_path: PathBuf,
+    ) -> FixedResource {
+        let ProjectResourceOutcome::Loaded { source } = &fixed.outcome else {
+            return fixed;
+        };
+        if let Err(limit) =
+            self.charge_scope_body(scope, &source_id, fixed.authority.as_ref(), source.len())
+        {
+            return limited_resource(
+                source_id,
+                requested_path,
+                fixed.no_symlinks,
+                fixed.authority,
+                limit,
+            );
+        }
+        fixed
+    }
+
+    fn reserve_scope(
+        &mut self,
+        scope: &Path,
+        source_id: &LogicalSourceId,
+        authority: Option<&LocalTargetPolicy>,
+    ) -> Result<(), ProjectLimit> {
+        self.scope_budgets
+            .get_mut(scope)
+            .expect("a resolved configuration creates its scope budget")
+            .reserve(source_id, authority)
+    }
+
+    fn charge_scope_body(
+        &mut self,
+        scope: &Path,
+        source_id: &LogicalSourceId,
+        authority: Option<&LocalTargetPolicy>,
+        bytes: usize,
+    ) -> Result<(), ProjectLimit> {
+        self.scope_budgets
+            .get_mut(scope)
+            .expect("a resolved configuration creates its scope budget")
+            .charge_body(source_id, authority, bytes)
+    }
+
+    fn inspect_fixed_in(
+        &mut self,
+        scope: &Path,
+        request: InspectionRequest<'_>,
         filesystem: &mut LocalFilesystemSession,
     ) -> FixedInspection {
-        if let Some(fixed) = self.inspections.get(&source_id) {
-            return cached_inspection_for_session(fixed, &path, filesystem);
+        let InspectionRequest {
+            source_id,
+            path,
+            authority,
+            base,
+            target,
+        } = request;
+        let budget_authority = filesystem.policy_for_path(&path).cloned();
+        if let Err(limit) = self.reserve_scope(scope, &source_id, budget_authority.as_ref()) {
+            return limited_inspection(source_id, path, limit);
         }
-        if let Some(fixed) = self.fixed.get(&source_id) {
-            let fixed = cached_for_session(fixed, &path, filesystem, false);
+        if let Some(fixed) = self
+            .inspections
+            .get(&source_id)
+            .and_then(|fixed| reusable_inspection(fixed, &path, filesystem))
+        {
+            return fixed;
+        }
+        if let Some(fixed) = self
+            .fixed
+            .get(&source_id)
+            .and_then(|fixed| reusable_resource(fixed, &path, filesystem, false))
+        {
             let outcome = match &fixed.outcome {
                 ProjectResourceOutcome::Loaded { .. }
                 | ProjectResourceOutcome::LoadedOmitted { .. } => {
@@ -925,7 +1047,10 @@ impl Processor {
                     authority: fixed.authority,
                     outcome,
                 };
-                self.inspections.insert(source_id, inspection.clone());
+                self.inspections
+                    .entry(source_id)
+                    .or_default()
+                    .push(inspection.clone());
                 return inspection;
             }
         }
@@ -973,7 +1098,12 @@ impl Processor {
             authority: acquired_authority,
             outcome: outcome.clone(),
         };
-        self.inspections.insert(source_id, fixed.clone());
+        if fixed.authority.is_some() {
+            self.inspections
+                .entry(source_id)
+                .or_default()
+                .push(fixed.clone());
+        }
         fixed
     }
 
@@ -983,15 +1113,7 @@ impl Processor {
         path: PathBuf,
         failure: ProjectResourceFailure,
     ) -> FixedResource {
-        if let Some(fixed) = self.fixed.get(&source_id) {
-            let mut rejected = fixed.clone();
-            rejected.requested_path = path.clone();
-            rejected.path = path;
-            rejected.base = None;
-            rejected.outcome = ProjectResourceOutcome::Failed(failure);
-            return rejected;
-        }
-        let fixed = FixedResource {
+        FixedResource {
             source_id: source_id.clone(),
             requested_path: path.clone(),
             path,
@@ -999,9 +1121,7 @@ impl Processor {
             no_symlinks: false,
             authority: None,
             outcome: ProjectResourceOutcome::Failed(failure),
-        };
-        self.fixed.insert(source_id, fixed.clone());
-        fixed
+        }
     }
 
     fn next_iteration(&mut self) -> Result<(), ProjectLimit> {
@@ -1088,31 +1208,38 @@ impl Processor {
 
 fn read_fixed_from(
     job: &IncludeFilesystemJob,
-    fixed_resources: &mut BTreeMap<LogicalSourceId, FixedResource>,
-    fixed_inspections: &BTreeMap<LogicalSourceId, FixedInspection>,
+    fixed_resources: &mut BTreeMap<LogicalSourceId, Vec<FixedResource>>,
+    fixed_inspections: &BTreeMap<LogicalSourceId, Vec<FixedInspection>>,
     limits: crate::ProjectLimits,
     source_id: LogicalSourceId,
     path: PathBuf,
     filesystem: &mut LocalFilesystemSession,
 ) -> FixedResource {
-    if let Some(fixed) = fixed_resources.get(&source_id) {
-        return cached_for_session(fixed, &path, filesystem, false);
+    if let Some(fixed) = fixed_resources
+        .get(&source_id)
+        .and_then(|fixed| reusable_resource(fixed, &path, filesystem, false))
+    {
+        return fixed;
     }
-    if let Some(inspection) = fixed_inspections.get(&source_id) {
-        let inspection = cached_inspection_for_session(inspection, &path, filesystem);
-        if matches!(inspection.outcome, ProjectResourceOutcome::Missing) {
-            let fixed = FixedResource {
-                source_id: source_id.clone(),
-                requested_path: path,
-                path: inspection.path,
-                base: None,
-                no_symlinks: false,
-                authority: inspection.authority,
-                outcome: ProjectResourceOutcome::Missing,
-            };
-            fixed_resources.insert(source_id, fixed.clone());
-            return fixed;
-        }
+    if let Some(inspection) = fixed_inspections
+        .get(&source_id)
+        .and_then(|fixed| reusable_inspection(fixed, &path, filesystem))
+        .filter(|inspection| matches!(inspection.outcome, ProjectResourceOutcome::Missing))
+    {
+        let fixed = FixedResource {
+            source_id: source_id.clone(),
+            requested_path: path,
+            path: inspection.path,
+            base: None,
+            no_symlinks: false,
+            authority: inspection.authority,
+            outcome: ProjectResourceOutcome::Missing,
+        };
+        fixed_resources
+            .entry(source_id)
+            .or_default()
+            .push(fixed.clone());
+        return fixed;
     }
     let requested_path = path.clone();
     let authority = filesystem.policy_for_path(&path).cloned();
@@ -1171,9 +1298,59 @@ fn read_fixed_from(
         authority,
         outcome,
     };
-    fixed_resources.insert(source_id, fixed.clone());
-    observe_fixed(&fixed);
+    if fixed.authority.is_some() {
+        fixed_resources
+            .entry(source_id)
+            .or_default()
+            .push(fixed.clone());
+        observe_fixed(&fixed);
+    }
     fixed
+}
+
+fn reusable_resource(
+    fixed: &[FixedResource],
+    requested_path: &Path,
+    filesystem: &LocalFilesystemSession,
+    no_symlinks: bool,
+) -> Option<FixedResource> {
+    fixed.iter().find_map(|fixed| {
+        (validate_cached_authority(
+            requested_path,
+            &fixed.requested_path,
+            &fixed.path,
+            matches!(
+                fixed.outcome,
+                ProjectResourceOutcome::Loaded { .. }
+                    | ProjectResourceOutcome::LoadedOmitted { .. }
+                    | ProjectResourceOutcome::Present
+            ),
+            fixed.authority.as_ref(),
+            filesystem,
+        )
+        .is_ok()
+            && fixed.no_symlinks == no_symlinks)
+            .then(|| fixed.clone())
+    })
+}
+
+fn reusable_inspection(
+    fixed: &[FixedInspection],
+    requested_path: &Path,
+    filesystem: &LocalFilesystemSession,
+) -> Option<FixedInspection> {
+    fixed.iter().find_map(|fixed| {
+        validate_cached_authority(
+            requested_path,
+            &fixed.requested_path,
+            &fixed.path,
+            matches!(fixed.outcome, ProjectResourceOutcome::Present),
+            fixed.authority.as_ref(),
+            filesystem,
+        )
+        .is_ok()
+        .then(|| fixed.clone())
+    })
 }
 
 fn resolve_lookup_path(
@@ -1194,6 +1371,7 @@ fn resolve_lookup_path(
     absolute_lexical(base, Path::new(relative))
 }
 
+#[cfg(test)]
 fn cached_for_session(
     fixed: &FixedResource,
     requested_path: &Path,
@@ -1230,6 +1408,7 @@ fn cached_for_session(
     rejected
 }
 
+#[cfg(test)]
 fn cached_inspection_for_session(
     fixed: &FixedInspection,
     requested_path: &Path,
@@ -1333,29 +1512,59 @@ impl ResourceLookup for FixedLookup {
     }
 }
 
-struct TargetBudget {
+struct ScopeBudget {
     limits: adocweave_host::FilesystemReadLimits,
-    ids: BTreeSet<LogicalSourceId>,
+    observations: Vec<BudgetObservation>,
     bytes: u64,
 }
 
-impl TargetBudget {
+struct BudgetObservation {
+    source_id: LogicalSourceId,
+    authority: Option<LocalTargetPolicy>,
+    body_charged: bool,
+}
+
+impl ScopeBudget {
     fn new(limits: adocweave_host::FilesystemReadLimits) -> Self {
         Self {
             limits,
-            ids: BTreeSet::new(),
+            observations: Vec::new(),
             bytes: 0,
         }
     }
 
-    fn charge(&mut self, source_id: &LogicalSourceId, bytes: usize) -> Result<(), ProjectLimit> {
-        if self.ids.contains(source_id) {
+    fn reserve(
+        &mut self,
+        source_id: &LogicalSourceId,
+        authority: Option<&LocalTargetPolicy>,
+    ) -> Result<(), ProjectLimit> {
+        if self.observation(source_id, authority).is_some() {
             return Ok(());
         }
-        if self.ids.len() >= self.limits.max_files {
+        if self.observations.len() >= self.limits.max_files {
             return Err(ProjectLimit::Files {
                 limit: self.limits.max_files,
             });
+        }
+        self.observations.push(BudgetObservation {
+            source_id: source_id.clone(),
+            authority: authority.cloned(),
+            body_charged: false,
+        });
+        Ok(())
+    }
+
+    fn charge_body(
+        &mut self,
+        source_id: &LogicalSourceId,
+        authority: Option<&LocalTargetPolicy>,
+        bytes: usize,
+    ) -> Result<(), ProjectLimit> {
+        let Some(index) = self.observation(source_id, authority) else {
+            unreachable!("resource bodies are charged only after reserving their observation")
+        };
+        if self.observations[index].body_charged {
+            return Ok(());
         }
         let bytes = u64::try_from(bytes).unwrap_or(u64::MAX);
         if bytes > self.limits.max_resource_bytes
@@ -1365,9 +1574,56 @@ impl TargetBudget {
                 limit: self.limits.max_total_bytes,
             });
         }
-        self.ids.insert(source_id.clone());
         self.bytes += bytes;
+        self.observations[index].body_charged = true;
         Ok(())
+    }
+
+    fn observation(
+        &self,
+        source_id: &LogicalSourceId,
+        authority: Option<&LocalTargetPolicy>,
+    ) -> Option<usize> {
+        self.observations.iter().position(|observation| {
+            observation.source_id == *source_id
+                && match (observation.authority.as_ref(), authority) {
+                    (Some(left), Some(right)) => left.has_same_authority(right),
+                    (None, None) => true,
+                    _ => false,
+                }
+        })
+    }
+}
+
+fn limited_resource(
+    source_id: LogicalSourceId,
+    path: PathBuf,
+    no_symlinks: bool,
+    authority: Option<LocalTargetPolicy>,
+    limit: ProjectLimit,
+) -> FixedResource {
+    FixedResource {
+        source_id,
+        requested_path: path.clone(),
+        path,
+        base: None,
+        no_symlinks,
+        authority,
+        outcome: ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(limit)),
+    }
+}
+
+fn limited_inspection(
+    source_id: LogicalSourceId,
+    path: PathBuf,
+    limit: ProjectLimit,
+) -> FixedInspection {
+    FixedInspection {
+        source_id,
+        requested_path: path.clone(),
+        path,
+        authority: None,
+        outcome: ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(limit)),
     }
 }
 
