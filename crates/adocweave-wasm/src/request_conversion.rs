@@ -61,28 +61,27 @@ pub(crate) fn convert(request: AnalyzeRequest) -> Result<ExecutionRequest, AdocW
         attributes: request.source.attributes.unwrap_or_default(),
     };
 
-    let mut preprocess_options = PreprocessOptions::default();
-    preprocess_options.source_id = source_id.clone();
-    preprocess_options.base_uri = resources.base_uri;
-    preprocess_options.safe_mode = match resources.safe_mode.unwrap_or_default() {
-        SafeMode::Unsafe => adocweave::preprocess::SafeMode::Unsafe,
-        SafeMode::Server => adocweave::preprocess::SafeMode::Server,
-        SafeMode::Safe => adocweave::preprocess::SafeMode::Safe,
-        SafeMode::Secure => adocweave::preprocess::SafeMode::Secure,
+    let preprocess_options = PreprocessOptions {
+        source_id: source_id.clone(),
+        base_uri: resources.base_uri,
+        safe_mode: match resources.safe_mode.unwrap_or_default() {
+            SafeMode::Unsafe => adocweave::preprocess::SafeMode::Unsafe,
+            SafeMode::Server => adocweave::preprocess::SafeMode::Server,
+            SafeMode::Safe => adocweave::preprocess::SafeMode::Safe,
+            SafeMode::Secure => adocweave::preprocess::SafeMode::Secure,
+        },
+        allowed_schemes: resources
+            .allowed_schemes
+            .unwrap_or_default()
+            .into_iter()
+            .map(|scheme| scheme.to_ascii_lowercase())
+            .collect(),
+        attributes: analysis_options.attributes.clone(),
+        enable_includes: !matches!(resources.includes, Some(IncludeHandling::Preserve)),
+        max_attribute_expansion_depth: analysis_options.syntax.limits.max_attribute_expansion_depth,
+        max_attribute_expansion_bytes: analysis_options.syntax.limits.max_attribute_expansion_bytes,
+        ..PreprocessOptions::default()
     };
-    preprocess_options.allowed_schemes = resources
-        .allowed_schemes
-        .unwrap_or_default()
-        .into_iter()
-        .map(|scheme| scheme.to_ascii_lowercase())
-        .collect();
-    preprocess_options.attributes = analysis_options.attributes.clone();
-    preprocess_options.enable_includes =
-        !matches!(resources.includes, Some(IncludeHandling::Preserve));
-    preprocess_options.max_attribute_expansion_depth =
-        analysis_options.syntax.limits.max_attribute_expansion_depth;
-    preprocess_options.max_attribute_expansion_bytes =
-        analysis_options.syntax.limits.max_attribute_expansion_bytes;
     let processing_options = EffectiveProcessingOptions::new(analysis_options, preprocess_options)
         .map_err(|error| invalid_request(error.to_string()))?;
 
@@ -192,7 +191,7 @@ fn render_policy(options: Option<&HtmlOptions>) -> Result<RenderPolicy, AdocWeav
         },
     );
     let external_links = options.external_links.as_ref().map_or_else(
-        || defaults.external_links.clone(),
+        || defaults.external_links,
         |options| {
             if options.open_in_new_context.unwrap_or(false) {
                 ExternalLinkPresentation::NewContext {

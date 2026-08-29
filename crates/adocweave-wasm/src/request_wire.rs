@@ -44,7 +44,7 @@ where
 #[serde(untagged)]
 enum HtmlSelection {
     Enabled(bool),
-    Options(HtmlOptions),
+    Options(Box<HtmlOptions>),
 }
 
 fn html_product<'de, D>(deserializer: D) -> Result<Option<HtmlOptions>, D::Error>
@@ -56,7 +56,7 @@ where
         HtmlSelection::Enabled(false) => {
             Err(serde::de::Error::custom("product value must be true"))
         }
-        HtmlSelection::Options(options) => Ok(Some(options)),
+        HtmlSelection::Options(options) => Ok(Some(*options)),
     }
 }
 
