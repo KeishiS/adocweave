@@ -51,7 +51,7 @@ Rust crateはcrates.ioへ公開しません。
 
 Visual Studio Marketplaceは公開後のVSIXへ署名情報を追加するため、取得したVSIX archive全体のbyte列は送信元と
 異なる場合があります。公開後の検査では拡張ID、version、target、署名以外のfile一覧および各fileの内容を照合し、
-Marketplaceが追加したOPC署名領域だけを比較から除きます。
+Marketplaceが追加したZIP内の標準署名領域（``_xmlsignatures/``と対応するmetadata）だけを比較から除きます。
 
 外部サービスへの送信はGitHub Releaseの公開後に、公開先ごとのworkflowで行います。一つの送信が失敗しても
 別の公開先を差し戻しません。同じ``vX.Y.Z``タグを指定して、失敗した送信だけを再実行できます。
