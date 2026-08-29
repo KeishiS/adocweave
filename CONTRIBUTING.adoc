@@ -352,6 +352,23 @@ integrityを確認し、未公開のpackageだけを送信します。公開後�
 ``npm deprecate``で警告を表示し、修正は新しいversionで行います。``unpublish``は安全上必要な場合に限ります。
 一度``unpublish``したversion番号は再利用できません。
 
+[#cachix-publication]
+=== Cachixへの公開
+
+Cachixへの公開は、stableなGitHub Releaseのtagを指定して実行します。
+
+[source,console]
+----
+gh workflow run binary-cache-publish.yml -f tag=vX.Y.Z
+----
+
+公開jobはRelease、tag、commitおよびworkspace版を照合し、``x86_64-linux``と``aarch64-linux``のNix packageと
+依存物一式を送信します。送信後は、書込みtokenを持たない別のrunnerがローカルでの構築を禁止してCachixから
+packageを取得し、versionと``adocweave lsp``の起動を確認します。
+
+送信または確認に失敗した場合は、同じtagでworkflowを再実行します。同じcommitから生成されるNix store pathは
+変わらないため、公開済みの内容を置き換えずに不足した送信と確認をやり直せます。
+
 [#release-checklist]
 == Release checklist
 
