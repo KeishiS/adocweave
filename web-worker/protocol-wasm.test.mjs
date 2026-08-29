@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 
 import { PROTOCOL_SCHEMA_VERSION } from "./worker-protocol.mjs";
+import { analysisPayload } from "./analysis.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -256,6 +257,25 @@ test("generated wasm-bindgen accepts only plain data objects and arrays", () => 
   assert.equal(wasmError(() => wasm.analyze({
     ...valid, resources: { references: customArray },
   })).code, "invalid-request");
+});
+
+test("public validation rejects accessors before the actual WASM boundary", () => {
+  let getterCalls = 0;
+  const request = { source: { text: "Text" }, products: { symbols: true } };
+  Object.defineProperty(request, "resources", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return {};
+    },
+  });
+  assert.equal(wasmError(() => wasm.analyze(request)).code, "invalid-request");
+  assert.equal(getterCalls, 0);
+  assert.throws(
+    () => wasm.analyze(analysisPayload(request)),
+    (error) => error.code === "invalid-request",
+  );
+  assert.equal(getterCalls, 0);
 });
 
 test("generated wasm-bindgen catches every reflection failure as invalid-request", () => {

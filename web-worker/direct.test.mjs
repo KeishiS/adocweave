@@ -25,6 +25,68 @@ test("cloneできない要求をinvalid-requestとして拒否する", () => {
   );
 });
 
+test("structured cloneでplain objectへ変わるinstanceを共通境界で拒否する", () => {
+  class CustomRequest {
+    constructor() {
+      this.source = { text: "Text" };
+      this.products = { html: true };
+    }
+  }
+  assert.throws(
+    () => analysisPayload(new CustomRequest()),
+    (error) => error.code === "invalid-request",
+  );
+});
+
+test("accessorを実行せずWorkerとdirectの共通境界で拒否する", () => {
+  let getterCalls = 0;
+  const request = { source: { text: "Text" }, products: { html: true } };
+  Object.defineProperty(request, "resources", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return {};
+    },
+  });
+  assert.throws(
+    () => analysisPayload(request),
+    (error) => error.code === "invalid-request",
+  );
+  assert.equal(getterCalls, 0);
+});
+
+test("direct入口はaccessorをWASMへ渡さず共通errorを返す", async () => {
+  let analyzeCalls = 0;
+  const analyzer = await createDirectAnalyzer({
+    ...ASSETS,
+    import: async () => ({
+      initSync() {},
+      protocolSchemaVersion: () => PROTOCOL_SCHEMA_VERSION,
+      analyze: () => {
+        analyzeCalls += 1;
+        return {};
+      },
+    }),
+    readWasm: () => new Uint8Array(),
+  });
+  let getterCalls = 0;
+  const request = { source: { text: "Text" }, products: { html: true } };
+  Object.defineProperty(request, "resources", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return {};
+    },
+  });
+  assert.throws(() => analyzer.analyze(request), (error) => {
+    assert.equal(error.code, "invalid-request");
+    assert.equal(error.message, "the analysis request must be structured-cloneable");
+    return true;
+  });
+  assert.equal(getterCalls, 0);
+  assert.equal(analyzeCalls, 0);
+});
+
 test("WASMの構造化errorだけをcode付きで読む", () => {
   assert.deepEqual(parseWasmError({ code: "input-limit-exceeded", message: "too large" }), {
     code: "input-limit-exceeded",

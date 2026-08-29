@@ -129,6 +129,32 @@ test("analyze sends the public request unchanged with one requestId", async () =
   instance.dispose();
 });
 
+test("public Worker client rejects accessors without cloning or invoking them", async () => {
+  const instance = client();
+  let getterCalls = 0;
+  const request = { source: { text: "Text" }, products: { html: true } };
+  Object.defineProperty(request, "resources", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return {};
+    },
+  });
+  const unsafeFirstClone = structuredClone(request);
+  structuredClone({ payload: request });
+  assert.equal(unsafeFirstClone.resources !== undefined, true);
+  assert.equal(getterCalls, 2);
+  getterCalls = 0;
+  await assert.rejects(instance.analyze(request), (error) => {
+    assert.equal(error.code, "invalid-request");
+    assert.equal(error.message, "the analysis request must be structured-cloneable");
+    return true;
+  });
+  assert.equal(getterCalls, 0);
+  assert.equal(FakeWorker.created.length, 0);
+  instance.dispose();
+});
+
 test("a second analysis is rejected without disturbing the active request", async () => {
   const instance = client();
   const first = instance.analyze({ source: { text: "first" }, products: { html: true } });

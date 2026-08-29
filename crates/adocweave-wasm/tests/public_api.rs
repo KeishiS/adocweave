@@ -150,6 +150,54 @@ fn public_request_types_are_constructible_with_struct_literals() {
     };
 
     assert_eq!(request.source.text, "Text");
+    let serialized = serde_json::to_value(&request).expect("serialize public request hierarchy");
+    assert_eq!(serialized["products"]["syntax"], true);
+    assert!(serialized["products"].get("canonicalAst").is_none());
+    assert!(!contains_null(&serialized));
+    let decoded: AnalyzeRequest =
+        serde_json::from_value(serialized).expect("deserialize public request hierarchy");
+    assert_eq!(decoded, request);
+}
+
+fn contains_null(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Null => true,
+        serde_json::Value::Array(values) => values.iter().any(contains_null),
+        serde_json::Value::Object(values) => values.values().any(contains_null),
+        _ => false,
+    }
+}
+
+#[test]
+fn request_serialization_uses_true_omission_defaults_and_bibliography_null() {
+    let products = ProductRequest {
+        syntax: Some(()),
+        html: Some(HtmlOptions::default()),
+        diagnostics: Some(DiagnosticOptions::default()),
+        ..ProductRequest::default()
+    };
+    let resources = ResourceInput::default();
+    let request = AnalyzeRequest {
+        source: SourceInput {
+            text: "Text".to_owned(),
+            id: None,
+            attributes: None,
+            syntax_mode: None,
+        },
+        products,
+        resources: Some(resources),
+    };
+    let value = serde_json::to_value(&request).expect("serialize request");
+    assert_eq!(value["products"]["syntax"], true);
+    assert_eq!(value["products"]["html"], serde_json::json!({}));
+    assert_eq!(value["products"]["diagnostics"], serde_json::json!({}));
+    assert_eq!(value["resources"]["bibliography"], serde_json::Value::Null);
+    assert_eq!(value["source"], serde_json::json!({ "text": "Text" }));
+    assert!(value["products"].get("canonicalAst").is_none());
+    assert_eq!(
+        serde_json::from_value::<AnalyzeRequest>(value).expect("round-trip request"),
+        request
+    );
 }
 
 #[test]

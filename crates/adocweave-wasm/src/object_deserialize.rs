@@ -63,11 +63,13 @@ macro_rules! serde_object {
         }
     ) => {
         #[cfg_attr($($type_cfg)*)]
-        #[derive($($derive),+)]
+        #[derive($($derive),+, serde::Serialize)]
+        #[serde($($container)*)]
         #[cfg_attr(feature = "ts-rs", ts(rename_all = "camelCase"))]
         $visibility struct $name {
             $(
                 $(#[cfg_attr($($field_cfg)*)])?
+                $(#[$wire_attribute])?
                 pub $field: $field_type,
             )*
         }

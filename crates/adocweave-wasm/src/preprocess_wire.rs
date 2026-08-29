@@ -8,7 +8,7 @@ use adocweave::preprocess::{ResourceDocument, ResourceSnapshot};
     derive(ts_rs::TS),
     ts(export, export_to = "protocol.d.mts")
 )]
-#[derive(Clone, Copy, Debug, Default, serde::Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum SafeMode {
     Unsafe,
