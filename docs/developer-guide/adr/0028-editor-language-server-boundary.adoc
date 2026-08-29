@@ -1,4 +1,4 @@
-= ADR 0028: エディターとLanguage Serverの導入境界
+= ADR 0028: エディタとLanguage Serverの導入方法の分担
 :status: accepted
 
 == 文脈
@@ -14,12 +14,12 @@ Language Serverを配布・更新する責務と、独自の互換性判定を�
 
 == 決定
 
-=== 製品と導入の境界
+=== 製品と導入方法の分担
 
 Language Server、VS Code拡張およびZed拡張は、引き続き異なる製品バージョン、tagおよびGitHub Releaseを持ちます。
 拡張へLanguage Serverを同梱しません。
 
-拡張はエディターで有効な設定の絶対path、editor processから見える``PATH``、自動取得の順で
+拡張はエディタで有効な設定の絶対path、editor processから見える``PATH``、自動取得の順で
 ``adocweave-lsp``を探します。利用者が導入した実行ファイルを常に優先し、自動取得は最後の手段とします。
 自動取得した実行ファイルの導入先は拡張が所有し、利用者が導入したものへ影響しません。
 
@@ -46,7 +46,7 @@ Nixおよびpackage registryは引き続き利用でき、そこではchecksum�
 Language Server processの起動、標準入出力による通信、初期化、停止、再起動および異常終了の処理は、
 VS CodeとZedが提供する標準LSP client APIへ委ねます。拡張独自のprocess監視と終了手順を設けません。
 
-=== 互換性の境界
+=== 互換性の判定範囲
 
 拡張とLanguage Serverの製品バージョン、``lspApiVersion``または固定した対応版の一覧を互換条件にしません。
 LSPの``initialize``で交換する標準capabilityを、利用できる機能の判定基準とします。editorのLSP clientはLanguage Serverが宣言した
@@ -74,7 +74,7 @@ AdocWeave固有のrequest、responseまたは通知を将来追加する場合�
 
 == 帰結
 
-エディター拡張を導入すれば、追加の手順なしで文書解析を利用できます。Language Serverをすでに導入している
+エディタ拡張を導入すれば、追加の手順なしで文書解析を利用できます。Language Serverをすでに導入している
 利用者は、設定または``PATH``によってこれまでどおりその実行ファイルが使われます。
 
 自動取得の完全性は、拡張によって程度が異なります。VS Code拡張はchecksumを照合するため、改変または破損した
@@ -90,5 +90,5 @@ managed downloadを提供していた旧拡張のcacheは更新だけでは削�
 
 ADR 0013とADR 0023にある拡張とLanguage Serverを同時に配布して完全一致を要求する決定、およびADR 0027にある
 ``lspApiVersion``、``managedLspVersion``と自動取得の決定を本ADRで置き換えます。ADR 0027の製品別release trainと、
-ADR 0023の公開先と権限境界は維持します。候補SHAと過去candidateの再利用は
+ADR 0023の公開先と権限制限は維持します。候補SHAと過去candidateの再利用は
 xref:0032-same-run-release-publication.adoc[ADR 0032]で置き換えます。

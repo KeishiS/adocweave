@@ -42,7 +42,7 @@ Rustの型定義を正本とし、ほかの成果物を既製のlibraryで導出
   JavaScript側で同じ検査を持ちません
 
 移行の安全網として、既存の``fixtures/protocol/request-corpus.json``を使うworkspace testのnative corpus検査と
-実WebAssembly境界のcorpus検査をそのまま使います。これらは同じ入力に対する
+実際のWebAssemblyインターフェイスを通すcorpus検査をそのまま使います。これらは同じ入力に対する
 受理と拒否の結果を固定しているため、置き換えの前後で挙動が変わらないことを確認できます。
 
 == 検討した代替案

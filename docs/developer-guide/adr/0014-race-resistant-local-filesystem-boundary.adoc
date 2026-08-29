@@ -1,4 +1,4 @@
-= ADR 0014: local filesystem境界の競合耐性
+= ADR 0014: local filesystemの競合耐性
 
 :status: accepted
 
@@ -11,7 +11,7 @@ root外のsymlinkを拒否できますが、検査とopenの間に祖先ディ�
 表す型だけでは、このTOCTOUを解消できません。
 
 AdocWeaveはLinux、macOSおよびWindowsでRust crateとして利用できます。一方、公式CLIとLanguage Serverの
-Linux配布物は、信頼していないrepositoryを検査する境界としても利用されます。OSごとに利用できる
+Linux配布物は、信頼していないrepositoryを検査する用途にも利用されます。OSごとに利用できる
 path解決primitiveが異なるため、全platformで同じ競合耐性を標準libraryだけから提供することはできません。
 
 == 脅威モデル
@@ -42,8 +42,8 @@ root内を指すsymlinkも拒否してよく、競合耐性を下げて受理範
 
 macOS、Windowsおよび汎用Rust利用では、同等のhandle相対解決を実装したadapterだけが敵対的な同時変更への
 耐性を宣言できます。それまではportable adapterを静的snapshot向けとし、``canonicalize``後のpath検査を
-best effortとして提供します。portable adapterは信頼していない書換え可能なworkspaceに対するsecurity境界とは
-みなしません。consumerはadapterのcapabilityを確認し、敵対的な同時変更を境界に含める場合は未対応platformで
+best effortとして提供します。portable adapterは信頼していない書換え可能なworkspaceに対する安全性を保証しません。
+consumerはadapterのcapabilityを確認し、敵対的な同時変更への対策を保証範囲に含める場合は未対応platformで
 local target検査とinclude読込を無効にするか、書換え不能なsnapshotへ入力をコピーします。
 
 検査だけのlocal target、本文を読むinclude、project設定の探索と読込、Language Serverのworkspace読込およびworkspace走査は
@@ -90,7 +90,7 @@ Linuxの``format --write``と``check --fix``は、入力読込時に選んだaut
 設定や引数だけでprocessのfile descriptorを使い切ることを防ぎます。
 単一resourceを取得する``*_outcome`` APIは``FilesystemReadOutcome``を返します。対象fileが存在しない場合は、errorではなく
 ``NotFound``として論理IDと候補pathを返します。実体を取得していないためbindingは作りません。権限不足、root外、
-symlink検証失敗、不正なUTF-8および上限超過は安全性や資源上限の失敗であり、``NotFound``にはしません。
+symlink検証失敗、不正なUTF-8および各種上限の超過は``NotFound``にはしません。
 従来の読込APIは不在を``ResourceError::Missing``として返し、読込前のbindingと保持量を変更しません。
 
 ``Found``が保持する``LoadedFilesystemSource``は``LogicalSourceId``、不変な本文および世代付き``FilesystemResourceBinding``を保持し、
@@ -98,7 +98,7 @@ symlink検証失敗、不正なUTF-8および上限超過は安全性や資源�
 読込結果として構築します。呼出側は監視用のcanonical pathをaccessorから参照できますが、
 診断とsource mapには論理IDを使用します。
 
-複数のsessionを使う一つの処理では、``FilesystemJobCoordinator``がresource取得試行数、取得byte数、
+複数のsessionを使う一つの処理では、``FilesystemJobCoordinator``がresource取得試行数、取得バイト数、
 directory列挙試行数、列挙entry数、候補stateの変更数および参加session数を累積します。
 ``LocalFilesystemDraft``は作成時に一つのcoordinatorへ結び付け、途中で別のjobへ付け替えられないようにします。
 fileの本文を読む前とdirectory iteratorを進める前に、複製できない予約を取得します。I/Oの直後に実際に得た量を
@@ -136,13 +136,13 @@ project設定読込、CLIの本文読込および設定由来stylesheet読込で
 CLIの書込では、policy作成後にrootのpathをroot外へのsymlinkへ差し替えても、保持したディレクトリだけが
 更新されることを確認します。
 書込直前の内容比較とrenameは別操作であり、このAPIを使わないwriterに対するcompare-and-swapは保証しません。
-portable adapterのtestは静的状態でのroot境界と、capabilityが競合耐性を
+portable adapterのtestは静的状態でのroot制限と、capabilityが競合耐性を
 宣言しないことを固定します。設定から派生するrootは全platformでanchor外とsymlinkを拒否しますが、macOSと
 Windowsでは検査中の同時変更まで防いだとはみなしません。
 
 == 帰結
 
-Linux配布物では、検査と利用の間にpathを差し替えてroot外を読ませる競合をsecurity境界に含められます。
+Linux配布物では、検査と利用の間にpathを差し替えてroot外を読ませる競合も安全性の保証範囲に含められます。
 古いLinux kernelではroot内symlinkを含む一部の入力を拒否する可能性がありますが、安全側に失敗します。
 ``HandleRelative``を提供するLinux実装は、取得済みdescriptorの実体pathをauthority確立時の論理rootへ対応付けるため、
 ``/proc/self/fd``を読み取れる実行環境を必要とします。procfsを利用できない環境ではpolicy作成に失敗し、
@@ -153,11 +153,11 @@ fileが存在しない、または読めないことを意味しないため、`
 一部として無条件に受理せず、保持中のroot handleから開き直したfileのidentityが一致しない場合は
 ``Unverifiable``として扱います。実際のfile名が`` (deleted)``で終わる場合は、identityが一致するため受理します。
 
-platform別adapter、OS errorの安定した分類および決定的な競合test用境界が必要になります。portable Rust APIは
+platform別adapter、OS errorの安定した分類および決定的な競合test用の差替え箇所が必要になります。portable Rust APIは
 従来どおり広いplatformで利用できますが、capabilityを確認しないconsumerは敵対的な同時変更への耐性を
 仮定できません。
 
-複数の許可rootは独立した境界として扱います。あるroot内のsymlinkが別の許可rootを指していても、
+複数の許可rootは独立した許可範囲として扱います。あるroot内のsymlinkが別の許可rootを指していても、
 最初に選んだrootのhandleから外へ移動する解決は拒否します。読込APIは絶対pathを要求し、相対pathから
 rootを暗黙に選びません。
 読込結果が返す``canonical_path``はpolicyを作成した時点の論理rootに対応するpathです。Linuxでrootのdirectory

@@ -50,4 +50,4 @@ Nixパッケージ検査、未公開製品の配布成果物の構築および�
 
 一方、cross target、実統合、fuzz、Nixおよび配布candidateの失敗は``main``への統合後に判明します。
 ``main``へのpushではmain gateを実行します。公開時は同じgateに続けて選択製品の全targetと成果物を検査し、
-失敗したrunを公開しません。このcandidate境界はxref:0032-same-run-release-publication.adoc[ADR 0032]で改訂します。
+失敗したrunを公開しません。このcandidateの扱いはxref:0032-same-run-release-publication.adoc[ADR 0032]で改訂します。

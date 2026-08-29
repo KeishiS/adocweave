@@ -18,4 +18,4 @@ DependabotのPull Requestは自動mergeせず、人が依存関係、security ad
 
 定型的なpatch更新にも人の確認が必要ですが、通常のPull Requestを停止させるrulesetや、
 alert照会とauto-merge登録の時間差を受け入れる必要がなく、自動化固有の保守対象も残りません。
-自動mergeを再検討する場合は、review体制と権限境界を含む新しいIssueとADRで判断します。
+自動mergeを再検討する場合は、review体制と権限制限を含む新しいIssueとADRで判断します。

@@ -3,7 +3,7 @@
 この文書は、``adocweave-lsp``で外部から観測できるプロトコル、並行実行および失敗時の保証の正本です。
 コンポーネント間の責務はxref:architecture.adoc#component-boundaries[アーキテクチャ]、
 一般的な解析の実行順序はxref:server-execution.adoc[利用側アプリの実行仕様]を参照してください。
-エディターへの導入方法はxref:../user-guide/release-installation.adoc[インストールと更新]を参照してください。
+エディタへの導入方法はxref:../user-guide/release-installation.adoc[インストールと更新]を参照してください。
 
 [#lsp-scope]
 == 対応範囲
@@ -47,9 +47,9 @@ Language Serverはstdio上のLanguage Server Protocol 3.18を使用し、診断�
 [#lsp-workspace]
 == ワークスペースとプロジェクト設定
 
-Language Serverはworkspace folderごとに読込境界を設け、各文書に最も近い``.adocweave.toml``を使用します。
+Language Serverはworkspace folderごとに読込範囲を設け、各文書に最も近い``.adocweave.toml``を使用します。
 設定の作成、変更または削除を受け取ると、影響する開いている文書を新しい設定で解析します。設定本文と属性値を
-ログへ記録しません。エディター設定の``enabledRules``はプロジェクト設定の後に適用し、ファイルの読込範囲や資源上限を
+ログへ記録しません。エディタ設定の``enabledRules``はプロジェクト設定の後に適用し、ファイルの読込範囲や処理量の上限を
 広げません。
 
 ``workspace/didChangeConfiguration``は、設定の直下または``adocweave``オブジェクト内にある``debounceMs``と
@@ -61,7 +61,7 @@ Language Serverはworkspace folderごとに読込境界を設け、各文書に�
 走査中に開いた文書や受け取ったファイル変更を古いディスク内容で上書きしません。ファイル監視の更新は同じ文書へまとめ、
 回復のための走査を同時に増やし続けません。
 
-走査対象の除外、入れ子のworkspace root、資源上限、上限超過時の部分結果および利用者への通知は
+走査対象の除外、入れ子のworkspace root、走査件数と読込量の上限、上限超過時の部分結果および利用者への通知は
 xref:../user-guide/project-configuration.adoc#workspace-scan[プロジェクト設定]を基準とします。走査対象からの除外は
 includeの読込許可を変更しません。明示的に開いた文書にも走査除外を適用しません。
 
@@ -71,15 +71,15 @@ includeの読込許可を変更しません。明示的に開いた文書にも�
 ファイル監視の動的登録に対応するクライアントには、任意の拡張子を持つinclude先の作成も検知できるよう
 ``**/*``の作成、
 変更および削除を購読します。ただし、未知のファイルは走査対象となる``.adoc``だけを新しい解析rootの候補とし、
-既知のinclude先とプロジェクト設定以外を通知だけで読みません。通知されたURIにもworkspace境界、symlink検査および
-資源上限を再適用します。監視登録に失敗してもサーバーを停止しません。Language Serverはネットワーク上の
+既知のinclude先とプロジェクト設定以外を通知だけで読みません。通知されたURIにもworkspaceの読込範囲、symlink検査および
+ファイル件数と読込量の上限を再適用します。監視登録に失敗してもサーバーを停止しません。Language Serverはネットワーク上の
 リソースを取得しません。
 
 初期走査またはプロジェクト設定の読込に失敗した場合も、``didOpen``した文書の状態は保持します。既定設定へ
 切り替えて解析せず、原因を文書診断として公開します。この失敗は、部分結果を利用できる不完全な走査の
 ``window/showMessage``通知と区別します。
 
-ディスク上の本文と開いている本文は別の版として保持します。文書を開いている間はエディターの本文を優先し、
+ディスク上の本文と開いている本文は別の版として保持します。文書を開いている間はエディタの本文を優先し、
 閉じた後は確認済みのディスク内容へ戻します。include依存関係を保持し、変更されたリソースに依存するrootだけを
 再解析します。
 
@@ -125,7 +125,7 @@ workspace folderに対応するクライアントにはfolder変更の購読を�
 [#lsp-diagnostics]
 == 診断と編集
 
-Language Serverはコアの診断とinclude元への位置投影をLSP診断へ変換し、入力を独自にLintしません。
+Language Serverはコアの診断とinclude元の位置との対応をLSP診断へ変換し、入力を独自にLintしません。
 push diagnosticsだけを使用し、現在の文書の版を確認してから通知します。workspace全体の走査通知は
 文書診断と分離します。
 
@@ -140,15 +140,15 @@ Renameは明示したアンカーIDだけを対象とし、生成ID、複数の�
 行わず、古い世代の結果を返しません。索引の障害は要求の失敗として扱い、コア診断やサーバープロセスを停止しません。
 
 [#lsp-projections]
-== エディター向け投影
+== エディタ向け構造情報
 
 Outline、Hover、Semantic Tokensその他の機能は、採用済みの同じ解析結果からLSP型を生成します。文書storeを
 読み直したり、ソースを再解析したりしません。
 
 Semantic Tokensはリンク、xref、アンカーID、literalおよび数式内容を意味情報から生成します。見出しmarker、
-commentおよび書式delimiterなど構文だけで決まる基本色付けは各エディターのgrammarが所有します。
+commentおよび書式delimiterなど構文だけで決まる基本色付けは各エディタのgrammarが所有します。
 補完はsource block言語と現在の文書で解析済みの候補に限定し、任意schemeや開いていない文書の内容を推測しません。
 
-プロトコルと状態遷移の検証は``adocweave-lsp``の試験を正本とします。開発版をエディターで確認する方法は
+プロトコルと状態遷移の検証は``adocweave-lsp``の試験を正本とします。開発版をエディタで確認する方法は
 xref:zed-development.adoc[Zedで開発版を試す]と
 xref:vscode-development.adoc[VS Codeで開発版を試す]を参照してください。

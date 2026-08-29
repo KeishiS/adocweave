@@ -11,7 +11,7 @@ inlineおよび回復規則が二重化します。逆に、完成済みsemantic
 
 一回の構文認識で、lossless syntax nodeと出力非依存のraw semantic factを同時に生成します。
 Loweringはraw factを一度だけ受け取り、文書属性の評価、リンクtargetの一回展開およびアンカーの
-対象結合を行って不変semantic ASTを完成させます。HTML、LSP、projectionおよびホスト解決はparserにも
+対象結合を行って不変semantic ASTを完成させます。HTML、LSP、用途別の解析結果およびホスト解決はparserにも
 loweringにも持ち込みません。
 
 == 却下した案
