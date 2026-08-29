@@ -4,9 +4,8 @@
  * 判断は`acquisition.ts`が持ち、この場所はnetworkとfilesystemの操作だけを行います。
  * 展開はchecksumの照合に成功したあとにだけ実行します。
  */
-import { chmod, mkdir, mkdtemp, rename, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { chmod, mkdir, mkdtemp, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 
 import { unzipSync } from "fflate";
 
@@ -108,6 +107,28 @@ export async function downloadServer(
   } finally {
     await rm(staging, { force: true, recursive: true });
   }
+  await removeOtherVersions(storageDirectory, basename(directory));
   dependencies.onProgress?.(`Verified and installed the Language Server ${release.version}.`);
   return executable;
+}
+
+/**
+ * 取得した版だけを残します。
+ *
+ * 消さないと更新のたびに保存領域が増え続けます。削除に失敗しても取得は成功して
+ * いるため、起動を止めません。
+ */
+async function removeOtherVersions(storageDirectory: string, keep: string): Promise<void> {
+  let entries: string[];
+  try {
+    entries = await readdir(storageDirectory);
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (entry === keep || !entry.startsWith("adocweave-lsp-")) continue;
+    await rm(join(storageDirectory, entry), { force: true, recursive: true }).catch(
+      () => undefined,
+    );
+  }
 }

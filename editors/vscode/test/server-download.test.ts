@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -118,6 +126,22 @@ test("取得済みの版を再取得しません", async () => {
 
     assert.equal(first, second);
     assert.equal(archiveDownloads, 1);
+  });
+});
+
+test("取得した版だけを残し、利用者のfileへ触れません", async () => {
+  await withStorage(async (storage) => {
+    const stale = join(storage, `adocweave-lsp-0.46.2-${target}`);
+    const unrelated = join(storage, "notes.txt");
+    mkdirSync(stale, { recursive: true });
+    writeFileSync(join(stale, "adocweave-lsp"), "old\n");
+    writeFileSync(unrelated, "keep\n");
+    const bytes = archive();
+
+    await downloadServer(storage, dependencies(bytes, sums(bytes)));
+
+    // 更新のたびに保存領域が増え続けないよう、以前の版を消す。
+    assert.deepEqual(readdirSync(storage).sort(), [`adocweave-lsp-0.47.0-${target}`, "notes.txt"]);
   });
 });
 
