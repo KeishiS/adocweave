@@ -995,6 +995,16 @@ impl<'request> Processor<'request> {
             config.resources.include = include;
             config.preprocess.enable_includes = include;
         }
+        for rule in &self.overrides.enable_lint_rules {
+            let current = config.analysis.diagnostics.lint.rule(*rule);
+            config.analysis.diagnostics.lint.set_rule(
+                *rule,
+                adocweave::output::diagnostics::RuleSettings {
+                    enabled: true,
+                    ..current
+                },
+            );
+        }
         config
             .html
             .stylesheet_files
@@ -3023,6 +3033,7 @@ mod tests {
                 config: ConfigSelection::Disabled,
                 overrides: ProjectOverrides {
                     include: Some(true),
+                    enable_lint_rules: Vec::new(),
                     stylesheet_files: Vec::new(),
                 },
                 authority: ProjectAuthority::open(root.clone(), [root])

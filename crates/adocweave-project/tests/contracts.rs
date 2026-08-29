@@ -162,6 +162,58 @@ fn configuration_can_be_resolved_without_processing_a_target() {
 }
 
 #[test]
+fn request_lint_overrides_apply_to_configuration_and_analysis() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    fs::write(
+        directory.path().join("guide.adoc"),
+        "本文xref:target.adoc[参照先]\n",
+    )
+    .expect("document fixture");
+    let rule = adocweave::output::diagnostics::lint_rule("macro-boundary")
+        .expect("known opt-in rule")
+        .id;
+    let mut request = ProjectRequest {
+        targets: vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
+        sources: Vec::new(),
+        config: ConfigSelection::Disabled,
+        overrides: ProjectOverrides {
+            enable_lint_rules: vec![rule],
+            ..ProjectOverrides::default()
+        },
+        authority: ProjectAuthority::open(
+            directory.path().to_owned(),
+            [directory.path().to_owned()],
+        )
+        .expect("authority"),
+        limits: request_with(Vec::new()).limits,
+    };
+    request.limits.max_output_bytes = u32::MAX;
+
+    let result = process(request, &NeverCancel).expect("request applies lint overrides");
+    let target = &result.targets[0];
+    assert!(
+        target
+            .config
+            .config
+            .analysis()
+            .diagnostics
+            .lint
+            .rule(rule)
+            .enabled
+    );
+    assert!(
+        target
+            .outcome
+            .as_ref()
+            .expect("analysis")
+            .source
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.code.as_str() == "macro-boundary")
+    );
+}
+
+#[test]
 fn pathless_input_does_not_replace_a_real_file_with_a_synthetic_name() {
     let directory = tempfile::tempdir().expect("temporary directory");
     fs::write(

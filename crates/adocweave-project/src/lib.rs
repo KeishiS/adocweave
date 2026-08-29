@@ -22,6 +22,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use adocweave::output::diagnostics::LintRuleId;
 use adocweave::output::formatter::FormatConfig;
 use adocweave::output::html::RenderPolicy;
 use adocweave::preprocess::PreprocessOptions;
@@ -211,6 +212,8 @@ pub enum ConfigSelection {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ProjectOverrides {
     pub include: Option<bool>,
+    /// Lint rules enabled for this request in addition to project settings.
+    pub enable_lint_rules: Vec<LintRuleId>,
     /// Additional stylesheet files resolved from the project root and observed
     /// under the same budgets as configured stylesheets.
     pub stylesheet_files: Vec<PathBuf>,
