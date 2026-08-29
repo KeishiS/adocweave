@@ -57,7 +57,8 @@ pub enum ProjectTarget {
     Directory(PathBuf),
     /// Files selected by one authored glob pattern.
     Glob(String),
-    /// Supported documents found by workspace discovery with configured excludes.
+    /// Supported documents found below the project root by workspace discovery
+    /// with configured excludes.
     Workspace(PathBuf),
 }
 
@@ -153,7 +154,13 @@ pub struct ProjectResourceResult {
 /// Content or failure retained for one logical resource until the request ends.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProjectResourceOutcome {
-    Loaded { source: Arc<str> },
+    Loaded {
+        source: Arc<str>,
+    },
+    /// Acquisition succeeded, but returning the body would exceed the result limit.
+    LoadedOmitted {
+        limit: ProjectLimit,
+    },
     Present,
     Missing,
     Failed(ProjectResourceFailure),

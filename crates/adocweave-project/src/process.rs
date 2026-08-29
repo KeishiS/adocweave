@@ -16,9 +16,7 @@ use adocweave_host::{
     LocalFilesystemSession, LogicalSourceId, ResourceError,
 };
 
-use crate::selection::{
-    absolute_lexical, identity_path, logical_path, scan_root_for_selector, select_targets,
-};
+use crate::selection::{absolute_lexical, identity_path, scan_root_for_selector, select_targets};
 use crate::{
     ConfigSelection, ProjectError, ProjectLimit, ProjectOutcome, ProjectRequest,
     ProjectResourceFailure, ProjectResourceKind, ProjectResourceOutcome, ProjectResourceResult,
@@ -50,8 +48,10 @@ struct Processor {
 #[derive(Clone, Debug)]
 struct FixedResource {
     source_id: LogicalSourceId,
+    requested_path: PathBuf,
     path: PathBuf,
     base: Option<PathBuf>,
+    no_symlinks: bool,
     outcome: ProjectResourceOutcome,
 }
 
@@ -69,6 +69,7 @@ struct TargetAnalysisContext<'target> {
     allowed_roots: &'target [PathBuf],
     budget: &'target mut TargetBudget,
     bases: &'target mut BTreeMap<String, PathBuf>,
+    lookup_bases: &'target mut BTreeMap<String, PathBuf>,
     resources: &'target mut Vec<ProjectResourceResult>,
     filesystem: &'target mut LocalFilesystemSession,
 }
@@ -270,6 +271,9 @@ impl Processor {
                 ));
             }
             ProjectResourceOutcome::Present => unreachable!("a primary document is read"),
+            ProjectResourceOutcome::LoadedOmitted { .. } => {
+                unreachable!("fixed primary resources retain acquired content")
+            }
         };
         let mut target_budget = TargetBudget::new(config.resources.limit_plan.filesystem_reads);
         if let Err(limit) = target_budget.charge(&source_id, source.len()) {
@@ -284,6 +288,13 @@ impl Processor {
         }
         let mut bases = BTreeMap::from([(
             source_id.as_str().to_owned(),
+            primary
+                .base
+                .clone()
+                .unwrap_or_else(|| self.project_root.clone()),
+        )]);
+        let mut lookup_bases = BTreeMap::from([(
+            "__adocweave_base__".to_owned(),
             primary
                 .base
                 .clone()
@@ -315,6 +326,7 @@ impl Processor {
             allowed_roots: &allowed_roots,
             budget: &mut target_budget,
             bases: &mut bases,
+            lookup_bases: &mut lookup_bases,
             resources: &mut resources,
             filesystem: &mut include_filesystem,
         });
@@ -349,6 +361,7 @@ impl Processor {
                     .iter()
                     .map(|resource| match &resource.outcome {
                         ProjectResourceOutcome::Loaded { source } => source.len(),
+                        ProjectResourceOutcome::LoadedOmitted { .. } => 0,
                         _ => 0,
                     })
                     .sum::<usize>(),
@@ -362,8 +375,7 @@ impl Processor {
             };
             for resource in &mut resources {
                 if matches!(resource.outcome, ProjectResourceOutcome::Loaded { .. }) {
-                    resource.outcome =
-                        ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(limit));
+                    resource.outcome = ProjectResourceOutcome::LoadedOmitted { limit };
                 }
             }
             outcome = Err(ProjectTargetError::Incomplete(limit));
@@ -396,6 +408,22 @@ impl Processor {
             return Ok((None, ResolvedProjectConfig::default(), None));
         };
         let snapshot = self.load_config(path.clone())?;
+        if !snapshot.path.starts_with(&self.project_root) {
+            for configured in snapshot
+                .config
+                .resources
+                .roots
+                .iter()
+                .chain(&snapshot.config.html.stylesheet_files)
+                .chain(snapshot.config.local_targets.project_root.iter())
+            {
+                if !configured.starts_with(&self.project_root) {
+                    return Err(ProjectError::Authority(ResourceError::OutsideRoots(
+                        configured.clone(),
+                    )));
+                }
+            }
+        }
         let source_id = self.source_id_for_path(&path)?;
         let resource = self
             .fixed
@@ -421,7 +449,9 @@ impl Processor {
                 ProjectResourceOutcome::Failed(failure) => {
                     Err(ProjectError::Authority(failure.error().clone()))
                 }
-                ProjectResourceOutcome::Present | ProjectResourceOutcome::Loaded { .. } => {
+                ProjectResourceOutcome::Present
+                | ProjectResourceOutcome::Loaded { .. }
+                | ProjectResourceOutcome::LoadedOmitted { .. } => {
                     unreachable!("configuration reads return content, absence or failure")
                 }
             };
@@ -464,6 +494,9 @@ impl Processor {
                 ProjectResourceOutcome::Present => {
                     unreachable!("configuration discovery reads candidates")
                 }
+                ProjectResourceOutcome::LoadedOmitted { .. } => {
+                    unreachable!("fixed configuration resources retain acquired content")
+                }
             }
             if directory == self.project_root {
                 return Ok(None);
@@ -480,7 +513,7 @@ impl Processor {
         path: PathBuf,
     ) -> FixedResource {
         if let Some(fixed) = self.fixed.get(&source_id) {
-            return fixed.clone();
+            return cached_for_session(fixed, &self.filesystem, true);
         }
         let transaction = self
             .job
@@ -533,8 +566,10 @@ impl Processor {
         });
         let fixed = FixedResource {
             source_id: source_id.clone(),
+            requested_path: path.clone(),
             path,
             base,
+            no_symlinks: true,
             outcome,
         };
         self.fixed.insert(source_id, fixed.clone());
@@ -553,17 +588,14 @@ impl Processor {
             allowed_roots,
             budget,
             bases,
+            lookup_bases,
             resources,
             filesystem,
         } = context;
         let mut preprocess = config.preprocess.clone();
         preprocess.enable_includes = config.resources.include;
         preprocess.source_id = Some(SourceId::new(source_id.as_str()));
-        let base = bases
-            .get(source_id.as_str())
-            .expect("the primary source has a verified base");
-        let base_key = logical_path(&self.project_root, base);
-        preprocess.base_uri = (!base_key.is_empty()).then_some(base_key);
+        preprocess.base_uri = Some("__adocweave_base__".to_owned());
         let options = EffectiveProcessingOptions::new(config.analysis.clone(), preprocess)
             .map_err(|error| {
                 ProjectTargetError::Analysis(PreprocessedAnalysisError::Options(error))
@@ -589,7 +621,7 @@ impl Processor {
                         .map(|id| self.source_id_for_value(id.as_str()))
                         .transpose()
                         .map_err(ProjectTargetError::Read)?;
-                    let path = absolute_lexical(&self.project_root, Path::new(&target))
+                    let path = resolve_lookup_path(&target, lookup_bases)
                         .map_err(ProjectTargetError::Read)?;
                     let include_id = self
                         .source_id_for_path(&path)
@@ -621,6 +653,9 @@ impl Processor {
                                 .map_err(ProjectTargetError::Incomplete)?;
                             if let Some(base) = &fixed.base {
                                 bases.insert(include_id.as_str().to_owned(), base.clone());
+                                if let Some((lookup_base, _)) = target.rsplit_once('/') {
+                                    lookup_bases.insert(lookup_base.to_owned(), base.clone());
+                                }
                             }
                             let document = ResourceDocument {
                                 source_id: SourceId::new(include_id.as_str()),
@@ -647,6 +682,9 @@ impl Processor {
                             request.load_failed(message)
                         }
                         ProjectResourceOutcome::Present => unreachable!("an include is read"),
+                        ProjectResourceOutcome::LoadedOmitted { .. } => {
+                            unreachable!("fixed include resources retain acquired content")
+                        }
                     };
                     step = suspended.resume(response, &lookup, &NeverCancel);
                 }
@@ -859,13 +897,14 @@ impl Processor {
         filesystem: &mut LocalFilesystemSession,
     ) -> FixedInspection {
         if let Some(fixed) = self.fixed.get(&source_id) {
+            let fixed = cached_for_session(fixed, filesystem, false);
             return FixedInspection {
                 source_id,
                 path: fixed.path.clone(),
                 outcome: match &fixed.outcome {
-                    ProjectResourceOutcome::Loaded { .. } | ProjectResourceOutcome::Present => {
-                        ProjectResourceOutcome::Present
-                    }
+                    ProjectResourceOutcome::Loaded { .. }
+                    | ProjectResourceOutcome::LoadedOmitted { .. }
+                    | ProjectResourceOutcome::Present => ProjectResourceOutcome::Present,
                     outcome => outcome.clone(),
                 },
             };
@@ -918,8 +957,10 @@ impl Processor {
                 source_id.clone(),
                 FixedResource {
                     source_id: source_id.clone(),
+                    requested_path: path.clone(),
                     path,
                     base: None,
+                    no_symlinks: false,
                     outcome,
                 },
             );
@@ -935,12 +976,19 @@ impl Processor {
         failure: ProjectResourceFailure,
     ) -> FixedResource {
         if let Some(fixed) = self.fixed.get(&source_id) {
-            return fixed.clone();
+            let mut rejected = fixed.clone();
+            rejected.requested_path = path.clone();
+            rejected.path = path;
+            rejected.base = None;
+            rejected.outcome = ProjectResourceOutcome::Failed(failure);
+            return rejected;
         }
         let fixed = FixedResource {
             source_id: source_id.clone(),
+            requested_path: path.clone(),
             path,
             base: None,
+            no_symlinks: false,
             outcome: ProjectResourceOutcome::Failed(failure),
         };
         self.fixed.insert(source_id, fixed.clone());
@@ -1038,7 +1086,7 @@ fn read_fixed_from(
     filesystem: &mut LocalFilesystemSession,
 ) -> FixedResource {
     if let Some(fixed) = fixed_resources.get(&source_id) {
-        return fixed.clone();
+        return cached_for_session(fixed, filesystem, false);
     }
     let outcome = job
         .transaction(filesystem)
@@ -1088,13 +1136,62 @@ fn read_fixed_from(
     });
     let fixed = FixedResource {
         source_id: source_id.clone(),
+        requested_path: path.clone(),
         path,
         base,
+        no_symlinks: false,
         outcome,
     };
     fixed_resources.insert(source_id, fixed.clone());
     observe_fixed(&fixed);
     fixed
+}
+
+fn resolve_lookup_path(
+    target: &str,
+    lookup_bases: &BTreeMap<String, PathBuf>,
+) -> Result<PathBuf, ResourceError> {
+    let (key, base) = lookup_bases
+        .iter()
+        .filter(|(key, _)| target == key.as_str() || target.starts_with(&format!("{key}/")))
+        .max_by_key(|(key, _)| key.len())
+        .ok_or_else(|| {
+            ResourceError::Unverifiable("include target has no verified filesystem base".to_owned())
+        })?;
+    let relative = target
+        .strip_prefix(key)
+        .and_then(|value| value.strip_prefix('/'))
+        .unwrap_or("");
+    absolute_lexical(base, Path::new(relative))
+}
+
+fn cached_for_session(
+    fixed: &FixedResource,
+    filesystem: &LocalFilesystemSession,
+    require_no_symlinks: bool,
+) -> FixedResource {
+    let within_authority = filesystem
+        .roots()
+        .iter()
+        .any(|root| fixed.requested_path.starts_with(root))
+        && (!matches!(fixed.outcome, ProjectResourceOutcome::Loaded { .. })
+            || filesystem
+                .roots()
+                .iter()
+                .any(|root| fixed.path.starts_with(root)));
+    if within_authority && (!require_no_symlinks || fixed.no_symlinks) {
+        return fixed.clone();
+    }
+    let mut rejected = fixed.clone();
+    let error = if !within_authority {
+        ResourceError::OutsideRoots(fixed.requested_path.clone())
+    } else {
+        ResourceError::Unverifiable(
+            "resource was not acquired with symbolic links forbidden".to_owned(),
+        )
+    };
+    rejected.outcome = ProjectResourceOutcome::Failed(ProjectResourceFailure::Rejected(error));
+    rejected
 }
 
 fn current_read_limit(job: &IncludeFilesystemJob, limits: crate::ProjectLimits) -> ProjectLimit {

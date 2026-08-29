@@ -35,18 +35,6 @@ pub(crate) fn absolute_lexical(root: &Path, path: &Path) -> Result<PathBuf, Reso
     Ok(normalized)
 }
 
-pub(crate) fn logical_path(root: &Path, path: &Path) -> String {
-    let selected = path.strip_prefix(root).unwrap_or(path);
-    selected
-        .components()
-        .filter_map(|component| match component {
-            Component::Normal(value) => Some(value.to_string_lossy()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("/")
-}
-
 pub(crate) fn identity_path(root: &Path, path: &Path) -> String {
     let selected = path.strip_prefix(root).unwrap_or(path);
     selected
@@ -242,9 +230,13 @@ pub(crate) fn scan_root_for_selector(
     selector: &ProjectTarget,
 ) -> Result<Option<PathBuf>, ProjectError> {
     match selector {
-        ProjectTarget::Workspace(path) => absolute_lexical(project_root, path)
-            .map(Some)
-            .map_err(ProjectError::Authority),
+        ProjectTarget::Workspace(path) => {
+            let root = absolute_lexical(project_root, path).map_err(ProjectError::Authority)?;
+            if !root.starts_with(project_root) {
+                return Err(ProjectError::Authority(ResourceError::OutsideRoots(root)));
+            }
+            Ok(Some(root))
+        }
         ProjectTarget::Path(_) | ProjectTarget::Directory(_) | ProjectTarget::Glob(_) => Ok(None),
     }
 }

@@ -266,13 +266,115 @@ fn bounded_workspace_scan_reports_partial_results() {
         vec![ProjectTarget::Workspace(PathBuf::from("."))],
     );
     request.config = ConfigSelection::Disabled;
-    request.limits.max_directory_entries = 1;
+    request.limits.max_directory_entries = 2;
 
     let result = process(request).expect("safe partial scan is returned");
     assert_eq!(
         result.warnings,
-        [adocweave_project::ProjectWarning::ScanTruncated { limit: 1 }]
+        [adocweave_project::ProjectWarning::ScanTruncated { limit: 2 }]
     );
+    assert!(!result.targets.is_empty());
+}
+
+#[test]
+fn external_primary_resolves_relative_include_from_its_own_authority() {
+    let project = tempfile::tempdir().expect("project directory");
+    let external = tempfile::tempdir().expect("external directory");
+    write(external.path().join("guide.adoc"), "include::part.adoc[]\n");
+    write(external.path().join("part.adoc"), "external include\n");
+    let filesystem_reads = FilesystemReadLimits::default();
+    let result = process(ProjectRequest {
+        project_root: project.path().to_owned(),
+        targets: vec![ProjectTarget::Path(external.path().join("guide.adoc"))],
+        config: ConfigSelection::Disabled,
+        overrides: ProjectOverrides {
+            include: Some(true),
+        },
+        authority: LocalFilesystemPolicy::new(
+            [project.path().to_owned(), external.path().to_owned()],
+            filesystem_reads,
+        )
+        .expect("two roots are retained"),
+        limits: ProjectLimits {
+            filesystem_reads,
+            max_directory_entries: 100,
+            max_processing_iterations: 10,
+            output: OutputLimits::default(),
+        },
+    })
+    .expect("external primary is processed");
+    assert!(
+        result.targets[0]
+            .outcome
+            .as_ref()
+            .expect("analysis succeeds")
+            .document
+            .source
+            .contains("external include")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn non_utf8_parent_resolves_relative_include_without_lossy_paths() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let parent = PathBuf::from(OsString::from_vec(b"chapter-\xff".to_vec()));
+    fs::create_dir(directory.path().join(&parent)).expect("non-UTF-8 directory");
+    write(
+        directory.path().join(&parent).join("guide.adoc"),
+        "include::part.adoc[]\n",
+    );
+    write(
+        directory.path().join(&parent).join("part.adoc"),
+        "non-UTF-8 parent include\n",
+    );
+    let mut request = request(
+        directory.path(),
+        vec![ProjectTarget::Path(parent.join("guide.adoc"))],
+    );
+    request.config = ConfigSelection::Disabled;
+    request.overrides.include = Some(true);
+    let result = process(request).expect("processing succeeds");
+    assert!(
+        result.targets[0]
+            .outcome
+            .as_ref()
+            .expect("analysis succeeds")
+            .document
+            .source
+            .contains("non-UTF-8 parent include")
+    );
+}
+
+#[test]
+fn workspace_selector_cannot_leave_the_project_root() {
+    let project = tempfile::tempdir().expect("project directory");
+    let outside = tempfile::tempdir().expect("outside directory");
+    let filesystem_reads = FilesystemReadLimits::default();
+    let result = process(ProjectRequest {
+        project_root: project.path().to_owned(),
+        targets: vec![ProjectTarget::Workspace(outside.path().to_owned())],
+        config: ConfigSelection::Disabled,
+        overrides: ProjectOverrides::default(),
+        authority: LocalFilesystemPolicy::new(
+            [project.path().to_owned(), outside.path().to_owned()],
+            filesystem_reads,
+        )
+        .expect("two roots are retained"),
+        limits: ProjectLimits {
+            filesystem_reads,
+            max_directory_entries: 100,
+            max_processing_iterations: 10,
+            output: OutputLimits::default(),
+        },
+    });
+    assert!(matches!(
+        result,
+        Err(adocweave_project::ProjectError::Authority(_))
+    ));
 }
 
 #[test]
@@ -361,6 +463,44 @@ fn returned_resource_text_is_bounded_by_the_output_limit() {
             .iter()
             .all(|resource| !matches!(resource.outcome, ProjectResourceOutcome::Loaded { .. }))
     );
+    assert!(result.targets[0].resources.iter().any(|resource| matches!(
+        resource.outcome,
+        ProjectResourceOutcome::LoadedOmitted {
+            limit: ProjectLimit::OutputBytes { limit: 64 }
+        }
+    )));
+}
+
+#[test]
+fn repeated_loaded_resource_distinguishes_body_omission_from_acquisition_failure() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    let config = "schema-version = 2\n[html]\nstylesheet-files = [\"style.css\"]\n";
+    write(root.join(".adocweave.toml"), config);
+    write(root.join("a.adoc"), "a\n");
+    write(root.join("b.adoc"), "b\n");
+    write(root.join("style.css"), "0123456789");
+    let mut request = request(root, vec![ProjectTarget::Directory(PathBuf::from("."))]);
+    request.limits.output.max_output_bytes =
+        u32::try_from(config.len() + 2 + 2 + 10).expect("small fixture");
+    let result = process(request).expect("processing succeeds");
+    let styles = result
+        .targets
+        .iter()
+        .map(|target| {
+            &target
+                .resources
+                .iter()
+                .find(|resource| resource.kind == ProjectResourceKind::Stylesheet)
+                .expect("stylesheet result")
+                .outcome
+        })
+        .collect::<Vec<_>>();
+    assert!(matches!(styles[0], ProjectResourceOutcome::Loaded { .. }));
+    assert!(matches!(
+        styles[1],
+        ProjectResourceOutcome::LoadedOmitted { .. }
+    ));
 }
 
 #[test]
@@ -412,6 +552,81 @@ fn multiple_authority_roots_receive_distinct_source_ids() {
     .expect("both roots are processed");
     assert_eq!(result.targets.len(), 2);
     assert_ne!(result.targets[0].source_id, result.targets[1].source_id);
+}
+
+#[test]
+fn external_config_authority_does_not_grant_its_include_stylesheet_or_local_paths() {
+    let project = tempfile::tempdir().expect("project directory");
+    let external = tempfile::tempdir().expect("external directory");
+    write(project.path().join("guide.adoc"), "text\n");
+    for (name, body) in [
+        (
+            "include.toml",
+            "schema-version = 2\n[resources]\nroots = [\"assets\"]\n",
+        ),
+        (
+            "stylesheet.toml",
+            "schema-version = 2\n[html]\nstylesheet-files = [\"style.css\"]\n",
+        ),
+        (
+            "local.toml",
+            "schema-version = 2\n[local-targets]\nenabled = true\nproject-root = \"assets\"\n",
+        ),
+    ] {
+        let config = external.path().join(name);
+        write(&config, body);
+        let filesystem_reads = FilesystemReadLimits::default();
+        let result = process(ProjectRequest {
+            project_root: project.path().to_owned(),
+            targets: vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
+            config: ConfigSelection::Explicit(config),
+            overrides: ProjectOverrides::default(),
+            authority: LocalFilesystemPolicy::new(
+                [project.path().to_owned(), external.path().to_owned()],
+                filesystem_reads,
+            )
+            .expect("configuration authority is retained"),
+            limits: ProjectLimits {
+                filesystem_reads,
+                max_directory_entries: 100,
+                max_processing_iterations: 10,
+                output: OutputLimits::default(),
+            },
+        });
+        assert!(
+            matches!(result, Err(adocweave_project::ProjectError::Authority(_))),
+            "external configuration path must not grant {name} resources"
+        );
+    }
+}
+
+#[test]
+fn external_config_authority_can_read_only_the_config_body() {
+    let project = tempfile::tempdir().expect("project directory");
+    let external = tempfile::tempdir().expect("external directory");
+    write(project.path().join("guide.adoc"), "text\n");
+    let config = external.path().join("adocweave.toml");
+    write(&config, "schema-version = 2\n");
+    let filesystem_reads = FilesystemReadLimits::default();
+    let result = process(ProjectRequest {
+        project_root: project.path().to_owned(),
+        targets: vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
+        config: ConfigSelection::Explicit(config),
+        overrides: ProjectOverrides::default(),
+        authority: LocalFilesystemPolicy::new(
+            [project.path().to_owned(), external.path().to_owned()],
+            filesystem_reads,
+        )
+        .expect("configuration authority is retained"),
+        limits: ProjectLimits {
+            filesystem_reads,
+            max_directory_entries: 100,
+            max_processing_iterations: 10,
+            output: OutputLimits::default(),
+        },
+    })
+    .expect("external configuration body is readable");
+    assert!(result.targets[0].outcome.is_ok());
 }
 
 #[cfg(unix)]
@@ -499,6 +714,81 @@ fn configured_include_root_cannot_cross_a_symlink() {
     ))
     .expect("request remains coherent");
     assert!(result.targets[0].outcome.is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn broad_cached_read_cannot_bypass_a_later_confined_include_root() {
+    use std::os::unix::fs::symlink;
+
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    fs::create_dir(root.join("narrow")).expect("narrow directory");
+    fs::create_dir(root.join("outside")).expect("outside directory");
+    write(
+        root.join("narrow/.adocweave.toml"),
+        "schema-version = 2\n[resources]\ninclude = true\nroots = [\".\"]\n",
+    );
+    write(root.join("outside/secret.adoc"), "secret\n");
+    symlink(
+        root.join("outside/secret.adoc"),
+        root.join("narrow/link.adoc"),
+    )
+    .expect("include symlink");
+    write(root.join("narrow/z-guide.adoc"), "include::link.adoc[]\n");
+
+    let result = process(request(
+        root,
+        vec![
+            ProjectTarget::Path(PathBuf::from("narrow/link.adoc")),
+            ProjectTarget::Path(PathBuf::from("narrow/z-guide.adoc")),
+        ],
+    ))
+    .expect("request remains coherent");
+    let guide = result
+        .targets
+        .iter()
+        .find(|target| target.path.ends_with("z-guide.adoc"))
+        .expect("guide result");
+    assert!(guide.outcome.is_err());
+    assert!(guide.resources.iter().any(|resource| {
+        resource.kind == ProjectResourceKind::Include
+            && matches!(resource.outcome, ProjectResourceOutcome::Failed(_))
+    }));
+}
+
+#[cfg(unix)]
+#[test]
+fn normal_cached_read_cannot_be_reused_as_no_symlink_config_read() {
+    use std::os::unix::fs::symlink;
+
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    fs::create_dir(root.join("nested")).expect("nested directory");
+    write(
+        root.join(".adocweave.toml"),
+        "schema-version = 2\n[html]\nstylesheet-files = [\"nested/.adocweave.toml\"]\n",
+    );
+    write(root.join("actual.toml"), "schema-version = 2\n");
+    symlink(
+        root.join("actual.toml"),
+        root.join("nested/.adocweave.toml"),
+    )
+    .expect("configuration symlink");
+    write(root.join("a.adoc"), "a\n");
+    write(root.join("nested/z.adoc"), "z\n");
+
+    let result = process(request(
+        root,
+        vec![
+            ProjectTarget::Path(PathBuf::from("a.adoc")),
+            ProjectTarget::Path(PathBuf::from("nested/z.adoc")),
+        ],
+    ));
+    assert!(matches!(
+        result,
+        Err(adocweave_project::ProjectError::Authority(_))
+    ));
 }
 
 #[cfg(unix)]
