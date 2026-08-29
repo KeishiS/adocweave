@@ -2,8 +2,6 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
-use crate::request_unknown::UnknownFields;
-
 use crate::{
     DocumentMode, GeneratedBibliography, MathLanguage, ResolvedCitation, ResolvedReference,
     ResolvedResource, SafeMode, Severity, SyntaxMode, UnknownRole, UnknownSourceLanguage,
@@ -74,11 +72,8 @@ where
     ts(export, export_to = "protocol.d.mts")
 )]
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AnalyzeRequest {
-    #[serde(flatten)]
-    #[cfg_attr(feature = "ts-rs", ts(skip))]
-    unknown_fields: UnknownFields,
     pub source: SourceInput,
     pub products: ProductRequest,
     #[serde(default, deserialize_with = "present")]
@@ -92,11 +87,8 @@ pub struct AnalyzeRequest {
     ts(export, export_to = "protocol.d.mts")
 )]
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SourceInput {
-    #[serde(flatten)]
-    #[cfg_attr(feature = "ts-rs", ts(skip))]
-    unknown_fields: UnknownFields,
     pub text: String,
     #[serde(default, deserialize_with = "present")]
     #[cfg_attr(feature = "ts-rs", ts(optional, type = "string"))]
@@ -118,11 +110,8 @@ pub struct SourceInput {
     ts(export, export_to = "protocol.d.mts")
 )]
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProductRequest {
-    #[serde(flatten)]
-    #[cfg_attr(feature = "ts-rs", ts(skip))]
-    unknown_fields: UnknownFields,
     #[serde(default, deserialize_with = "requested")]
     #[cfg_attr(feature = "ts-rs", ts(optional, type = "true"))]
     pub syntax: Option<()>,
@@ -172,11 +161,8 @@ impl ProductRequest {
     ts(export, export_to = "protocol.d.mts")
 )]
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct DiagnosticOptions {
-    #[serde(flatten)]
-    #[cfg_attr(feature = "ts-rs", ts(skip))]
-    unknown_fields: UnknownFields,
     #[serde(default, deserialize_with = "present")]
     #[cfg_attr(
         feature = "ts-rs",
@@ -203,11 +189,8 @@ pub struct DiagnosticOptions {
     ts(export, export_to = "protocol.d.mts")
 )]
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct AuthoredUrlOptions {
-    #[serde(flatten)]
-    #[cfg_attr(feature = "ts-rs", ts(skip))]
-    unknown_fields: UnknownFields,
     #[serde(default, deserialize_with = "present")]
     #[cfg_attr(feature = "ts-rs", ts(optional, type = "Array<string>"))]
     pub allowed_schemes: Option<Vec<String>>,
@@ -222,11 +205,8 @@ pub struct AuthoredUrlOptions {
     ts(export, export_to = "protocol.d.mts")
 )]
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct RuleOptions {
-    #[serde(flatten)]
-    #[cfg_attr(feature = "ts-rs", ts(skip))]
-    unknown_fields: UnknownFields,
     #[serde(default, deserialize_with = "present")]
     #[cfg_attr(feature = "ts-rs", ts(optional, type = "boolean"))]
     pub enabled: Option<bool>,
@@ -241,11 +221,8 @@ pub struct RuleOptions {
     ts(export, export_to = "protocol.d.mts")
 )]
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct HtmlOptions {
-    #[serde(flatten)]
-    #[cfg_attr(feature = "ts-rs", ts(skip))]
-    unknown_fields: UnknownFields,
     #[serde(default, deserialize_with = "present")]
     #[cfg_attr(feature = "ts-rs", ts(optional, type = "DocumentMode"))]
     pub document_mode: Option<DocumentMode>,
@@ -284,11 +261,8 @@ pub struct HtmlOptions {
     ts(export, export_to = "protocol.d.mts")
 )]
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct ActiveUrlOptions {
-    #[serde(flatten)]
-    #[cfg_attr(feature = "ts-rs", ts(skip))]
-    unknown_fields: UnknownFields,
     #[serde(default, deserialize_with = "present")]
     #[cfg_attr(feature = "ts-rs", ts(optional, type = "Array<string>"))]
     pub allowed_schemes: Option<Vec<String>>,
@@ -312,11 +286,8 @@ pub struct ActiveUrlOptions {
     ts(export, export_to = "protocol.d.mts")
 )]
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExternalLinkOptions {
-    #[serde(flatten)]
-    #[cfg_attr(feature = "ts-rs", ts(skip))]
-    unknown_fields: UnknownFields,
     #[serde(default, deserialize_with = "present")]
     #[cfg_attr(feature = "ts-rs", ts(optional, type = "boolean"))]
     pub open_in_new_context: Option<bool>,
@@ -331,11 +302,8 @@ pub struct ExternalLinkOptions {
     ts(export, export_to = "protocol.d.mts")
 )]
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct SourceLanguageOptions {
-    #[serde(flatten)]
-    #[cfg_attr(feature = "ts-rs", ts(skip))]
-    unknown_fields: UnknownFields,
     #[serde(default, deserialize_with = "present")]
     #[cfg_attr(feature = "ts-rs", ts(optional, type = "Array<string>"))]
     pub allowed: Option<Vec<String>>,
@@ -350,11 +318,8 @@ pub struct SourceLanguageOptions {
     ts(export, export_to = "protocol.d.mts")
 )]
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct RoleOptions {
-    #[serde(flatten)]
-    #[cfg_attr(feature = "ts-rs", ts(skip))]
-    unknown_fields: UnknownFields,
     #[serde(default, deserialize_with = "present")]
     #[cfg_attr(feature = "ts-rs", ts(optional, type = "Array<string>"))]
     pub allowed: Option<Vec<String>>,
@@ -369,11 +334,8 @@ pub struct RoleOptions {
     ts(export, export_to = "protocol.d.mts")
 )]
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct ResourceCapabilities {
-    #[serde(flatten)]
-    #[cfg_attr(feature = "ts-rs", ts(skip))]
-    unknown_fields: UnknownFields,
     #[serde(default, deserialize_with = "present")]
     #[cfg_attr(feature = "ts-rs", ts(optional, type = "boolean"))]
     pub images: Option<bool>,
@@ -382,7 +344,7 @@ pub struct ResourceCapabilities {
     pub media: Option<bool>,
 }
 
-#[derive(Clone, Debug, serde::Serialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(
     tag = "kind",
     rename_all = "kebab-case",
@@ -399,48 +361,14 @@ pub enum Stylesheet {
     Inline { css: String },
 }
 
-#[derive(Deserialize)]
-#[serde(
-    tag = "kind",
-    rename_all = "kebab-case",
-    rename_all_fields = "camelCase"
-)]
-enum StylesheetInput {
-    External {
-        #[serde(flatten)]
-        _unknown_fields: UnknownFields,
-        url: String,
-    },
-    Inline {
-        #[serde(flatten)]
-        _unknown_fields: UnknownFields,
-        css: String,
-    },
-}
-
-impl<'de> Deserialize<'de> for Stylesheet {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        Ok(match StylesheetInput::deserialize(deserializer)? {
-            StylesheetInput::External { url, .. } => Self::External { url },
-            StylesheetInput::Inline { css, .. } => Self::Inline { css },
-        })
-    }
-}
-
 #[cfg_attr(
     feature = "ts-rs",
     derive(ts_rs::TS),
     ts(export, export_to = "protocol.d.mts")
 )]
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct ResourceInput {
-    #[serde(flatten)]
-    #[cfg_attr(feature = "ts-rs", ts(skip))]
-    unknown_fields: UnknownFields,
     #[serde(default, deserialize_with = "present")]
     #[cfg_attr(feature = "ts-rs", ts(optional, type = "{ [key in string]: string }"))]
     pub documents: Option<BTreeMap<String, String>>,

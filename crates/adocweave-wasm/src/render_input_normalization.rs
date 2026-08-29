@@ -214,7 +214,6 @@ mod tests {
     fn nested_elements_count_toward_the_fixed_item_limit() {
         let inputs = RenderInputs {
             references: vec![ResolvedReference {
-                unknown_fields: BTreeMap::new(),
                 source_start: 0,
                 source_end: 0,
                 outcome: ReferenceOutcome::Resolved {
@@ -235,7 +234,6 @@ mod tests {
         let source = "x".repeat(10_001);
         let references = (0..10_001)
             .map(|index| ResolvedReference {
-                unknown_fields: BTreeMap::new(),
                 source_start: index,
                 source_end: index,
                 outcome: ReferenceOutcome::Failed {
@@ -245,7 +243,6 @@ mod tests {
             .collect();
         let resources = (0..10_001)
             .map(|index| ResolvedResource {
-                unknown_fields: BTreeMap::new(),
                 source_start: index,
                 source_end: index,
                 outcome: ResourceOutcome::Failed {
@@ -255,7 +252,6 @@ mod tests {
             .collect();
         let citations = (0..10_001)
             .map(|index| ResolvedCitation {
-                unknown_fields: BTreeMap::new(),
                 source_start: index,
                 source_end: index,
                 outcome: CitationOutcome::Failed {
@@ -290,7 +286,6 @@ mod tests {
     fn byte_limit_accepts_the_exact_boundary_and_rejects_one_more() {
         let inputs = |href: &str| RenderInputs {
             references: vec![ResolvedReference {
-                unknown_fields: BTreeMap::new(),
                 source_start: 0,
                 source_end: 0,
                 outcome: ReferenceOutcome::Resolved {
@@ -324,10 +319,8 @@ mod tests {
     fn bibliography_entries_share_the_external_input_budget() {
         let inputs = |text: &str| RenderInputs {
             generated_bibliography: Some(GeneratedBibliography {
-                unknown_fields: BTreeMap::new(),
                 title: "R".to_owned(),
                 entries: vec![GeneratedBibliographyEntry {
-                    unknown_fields: BTreeMap::new(),
                     citation_key: "k".to_owned(),
                     text: text.to_owned(),
                     label: Some("l".to_owned()),
@@ -349,7 +342,6 @@ mod tests {
     #[test]
     fn duplicate_overlapping_and_unstable_ranges_are_rejected_per_input_kind() {
         let reference = ResolvedReference {
-            unknown_fields: BTreeMap::new(),
             source_start: 1,
             source_end: 2,
             outcome: ReferenceOutcome::Failed {
@@ -357,7 +349,6 @@ mod tests {
             },
         };
         let resource = ResolvedResource {
-            unknown_fields: BTreeMap::new(),
             source_start: 3,
             source_end: 4,
             outcome: ResourceOutcome::Failed {
@@ -365,7 +356,6 @@ mod tests {
             },
         };
         let citation = ResolvedCitation {
-            unknown_fields: BTreeMap::new(),
             source_start: 0,
             source_end: 2,
             outcome: CitationOutcome::Failed {
@@ -397,7 +387,6 @@ mod tests {
         let overlapping = RenderInputs {
             references: vec![
                 ResolvedReference {
-                    unknown_fields: BTreeMap::new(),
                     source_start: 0,
                     source_end: 3,
                     outcome: ReferenceOutcome::Failed {
@@ -405,7 +394,6 @@ mod tests {
                     },
                 },
                 ResolvedReference {
-                    unknown_fields: BTreeMap::new(),
                     source_start: 2,
                     source_end: 4,
                     outcome: ReferenceOutcome::Failed {
@@ -425,7 +413,6 @@ mod tests {
         let unstable = RenderInputs {
             references: vec![
                 ResolvedReference {
-                    unknown_fields: BTreeMap::new(),
                     source_start: 3,
                     source_end: 4,
                     outcome: ReferenceOutcome::Failed {
@@ -433,7 +420,6 @@ mod tests {
                     },
                 },
                 ResolvedReference {
-                    unknown_fields: BTreeMap::new(),
                     source_start: 0,
                     source_end: 1,
                     outcome: ReferenceOutcome::Failed {
@@ -456,7 +442,6 @@ mod tests {
         let inputs = |byte_length| RenderInputs {
             references: Vec::new(),
             resources: vec![ResolvedResource {
-                unknown_fields: BTreeMap::new(),
                 source_start: 0,
                 source_end: 0,
                 outcome: ResourceOutcome::Resolved {

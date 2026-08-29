@@ -13,7 +13,6 @@ mod render_input_normalization;
 mod render_input_wire;
 mod request_conversion;
 mod request_enums;
-mod request_unknown;
 mod request_wire;
 mod response_conversion;
 mod response_projection;
@@ -213,9 +212,16 @@ mod bindings {
 
     #[wasm_bindgen(js_name = analyze)]
     pub fn analyze_js(request: JsValue) -> Result<JsValue, JsValue> {
+        // The generic value conversion enumerates every object key before the
+        // public Serde types enforce `deny_unknown_fields` at every level.
+        // Direct typed conversion only requests known JavaScript properties.
         let request = serde_input(request)
             .and_then(|request| {
                 serde_wasm_bindgen::from_value(request)
+                    .map_err(|error| request_conversion::invalid_request(error.to_string()))
+            })
+            .and_then(|request| {
+                serde_json::from_value(request)
                     .map_err(|error| request_conversion::invalid_request(error.to_string()))
             })
             .map_err(error_to_js)?;

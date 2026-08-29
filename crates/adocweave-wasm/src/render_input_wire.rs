@@ -1,5 +1,3 @@
-use crate::request_unknown::UnknownFields;
-
 pub(crate) const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 
 fn deserialize_optional_safe_integer<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
@@ -57,7 +55,7 @@ pub enum ResourceFailureKind {
     ResolverFailure,
 }
 
-#[derive(Clone, Debug, serde::Serialize, Eq, PartialEq)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(
     tag = "status",
     rename_all = "kebab-case",
@@ -82,51 +80,7 @@ pub enum ReferenceOutcome {
     },
 }
 
-#[derive(serde::Deserialize)]
-#[serde(
-    tag = "status",
-    rename_all = "kebab-case",
-    rename_all_fields = "camelCase"
-)]
-enum ReferenceOutcomeInput {
-    Resolved {
-        #[serde(flatten)]
-        _unknown_fields: UnknownFields,
-        href: String,
-        #[serde(default)]
-        display_text: Option<String>,
-        #[serde(default)]
-        notices: Vec<ReferenceNotice>,
-    },
-    Failed {
-        #[serde(flatten)]
-        _unknown_fields: UnknownFields,
-        kind: ReferenceFailureKind,
-    },
-}
-
-impl<'de> serde::Deserialize<'de> for ReferenceOutcome {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        Ok(match ReferenceOutcomeInput::deserialize(deserializer)? {
-            ReferenceOutcomeInput::Resolved {
-                href,
-                display_text,
-                notices,
-                ..
-            } => Self::Resolved {
-                href,
-                display_text,
-                notices,
-            },
-            ReferenceOutcomeInput::Failed { kind, .. } => Self::Failed { kind },
-        })
-    }
-}
-
-#[derive(Clone, Debug, serde::Serialize, Eq, PartialEq)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(
     tag = "status",
     rename_all = "kebab-case",
@@ -150,50 +104,7 @@ pub enum ResourceOutcome {
     },
 }
 
-#[derive(serde::Deserialize)]
-#[serde(
-    tag = "status",
-    rename_all = "kebab-case",
-    rename_all_fields = "camelCase"
-)]
-enum ResourceOutcomeInput {
-    Resolved {
-        #[serde(flatten)]
-        _unknown_fields: UnknownFields,
-        href: String,
-        media_type: String,
-        #[serde(default, deserialize_with = "deserialize_optional_safe_integer")]
-        byte_length: Option<u64>,
-    },
-    Failed {
-        #[serde(flatten)]
-        _unknown_fields: UnknownFields,
-        kind: ResourceFailureKind,
-    },
-}
-
-impl<'de> serde::Deserialize<'de> for ResourceOutcome {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        Ok(match ResourceOutcomeInput::deserialize(deserializer)? {
-            ResourceOutcomeInput::Resolved {
-                href,
-                media_type,
-                byte_length,
-                ..
-            } => Self::Resolved {
-                href,
-                media_type,
-                byte_length,
-            },
-            ResourceOutcomeInput::Failed { kind, .. } => Self::Failed { kind },
-        })
-    }
-}
-
-#[derive(Clone, Debug, serde::Serialize, Eq, PartialEq)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(
     tag = "status",
     rename_all = "kebab-case",
@@ -215,38 +126,6 @@ pub enum CitationOutcome {
     },
 }
 
-#[derive(serde::Deserialize)]
-#[serde(
-    tag = "status",
-    rename_all = "kebab-case",
-    rename_all_fields = "camelCase"
-)]
-enum CitationOutcomeInput {
-    Resolved {
-        #[serde(flatten)]
-        _unknown_fields: UnknownFields,
-        #[serde(default)]
-        segments: Vec<CitationSegment>,
-    },
-    Failed {
-        #[serde(flatten)]
-        _unknown_fields: UnknownFields,
-        kind: ReferenceFailureKind,
-    },
-}
-
-impl<'de> serde::Deserialize<'de> for CitationOutcome {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        Ok(match CitationOutcomeInput::deserialize(deserializer)? {
-            CitationOutcomeInput::Resolved { segments, .. } => Self::Resolved { segments },
-            CitationOutcomeInput::Failed { kind, .. } => Self::Failed { kind },
-        })
-    }
-}
-
 #[cfg_attr(
     feature = "ts-rs",
     derive(ts_rs::TS),
@@ -255,9 +134,6 @@ impl<'de> serde::Deserialize<'de> for CitationOutcome {
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CitationSegment {
-    #[serde(flatten, skip_serializing)]
-    #[cfg_attr(feature = "ts-rs", ts(skip))]
-    pub(crate) unknown_fields: UnknownFields,
     pub text: String,
     #[serde(default)]
     pub anchor: Option<String>,
@@ -271,9 +147,6 @@ pub struct CitationSegment {
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GeneratedBibliographyEntry {
-    #[serde(flatten, skip_serializing)]
-    #[cfg_attr(feature = "ts-rs", ts(skip))]
-    pub(crate) unknown_fields: UnknownFields,
     pub citation_key: String,
     pub text: String,
     #[serde(default)]
@@ -290,9 +163,6 @@ pub struct GeneratedBibliographyEntry {
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GeneratedBibliography {
-    #[serde(flatten, skip_serializing)]
-    #[cfg_attr(feature = "ts-rs", ts(skip))]
-    pub(crate) unknown_fields: UnknownFields,
     pub title: String,
     #[serde(default)]
     pub entries: Vec<GeneratedBibliographyEntry>,
@@ -306,9 +176,6 @@ pub struct GeneratedBibliography {
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ResolvedCitation {
-    #[serde(flatten, skip_serializing)]
-    #[cfg_attr(feature = "ts-rs", ts(skip))]
-    pub(crate) unknown_fields: UnknownFields,
     pub source_start: u32,
     pub source_end: u32,
     pub outcome: CitationOutcome,
@@ -322,9 +189,6 @@ pub struct ResolvedCitation {
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ResolvedReference {
-    #[serde(flatten, skip_serializing)]
-    #[cfg_attr(feature = "ts-rs", ts(skip))]
-    pub(crate) unknown_fields: UnknownFields,
     pub source_start: u32,
     pub source_end: u32,
     pub outcome: ReferenceOutcome,
@@ -338,9 +202,6 @@ pub struct ResolvedReference {
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ResolvedResource {
-    #[serde(flatten, skip_serializing)]
-    #[cfg_attr(feature = "ts-rs", ts(skip))]
-    pub(crate) unknown_fields: UnknownFields,
     pub source_start: u32,
     pub source_end: u32,
     pub outcome: ResourceOutcome,
