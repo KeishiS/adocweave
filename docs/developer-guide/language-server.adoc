@@ -24,20 +24,25 @@ Language Serverはstdio上のLanguage Server Protocol 3.18を使用し、診断�
 ``InvalidRequest``とします。無効な状態で届いた通知は破棄します。``shutdown``後の``exit``だけを正常終了とし、
 クライアントのプロセスIDが指定された場合はクライアント終了も監視します。
 
-``initialize``ではworkspace folderを記録し、``initialized``の後に読込を開始します。初期読込を待つ間も、
+``initialize``ではワークスペースフォルダを記録し、``initialized``の後に読込を開始します。初期読込を待つ間も、
 開いた文書に対する要求へ応答します。
 
 一つのLSP接続には一つの``Session``を作ります。``Session``は、開いている文書のURI、LSP文書version、
 未保存本文、採用済み結果、クライアントのcapability、位置encoding、サーバ設定、ワークスペースフォルダ、
-検証済みの読込範囲および実行中の解析を取り消すtokenを所有します。文書、設定またはワークスペースフォルダが
-有効に変わるたびに、接続内で単調に増える入力revisionを更新します。古いLSP文書versionは本文と
-入力revisionのどちらも変更しません。
+検証済みの読込範囲および実行中の解析を取り消すtokenを所有します。解析入力が変わるたびに、``Session``は
+単調に増える番号を発行し、影響する文書の入力revisionと、その文書から作る``AnalysisJob``へ割り当てます。結果の
+採用時には、文書が保持する入力revisionと``AnalysisJob``の入力revisionが一致し、文書が開いたままで、かつ処理が
+取り消されていないことを確認します。古いLSP文書versionや``debounceMs``だけの変更は解析入力ではないため、
+文書の本文と入力revisionを変更しません。
 
 プロトコルの``Backend``は通知と非同期taskを接続します。task handle、再走査を遅らせるtimer handleおよび
 実行枠は``Backend``に置きますが、現在の入力、取消しtokenおよび採用済み結果を重ねて所有しません。
 走査の順序、結果を採用できるか、再走査が必要か、走査中に届いた変更および取消しtokenは``Session``が
 判断して所有します。移行中のワークスペース読込状態も``Session``の非公開fieldとし、文書通知、
 ファイル変更通知およびワークスペース読込結果を受け取る処理からだけ更新します。
+``.adocweave.toml``の変更や、一つの監視通知で保持できる変更数を超えた場合は、走査を始める前に影響する
+文書の入力revisionを更新して実行中の解析を取り消します。失敗した走査を同じ入力で再試行するだけの場合は、
+入力revisionを変更しません。
 
 [#lsp-concurrency]
 == 通知、要求および取消し

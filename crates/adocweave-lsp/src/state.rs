@@ -378,6 +378,13 @@ impl DocumentStore {
         }
     }
 
+    pub fn invalidate_all_inputs(&mut self, input_revision: u64) {
+        for document in Arc::make_mut(&mut self.documents).values_mut() {
+            document.input_revision = input_revision;
+            document.cancellation.cancel();
+        }
+    }
+
     fn new_job(
         &mut self,
         uri: String,

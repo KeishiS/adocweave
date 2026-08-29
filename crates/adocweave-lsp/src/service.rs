@@ -248,6 +248,13 @@ pub(crate) struct WorkspaceFileChanges {
     pub(crate) recovery_required: bool,
 }
 
+pub(crate) struct WorkspaceFileEventOutcome {
+    pub(crate) jobs: Vec<AnalysisJob>,
+    pub(crate) recovery_generation: Option<u64>,
+    pub(crate) rebuild: Option<WorkspaceScanStart>,
+    pub(crate) cancel_recovery_timer: bool,
+}
+
 pub(crate) struct WorkspaceScanApplication {
     pub(crate) jobs: Vec<AnalysisJob>,
     pub(crate) installed: bool,
@@ -350,7 +357,12 @@ impl Session {
     }
 
     fn analysis_job_is_current(&self, job: &AnalysisJob) -> bool {
-        job.input_revision <= self.input_revision && self.documents.job_is_current(job)
+        self.documents.job_is_current(job)
+    }
+
+    fn invalidate_all_document_inputs(&mut self) {
+        self.advance_input_revision();
+        self.documents.invalidate_all_inputs(self.input_revision);
     }
 
     #[cfg(test)]
@@ -805,6 +817,35 @@ impl Session {
         }
     }
 
+    pub(crate) fn handle_workspace_files_changed(
+        &mut self,
+        params: lsp::DidChangeWatchedFilesParams,
+    ) -> WorkspaceFileEventOutcome {
+        if params.changes.iter().any(|change| {
+            change.uri.path_segments().and_then(Iterator::last) == Some(adocweave_config::FILE_NAME)
+        }) {
+            self.invalidate_all_document_inputs();
+            return WorkspaceFileEventOutcome {
+                jobs: Vec::new(),
+                recovery_generation: None,
+                rebuild: self.request_workspace_scan(),
+                cancel_recovery_timer: true,
+            };
+        }
+
+        let changes = self.workspace_files_changed_with_journal(params);
+        if changes.recovery_required && !changes.replay_complete {
+            self.invalidate_all_document_inputs();
+        }
+        let recovery_generation = self.record_workspace_changes(&changes);
+        WorkspaceFileEventOutcome {
+            jobs: changes.jobs,
+            recovery_generation,
+            rebuild: None,
+            cancel_recovery_timer: false,
+        }
+    }
+
     /// Reads the workspace roots without touching service state.
     ///
     /// This is the half of a reload whose cost grows with the workspace: it
@@ -1012,8 +1053,7 @@ impl Session {
         }
         self.workspace_roots = roots;
         self.active_scan_notices.clear();
-        self.advance_input_revision();
-        self.documents.cancel_all();
+        self.invalidate_all_document_inputs();
         true
     }
 
@@ -1242,15 +1282,12 @@ impl Session {
                 ));
             }
         }
-        let settings_changed = self.settings != settings;
         let diagnostics_changed = self.settings.enabled_rules != settings.enabled_rules;
         self.settings = settings;
-        if settings_changed {
-            self.advance_input_revision();
-        }
         if !diagnostics_changed {
             return Ok(Vec::new());
         }
+        self.advance_input_revision();
         Ok(self
             .documents
             .open_sources()

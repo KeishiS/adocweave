@@ -174,21 +174,18 @@ impl Backend {
                 ControlFlow::Continue(())
             })
             .notification::<notification::DidChangeWatchedFiles>(|state, params| {
-                let project_configuration_changed = params.changes.iter().any(|change| {
-                    change.uri.path_segments().and_then(Iterator::last)
-                        == Some(adocweave_config::FILE_NAME)
-                });
-                if project_configuration_changed {
-                    state.schedule_workspace_scan();
-                } else {
-                    let changes = state.session.workspace_files_changed_with_journal(params);
-                    let recovery_generation = state.session.record_workspace_changes(&changes);
-                    if let Some(generation) = recovery_generation {
-                        state.schedule_workspace_scan_recovery(generation);
-                    }
-                    for job in changes.jobs {
-                        state.schedule_analysis(job);
-                    }
+                let outcome = state.session.handle_workspace_files_changed(params);
+                if outcome.cancel_recovery_timer {
+                    state.cancel_workspace_scan_recovery();
+                }
+                if let Some(generation) = outcome.recovery_generation {
+                    state.schedule_workspace_scan_recovery(generation);
+                }
+                for job in outcome.jobs {
+                    state.schedule_analysis(job);
+                }
+                if let Some(start) = outcome.rebuild {
+                    state.spawn_workspace_scan(start);
                 }
                 ControlFlow::Continue(())
             })

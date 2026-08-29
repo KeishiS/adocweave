@@ -164,10 +164,18 @@ fn effective_server_setting_changes_advance_session_revision() {
         .update_configuration(json!({
             "adocweave": {"debounceMs": 75, "enabledRules": []}
         }))
-        .expect("changed settings");
+        .expect("execution-only setting");
+    assert!(jobs.is_empty());
+    assert_eq!(session.input_revision(), initialized_revision);
+    assert_eq!(session.debounce_ms(), 75);
+
+    let jobs = session
+        .update_configuration(json!({
+            "adocweave": {"debounceMs": 75, "enabledRules": ["macro-boundary"]}
+        }))
+        .expect("analysis setting");
     assert!(jobs.is_empty());
     assert_eq!(session.input_revision(), initialized_revision + 1);
-    assert_eq!(session.debounce_ms(), 75);
 }
 
 #[test]
@@ -183,4 +191,83 @@ fn session_input_revision_is_never_reused_after_exhaustion() {
             "text": "= Guide\n"
         }
     })));
+}
+
+#[test]
+fn project_configuration_change_invalidates_jobs_before_rebuild_finishes() {
+    let mut session = Session::default();
+    initialize(&mut session, &["utf-16"]);
+    let job = session
+        .begin_open(typed(json!({
+            "textDocument": {
+                "uri": "file:///guide.adoc",
+                "languageId": "asciidoc",
+                "version": 1,
+                "text": "= Before\n"
+            }
+        })))
+        .remove(0);
+    let result = job
+        .request
+        .analyze(&adocweave::NeverCancel)
+        .expect("analysis before configuration change");
+    let previous_revision = session.input_revision();
+
+    let outcome = session.handle_workspace_files_changed(typed(json!({
+        "changes": [{"uri": "file:///.adocweave.toml", "type": 2}]
+    })));
+
+    assert!(outcome.cancel_recovery_timer);
+    assert!(outcome.rebuild.is_some());
+    assert!(outcome.jobs.is_empty());
+    assert!(job.cancellation.is_cancelled());
+    assert_eq!(session.input_revision(), previous_revision + 1);
+    assert_eq!(
+        session
+            .documents
+            .get("file:///guide.adoc")
+            .expect("open document")
+            .input_revision,
+        session.input_revision()
+    );
+    assert_eq!(session.adopt(&job, result), Adoption::Stale);
+}
+
+#[test]
+fn oversized_watch_batch_invalidates_jobs_before_recovery_scan() {
+    let mut session = Session::default();
+    initialize(&mut session, &["utf-16"]);
+    let job = session
+        .begin_open(typed(json!({
+            "textDocument": {
+                "uri": "file:///guide.adoc",
+                "languageId": "asciidoc",
+                "version": 1,
+                "text": "= Before\n"
+            }
+        })))
+        .remove(0);
+    let result = job
+        .request
+        .analyze(&adocweave::NeverCancel)
+        .expect("analysis before watched changes");
+    let previous_revision = session.input_revision();
+    let changes = (0..=10_000)
+        .map(|index| {
+            lsp::FileEvent::new(
+                uri(&format!("file:///watched/{index}.adoc")),
+                lsp::FileChangeType::CHANGED,
+            )
+        })
+        .collect();
+
+    let outcome =
+        session.handle_workspace_files_changed(lsp::DidChangeWatchedFilesParams { changes });
+
+    assert!(outcome.rebuild.is_none());
+    assert!(outcome.recovery_generation.is_some());
+    assert!(outcome.jobs.is_empty());
+    assert!(job.cancellation.is_cancelled());
+    assert_eq!(session.input_revision(), previous_revision + 1);
+    assert_eq!(session.adopt(&job, result), Adoption::Stale);
 }
