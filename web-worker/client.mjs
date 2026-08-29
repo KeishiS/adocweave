@@ -1,4 +1,4 @@
-import { analysisPayload } from "./analysis.mjs";
+import { analysisPayload, parseWasmError } from "./analysis.mjs";
 import { WORKER_PROTOCOL_VERSION, validateWorkerMessage } from "./worker-protocol.mjs";
 
 export class AdocWeaveClient {
@@ -41,7 +41,16 @@ export class AdocWeaveClient {
     if (signal?.aborted) return Promise.reject(abortError());
 
     const requestId = this.#allocateRequestId();
-    const payload = analysisPayload(request);
+    let payload;
+    try {
+      payload = analysisPayload(request);
+    } catch (cause) {
+      const requestError = parseWasmError(cause);
+      return Promise.reject(new AdocWeaveError(requestError ?? {
+        code: "invalid-request",
+        message: "the analysis request is invalid",
+      }));
+    }
 
     return new Promise((resolve, reject) => {
       const active = {
@@ -73,7 +82,14 @@ export class AdocWeaveClient {
             payload,
           });
         } catch (cause) {
-          this.#failWorker(cause, worker);
+          if (cause?.name === "DataCloneError") {
+            this.#settleActive("reject", new AdocWeaveError({
+              code: "invalid-request",
+              message: "the analysis request must be structured-cloneable",
+            }));
+          } else {
+            this.#failWorker(cause, worker);
+          }
         }
       }).catch((error) => {
         if (this.#active !== active) return;

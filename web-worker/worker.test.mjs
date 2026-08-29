@@ -89,6 +89,11 @@ test("worker envelope has one requestId and exact fields", () => {
       assert.equal(validateWorkerMessage(missing, direction), false, `${contract}.${field}`);
     }
   }
+  assert.equal(validateWorkerMessage({
+    type: "error",
+    requestId: 1,
+    error: { code: "unknown", message: "invalid code" },
+  }, "responses"), false);
 });
 
 test("an incompatible Worker protocol rejects initialization explicitly", async () => {
@@ -180,6 +185,28 @@ test("ordinary structured WASM errors do not close the worker", async () => {
     await state.analyze(2, { source: { text: "good" }, products: { html: true } });
     assert.equal(state.messages[2].type, "result");
     assert.equal(state.messages[2].requestId, 2);
+  } finally { state.restore(); }
+});
+
+test("null and primitive requests return invalid-request without closing", async () => {
+  const state = await harness(`
+    if (request === null || typeof request !== "object") {
+      throw { code: "invalid-request", message: "invalid request" };
+    }
+    return { html: request.source.text };
+  `);
+  try {
+    for (const [index, payload] of [null, 1, "text"].entries()) {
+      await state.analyze(index + 1, payload);
+      assert.deepEqual(state.messages[index + 1], {
+        type: "error",
+        requestId: index + 1,
+        error: { code: "invalid-request", message: "invalid request" },
+      });
+      assert.equal(state.closes, 0);
+    }
+    await state.analyze(4);
+    assert.equal(state.messages[4].type, "result");
   } finally { state.restore(); }
 });
 

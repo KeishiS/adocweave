@@ -85,6 +85,7 @@ pub(crate) fn convert(request: AnalyzeRequest) -> Result<ExecutionRequest, AdocW
     let processing_options = EffectiveProcessingOptions::new(analysis_options, preprocess_options)
         .map_err(|error| invalid_request(error.to_string()))?;
 
+    let documents = resources.documents.unwrap_or_default();
     let render_inputs = RenderInputs {
         references: resources.references.unwrap_or_default(),
         resources: resources.assets.unwrap_or_default(),
@@ -92,10 +93,14 @@ pub(crate) fn convert(request: AnalyzeRequest) -> Result<ExecutionRequest, AdocW
         generated_bibliography: resources.bibliography,
     };
     let output_limits = adocweave::OutputLimits::default();
-    let render_inputs =
-        render_input_normalization::normalize(render_inputs, &analysis_limits, &output_limits)?;
+    let render_inputs = render_input_normalization::normalize(
+        render_inputs,
+        &documents,
+        &request.source.text,
+        &analysis_limits,
+    )?;
     let render_policy = render_policy(request.products.html.as_ref())?;
-    let snapshot = resource_snapshot(resources.documents.unwrap_or_default());
+    let snapshot = resource_snapshot(documents);
 
     Ok(ExecutionRequest {
         source: request.source.text,

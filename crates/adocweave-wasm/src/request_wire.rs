@@ -8,6 +8,11 @@ use crate::{
     UnresolvedReferencePresentation,
 };
 
+// `serde_wasm_bindgen` 0.6 deserializes a typed struct by requesting known
+// properties and does not enumerate extra JavaScript properties for
+// `deny_unknown_fields`. Flattening this rejecting map forces map traversal at
+// the WASM boundary. `protocol-wasm.test.mjs` fixes that behavior with the
+// generated module; JSON deserialization rejects the same fields.
 type UnknownFields = BTreeMap<String, UnknownField>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]

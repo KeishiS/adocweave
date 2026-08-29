@@ -84,3 +84,25 @@ test("generated wasm-bindgen reports UTF-8 byte ranges", () => {
   });
   assert.equal(response.symbols[0].range.end, 9);
 });
+
+test("generated wasm-bindgen enforces external input limits and range conflicts", () => {
+  const documents = Object.fromEntries(
+    Array.from({ length: 10_001 }, (_, index) => [`${index}.adoc`, ""]),
+  );
+  assert.equal(wasmError(() => wasm.analyze({
+    source: { text: "Text" },
+    products: { symbols: true },
+    resources: { documents },
+  })).code, "input-limit-exceeded");
+
+  const failed = {
+    sourceStart: 0,
+    sourceEnd: 4,
+    outcome: { status: "failed", kind: "missing-target" },
+  };
+  assert.equal(wasmError(() => wasm.analyze({
+    source: { text: "Text" },
+    products: { symbols: true },
+    resources: { references: [failed, failed] },
+  })).code, "invalid-request");
+});

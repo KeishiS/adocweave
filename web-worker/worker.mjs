@@ -2,6 +2,7 @@ import { parseWasmError } from "./analysis.mjs";
 import {
   PROTOCOL_SCHEMA_VERSION,
   WORKER_PROTOCOL_VERSION,
+  isAdocWeaveErrorCode,
   validateWorkerMessage,
 } from "./worker-protocol.mjs";
 
@@ -124,7 +125,7 @@ function publish(message) {
 function normalizeFatal(cause) {
   if (
     typeof cause === "object" && cause !== null && !(cause instanceof Error) &&
-    typeof cause.code === "string" && typeof cause.message === "string"
+    isAdocWeaveErrorCode(cause.code) && typeof cause.message === "string"
   ) {
     return { code: cause.code, message: cause.message };
   }

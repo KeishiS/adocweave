@@ -156,6 +156,54 @@ test("a pre-aborted signal rejects with the common cancelled error", async () =>
   instance.dispose();
 });
 
+test("a request that cannot be cloned is invalid without terminating a worker", async () => {
+  const instance = client();
+  await assert.rejects(
+    instance.analyze({
+      source: { text: "text" },
+      products: { html: true },
+      invalid: () => {},
+    }),
+    errorWithCode("invalid-request"),
+  );
+  assert.equal(FakeWorker.created.length, 0);
+
+  const next = instance.analyze({ source: { text: "next" }, products: { html: true } });
+  const worker = FakeWorker.created[0];
+  const message = await dispatched(worker);
+  worker.publish(result(message.requestId));
+  await next;
+  assert.equal(worker.terminated, false);
+  instance.dispose();
+});
+
+test("a DataCloneError from postMessage does not terminate the worker", async () => {
+  class CloneFailureWorker extends FakeWorker {
+    failed = false;
+    postMessage(message) {
+      if (message.type === "analyze" && !this.failed) {
+        this.failed = true;
+        throw new DOMException("cannot clone", "DataCloneError");
+      }
+      super.postMessage(message);
+    }
+  }
+  const instance = client(CloneFailureWorker);
+  await assert.rejects(
+    instance.analyze({ source: { text: "first" }, products: { html: true } }),
+    errorWithCode("invalid-request"),
+  );
+  const worker = FakeWorker.created[0];
+  assert.equal(worker.terminated, false);
+
+  const next = instance.analyze({ source: { text: "next" }, products: { html: true } });
+  const message = await dispatched(worker);
+  worker.publish(result(message.requestId));
+  await next;
+  assert.equal(FakeWorker.created.length, 1);
+  instance.dispose();
+});
+
 test("Abort during initialization settles and permits a fresh worker", async () => {
   class SlowWorker extends FakeWorker { autoReady = false; }
   const controller = new AbortController();
