@@ -43,3 +43,4 @@ ADRは、複数の機能に影響する長期的な設計判断と、その理�
 * xref:0038-additive-workspace-scan-excludes.adoc[ADR 0038: ワークスペース走査の除外patternを組込み値へ追加]
 * xref:0039-ci-shell-responsibility-boundary.adoc[ADR 0039: CI検査ごとのNix開発shellの分担]
 * xref:0040-unified-release-and-native-executable.adoc[ADR 0040: 単一バージョン・Release・native実行ファイル]
+* xref:0041-cli-and-language-server-project-responsibilities.adoc[ADR 0041: CLIとLanguage Serverのプロジェクト処理責務]
