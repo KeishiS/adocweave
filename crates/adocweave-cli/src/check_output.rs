@@ -1,7 +1,5 @@
 //! Stable diagnostic output and CI failure contracts.
 
-use std::process::ExitCode;
-
 use adocweave::output::diagnostics as diagnostic;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, clap::ValueEnum)]
@@ -69,17 +67,6 @@ impl DiagnosticCounts {
 pub(crate) struct CheckOutcome {
     pub(crate) output: String,
     pub(crate) counts: DiagnosticCounts,
-    pub(crate) fail_on: FailOn,
-}
-
-impl CheckOutcome {
-    pub(crate) const fn exit_code(&self) -> ExitCode {
-        if self.counts.fails(self.fail_on) {
-            ExitCode::FAILURE
-        } else {
-            ExitCode::SUCCESS
-        }
-    }
 }
 
 pub(crate) fn github_annotation(
@@ -179,18 +166,4 @@ pub(crate) fn sarif_results(output: &str) -> Vec<serde_json::Value> {
                 .cloned()
         })
         .expect("check SARIF contains one run with a results array")
-}
-
-pub(crate) fn prefix_human_source(output: &str, source_id: &str) -> String {
-    use std::fmt::Write as _;
-
-    let source_id = source_id
-        .chars()
-        .flat_map(char::escape_default)
-        .collect::<String>();
-    let mut prefixed = String::new();
-    for line in output.lines() {
-        writeln!(prefixed, "{source_id}:{line}").expect("writing to a String cannot fail");
-    }
-    prefixed
 }

@@ -183,6 +183,15 @@ adocweave check --fix docs
 adocweave check --fix --diff --summary docs
 ----
 
+[#multi-file-updates]
+== 複数ファイルの書換え
+
+``format --write``と``check --fix``は、すべての変更内容を確定してから、ファイルごとに一時ファイルへ
+書き込み、元ファイルを置き換えます。一つのファイルに不完全な内容は残しません。
+
+複数ファイル全体の一括更新は保証しません。途中の置換に失敗しても、それまでに更新したファイルを
+元へ戻しません。実行結果と終了コードを確認してください。
+
 == 色とshell completion
 
 ``--color auto|always|never``で、``human``形式の診断結果と差分に色を付ける条件を指定します。

@@ -6,13 +6,12 @@ use std::fmt;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
-use adocweave::preprocess::{
-    EffectiveProcessingOptions, PreprocessError, PreprocessOptions, PreprocessedDocument,
-};
+use adocweave::preprocess::{EffectiveProcessingOptions, PreprocessOptions, PreprocessedDocument};
+#[cfg(test)]
+use adocweave_host::{FilesystemReadLimits, LocalFilesystemPolicy, LocalTargetPolicy};
 use adocweave_host::{
-    FilesystemReadLimits, IncludeFilesystem, IncludeFilesystemOutcome, IncludeFilesystemRequest,
-    LocalFilesystemPolicy, LocalFilesystemSession, LocalTargetError, LocalTargetPolicy,
-    LogicalSourceId, ResourceError,
+    IncludeFilesystem, IncludeFilesystemOutcome, IncludeFilesystemRequest, LocalFilesystemSession,
+    LocalTargetError, LogicalSourceId, ResourceError,
 };
 use adocweave_workspace::{
     NeverCancelled, ResourceId, Revision, Workspace, WorkspaceIncludeResolution, WorkspaceLimits,
@@ -23,19 +22,18 @@ use adocweave_workspace::{
 
 #[derive(Debug)]
 pub enum LocalIncludeError {
+    #[cfg(test)]
     InvalidBase {
         path: PathBuf,
         source: std::io::Error,
     },
+    #[cfg(test)]
     InvalidRoot {
         path: PathBuf,
         source: std::io::Error,
     },
     OutsideRoot(PathBuf),
-    Position(adocweave::text::PositionError),
-    Preprocess(PreprocessError),
     Analysis(String),
-    MissingSource(String),
     Host(ResourceError),
 }
 
@@ -77,19 +75,14 @@ impl From<LocalIncludeError> for PrepareFailure {
 pub struct ProjectionInput {
     draft: WorkspacePreprocessDraft,
     source_keys: BTreeMap<String, ResourceId>,
-    source_bases: BTreeMap<String, PathBuf>,
-    include_bases: BTreeMap<String, PathBuf>,
 }
 
 pub struct LocalValidationContext {
-    authority: PathBuf,
     include_errors: Vec<IncludeFailure>,
 }
 
 #[derive(Clone, Debug)]
 struct IncludeFailure {
-    source_id: Option<String>,
-    range: adocweave::text::TextRange,
     target: String,
     error: LocalTargetError,
 }
@@ -124,23 +117,8 @@ impl PreparedInput {
         self.validation.as_ref()
     }
 
-    pub fn projection_and_validation_mut(
-        &mut self,
-    ) -> (&ProjectionInput, Option<&mut LocalValidationContext>) {
-        (&self.projection, self.validation.as_mut())
-    }
-
     pub(crate) fn resource_sizes(&self) -> impl Iterator<Item = u64> + '_ {
         self.projection.resource_lengths()
-    }
-
-    pub(crate) fn resource_entries(&self) -> impl Iterator<Item = (&str, u64)> + '_ {
-        self.projection.source_keys.iter().filter_map(|(id, key)| {
-            self.projection
-                .draft
-                .source(key)
-                .map(|source| (id.as_str(), source.len() as u64))
-        })
     }
 
     pub(crate) fn dependency_entries(&self) -> impl Iterator<Item = (&Path, Option<&str>)> {
@@ -153,20 +131,6 @@ impl ProjectionInput {
         self.draft.document()
     }
 
-    pub fn source(&self, source_id: &str) -> Option<&str> {
-        self.source_keys
-            .get(source_id)
-            .and_then(|key| self.draft.source(key))
-    }
-
-    pub fn source_base(&self, source_id: &str) -> Option<&Path> {
-        self.source_bases.get(source_id).map(PathBuf::as_path)
-    }
-
-    pub fn include_base(&self, source_id: &str) -> Option<&Path> {
-        self.include_bases.get(source_id).map(PathBuf::as_path)
-    }
-
     pub fn resource_lengths(&self) -> impl Iterator<Item = u64> + '_ {
         self.source_keys.values().filter_map(|key| {
             self.draft
@@ -177,26 +141,6 @@ impl ProjectionInput {
 }
 
 impl LocalValidationContext {
-    pub fn authority(&self) -> &Path {
-        &self.authority
-    }
-
-    pub fn include_error(
-        &self,
-        source_id: &str,
-        range: adocweave::text::TextRange,
-        target: &str,
-    ) -> Option<&LocalTargetError> {
-        self.include_errors
-            .iter()
-            .find(|failure| {
-                failure.source_id.as_deref() == Some(source_id)
-                    && failure.range == range
-                    && failure.target == target
-            })
-            .map(|failure| &failure.error)
-    }
-
     pub(crate) fn include_errors(&self) -> impl Iterator<Item = (&str, &LocalTargetError)> {
         self.include_errors
             .iter()
@@ -245,6 +189,7 @@ pub(crate) fn read_utf8_with_session(
 impl fmt::Display for LocalIncludeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            #[cfg(test)]
             Self::InvalidBase { path, source } => {
                 write!(
                     formatter,
@@ -252,6 +197,7 @@ impl fmt::Display for LocalIncludeError {
                     path.display()
                 )
             }
+            #[cfg(test)]
             Self::InvalidRoot { path, source } => {
                 write!(
                     formatter,
@@ -266,12 +212,7 @@ impl fmt::Display for LocalIncludeError {
                     path.display()
                 )
             }
-            Self::Position(error) => error.fmt(formatter),
-            Self::Preprocess(error) => error.fmt(formatter),
             Self::Analysis(error) => formatter.write_str(error),
-            Self::MissingSource(source_id) => {
-                write!(formatter, "projected source is missing: {source_id}")
-            }
             Self::Host(error) => error.fmt(formatter),
         }
     }
@@ -280,6 +221,7 @@ impl fmt::Display for LocalIncludeError {
 impl Error for LocalIncludeError {}
 
 enum IncludeReadMode {
+    #[cfg(test)]
     General {
         base: PathBuf,
         base_policy: LocalTargetPolicy,
@@ -291,16 +233,10 @@ enum IncludeReadMode {
 }
 
 impl IncludeReadMode {
-    fn local_authority(&self) -> Option<&Path> {
-        match self {
-            Self::Local { root } => Some(root),
-            Self::General { .. } => None,
-        }
-    }
-
     fn watch_candidate(&self, target: &str) -> Option<PathBuf> {
         match self {
             Self::Local { root } => Some(root.join(target)),
+            #[cfg(test)]
             Self::General { .. } => None,
         }
     }
@@ -313,6 +249,7 @@ impl IncludeReadMode {
     ) -> Result<IncludeFilesystemOutcome, LocalIncludeError> {
         let provider = IncludeFilesystem::new();
         match self {
+            #[cfg(test)]
             Self::General {
                 base,
                 base_policy,
@@ -365,26 +302,20 @@ struct LoadedIncludeEvidence {
 struct CollectedIncludeEvidence {
     dependencies: DependencyJournal,
     source_keys: BTreeMap<String, ResourceId>,
-    source_bases: BTreeMap<String, PathBuf>,
-    include_bases: BTreeMap<String, PathBuf>,
     failure_errors: BTreeMap<String, LocalTargetError>,
 }
 
 fn collect_include_evidence(
     source_id: String,
     root_id: ResourceId,
-    source_base: PathBuf,
-    include_base: Option<PathBuf>,
-    validate_local_targets: bool,
+    _source_base: PathBuf,
+    _include_base: Option<PathBuf>,
+    _validate_local_targets: bool,
     loads: Vec<WorkspaceResourceLoadEvent<LocalIncludeEvidence>>,
 ) -> CollectedIncludeEvidence {
     let mut collected = CollectedIncludeEvidence {
         dependencies: DependencyJournal::default(),
         source_keys: BTreeMap::from([(source_id.clone(), root_id)]),
-        source_bases: BTreeMap::from([(source_id.clone(), source_base)]),
-        include_bases: include_base
-            .map(|base| BTreeMap::from([(source_id, base)]))
-            .unwrap_or_default(),
         failure_errors: BTreeMap::new(),
     };
     for event in loads {
@@ -398,18 +329,7 @@ fn collect_include_evidence(
                 .observe_loaded(&loaded.canonical_path, Arc::clone(&loaded.source));
             let key = ResourceId::new(request.target())
                 .expect("workspace driver returned a valid resource target");
-            let base = loaded
-                .canonical_path
-                .parent()
-                .unwrap_or_else(|| Path::new(""))
-                .to_owned();
             collected.source_keys.insert(loaded.source_id.clone(), key);
-            collected
-                .source_bases
-                .insert(loaded.source_id.clone(), base.clone());
-            if validate_local_targets {
-                collected.include_bases.insert(loaded.source_id, base);
-            }
         }
         if let Some(error) = evidence.failure {
             collected
@@ -548,7 +468,6 @@ fn prepare_with_driver(
         read_mode,
         validate_local_targets,
     } = request;
-    let validation_authority = read_mode.local_authority().map(Path::to_owned);
     let root_id = ResourceId::new(source_id.clone())
         .map_err(|error| LocalIncludeError::Analysis(error.to_string()))?;
     let mut workspace = Workspace::new(WorkspaceLimits::default());
@@ -571,8 +490,6 @@ fn prepare_with_driver(
     let CollectedIncludeEvidence {
         dependencies,
         source_keys,
-        source_bases,
-        include_bases,
         failure_errors,
     } = collect_include_evidence(
         source_id,
@@ -609,24 +526,14 @@ fn prepare_with_driver(
                 .get(event.target().as_str())
                 .cloned()
                 .map(|error| IncludeFailure {
-                    source_id: event.source_id().map(str::to_owned),
-                    range: event.range(),
                     target: event.target().to_string(),
                     error,
                 })
         })
         .collect();
-    let validation = validate_local_targets.then(|| LocalValidationContext {
-        authority: validation_authority.expect("local validation has an authority"),
-        include_errors,
-    });
+    let validation = validate_local_targets.then_some(LocalValidationContext { include_errors });
     Ok(PreparedInput {
-        projection: ProjectionInput {
-            draft,
-            source_keys,
-            source_bases,
-            include_bases,
-        },
+        projection: ProjectionInput { draft, source_keys },
         validation,
         dependencies,
     })
@@ -641,6 +548,7 @@ pub(crate) struct PrepareRequest<'request> {
 }
 
 enum PrepareAuthority {
+    #[cfg(test)]
     General {
         base_dir: PathBuf,
         allowed_roots: Vec<PathBuf>,
@@ -653,6 +561,7 @@ enum PrepareAuthority {
 }
 
 impl<'request> PrepareRequest<'request> {
+    #[cfg(test)]
     pub(crate) fn general(
         source: &'request str,
         source_id: String,
@@ -695,6 +604,7 @@ impl<'request> PrepareRequest<'request> {
         }
     }
 
+    #[cfg(test)]
     fn canonicalize_general_authority(mut self) -> Result<Self, LocalIncludeError> {
         if let PrepareAuthority::General {
             base_dir,
@@ -722,6 +632,7 @@ impl<'request> PrepareRequest<'request> {
         Ok(self)
     }
 
+    #[cfg(test)]
     fn filesystem_policy(
         &self,
         limits: FilesystemReadLimits,
@@ -743,6 +654,7 @@ impl<'request> PrepareRequest<'request> {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn prepare(
     request: PrepareRequest<'_>,
     limits: FilesystemReadLimits,
@@ -766,6 +678,7 @@ pub(crate) fn prepare_with_session(
     } = request;
     let (source_base, include_base, preprocess_options, read_mode, validate_local_targets) =
         match authority {
+            #[cfg(test)]
             PrepareAuthority::General {
                 base_dir,
                 allowed_roots,

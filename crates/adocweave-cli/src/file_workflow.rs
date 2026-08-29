@@ -1,116 +1,61 @@
 //! Guarded in-place writes and user-visible file differences.
 
-#[cfg(any(test, not(target_os = "linux")))]
-use std::fs;
 use std::io;
-#[cfg(not(target_os = "linux"))]
-use std::io::Write;
-#[cfg(not(target_os = "linux"))]
-use std::path::Path;
 use std::path::PathBuf;
 
-use super::{CliError, ColorChoice};
+use crate::arguments::ColorChoice;
 
 pub(crate) struct PendingWrite {
     pub(crate) path: PathBuf,
-    pub(crate) original: Vec<u8>,
     pub(crate) replacement: Vec<u8>,
-    pub(crate) policy: adocweave_host::LocalTargetPolicy,
+    pub(crate) capability: adocweave_project::ProjectWriteCapability,
 }
 
-#[cfg(target_os = "linux")]
-pub(crate) fn atomic_write_all(writes: Vec<PendingWrite>) -> Result<(), CliError> {
-    for write in &writes {
-        let unchanged = write
-            .policy
-            .candidate_contents_match(&write.path, &write.original)
-            .map_err(CliError::LocalTarget)?;
-        if !unchanged {
-            return Err(CliError::ConcurrentModification(write.path.clone()));
-        }
+impl PendingWrite {
+    fn contents_match(&self) -> Result<bool, String> {
+        self.capability
+            .contents_match()
+            .map_err(|error| error.to_string())
     }
+
+    fn replace_after_recheck(self) -> Result<bool, String> {
+        self.capability
+            .replace_after_recheck(&self.replacement)
+            .map_err(|error| error.to_string())
+    }
+}
+
+pub(crate) struct WriteFailure {
+    pub(crate) path: PathBuf,
+    pub(crate) message: String,
+}
+
+#[derive(Default)]
+pub(crate) struct WriteOutcome {
+    pub(crate) updated: usize,
+    pub(crate) failures: Vec<WriteFailure>,
+}
+
+pub(crate) fn apply_file_writes(writes: Vec<PendingWrite>) -> WriteOutcome {
+    let mut outcome = WriteOutcome::default();
     for write in writes {
-        let replaced = write
-            .policy
-            .replace_candidate_after_recheck(&write.path, &write.original, &write.replacement)
-            .map_err(CliError::LocalTarget)?;
-        if !replaced {
-            return Err(CliError::ConcurrentModification(write.path));
+        let path = write.path.clone();
+        let result = write.contents_match().and_then(|unchanged| {
+            if !unchanged {
+                return Err("input changed after it was read".to_owned());
+            }
+            write.replace_after_recheck().and_then(|replaced| {
+                replaced
+                    .then_some(())
+                    .ok_or_else(|| "input changed after it was read".to_owned())
+            })
+        });
+        match result {
+            Ok(()) => outcome.updated += 1,
+            Err(message) => outcome.failures.push(WriteFailure { path, message }),
         }
     }
-    Ok(())
-}
-
-#[cfg(not(target_os = "linux"))]
-pub(crate) fn atomic_write_all(writes: Vec<PendingWrite>) -> Result<(), CliError> {
-    let mut prepared = Vec::new();
-    for write in writes {
-        write
-            .policy
-            .inspect_candidate_no_symlinks(&write.path)
-            .map_err(CliError::LocalTarget)?;
-        let metadata = fs::symlink_metadata(&write.path).map_err(|source| CliError::Read {
-            source_name: write.path.display().to_string(),
-            source,
-        })?;
-        if metadata.file_type().is_symlink() || !metadata.is_file() {
-            return Err(CliError::Path(format!(
-                "write target is not a regular non-symlink file: {}",
-                write.path.display()
-            )));
-        }
-        ensure_unchanged(&write)?;
-        let parent = write
-            .path
-            .parent()
-            .ok_or_else(|| CliError::Path("write target has no parent directory".to_owned()))?;
-        let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(CliError::Write)?;
-        temporary
-            .as_file()
-            .set_permissions(metadata.permissions())
-            .map_err(CliError::Write)?;
-        temporary
-            .write_all(&write.replacement)
-            .map_err(CliError::Write)?;
-        temporary.as_file().sync_all().map_err(CliError::Write)?;
-        prepared.push((write, temporary));
-    }
-    for (write, temporary) in prepared {
-        ensure_unchanged(&write)?;
-        temporary
-            .persist(&write.path)
-            .map_err(|error| CliError::Write(error.error))?;
-        sync_parent(&write.path)?;
-    }
-    Ok(())
-}
-
-#[cfg(not(target_os = "linux"))]
-fn ensure_unchanged(write: &PendingWrite) -> Result<(), CliError> {
-    let current = fs::read(&write.path).map_err(|source| CliError::Read {
-        source_name: write.path.display().to_string(),
-        source,
-    })?;
-    if current == write.original {
-        Ok(())
-    } else {
-        Err(CliError::ConcurrentModification(write.path.clone()))
-    }
-}
-
-#[cfg(all(unix, not(target_os = "linux")))]
-fn sync_parent(path: &Path) -> Result<(), CliError> {
-    if let Some(parent) = path.parent() {
-        fs::File::open(parent)
-            .and_then(|directory| directory.sync_all())
-            .map_err(CliError::Write)?;
-    }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn sync_parent(_path: &Path) -> Result<(), CliError> {
-    Ok(())
+    outcome
 }
 
 pub(crate) fn colorize_lines(output: &str, choice: ColorChoice) -> String {
@@ -153,7 +98,14 @@ pub(crate) fn colorize_lines(output: &str, choice: ColorChoice) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    use adocweave::NeverCancel;
+    use adocweave_project::{
+        ConfigSelection, ProjectAuthority, ProjectLimits, ProjectOverrides, ProjectRequest,
+        ProjectTarget, process,
+    };
 
     use super::*;
 
@@ -167,52 +119,93 @@ mod tests {
         path
     }
 
+    fn capability(
+        root: &std::path::Path,
+        file_name: &str,
+    ) -> adocweave_project::ProjectWriteCapability {
+        let authority =
+            ProjectAuthority::open(root.to_owned(), [root.to_owned()]).expect("project authority");
+        let result = process(
+            ProjectRequest {
+                targets: vec![ProjectTarget::Path(PathBuf::from(file_name))],
+                sources: Vec::new(),
+                config: ConfigSelection::Disabled,
+                overrides: ProjectOverrides::default(),
+                apply_safe_fixes: false,
+                resource_selection: Default::default(),
+                authority,
+                limits: ProjectLimits::default(),
+            },
+            &NeverCancel,
+        )
+        .expect("project processing");
+        result
+            .targets
+            .into_iter()
+            .next()
+            .expect("one target")
+            .write
+            .expect("file target has write authority")
+    }
+
     #[test]
     fn concurrent_content_change_is_never_replaced() {
         let root = temporary_directory("concurrent-write");
         let path = root.join("document.adoc");
         fs::write(&path, "original\n").expect("original");
-        let policy = adocweave_host::LocalTargetPolicy::new(&root).expect("write policy");
+        let capability = capability(&root, "document.adoc");
         let pending = PendingWrite {
             path: path.clone(),
-            original: b"original\n".to_vec(),
             replacement: b"formatted\n".to_vec(),
-            policy,
+            capability,
         };
         fs::write(&path, "concurrent\n").expect("concurrent update");
 
-        assert!(matches!(
-            atomic_write_all(vec![pending]),
-            Err(CliError::ConcurrentModification(changed)) if changed == path
-        ));
+        let outcome = apply_file_writes(vec![pending]);
+        assert_eq!(outcome.updated, 0);
+        assert_eq!(outcome.failures.len(), 1);
+        assert_eq!(outcome.failures[0].path, path);
         assert_eq!(fs::read_to_string(&path).unwrap(), "concurrent\n");
         fs::remove_dir_all(root).expect("cleanup");
     }
 
     #[test]
-    fn preflight_failure_leaves_every_existing_file_unchanged() {
+    fn one_failed_replacement_does_not_roll_back_an_updated_file() {
         let root = temporary_directory("preflight-write");
         let first = root.join("first.adoc");
-        let missing = root.join("missing.adoc");
+        let second = root.join("second.adoc");
+        let third = root.join("third.adoc");
         fs::write(&first, "first\n").expect("first");
-        let policy = adocweave_host::LocalTargetPolicy::new(&root).expect("write policy");
+        fs::write(&second, "second\n").expect("second");
+        fs::write(&third, "third\n").expect("third");
+        let first_capability = capability(&root, "first.adoc");
+        let second_capability = capability(&root, "second.adoc");
+        let third_capability = capability(&root, "third.adoc");
+        fs::write(&second, "concurrent\n").expect("concurrent update");
         let writes = vec![
             PendingWrite {
                 path: first.clone(),
-                original: b"first\n".to_vec(),
                 replacement: b"changed\n".to_vec(),
-                policy: policy.clone(),
+                capability: first_capability,
             },
             PendingWrite {
-                path: missing,
-                original: Vec::new(),
-                replacement: b"created\n".to_vec(),
-                policy,
+                path: second.clone(),
+                replacement: b"changed\n".to_vec(),
+                capability: second_capability,
+            },
+            PendingWrite {
+                path: third.clone(),
+                replacement: b"changed\n".to_vec(),
+                capability: third_capability,
             },
         ];
 
-        assert!(atomic_write_all(writes).is_err());
-        assert_eq!(fs::read_to_string(&first).unwrap(), "first\n");
+        let outcome = apply_file_writes(writes);
+        assert_eq!(outcome.updated, 2);
+        assert_eq!(outcome.failures.len(), 1);
+        assert_eq!(fs::read_to_string(&first).unwrap(), "changed\n");
+        assert_eq!(fs::read_to_string(&second).unwrap(), "concurrent\n");
+        assert_eq!(fs::read_to_string(&third).unwrap(), "changed\n");
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -230,18 +223,18 @@ mod tests {
         let outside_path = outside.join("document.adoc");
         fs::write(&path, "original\n").expect("trusted input");
         fs::write(&outside_path, "outside\n").expect("outside input");
-        let policy = adocweave_host::LocalTargetPolicy::new(&root).expect("write policy");
+        let capability = capability(&root, "document.adoc");
         let displaced = parent.join("retained-workspace");
         fs::rename(&root, &displaced).expect("displace workspace");
         symlink(&outside, &root).expect("replacement symlink");
 
-        atomic_write_all(vec![PendingWrite {
+        let outcome = apply_file_writes(vec![PendingWrite {
             path: path.clone(),
-            original: b"original\n".to_vec(),
             replacement: b"formatted\n".to_vec(),
-            policy,
-        }])
-        .expect("retained write");
+            capability,
+        }]);
+        assert_eq!(outcome.updated, 1);
+        assert!(outcome.failures.is_empty());
 
         assert_eq!(
             fs::read(displaced.join("document.adoc")).expect("retained result"),
