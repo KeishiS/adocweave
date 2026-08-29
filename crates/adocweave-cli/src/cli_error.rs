@@ -12,6 +12,7 @@ use crate::{commands, local_include, preview};
 
 #[derive(Debug)]
 pub(crate) enum CliError {
+    Arguments(clap::Error),
     Usage(String),
     Read {
         source_name: String,
@@ -44,6 +45,7 @@ pub(crate) enum CliError {
 impl fmt::Display for CliError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Arguments(source) => source.fmt(formatter),
             Self::Usage(message) => formatter.write_str(message),
             Self::Read {
                 source_name,
@@ -91,6 +93,7 @@ impl fmt::Display for CliError {
 impl Error for CliError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::Arguments(source) => Some(source),
             Self::Read { source, .. } | Self::Write(source) => Some(source),
             Self::Analysis(source) => Some(source),
             Self::Position(source) => Some(source),
@@ -118,9 +121,11 @@ impl CliError {
     pub(crate) const fn exit_status(&self) -> ExitStatus {
         match self {
             // What the caller asked for cannot be acted on as written.
-            Self::Usage(_) | Self::Path(_) | Self::Stylesheet(_) | Self::ConfigAuthority(_) => {
-                ExitStatus::Usage
-            }
+            Self::Arguments(_)
+            | Self::Usage(_)
+            | Self::Path(_)
+            | Self::Stylesheet(_)
+            | Self::ConfigAuthority(_) => ExitStatus::Usage,
             // A file, stream or resource could not be read or written. The input
             // may be fine; the surroundings were not.
             Self::Read { .. }

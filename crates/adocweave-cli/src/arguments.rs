@@ -1,24 +1,20 @@
-//! Parsing of the command line into a typed action.
-//!
-//! The command surface is described once in `commands::model`. This module
-//! turns the arguments a caller typed into the request the rest of the program
-//! acts on, and reports a usage error for anything it cannot place.
+//! Command-line definition and conversion to the application's input types.
 
+use std::ffi::{OsStr, OsString};
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
 
 use adocweave::output::diagnostics as diagnostic;
+use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum, ValueHint};
 
 use crate::check_output::{DiagnosticFormat, FailOn};
-
 use crate::cli_error::CliError;
+use crate::commands::check::Options as CheckOptions;
 use crate::commands::format::Options as FormatOptions;
 use crate::commands::html_policy::StylesheetArgument;
-use crate::commands::model::{CommandId, LookupError, OptionId, OptionSpec};
-use crate::commands::{self, check::Options as CheckOptions};
 use crate::{DEFAULT_PREVIEW_DEBOUNCE_MS, DEFAULT_PREVIEW_PORT};
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
 pub(crate) enum ColorChoice {
     #[default]
     Auto,
@@ -45,15 +41,12 @@ pub(crate) enum CommandOptions {
 }
 
 impl CommandOptions {
-    pub(crate) const fn command_id(&self) -> CommandId {
-        match self {
-            Self::Convert { .. } => CommandId::Convert,
-            Self::Preview { .. } => CommandId::Preview,
-            Self::Check(_) => CommandId::Check,
-            Self::Format(_) => CommandId::Format,
-            Self::Symbols => CommandId::Symbols,
-            Self::ConfigShow => CommandId::ConfigShow,
-        }
+    pub(crate) const fn uses_stylesheets(&self) -> bool {
+        matches!(self, Self::Convert { .. } | Self::Preview { .. })
+    }
+
+    pub(crate) const fn is_format(&self) -> bool {
+        matches!(self, Self::Format(_))
     }
 }
 
@@ -74,517 +67,623 @@ pub(crate) struct Arguments {
 
 pub(crate) enum Action {
     Run(Box<Arguments>),
-    Help { command: Option<CommandId> },
+    Help(clap::Error),
     Version { json: bool },
     Completion { shell: CompletionShell },
     Rules { json: bool },
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub(crate) enum CompletionShell {
     Bash,
     Zsh,
     Fish,
+    #[value(name = "powershell")]
     PowerShell,
 }
 
-fn take_option_value(
-    option: &OptionSpec,
-    arguments: &mut impl Iterator<Item = String>,
-) -> Result<String, CliError> {
-    let missing = option
-        .missing_value()
-        .expect("only valued options request a following value");
-    arguments
-        .next()
-        .ok_or_else(|| CliError::Usage(format!("{} requires {missing}", option.canonical_name())))
+impl From<CompletionShell> for clap_complete::Shell {
+    fn from(value: CompletionShell) -> Self {
+        match value {
+            CompletionShell::Bash => Self::Bash,
+            CompletionShell::Zsh => Self::Zsh,
+            CompletionShell::Fish => Self::Fish,
+            CompletionShell::PowerShell => Self::PowerShell,
+        }
+    }
 }
 
-pub(crate) fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result<Action, CliError> {
-    let arguments = arguments.collect::<Vec<_>>();
-    let Some(command) = arguments.first() else {
-        return Err(CliError::Usage("a command is required".to_owned()));
-    };
+#[derive(Debug, Parser)]
+#[command(
+    name = "adocweave",
+    version,
+    about = "AdocWeave command-line interface",
+    disable_version_flag = true,
+    arg_required_else_help = true,
+    args_conflicts_with_subcommands = true
+)]
+struct Cli {
+    /// Print version information.
+    #[arg(short = 'V', long)]
+    version: bool,
 
-    if commands::model::root_option(command).is_some_and(|option| option.id == OptionId::Help) {
-        return Ok(Action::Help { command: None });
-    }
-    if commands::model::root_option(command).is_some_and(|option| option.id == OptionId::Version) {
-        let mut arguments = arguments.into_iter().skip(1);
-        let json = match arguments.next().as_deref() {
-            None => false,
-            Some(argument)
-                if commands::model::version_option(argument)
-                    .is_some_and(|option| option.id == OptionId::Json)
-                    && arguments.next().is_none() =>
-            {
-                true
-            }
-            Some(argument) => {
-                return Err(CliError::Usage(format!(
-                    "unexpected version argument: {argument}"
-                )));
-            }
-        };
-        return Ok(Action::Version { json });
-    }
-    if command.starts_with('-') {
-        return Err(CliError::Usage(format!("unknown option: {command}")));
-    }
-    let (command_id, consumed) = commands::model::lookup(&arguments).map_err(|error| {
-        CliError::Usage(match error {
-            LookupError::UnknownCommand(value) => format!("unknown command: {value}"),
-            LookupError::MissingSubcommand(parent) => {
-                format!("{parent} requires a command")
-            }
-            LookupError::UnknownSubcommand { parent, value } => {
-                format!("unknown {parent} command: {value}")
-            }
-        })
-    })?;
-    let mut arguments = arguments.into_iter().skip(consumed).peekable();
-    if command_id == CommandId::Help {
-        if let Some(argument) = arguments.next() {
-            return Err(CliError::Usage(format!(
-                "unexpected help argument: {argument}"
-            )));
-        }
-        return Ok(Action::Help { command: None });
-    }
-    if command_id == CommandId::Completion {
-        if arguments.peek().is_some_and(|argument| {
-            commands::model::option_for_command(command_id, argument)
-                .is_some_and(|option| option.id == OptionId::Help)
-        }) {
-            return Ok(Action::Help {
-                command: Some(command_id),
-            });
-        }
-        let shell = match arguments.next().as_deref() {
-            Some("bash") => CompletionShell::Bash,
-            Some("zsh") => CompletionShell::Zsh,
-            Some("fish") => CompletionShell::Fish,
-            Some("powershell") => CompletionShell::PowerShell,
-            Some(value) => {
-                return Err(CliError::Usage(format!(
-                    "unknown completion shell: {value}"
-                )));
-            }
-            None => return Err(CliError::Usage("completion requires a shell".to_owned())),
-        };
-        if let Some(argument) = arguments.next() {
-            return Err(CliError::Usage(format!(
-                "unexpected completion argument: {argument}"
-            )));
-        }
-        return Ok(Action::Completion { shell });
-    }
-    if command_id == CommandId::Rules {
-        let mut json = false;
-        let mut format_selected = false;
-        while let Some(argument) = arguments.next() {
-            match commands::model::option_for_command(command_id, &argument).map(|option| option.id)
-            {
-                Some(OptionId::Help) => {
-                    return Ok(Action::Help {
-                        command: Some(command_id),
-                    });
-                }
-                Some(OptionId::RuleFormat) => {
-                    let value = take_option_value(
-                        commands::model::option(OptionId::RuleFormat),
-                        &mut arguments,
-                    )?;
-                    let parsed = match value.as_str() {
-                        "human" => false,
-                        "json" => true,
-                        _ => {
-                            return Err(CliError::Usage(format!("unknown rules format: {value}")));
-                        }
-                    };
-                    if format_selected && parsed != json {
-                        return Err(CliError::Usage(
-                            "--format cannot be specified with conflicting values".to_owned(),
-                        ));
-                    }
-                    json = parsed;
-                    format_selected = true;
-                }
-                _ if argument.starts_with('-') => {
-                    return Err(CliError::Usage(format!("unknown option: {argument}")));
-                }
-                _ => {
-                    return Err(CliError::Usage(format!(
-                        "unexpected rules argument: {argument}"
-                    )));
-                }
-            }
-        }
-        return Ok(Action::Rules { json });
-    }
+    /// Use JSON output with --version.
+    #[arg(long, requires = "version")]
+    json: bool,
 
-    let mut input = None;
-    let mut additional_inputs = Vec::new();
-    let mut glob_patterns = Vec::new();
-    let mut stdin_selected = false;
-    let mut diagnostic_format = DiagnosticFormat::Human;
-    let mut format_selected = false;
-    let mut fail_on = FailOn::Error;
-    let mut summary = false;
-    let mut fix = false;
-    let mut enabled_rules = Vec::new();
-    let mut format_check = false;
-    let mut format_write = false;
-    let mut format_diff = false;
-    let mut fix_diff = false;
-    let mut include = false;
-    let mut no_include = false;
-    let mut stdin_base = None;
-    let mut allowed_roots = Vec::new();
-    let mut project_root = None;
-    let mut complete = false;
-    let mut css = Vec::new();
-    let mut bind = IpAddr::V4(Ipv4Addr::LOCALHOST);
-    let mut port = DEFAULT_PREVIEW_PORT;
-    let mut debounce_ms = DEFAULT_PREVIEW_DEBOUNCE_MS;
-    let mut allow_external = false;
-    let mut config_path = None;
-    let mut no_config = false;
-    let mut color = ColorChoice::Auto;
-    let mut positional_only = false;
-    while let Some(argument) = arguments.next() {
-        if !positional_only && argument == "--" {
-            positional_only = true;
-            continue;
-        }
-        let option = (!positional_only)
-            .then(|| commands::model::option_for_command(command_id, &argument))
-            .flatten();
-        match option.map(|option| option.id) {
-            Some(OptionId::Help) => {
-                return Ok(Action::Help {
-                    command: Some(command_id),
-                });
-            }
-            Some(OptionId::Config) => {
-                if no_config {
-                    return Err(CliError::Usage(
-                        "--config cannot be combined with --no-config".to_owned(),
-                    ));
-                }
-                let value = take_option_value(
-                    option.expect("matched option id has a specification"),
-                    &mut arguments,
-                )?;
-                if config_path.replace(PathBuf::from(value)).is_some() {
-                    return Err(CliError::Usage(
-                        "--config cannot be specified more than once".to_owned(),
-                    ));
-                }
-            }
-            Some(OptionId::NoConfig) => {
-                if config_path.is_some() {
-                    return Err(CliError::Usage(
-                        "--no-config cannot be combined with --config".to_owned(),
-                    ));
-                }
-                no_config = true;
-            }
-            Some(OptionId::Color) => {
-                let value = take_option_value(
-                    option.expect("matched option id has a specification"),
-                    &mut arguments,
-                )?;
-                color = match value.as_str() {
-                    "auto" => ColorChoice::Auto,
-                    "always" => ColorChoice::Always,
-                    "never" => ColorChoice::Never,
-                    _ => return Err(CliError::Usage(format!("unknown color choice: {value}"))),
-                };
-            }
-            Some(OptionId::Glob) => {
-                let value = take_option_value(
-                    option.expect("matched option id has a specification"),
-                    &mut arguments,
-                )?;
-                glob_patterns.push(value);
-            }
-            Some(OptionId::DiagnosticFormat) => {
-                let value = take_option_value(
-                    option.expect("matched option id has a specification"),
-                    &mut arguments,
-                )?;
-                let parsed = DiagnosticFormat::parse(&value)?;
-                if format_selected && parsed != diagnostic_format {
-                    return Err(CliError::Usage(
-                        "--format cannot be specified with conflicting values".to_owned(),
-                    ));
-                }
-                diagnostic_format = parsed;
-                format_selected = true;
-            }
-            Some(OptionId::FailOn) => {
-                let value = take_option_value(
-                    option.expect("matched option id has a specification"),
-                    &mut arguments,
-                )?;
-                fail_on = FailOn::parse(&value)?;
-            }
-            Some(OptionId::Summary) => summary = true,
-            Some(OptionId::Fix) => fix = true,
-            Some(OptionId::EnableRule) => {
-                let code = take_option_value(
-                    option.expect("matched option id has a specification"),
-                    &mut arguments,
-                )?;
-                let descriptor = diagnostic::lint_rule(&code).ok_or_else(|| {
-                    CliError::Usage(format!("unknown or non-enableable rule: {code}"))
-                })?;
-                if descriptor.default_enabled {
-                    return Err(CliError::Usage(format!(
-                        "rule is already enabled by default: {code}"
-                    )));
-                }
-                if !enabled_rules.contains(&descriptor.id) {
-                    enabled_rules.push(descriptor.id);
-                }
-            }
-            Some(OptionId::FormatCheck) => format_check = true,
-            Some(OptionId::FormatWrite) => format_write = true,
-            Some(OptionId::Diff) if command_id == CommandId::Check => fix_diff = true,
-            Some(OptionId::Diff) => format_diff = true,
-            Some(OptionId::Include) => {
-                if no_include {
-                    return Err(CliError::Usage(
-                        "--include cannot be combined with --no-include".to_owned(),
-                    ));
-                }
-                include = true;
-            }
-            Some(OptionId::NoInclude) => {
-                if include {
-                    return Err(CliError::Usage(
-                        "--no-include cannot be combined with --include".to_owned(),
-                    ));
-                }
-                no_include = true;
-            }
-            Some(OptionId::ProjectRoot) => {
-                let value = take_option_value(
-                    option.expect("matched option id has a specification"),
-                    &mut arguments,
-                )?;
-                project_root = Some(PathBuf::from(value));
-            }
-            Some(OptionId::Complete) => complete = true,
-            Some(OptionId::Css) => {
-                let value = take_option_value(
-                    option.expect("matched option id has a specification"),
-                    &mut arguments,
-                )?;
-                css.push(StylesheetArgument::File(PathBuf::from(value)));
-            }
-            Some(OptionId::CssUrl) => {
-                let value = take_option_value(
-                    option.expect("matched option id has a specification"),
-                    &mut arguments,
-                )?;
-                css.push(StylesheetArgument::Url(value));
-            }
-            Some(OptionId::Bind) => {
-                let value = take_option_value(
-                    option.expect("matched option id has a specification"),
-                    &mut arguments,
-                )?;
-                bind = value
-                    .parse()
-                    .map_err(|_| CliError::Usage(format!("invalid bind address: {value}")))?;
-            }
-            Some(OptionId::Port) => {
-                let value = take_option_value(
-                    option.expect("matched option id has a specification"),
-                    &mut arguments,
-                )?;
-                port = value
-                    .parse()
-                    .map_err(|_| CliError::Usage(format!("invalid port: {value}")))?;
-            }
-            Some(OptionId::Debounce) => {
-                let value = take_option_value(
-                    option.expect("matched option id has a specification"),
-                    &mut arguments,
-                )?;
-                debounce_ms = value
-                    .parse()
-                    .map_err(|_| CliError::Usage(format!("invalid debounce interval: {value}")))?;
-                if debounce_ms == 0 {
-                    return Err(CliError::Usage(
-                        "--debounce-ms must be greater than zero".to_owned(),
-                    ));
-                }
-            }
-            Some(OptionId::AllowExternal) => allow_external = true,
-            Some(OptionId::StdinBase) => {
-                let value = take_option_value(
-                    option.expect("matched option id has a specification"),
-                    &mut arguments,
-                )?;
-                stdin_base = Some(PathBuf::from(value));
-            }
-            Some(OptionId::AllowRoot) => {
-                let value = take_option_value(
-                    option.expect("matched option id has a specification"),
-                    &mut arguments,
-                )?;
-                allowed_roots.push(PathBuf::from(value));
-            }
-            Some(OptionId::Version) => {
-                unreachable!("version is a root-only option")
-            }
-            Some(OptionId::Json | OptionId::RuleFormat) => {
-                unreachable!("utility-only options are handled before document options")
-            }
-            None if command_id == CommandId::ConfigShow
-                && commands::model::option_by_name(&argument).is_some() =>
-            {
-                return Err(CliError::Usage(
-                    "config show only accepts --config or --no-config".to_owned(),
-                ));
-            }
-            None if !positional_only && argument == "-" && input.is_none() && !stdin_selected => {
-                stdin_selected = true
-            }
-            None if !positional_only && argument == "-" => {
-                return Err(CliError::Usage(
-                    "standard input cannot be combined with file paths".to_owned(),
-                ));
-            }
-            None if !positional_only && argument.starts_with('-') => {
-                let message = if commands::model::option_by_name(&argument).is_some() {
-                    format!("option is not available for this command: {argument}")
-                } else {
-                    format!("unknown option: {argument}")
-                };
-                return Err(CliError::Usage(message));
-            }
-            None if input.is_none() && !stdin_selected => input = Some(PathBuf::from(argument)),
-            None if matches!(command_id, CommandId::Check | CommandId::Format)
-                && !stdin_selected =>
-            {
-                additional_inputs.push(PathBuf::from(argument));
-            }
-            None => {
-                return Err(CliError::Usage(format!(
-                    "unexpected argument after input: {argument}"
-                )));
-            }
-        }
+    #[command(subcommand)]
+    command: Option<CliCommand>,
+}
+
+#[derive(Debug, Subcommand)]
+enum CliCommand {
+    /// Convert an AsciiDoc document to HTML.
+    #[command(after_help = "Example:\n  adocweave convert --complete manual.adoc")]
+    Convert(ConvertArgs),
+
+    /// Serve a live document preview.
+    #[command(
+        after_help = "Security:\n  A non-loopback address requires --allow-external.\n  The server does not provide authentication or TLS encryption.\n\nExample:\n  adocweave preview --port 8080 manual.adoc"
+    )]
+    Preview(PreviewArgs),
+
+    /// Check AsciiDoc documents.
+    #[command(
+        after_help = "Examples:\n  adocweave check --fail-on warning docs\n  adocweave check --format sarif docs > adocweave.sarif\n  adocweave check --fix docs\n  adocweave check --fix --diff docs"
+    )]
+    Check(CheckArgs),
+
+    /// Format AsciiDoc documents.
+    #[command(
+        after_help = "Examples:\n  adocweave format --check docs\n  adocweave format --diff manual.adoc\n  adocweave format --write docs"
+    )]
+    Format(FormatArgs),
+
+    /// Print document symbols as JSON.
+    #[command(after_help = "Example:\n  adocweave symbols manual.adoc")]
+    Symbols(SymbolArgs),
+
+    /// List diagnostic rules.
+    #[command(after_help = "Examples:\n  adocweave rules\n  adocweave rules --format json")]
+    Rules(RuleArgs),
+
+    /// Inspect project configuration.
+    Config(ConfigArgs),
+
+    /// Print a shell completion script.
+    #[command(after_help = "Example:\n  adocweave completion bash")]
+    Completion(CompletionArgs),
+}
+
+#[derive(Debug, Args)]
+struct ProjectConfigArgs {
+    /// Use the specified project configuration.
+    #[arg(long, value_name = "FILE", value_hint = ValueHint::FilePath, conflicts_with = "no_config")]
+    config: Option<PathBuf>,
+
+    /// Disable project configuration discovery.
+    #[arg(long)]
+    no_config: bool,
+}
+
+#[derive(Debug, Args)]
+struct IncludeArgs {
+    /// Process local includes even if disabled by configuration.
+    #[arg(long, conflicts_with = "no_include")]
+    include: bool,
+
+    /// Leave include directives unresolved.
+    #[arg(long)]
+    no_include: bool,
+}
+
+#[derive(Debug, Args)]
+struct AllowedRootArgs {
+    /// Permit includes below this directory; repeatable.
+    #[arg(long = "allow-root", value_name = "DIR", num_args = 1, value_hint = ValueHint::DirPath)]
+    allowed_roots: Vec<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+struct StdinArgs {
+    /// Resolve standard-input includes from this directory.
+    #[arg(long = "stdin-base", value_name = "DIR", value_hint = ValueHint::DirPath)]
+    stdin_base: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+struct ColorArgs {
+    /// Control color in human-readable diagnostics and diffs.
+    #[arg(long, value_name = "WHEN", value_enum, default_value_t)]
+    color: ColorChoice,
+}
+
+#[derive(Debug, Args)]
+struct ConvertArgs {
+    /// Input file; omit or use - for standard input.
+    #[arg(value_name = "FILE", value_hint = ValueHint::FilePath)]
+    file: Option<PathBuf>,
+
+    /// Output a complete HTML document.
+    #[arg(long)]
+    complete: bool,
+
+    /// Embed CSS from this file; repeatable.
+    #[arg(long, value_name = "FILE", num_args = 1, value_hint = ValueHint::FilePath)]
+    css: Vec<PathBuf>,
+
+    /// Link an allowed CSS URL; repeatable.
+    #[arg(long = "css-url", value_name = "URL", num_args = 1, value_hint = ValueHint::Url)]
+    css_url: Vec<String>,
+
+    #[command(flatten)]
+    include: IncludeArgs,
+    #[command(flatten)]
+    stdin: StdinArgs,
+    #[command(flatten)]
+    roots: AllowedRootArgs,
+    #[command(flatten)]
+    config: ProjectConfigArgs,
+    #[command(flatten)]
+    color: ColorArgs,
+}
+
+#[derive(Debug, Args)]
+struct PreviewArgs {
+    /// AsciiDoc file to preview; standard input and symbolic links are not supported.
+    #[arg(value_name = "FILE", value_hint = ValueHint::FilePath)]
+    file: PathBuf,
+
+    /// Listen address.
+    #[arg(long, value_name = "ADDRESS", default_value_t = IpAddr::V4(Ipv4Addr::LOCALHOST))]
+    bind: IpAddr,
+
+    /// Listen port.
+    #[arg(long, value_name = "PORT", default_value_t = DEFAULT_PREVIEW_PORT)]
+    port: u16,
+
+    /// Rebuild debounce interval in milliseconds.
+    #[arg(long = "debounce-ms", value_name = "MILLISECONDS", default_value_t = DEFAULT_PREVIEW_DEBOUNCE_MS, value_parser = positive_u64)]
+    debounce_ms: u64,
+
+    /// Permit an explicitly selected non-loopback address.
+    #[arg(long)]
+    allow_external: bool,
+
+    /// Embed CSS from this file; repeatable.
+    #[arg(long, value_name = "FILE", num_args = 1, value_hint = ValueHint::FilePath)]
+    css: Vec<PathBuf>,
+
+    /// Link an allowed CSS URL; repeatable.
+    #[arg(long = "css-url", value_name = "URL", num_args = 1, value_hint = ValueHint::Url)]
+    css_url: Vec<String>,
+
+    #[command(flatten)]
+    include: IncludeArgs,
+    #[command(flatten)]
+    roots: AllowedRootArgs,
+    #[command(flatten)]
+    config: ProjectConfigArgs,
+    #[command(flatten)]
+    color: ColorArgs,
+}
+
+#[derive(Debug, Args)]
+struct CheckArgs {
+    /// Input file or directory; omit or use - for standard input.
+    #[arg(value_name = "FILE", value_hint = ValueHint::AnyPath)]
+    files: Vec<PathBuf>,
+
+    /// Select the diagnostic output format.
+    #[arg(long, value_name = "FORMAT", value_enum, default_value_t)]
+    format: DiagnosticFormat,
+
+    /// Set when diagnostics cause a nonzero exit status.
+    #[arg(long = "fail-on", value_name = "LEVEL", value_enum, default_value_t)]
+    fail_on: FailOn,
+
+    /// Print counts to standard error.
+    #[arg(long)]
+    summary: bool,
+
+    /// Write fixes that are always safe to apply.
+    #[arg(long)]
+    fix: bool,
+
+    /// Print proposed fixes as a unified diff without modifying files.
+    #[arg(long, requires = "fix")]
+    diff: bool,
+
+    /// Enable an opt-in rule; repeatable.
+    #[arg(long = "enable-rule", value_name = "CODE", num_args = 1)]
+    enabled_rules: Vec<String>,
+
+    /// Also process files matching this pattern; repeatable.
+    #[arg(long = "glob", value_name = "PATTERN", num_args = 1)]
+    glob_patterns: Vec<String>,
+
+    /// Check local file targets below this directory.
+    #[arg(
+        long = "project-root",
+        value_name = "DIR",
+        value_hint = ValueHint::DirPath,
+        conflicts_with = "allowed_roots"
+    )]
+    project_root: Option<PathBuf>,
+
+    #[command(flatten)]
+    include: IncludeArgs,
+    #[command(flatten)]
+    stdin: StdinArgs,
+    #[command(flatten)]
+    roots: AllowedRootArgs,
+    #[command(flatten)]
+    config: ProjectConfigArgs,
+    #[command(flatten)]
+    color: ColorArgs,
+}
+
+#[derive(Debug, Args)]
+struct FormatArgs {
+    /// Input file or directory; omit or use - for standard input.
+    #[arg(value_name = "FILE", value_hint = ValueHint::AnyPath)]
+    files: Vec<PathBuf>,
+
+    /// Check whether formatting changes are required.
+    #[arg(long, conflicts_with_all = ["write", "diff"])]
+    check: bool,
+
+    /// Write formatted output to files.
+    #[arg(long, conflicts_with_all = ["check", "diff"])]
+    write: bool,
+
+    /// Print changes as a unified diff.
+    #[arg(long, conflicts_with_all = ["check", "write"])]
+    diff: bool,
+
+    /// Print counts to standard error.
+    #[arg(long)]
+    summary: bool,
+
+    /// Also process files matching this pattern; repeatable.
+    #[arg(long = "glob", value_name = "PATTERN", num_args = 1)]
+    glob_patterns: Vec<String>,
+
+    #[command(flatten)]
+    include: IncludeArgs,
+    #[command(flatten)]
+    stdin: StdinArgs,
+    #[command(flatten)]
+    roots: AllowedRootArgs,
+    #[command(flatten)]
+    config: ProjectConfigArgs,
+    #[command(flatten)]
+    color: ColorArgs,
+}
+
+#[derive(Debug, Args)]
+struct SymbolArgs {
+    /// Input file; omit or use - for standard input.
+    #[arg(value_name = "FILE", value_hint = ValueHint::FilePath)]
+    file: Option<PathBuf>,
+
+    #[command(flatten)]
+    include: IncludeArgs,
+    #[command(flatten)]
+    stdin: StdinArgs,
+    #[command(flatten)]
+    roots: AllowedRootArgs,
+    #[command(flatten)]
+    config: ProjectConfigArgs,
+    #[command(flatten)]
+    color: ColorArgs,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
+enum RuleOutput {
+    #[default]
+    Human,
+    Json,
+}
+
+#[derive(Debug, Args)]
+struct RuleArgs {
+    /// Select the output format.
+    #[arg(long, value_name = "FORMAT", value_enum, default_value_t)]
+    format: RuleOutput,
+}
+
+#[derive(Debug, Args)]
+struct ConfigArgs {
+    #[command(subcommand)]
+    command: ConfigCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum ConfigCommand {
+    /// Print the resolved project configuration as JSON.
+    #[command(after_help = "Example:\n  adocweave config show")]
+    Show(ProjectConfigArgs),
+}
+
+#[derive(Debug, Args)]
+struct CompletionArgs {
+    /// Shell for which to generate completion.
+    #[arg(value_enum)]
+    shell: CompletionShell,
+}
+
+fn positive_u64(value: &str) -> Result<u64, String> {
+    let value = value
+        .parse::<u64>()
+        .map_err(|_| "expected a positive integer".to_owned())?;
+    if value == 0 {
+        Err("value must be greater than zero".to_owned())
+    } else {
+        Ok(value)
     }
-    if usize::from(format_check) + usize::from(format_write) + usize::from(format_diff) > 1 {
-        return Err(CliError::Usage(
-            "--check, --write, and --diff are mutually exclusive".to_owned(),
-        ));
+}
+
+fn stylesheet_arguments(matches: &clap::ArgMatches) -> Vec<StylesheetArgument> {
+    let mut values = Vec::new();
+    if let (Some(indices), Some(stylesheets)) = (
+        matches.indices_of("css"),
+        matches.get_many::<PathBuf>("css"),
+    ) {
+        values.extend(
+            indices
+                .zip(stylesheets)
+                .map(|(index, path)| (index, StylesheetArgument::File(path.clone()))),
+        );
     }
-    if stdin_selected && !glob_patterns.is_empty() {
-        return Err(CliError::Usage(
-            "standard input cannot be combined with --glob".to_owned(),
-        ));
+    if let (Some(indices), Some(stylesheets)) = (
+        matches.indices_of("css_url"),
+        matches.get_many::<String>("css_url"),
+    ) {
+        values.extend(
+            indices
+                .zip(stylesheets)
+                .map(|(index, url)| (index, StylesheetArgument::Url(url.clone()))),
+        );
     }
-    if fix_diff && !fix {
-        return Err(CliError::Usage("check --diff requires --fix".to_owned()));
+    values.sort_by_key(|(index, _)| *index);
+    values.into_iter().map(|(_, value)| value).collect()
+}
+
+fn single_input(value: Option<PathBuf>) -> Option<PathBuf> {
+    value.filter(|value| value.as_os_str() != OsStr::new("-"))
+}
+
+fn multiple_inputs(values: Vec<PathBuf>) -> Result<(Option<PathBuf>, Vec<PathBuf>), CliError> {
+    if values.is_empty() || (values.len() == 1 && values[0].as_os_str() == OsStr::new("-")) {
+        return Ok((None, Vec::new()));
     }
-    if fix_diff && diagnostic_format != DiagnosticFormat::Human {
-        return Err(CliError::Usage(
-            "check --fix --diff requires --format human".to_owned(),
-        ));
-    }
-    if command_id == CommandId::Check && fix && input.is_none() {
-        return Err(CliError::Usage(
-            "check --fix requires at least one file or directory".to_owned(),
-        ));
-    }
-    if command_id == CommandId::Preview {
-        if stdin_selected || input.is_none() || !additional_inputs.is_empty() {
-            return Err(CliError::Usage(
-                "preview requires exactly one input file".to_owned(),
-            ));
-        }
-        if !bind.is_loopback() && !allow_external {
-            return Err(CliError::Usage(
-                "a non-loopback --bind requires --allow-external".to_owned(),
-            ));
-        }
-    }
-    if project_root.is_some() && !allowed_roots.is_empty() {
-        return Err(CliError::Usage(
-            "--allow-root cannot be combined with --project-root; --project-root is the boundary"
-                .to_owned(),
-        ));
-    }
-    if command_id == CommandId::ConfigShow
-        && (input.is_some()
-            || !additional_inputs.is_empty()
-            || !glob_patterns.is_empty()
-            || stdin_selected
-            || include
-            || no_include
-            || stdin_base.is_some()
-            || !allowed_roots.is_empty()
-            || project_root.is_some()
-            || complete
-            || !css.is_empty()
-            || color != ColorChoice::Auto)
+    if values
+        .iter()
+        .any(|value| value.as_os_str() == OsStr::new("-"))
     {
         return Err(CliError::Usage(
-            "config show only accepts --config or --no-config".to_owned(),
+            "standard input cannot be combined with file paths".to_owned(),
         ));
     }
-    if stdin_base.is_some() && input.is_some() {
+    let mut values = values.into_iter();
+    Ok((values.next(), values.collect()))
+}
+
+fn enabled_rules(values: Vec<String>) -> Result<Vec<diagnostic::LintRuleId>, CliError> {
+    let mut rules = Vec::new();
+    for code in values {
+        let descriptor = diagnostic::lint_rule(&code)
+            .ok_or_else(|| CliError::Usage(format!("unknown or non-enableable rule: {code}")))?;
+        if descriptor.default_enabled {
+            return Err(CliError::Usage(format!(
+                "rule is already enabled by default: {code}"
+            )));
+        }
+        if !rules.contains(&descriptor.id) {
+            rules.push(descriptor.id);
+        }
+    }
+    Ok(rules)
+}
+
+fn run_action(arguments: Arguments) -> Result<Action, CliError> {
+    if arguments.stdin_base.is_some() && arguments.input.is_some() {
         return Err(CliError::Usage(
             "--stdin-base can be used only with standard input".to_owned(),
         ));
     }
+    if arguments.input.is_none() && !arguments.glob_patterns.is_empty() {
+        return Err(CliError::Usage(
+            "standard input cannot be combined with --glob".to_owned(),
+        ));
+    }
+    Ok(Action::Run(Box::new(arguments)))
+}
 
-    let command = match command_id {
-        CommandId::Convert => CommandOptions::Convert { complete, css },
-        CommandId::Preview => CommandOptions::Preview {
-            css,
-            bind,
-            port,
-            debounce_ms,
+fn convert_action(command: ConvertArgs, matches: &clap::ArgMatches) -> Result<Action, CliError> {
+    run_action(Arguments {
+        command: CommandOptions::Convert {
+            complete: command.complete,
+            css: stylesheet_arguments(matches),
         },
-        CommandId::Check => CommandOptions::Check(CheckOptions {
-            format: diagnostic_format,
-            fail_on,
-            summary,
-            fix,
-            diff: fix_diff,
-            enabled_rules,
+        input: single_input(command.file),
+        additional_inputs: Vec::new(),
+        glob_patterns: Vec::new(),
+        include: command.include.include,
+        no_include: command.include.no_include,
+        stdin_base: command.stdin.stdin_base,
+        allowed_roots: command.roots.allowed_roots,
+        project_root: None,
+        config_path: command.config.config,
+        no_config: command.config.no_config,
+        color: command.color.color,
+    })
+}
+
+fn preview_action(command: PreviewArgs, matches: &clap::ArgMatches) -> Result<Action, CliError> {
+    if command.file.as_os_str() == OsStr::new("-") {
+        return Err(CliError::Usage(
+            "standard input is not supported by preview".to_owned(),
+        ));
+    }
+    if !command.bind.is_loopback() && !command.allow_external {
+        return Err(CliError::Usage(
+            "a non-loopback --bind requires --allow-external".to_owned(),
+        ));
+    }
+    run_action(Arguments {
+        command: CommandOptions::Preview {
+            css: stylesheet_arguments(matches),
+            bind: command.bind,
+            port: command.port,
+            debounce_ms: command.debounce_ms,
+        },
+        input: Some(command.file),
+        additional_inputs: Vec::new(),
+        glob_patterns: Vec::new(),
+        include: command.include.include,
+        no_include: command.include.no_include,
+        stdin_base: None,
+        allowed_roots: command.roots.allowed_roots,
+        project_root: None,
+        config_path: command.config.config,
+        no_config: command.config.no_config,
+        color: command.color.color,
+    })
+}
+
+fn check_action(command: CheckArgs) -> Result<Action, CliError> {
+    let (input, additional_inputs) = multiple_inputs(command.files)?;
+    if command.fix && input.is_none() {
+        return Err(CliError::Usage(
+            "check --fix requires at least one file or directory".to_owned(),
+        ));
+    }
+    let format = command.format;
+    if command.diff && format != DiagnosticFormat::Human {
+        return Err(CliError::Usage(
+            "check --fix --diff requires --format human".to_owned(),
+        ));
+    }
+    run_action(Arguments {
+        command: CommandOptions::Check(CheckOptions {
+            format,
+            fail_on: command.fail_on,
+            summary: command.summary,
+            fix: command.fix,
+            diff: command.diff,
+            enabled_rules: enabled_rules(command.enabled_rules)?,
         }),
-        CommandId::Format => CommandOptions::Format(FormatOptions {
-            check: format_check,
-            write: format_write,
-            diff: format_diff,
-            summary,
-        }),
-        CommandId::Symbols => CommandOptions::Symbols,
-        CommandId::ConfigShow => CommandOptions::ConfigShow,
-        CommandId::Rules | CommandId::Completion | CommandId::Help => {
-            unreachable!("public utility commands are handled before option parsing")
-        }
-    };
-    Ok(Action::Run(Box::new(Arguments {
-        command,
         input,
         additional_inputs,
-        glob_patterns,
-        include,
-        no_include,
-        stdin_base,
-        allowed_roots,
-        project_root,
-        config_path,
-        no_config,
-        color,
-    })))
+        glob_patterns: command.glob_patterns,
+        include: command.include.include,
+        no_include: command.include.no_include,
+        stdin_base: command.stdin.stdin_base,
+        allowed_roots: command.roots.allowed_roots,
+        project_root: command.project_root,
+        config_path: command.config.config,
+        no_config: command.config.no_config,
+        color: command.color.color,
+    })
+}
+
+fn format_action(command: FormatArgs) -> Result<Action, CliError> {
+    let (input, additional_inputs) = multiple_inputs(command.files)?;
+    run_action(Arguments {
+        command: CommandOptions::Format(FormatOptions {
+            check: command.check,
+            write: command.write,
+            diff: command.diff,
+            summary: command.summary,
+        }),
+        input,
+        additional_inputs,
+        glob_patterns: command.glob_patterns,
+        include: command.include.include,
+        no_include: command.include.no_include,
+        stdin_base: command.stdin.stdin_base,
+        allowed_roots: command.roots.allowed_roots,
+        project_root: None,
+        config_path: command.config.config,
+        no_config: command.config.no_config,
+        color: command.color.color,
+    })
+}
+
+fn symbols_action(command: SymbolArgs) -> Result<Action, CliError> {
+    run_action(Arguments {
+        command: CommandOptions::Symbols,
+        input: single_input(command.file),
+        additional_inputs: Vec::new(),
+        glob_patterns: Vec::new(),
+        include: command.include.include,
+        no_include: command.include.no_include,
+        stdin_base: command.stdin.stdin_base,
+        allowed_roots: command.roots.allowed_roots,
+        project_root: None,
+        config_path: command.config.config,
+        no_config: command.config.no_config,
+        color: command.color.color,
+    })
+}
+
+pub(crate) fn command() -> clap::Command {
+    Cli::command()
+}
+
+pub(crate) fn parse_arguments<T>(arguments: impl Iterator<Item = T>) -> Result<Action, CliError>
+where
+    T: Into<OsString>,
+{
+    let mut definition = Cli::command();
+    let matches = match definition.try_get_matches_from_mut(
+        std::iter::once(OsString::from("adocweave")).chain(arguments.map(Into::into)),
+    ) {
+        Ok(matches) => matches,
+        Err(error) if !error.use_stderr() => {
+            return Ok(Action::Help(error));
+        }
+        Err(error) => return Err(CliError::Arguments(error)),
+    };
+    let cli = Cli::from_arg_matches(&matches).map_err(CliError::Arguments)?;
+    if cli.version {
+        return Ok(Action::Version { json: cli.json });
+    }
+    let command = cli
+        .command
+        .expect("clap requires a command unless --version exits first");
+    let (_, command_matches) = matches
+        .subcommand()
+        .expect("a parsed command has matching arguments");
+    match command {
+        CliCommand::Convert(command) => convert_action(command, command_matches),
+        CliCommand::Preview(command) => preview_action(command, command_matches),
+        CliCommand::Check(command) => check_action(command),
+        CliCommand::Format(command) => format_action(command),
+        CliCommand::Symbols(command) => symbols_action(command),
+        CliCommand::Rules(command) => Ok(Action::Rules {
+            json: command.format == RuleOutput::Json,
+        }),
+        CliCommand::Config(ConfigArgs {
+            command: ConfigCommand::Show(config),
+        }) => Ok(Action::Run(Box::new(Arguments {
+            command: CommandOptions::ConfigShow,
+            input: None,
+            additional_inputs: Vec::new(),
+            glob_patterns: Vec::new(),
+            include: false,
+            no_include: false,
+            stdin_base: None,
+            allowed_roots: Vec::new(),
+            project_root: None,
+            config_path: config.config,
+            no_config: config.no_config,
+            color: ColorChoice::Auto,
+        }))),
+        CliCommand::Completion(command) => Ok(Action::Completion {
+            shell: command.shell,
+        }),
+    }
 }
