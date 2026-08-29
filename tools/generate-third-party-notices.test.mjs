@@ -35,7 +35,7 @@ test("notice rendering groups root dependencies and leaves shared Zed dependenci
 });
 
 test("textlint plugin noticeには専用WASMから到達する依存だけを含めます", () => {
-  const adapter = { id: "adapter", name: "adocweave-textlint-wasm", version: "1.2.3" };
+  const adapter = { id: "adapter", name: "adocweave-textlint", version: "1.2.3" };
   const core = { id: "core", name: "adocweave", version: "1.2.3" };
   const alpha = packageOf("alpha", "1.0.0", "MIT");
   const beta = packageOf("beta", "2.0.0", "Apache-2.0");
@@ -67,11 +67,10 @@ test("notice rendering rejects dependencies without SPDX license metadata", () =
 test("textlint pluginの依存集合はwasm32向けnormal edgeと一致します", () => {
   const key = (name, version) => `${name}\0${version}`;
   const packages = cargoTreePackageKeys(
-    "adocweave-textlint-wasm",
+    "adocweave-textlint",
     "wasm32-unknown-unknown",
   );
   assert.ok([...packages].some((key) => key.startsWith("adocweave-textlint\0")));
-  assert.ok([...packages].some((key) => key.startsWith("adocweave-textlint-wasm\0")));
   assert.ok(packages.has(key("serde-wasm-bindgen", "0.6.5")));
   assert.ok(!packages.has(key("futures-channel", "0.3.33")));
   assert.ok(!packages.has(key("const-oid", "0.10.2")));

@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   validateCiGates,
   validateExternalPublicationIsolation,
+  validateNpmPublication,
   validatePermissions,
   validatePinnedActions,
   validateReleaseFlow,
@@ -67,6 +68,22 @@ function publicationWorkflow(oidc = false) {
   };
 }
 
+function npmPublicationWorkflow() {
+  const workflow = publicationWorkflow(true);
+  workflow.on.workflow_call.inputs = { tag: {} };
+  workflow.on.workflow_dispatch.inputs = { tag: {} };
+  workflow.jobs.publish.environment = "npm-publish";
+  workflow.jobs.publish.strategy = {
+    "fail-fast": false,
+    matrix: { package: ["textlint", "wasm"] },
+  };
+  workflow.jobs.publish.steps = [{
+    env: { RELEASE_PACKAGE: "${{ matrix.package }}" },
+    run: "node tools/npm-publication.mjs",
+  }];
+  return workflow;
+}
+
 function workflows() {
   return {
     "release.yml": releaseWorkflow(),
@@ -88,7 +105,7 @@ function workflows() {
         },
       },
     },
-    "npm-publish.yml": publicationWorkflow(true),
+    "npm-publish.yml": npmPublicationWorkflow(),
     "open-vsx-publish.yml": publicationWorkflow(),
   };
 }
@@ -195,6 +212,16 @@ test("Marketplace公開は専用environmentとOIDCだけを使う", () => {
     () => validateExternalPublicationIsolation(shared),
     /isolated to marketplace-publish/u,
   );
+});
+
+test("npm公開は利用者にpackageを選ばせず二つの固定対象を検証する", () => {
+  const fixtures = workflows();
+  validateNpmPublication(fixtures);
+  fixtures["npm-publish.yml"].on.workflow_dispatch.inputs.package = {};
+  assert.throws(() => validateNpmPublication(fixtures), /accept only the release tag/);
+  delete fixtures["npm-publish.yml"].on.workflow_dispatch.inputs.package;
+  fixtures["npm-publish.yml"].jobs.publish.strategy.matrix.package = ["wasm"];
+  assert.throws(() => validateNpmPublication(fixtures), /both fixed packages/);
 });
 
 test("release guideは単一versionの--checkと--versionだけを使う", () => {
