@@ -237,6 +237,7 @@ jobs:
       - custom-native-artifact-smoke
     # Publish only after every build and smoke-test prerequisite succeeds.
     if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.publishing == 'true' && needs.build-global-artifacts.result == 'success' && needs.custom-native-artifact-smoke.result == 'success' && needs.build-local-artifacts.result == 'success' }}
+    environment: github-release
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     runs-on: "ubuntu-24.04"
@@ -305,37 +306,67 @@ jobs:
 
           gh release create "${{ needs.plan.outputs.tag }}" --target "$RELEASE_COMMIT" $PRERELEASE_FLAG --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
 
-  dispatch-publication:
+  publish-binary-cache:
     needs:
       - plan
       - host
     if: ${{ always() && needs.host.result == 'success' }}
-    runs-on: "ubuntu-24.04"
+    uses: ./.github/workflows/binary-cache-publish.yml
+    with:
+      tag: ${{ needs.plan.outputs.tag }}
+      commit: ${{ github.sha }}
     permissions:
-      "contents": "write"
-    env:
-      GH_TOKEN: ${{ github.token }}
-      RELEASE_TAG: ${{ needs.plan.outputs.tag }}
-    steps:
-      - name: Notify external publication workflows
-        run: |
-          [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
-          release="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")"
-          test "$(jq -r .tag_name <<<"$release")" = "$RELEASE_TAG"
-          test "$(jq -r .draft <<<"$release")" = false
-          test "$(jq -r .prerelease <<<"$release")" = false
-          gh api --method POST "repos/$GITHUB_REPOSITORY/dispatches" \
-            --field event_type=adocweave_release_published \
-            --field "client_payload[tag]=$RELEASE_TAG"
+      "contents": "read"
+
+  publish-marketplace:
+    needs:
+      - plan
+      - host
+    if: ${{ always() && needs.host.result == 'success' }}
+    uses: ./.github/workflows/marketplace-publish.yml
+    with:
+      tag: ${{ needs.plan.outputs.tag }}
+      commit: ${{ github.sha }}
+    permissions:
+      "contents": "read"
+      "id-token": "write"
+
+  publish-npm:
+    needs:
+      - plan
+      - host
+    if: ${{ always() && needs.host.result == 'success' }}
+    uses: ./.github/workflows/npm-publish.yml
+    with:
+      tag: ${{ needs.plan.outputs.tag }}
+      commit: ${{ github.sha }}
+    permissions:
+      "contents": "read"
+      "id-token": "write"
+
+  publish-open-vsx:
+    needs:
+      - plan
+      - host
+    if: ${{ always() && needs.host.result == 'success' }}
+    uses: ./.github/workflows/open-vsx-publish.yml
+    with:
+      tag: ${{ needs.plan.outputs.tag }}
+      commit: ${{ github.sha }}
+    permissions:
+      "contents": "read"
 
   announce:
     needs:
       - plan
       - host
-    # use "always() && ..." to allow us to wait for all publish jobs while
-    # still allowing individual publish jobs to skip themselves (for prereleases).
-    # "host" however must run to completion, no skipping allowed!
-    if: ${{ always() && needs.host.result == 'success' }}
+      - publish-binary-cache
+      - publish-marketplace
+      - publish-npm
+      - publish-open-vsx
+    # A stable Release run is successful only after every external publication succeeds.
+    # Standard "Re-run failed jobs" retries only failed idempotent publication calls.
+    if: ${{ always() && needs.host.result == 'success' && needs.publish-binary-cache.result == 'success' && needs.publish-marketplace.result == 'success' && needs.publish-npm.result == 'success' && needs.publish-open-vsx.result == 'success' }}
     runs-on: "ubuntu-24.04"
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -5,22 +5,26 @@ name: npm publication
 #
 # 認証はnpmのTrusted Publishingを使う。長期tokenを持たず、GitHub ActionsのOIDCで公開元を
 # 確認する。provenanceはTrusted Publishing経由の公開へ自動で付くため、明示の指定はしない。
+# Trusted Publisherには呼出し先のnpm-publish.ymlではなく、OIDC上のworkflow identityになる
+# 呼出し元のrelease.ymlとnpm-publish environmentを登録する。
 # Trusted Publisherはpackage単位の設定で、packageが実在しないと登録できない。したがって
 # 初回公開だけは、公開済みReleaseのarchiveを手元からnpmへ送る。手順はコントリビューション
 # ガイドを参照する。
 #
-# stable Releaseの通知で自動起動するほか、tagを指定して単独で実行できる。
-# 二つのpackageは固定したmatrixで処理する。npmへの送信だけが失敗した場合は、このworkflowを
-# 同じtagで実行して回復する。同じversionが既に存在する場合はRegistryのintegrityを確認し、
+# Release workflowからstable tagとcommitを受け取る再利用workflowとして実行する。
+# 二つのpackageは固定したmatrixで処理する。npmへの送信だけが失敗した場合は、Release workflowの
+# 失敗jobを再実行して回復する。同じversionが既に存在する場合はRegistryのintegrityを確認し、
 # Releaseのarchiveと同じであれば送信せずに完了する。
 
 on:
-  repository_dispatch:
-    types: [adocweave_release_published]
-  workflow_dispatch:
+  workflow_call:
     inputs:
       tag:
         description: Published stable tag whose package archive is sent to npm
+        required: true
+        type: string
+      commit:
+        description: Complete commit SHA for the published stable tag
         required: true
         type: string
 
@@ -28,53 +32,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: npm-publish-${{ github.event_name == 'repository_dispatch' && github.event.client_payload.tag || inputs.tag }}
+  group: npm-publish-${{ inputs.tag }}
   cancel-in-progress: false
 
 jobs:
-  validate:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    outputs:
-      tag: ${{ steps.input.outputs.tag }}
-      commit: ${{ steps.candidate.outputs.commit }}
-    steps:
-      - name: Stable Release input verification
-        id: input
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REQUESTED_TAG: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.tag || inputs.tag }}
-        run: |
-          [[ "$REQUESTED_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
-          release="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$REQUESTED_TAG")"
-          test "$(jq -r .tag_name <<<"$release")" = "$REQUESTED_TAG"
-          test "$(jq -r .draft <<<"$release")" = false
-          test "$(jq -r .prerelease <<<"$release")" = false
-          tag_ref="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$REQUESTED_TAG")"
-          test "$(jq -r .ref <<<"$tag_ref")" = "refs/tags/$REQUESTED_TAG"
-          echo "tag=$REQUESTED_TAG" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: refs/tags/${{ steps.input.outputs.tag }}
-          fetch-depth: 0
-          fetch-tags: true
-          persist-credentials: false
-      - name: Release commit and version verification
-        id: candidate
-        env:
-          RELEASE_TAG: ${{ steps.input.outputs.tag }}
-        run: |
-          commit="$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")"
-          test "$commit" = "$(git rev-parse HEAD)"
-          git fetch --no-tags origin main:refs/remotes/origin/main
-          git merge-base --is-ancestor "$commit" refs/remotes/origin/main
-          workspace_version="$(sed -n '/^\[workspace\.package\]/,/^\[/ s/^version = "\([^"]*\)"/\1/p' Cargo.toml)"
-          [[ "$workspace_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
-          test "$RELEASE_TAG" = "v$workspace_version"
-          echo "commit=$commit" >> "$GITHUB_OUTPUT"
-
   publish:
-    needs: validate
     strategy:
       fail-fast: false
       matrix:
@@ -90,7 +52,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.validate.outputs.commit }}
+          ref: ${{ inputs.commit }}
           fetch-depth: 0
           fetch-tags: true
           persist-credentials: false
@@ -106,8 +68,8 @@ jobs:
         id: candidate
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
-          RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_COMMIT: ${{ inputs.commit }}
           RELEASE_PACKAGE: ${{ matrix.package }}
         run: |
           test -n "$RELEASE_TAG"
@@ -141,8 +103,8 @@ jobs:
           mkdir -p npm-candidate
           gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir npm-candidate \
             --pattern sha256.sum --pattern "$asset"
-          # 復旧では過去のtagを指定するため、checkoutしたtoolはこのworkflowより古い
-          # ことがある。公開そのものの手順はtoolのversionに依存させない。npmは
+          # 失敗jobの再実行ではReleaseのtag時点をcheckoutするため、このworkflowの
+          # 現行版より古いtoolを使うことがある。公開そのものの手順はtoolのversionに依存させない。npmは
           # ``foo/bar.tgz``をGitHubの``owner/repo``短縮記法として解釈するため、
           # 成果物は絶対pathで渡す。
           tarball="$(realpath "npm-candidate/$asset")"

@@ -13,8 +13,23 @@ import {
 } from "./release-workflow-policy.mjs";
 
 const pin = "actions/checkout@0000000000000000000000000000000000000000";
-const publicationTag =
-  "${{ github.event_name == 'repository_dispatch' && github.event.client_payload.tag || inputs.tag }}";
+const publicationTag = "${{ inputs.tag }}";
+const publicationCommit = "${{ inputs.commit }}";
+
+function releasePublicationJob(workflow, oidc = false) {
+  return {
+    needs: ["plan", "host"],
+    if: "${{ always() && needs.host.result == 'success' }}",
+    uses: `./.github/workflows/${workflow}`,
+    with: {
+      tag: "${{ needs.plan.outputs.tag }}",
+      commit: "${{ github.sha }}",
+    },
+    permissions: oidc
+      ? { contents: "read", "id-token": "write" }
+      : { contents: "read" },
+  };
+}
 
 function releaseWorkflow() {
   return {
@@ -36,6 +51,7 @@ function releaseWorkflow() {
           "custom-native-artifact-smoke",
         ],
         if: "${{ always() && needs.plan.result == 'success' && needs.build-local-artifacts.result == 'success' && needs.build-global-artifacts.result == 'success' && needs.custom-native-artifact-smoke.result == 'success' && needs.plan.outputs.publishing == 'true' }}",
+        environment: "github-release",
         permissions: { attestations: "write", contents: "write", "id-token": "write" },
         steps: [
           {
@@ -44,22 +60,21 @@ function releaseWorkflow() {
           },
         ],
       },
-      "dispatch-publication": {
-        needs: ["plan", "host"],
-        if: "${{ always() && needs.host.result == 'success' }}",
-        permissions: { contents: "write" },
-        env: {
-          GH_TOKEN: "${{ github.token }}",
-          RELEASE_TAG: "${{ needs.plan.outputs.tag }}",
-        },
-        steps: [{
-          run: `
-gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" | jq .draft,.prerelease
-gh api --method POST "repos/$GITHUB_REPOSITORY/dispatches" \\
-  --field event_type=adocweave_release_published \\
-  --field "client_payload[tag]=$RELEASE_TAG"
-`,
-        }],
+      "publish-binary-cache": releasePublicationJob("binary-cache-publish.yml"),
+      "publish-marketplace": releasePublicationJob("marketplace-publish.yml", true),
+      "publish-npm": releasePublicationJob("npm-publish.yml", true),
+      "publish-open-vsx": releasePublicationJob("open-vsx-publish.yml"),
+      announce: {
+        needs: [
+          "plan",
+          "host",
+          "publish-binary-cache",
+          "publish-marketplace",
+          "publish-npm",
+          "publish-open-vsx",
+        ],
+        if: "${{ always() && needs.host.result == 'success' && needs.publish-binary-cache.result == 'success' && needs.publish-marketplace.result == 'success' && needs.publish-npm.result == 'success' && needs.publish-open-vsx.result == 'success' }}",
+        steps: [],
       },
     },
   };
@@ -80,61 +95,35 @@ function ciWorkflow() {
   };
 }
 
-function validationJob() {
-  return {
-    outputs: {
-      tag: "${{ steps.input.outputs.tag }}",
-      commit: "${{ steps.candidate.outputs.commit }}",
-    },
-    steps: [
-      {
-        id: "input",
-        env: { REQUESTED_TAG: publicationTag },
-        run: `
-[[ "$REQUESTED_TAG" =~ ^v(0|[1-9][0-9]*) ]]
-gh api "repos/$GITHUB_REPOSITORY/releases/tags/$REQUESTED_TAG" | jq .draft,.prerelease
-gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$REQUESTED_TAG"
-`,
-      },
-      {
-        uses: pin,
-        with: {
-          ref: "refs/tags/${{ steps.input.outputs.tag }}",
-          "persist-credentials": false,
-        },
-      },
-      {
-        id: "candidate",
-        run: `
+const stableReleaseVerification = `
+gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" | jq .draft,.prerelease
 git rev-parse "refs/tags/$RELEASE_TAG^{commit}"
-git merge-base --is-ancestor "$commit" refs/remotes/origin/main
+git rev-parse HEAD
 workspace_version=1.2.3
 test "$RELEASE_TAG" = "v$workspace_version"
-`,
-      },
-    ],
-  };
-}
+`;
 
 function publicationWorkflow(environment, oidc = false) {
   return {
     on: {
-      repository_dispatch: { types: ["adocweave_release_published"] },
-      workflow_dispatch: { inputs: { tag: { required: true, type: "string" } } },
+      workflow_call: {
+        inputs: {
+          tag: { required: true, type: "string" },
+          commit: { required: true, type: "string" },
+        },
+      },
     },
     permissions: { contents: "read" },
     concurrency: { group: `publication-${publicationTag}`, "cancel-in-progress": false },
     jobs: {
-      validate: validationJob(),
       publish: {
-        needs: "validate",
         environment,
         ...(oidc ? { permissions: { contents: "read", "id-token": "write" } } : {}),
-        env: { RELEASE_COMMIT: "${{ needs.validate.outputs.commit }}" },
-        steps: [{
-          uses: pin,
-          with: { ref: "${{ needs.validate.outputs.commit }}" },
-        }],
+        env: { RELEASE_TAG: publicationTag, RELEASE_COMMIT: publicationCommit },
+        steps: [
+          { uses: pin, with: { ref: publicationCommit } },
+          { run: stableReleaseVerification },
+        ],
       },
     },
   };
@@ -147,13 +136,10 @@ function npmPublicationWorkflow() {
     "fail-fast": false,
     matrix: { package: ["textlint", "wasm"] },
   };
-  workflow.jobs.publish.steps = [{
-    uses: pin,
-    with: { ref: "${{ needs.validate.outputs.commit }}" },
-  }, {
+  workflow.jobs.publish.steps.push({
     env: { RELEASE_PACKAGE: "${{ matrix.package }}" },
-    run: "test $RELEASE_COMMIT = ${{ needs.validate.outputs.commit }}\nnode tools/npm-publication.mjs",
-  }];
+    run: "test $RELEASE_COMMIT = ${{ inputs.commit }}\nnode tools/npm-publication.mjs",
+  });
   return workflow;
 }
 
@@ -169,30 +155,27 @@ function binaryCachePublicationWorkflow() {
   };
   return {
     on: {
-      repository_dispatch: { types: ["adocweave_release_published"] },
-      workflow_dispatch: { inputs: { tag: { required: true, type: "string" } } },
+      workflow_call: {
+        inputs: {
+          tag: { required: true, type: "string" },
+          commit: { required: true, type: "string" },
+        },
+      },
     },
     permissions: { contents: "read" },
     concurrency: { group: `binary-cache-${publicationTag}`, "cancel-in-progress": false },
     jobs: {
-      validate: validationJob(),
       publish: {
-        needs: "validate",
         environment: "binary-cache-publish",
-        env: { RELEASE_TAG: publicationTag },
+        env: { RELEASE_TAG: publicationTag, RELEASE_COMMIT: publicationCommit },
         strategy: matrix,
         steps: [
           {
             uses: pin,
-            with: { ref: "${{ needs.validate.outputs.commit }}" },
+            with: { ref: publicationCommit },
           },
           {
-            run: `
-gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" | jq .draft,.prerelease
-git rev-parse "refs/tags/$RELEASE_TAG^{commit}"
-git rev-parse HEAD
-workspace_version=1.2.3
-test "$RELEASE_TAG" = "v$workspace_version"
+            run: `${stableReleaseVerification}
 cachix push keishis "$package"
 `,
           },
@@ -207,9 +190,10 @@ cachix push keishis "$package"
         ],
       },
       verify: {
-        needs: ["validate", "publish"],
+        needs: "publish",
         strategy: structuredClone(matrix),
         steps: [
+          { uses: pin, with: { ref: publicationCommit } },
           {
             uses: "cachix/cachix-action@0000000000000000000000000000000000000000",
             with: { name: "keishis", skipPush: true },
@@ -230,6 +214,14 @@ node tools/binary-cache-smoke.mjs "$package/bin/adocweave"
   };
 }
 
+function marketplacePublicationWorkflow() {
+  const workflow = publicationWorkflow("marketplace-publish", true);
+  workflow.jobs.publish.steps.push({
+    run: "npx vsce publish --packagePath extension.vsix --oidc",
+  });
+  return workflow;
+}
+
 function workflows() {
   return {
     "release.yml": releaseWorkflow(),
@@ -240,27 +232,7 @@ function workflows() {
       jobs: { smoke: { steps: [] } },
     },
     "binary-cache-publish.yml": binaryCachePublicationWorkflow(),
-    "marketplace-publish.yml": {
-      on: {
-        repository_dispatch: { types: ["adocweave_release_published"] },
-        workflow_dispatch: { inputs: { tag: { required: true, type: "string" } } },
-      },
-      permissions: { contents: "read" },
-      concurrency: { group: `marketplace-${publicationTag}`, "cancel-in-progress": false },
-      jobs: {
-        validate: validationJob(),
-        publish: {
-          needs: "validate",
-          environment: "marketplace-publish",
-          permissions: { contents: "read", "id-token": "write" },
-          env: { RELEASE_COMMIT: "${{ needs.validate.outputs.commit }}" },
-          steps: [
-            { uses: pin, with: { ref: "${{ needs.validate.outputs.commit }}" } },
-            { run: "npx vsce publish --packagePath extension.vsix --oidc" },
-          ],
-        },
-      },
-    },
+    "marketplace-publish.yml": marketplacePublicationWorkflow(),
     "npm-publish.yml": npmPublicationWorkflow(),
     "open-vsx-publish.yml": publicationWorkflow("open-vsx-publish"),
   };
@@ -289,6 +261,10 @@ test("workflowと公開jobの権限を必要最小限に限定する", () => {
   assert.throws(() => validatePermissions(fixtures), /release\.yml host permissions/);
   delete fixtures["release.yml"].jobs.host.permissions.actions;
 
+  fixtures["release.yml"].jobs["publish-npm"].permissions["id-token"] = "read";
+  assert.throws(() => validatePermissions(fixtures), /release\.yml publish-npm permissions/);
+  fixtures["release.yml"].jobs["publish-npm"].permissions["id-token"] = "write";
+
   fixtures["open-vsx-publish.yml"].jobs.publish.permissions = { contents: "write" };
   assert.throws(() => validatePermissions(fixtures), /unexpected contents: write/);
 });
@@ -316,6 +292,15 @@ test("hostはplan、local、global、native smokeの成功をすべて要求す�
   );
 });
 
+test("hostの書込み権限とOIDCをgithub-release environmentへ隔離する", () => {
+  const release = releaseWorkflow();
+  delete release.jobs.host.environment;
+  assert.throws(
+    () => validateReleaseFlow({ "release.yml": release }, 'pr-run-mode = "plan"'),
+    /github-release environment/u,
+  );
+});
+
 test("hostは公開する全成果物をattestation対象にする", () => {
   const release = releaseWorkflow();
   release.jobs.host.steps[0].with["subject-path"] = "artifacts/*.zip";
@@ -325,15 +310,33 @@ test("hostは公開する全成果物をattestation対象にする", () => {
   );
 });
 
-test("Release成功後はtagだけを一つのrepository dispatchで通知する", () => {
+test("Release成功後は4つの公開workflowを直接呼び出して成否を集約する", () => {
   const release = releaseWorkflow();
   validateReleaseFlow({ "release.yml": release }, 'pr-run-mode = "plan"');
 
-  release.jobs["dispatch-publication"].steps[0].run +=
-    "\ngh workflow run npm-publish.yml -f tag=$RELEASE_TAG";
+  release.jobs["publish-npm"].uses = "./.github/workflows/open-vsx-publish.yml";
   assert.throws(
     () => validateReleaseFlow({ "release.yml": release }, 'pr-run-mode = "plan"'),
-    /must not enumerate workflows/u,
+    /publish-npm must call npm-publish\.yml/u,
+  );
+
+  const incomplete = releaseWorkflow();
+  incomplete.jobs.announce.needs = incomplete.jobs.announce.needs.filter(
+    (job) => job !== "publish-marketplace",
+  );
+  assert.throws(
+    () => validateReleaseFlow({ "release.yml": incomplete }, 'pr-run-mode = "plan"'),
+    /announce must wait for every external publication/u,
+  );
+
+  const skipped = releaseWorkflow();
+  skipped.jobs.announce.if = skipped.jobs.announce.if.replace(
+    "needs.publish-open-vsx.result == 'success'",
+    "(needs.publish-open-vsx.result == 'success' || needs.publish-open-vsx.result == 'skipped')",
+  );
+  assert.throws(
+    () => validateReleaseFlow({ "release.yml": skipped }, 'pr-run-mode = "plan"'),
+    /must not report success after a skipped publication/u,
   );
 });
 
@@ -344,27 +347,27 @@ test("CIはPRのsource gateとmain専用gateを分離する", () => {
   assert.throws(() => validateCiGates({ "ci.yml": ci }), /main-integrations.*main-only/);
 });
 
-test("外部公開workflowは共通通知とtagだけの手動入口を持つ", () => {
+test("外部公開workflowはReleaseからの再利用呼出しだけを受け付ける", () => {
   const fixtures = workflows();
   validateExternalPublicationIsolation(fixtures);
-  fixtures["npm-publish.yml"].on.push = { tags: ["v*"] };
+  fixtures["npm-publish.yml"].on.workflow_dispatch = {};
   assert.throws(
     () => validateExternalPublicationIsolation(fixtures),
-    /npm-publish.*shared repository dispatch/u,
+    /npm-publish.*callable only/u,
   );
 
   const called = workflows();
-  called["open-vsx-publish.yml"].on.workflow_call = {};
+  called["open-vsx-publish.yml"].on.workflow_call.inputs.commit.required = false;
   assert.throws(
     () => validateExternalPublicationIsolation(called),
-    /open-vsx-publish.*shared repository dispatch/u,
+    /open-vsx-publish.*stable tag and complete commit/u,
   );
 
-  const optional = workflows();
-  optional["binary-cache-publish.yml"].on.workflow_dispatch.inputs.tag.required = false;
+  const duplicateValidation = workflows();
+  duplicateValidation["binary-cache-publish.yml"].jobs.validate = { steps: [] };
   assert.throws(
-    () => validateExternalPublicationIsolation(optional),
-    /binary-cache-publish.*manual recovery/u,
+    () => validateExternalPublicationIsolation(duplicateValidation),
+    /binary-cache-publish.*isolated publication jobs/u,
   );
 
   const extraSender = workflows();
@@ -373,7 +376,7 @@ test("外部公開workflowは共通通知とtagだけの手動入口を持つ", 
   });
   assert.throws(
     () => validateExternalPublicationIsolation(extraSender),
-    /sent once and only by the Release dispatch job/u,
+    /must not use dispatch events/u,
   );
 });
 
@@ -381,7 +384,10 @@ test("Marketplace公開は専用environmentとOIDCだけを使う", () => {
   const fixtures = workflows();
   validateExternalPublicationIsolation(fixtures);
 
-  fixtures["marketplace-publish.yml"].jobs.publish.steps[0].run =
+  const marketplaceStep = fixtures["marketplace-publish.yml"].jobs.publish.steps.find((step) =>
+    String(step.run ?? "").includes("vsce publish")
+  );
+  marketplaceStep.run =
     "npx vsce publish --packagePath extension.vsix --azure-credential";
   assert.throws(
     () => validateExternalPublicationIsolation(fixtures),
@@ -409,8 +415,8 @@ test("Cachix公開は二つのLinux closureを送り別のtokenなしrunnerで�
   const fixtures = workflows();
   validateBinaryCachePublication(fixtures);
 
-  fixtures["binary-cache-publish.yml"].jobs.verify.steps[1].run =
-    fixtures["binary-cache-publish.yml"].jobs.verify.steps[1].run.replace(
+  fixtures["binary-cache-publish.yml"].jobs.verify.steps[2].run =
+    fixtures["binary-cache-publish.yml"].jobs.verify.steps[2].run.replace(
       "--option max-jobs 0",
       "--option max-jobs 1",
     );
@@ -422,7 +428,7 @@ test("Cachix公開は二つのLinux closureを送り別のtokenなしrunnerで�
 
 test("Cachixの書込みtokenを公開job以外へ渡さない", () => {
   const fixtures = workflows();
-  fixtures["binary-cache-publish.yml"].jobs.verify.steps[0].with.authToken =
+  fixtures["binary-cache-publish.yml"].jobs.verify.steps[1].with.authToken =
     "${{ secrets.CACHIX_AUTH_TOKEN }}";
   assert.throws(
     () => validateBinaryCachePublication(fixtures),
@@ -443,9 +449,9 @@ test("Cachixの書込みtokenを公開job以外へ渡さない", () => {
 test("npm公開は利用者にpackageを選ばせず二つの固定対象を検証する", () => {
   const fixtures = workflows();
   validateNpmPublication(fixtures);
-  fixtures["npm-publish.yml"].on.workflow_dispatch.inputs.package = {};
-  assert.throws(() => validateNpmPublication(fixtures), /accept only the release tag/);
-  delete fixtures["npm-publish.yml"].on.workflow_dispatch.inputs.package;
+  fixtures["npm-publish.yml"].on.workflow_call.inputs.package = {};
+  assert.throws(() => validateNpmPublication(fixtures), /accept only the release tag and commit/);
+  delete fixtures["npm-publish.yml"].on.workflow_call.inputs.package;
   fixtures["npm-publish.yml"].jobs.publish.strategy.matrix.package = ["wasm"];
   assert.throws(() => validateNpmPublication(fixtures), /both fixed packages/);
 });

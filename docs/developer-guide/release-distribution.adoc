@@ -53,11 +53,10 @@ Visual Studio Marketplaceは公開後のVSIXへ署名情報を追加するため
 異なる場合があります。公開後の検査では拡張ID、version、target、署名以外のfile一覧および各fileの内容を照合し、
 Marketplaceが追加したZIP内の標準署名領域（``_xmlsignatures/``と対応するmetadata）だけを比較から除きます。
 
-外部サービスへの送信はGitHub Releaseの公開後に、公開先ごとのworkflowで行います。Release workflowは
-``adocweave_release_published``という``repository_dispatch``を専用jobの1実行につき1回送信し、
-4つの公開workflowが同じ通知を直接受け取ります。一つの送信が失敗しても別の公開先を差し戻しません。
-同じ``vX.Y.Z``タグを指定して、
-失敗した送信だけを手動で再実行できます。
+外部サービスへの送信はGitHub Releaseの公開後に、公開先ごとの再利用workflowで行います。Release workflowは
+4つのworkflowへ同じstable tagと完全なcommit SHAを渡し、直接かつ並列に呼び出します。独自eventと手動起動用の
+入口は使用しません。一つの送信が失敗しても別の公開先を差し戻さず、Release workflowの``Re-run failed jobs``で
+失敗した送信だけを同じtagとcommitに対して再実行します。
 この公開単位を選んだ理由はxref:adr/0040-unified-release-and-native-executable.adoc[ADR 0040]、公開先と
 権限の分離はxref:adr/0023-publication-boundary.adoc[ADR 0023]を参照してください。
 
@@ -113,18 +112,22 @@ GitHub認証だけを使用し、credentialをmanifest、log、sourceまたは�
 == 公開に使用する権限
 
 planの生成、構築および成果物検査はrepositoryの読取り権限だけで実行し、公開先のsecretを参照しません。
-GitHub Releaseへ添付するjobだけが、Releaseへの書込みとArtifact Attestationに必要なOIDC権限を持ちます。
-Release作成後の専用jobは``GITHUB_TOKEN``とrepositoryの書込み権限だけを持ち、公開先の資格情報を持ちません。
-外部actionは完全なcommit SHAへ固定します。
+GitHub Releaseへ添付する``host`` jobだけが、``github-release`` environmentでReleaseへの書込みとArtifact Attestationに
+必要なOIDC権限を持ちます。
+Release作成後は、公開先ごとの再利用workflowを最小権限で直接呼び出します。公開先の資格情報は各workflowの
+公開jobへ設定したGitHub environmentだけから取得し、呼出し元のjobへ渡しません。外部actionは完全なcommit SHAへ
+固定します。
 
 Open VSX Registryへの公開workflowだけが専用tokenを使用します。Visual Studio MarketplaceはTrusted Publisherと
 ``vsce publish --oidc``を使用し、長期tokenを持ちません。MarketplaceのTrusted Publisherにはrepository、
-``marketplace-publish.yml``および同名のGitHub environmentを登録します。両workflowともGitHub Releaseから取得した
+呼出し元workflow file``release.yml``および``marketplace-publish`` environmentを登録します。OIDCのworkflow identityは
+再利用workflowの``marketplace-publish.yml``ではなく``release.yml``です。両workflowともGitHub Releaseから取得した
 VSIXのchecksumとattestationを確認し、別の成果物を公開しません。
 
 npmの公開workflowも``id-token``の書込みを受け取り、Trusted Publishingで長期tokenの代わりにOIDCで公開元を
-確認します。workflowはGitHub Releaseから取得したarchiveのchecksumとattestationを確認してから送信し、送信後は
-registryが記録したintegrityとReleaseの成果物を照合します。
+確認します。npmのTrusted Publisherにも``release.yml``と``npm-publish`` environmentを登録します。workflowは
+GitHub Releaseから取得したarchiveのchecksumとattestationを確認してから送信し、送信後はregistryが記録した
+integrityとReleaseの成果物を照合します。
 
 stable Releaseの公開後に、Cachix用workflowの公開jobだけが``CACHIX_AUTH_TOKEN``を使用します。公開jobは
 公開済みのtag、commitおよびworkspace版を照合し、同じcommitから``x86_64-linux``と``aarch64-linux``向けに
@@ -134,9 +137,10 @@ stable Releaseの公開後に、Cachix用workflowの公開jobだけが``CACHIX_A
 取得した``adocweave``のversionと``adocweave lsp``の起動を確認します。Nix store pathは内容から決まるため、
 同じtagでworkflowを再実行しても既存の内容は変わりません。
 
-最初の自動公開より前に、``binary-cache-publish``、``marketplace-publish``、``npm-publish``および
-``open-vsx-publish``の各environmentを作成します。CachixとOpen VSXのtokenはrepository全体ではなく対応する
-environmentへ置き、MarketplaceとnpmのTrusted Publisherにも対応するenvironmentを登録します。
+最初の自動公開より前に、``github-release``、``binary-cache-publish``、``marketplace-publish``、``npm-publish``および
+``open-vsx-publish``の各environmentを作成します。5つすべてのdeployment branch policyは、Release workflowを起動する
+stable tagのpattern ``v*``だけを許可します。CachixとOpen VSXのtokenはrepository全体ではなく対応するenvironmentへ置き、
+MarketplaceとnpmのTrusted Publisherには``release.yml``と対応するenvironmentを登録します。
 
 repositoryへの書込み権限がある利用者による手元からのtag作成を、workflowだけで機械的に禁止することはできません。
 tag rulesetを追加せず、公開前検査によって権限を制限する理由は
@@ -147,20 +151,15 @@ xref:adr/0023-publication-boundary.adoc#publication-authority[ADR 0023]を参照
 
 公開前検査に成功した``main``のcommitへ``vX.Y.Z``タグを作成すると、cargo-distのRelease workflowが起動します。
 workflowはplanを生成し、native成果物と追加成果物を構築して検査した後、一つのGitHub Releaseへ公開します。
-異なるworkflow runや手元の成果物を途中で混在させません。Release作成に成功すると、別の専用jobがtagだけを
-``client_payload``へ入れた``adocweave_release_published``イベントを専用jobの1実行につき1回送信します。
-公開workflowは、自動実行ではこのpayloadのtag、手動復旧では入力したtagを使います。資格情報を受け取らない
-検証jobがtagの形式、stableな
-Release、完全なtag ref、tagのcommit、``main``との祖先関係およびworkspace版を照合します。公開jobは検証jobが
-出力した完全なcommit SHAだけをcheckoutし、payloadのrefを直接使用しません。
+異なるworkflow runや手元の成果物を途中で混在させません。Release作成に成功すると、Release workflow内の4つのjobが
+公開先ごとの``workflow_call``専用workflowを直接かつ並列に呼び出します。呼出し先へはplanで確定したtagと
+Releaseを作成した完全なcommit SHAだけを渡します。各公開jobはstableなRelease、tagのcommit、checkoutしたcommit、
+workspace版、checksumおよびattestationを照合します。
 
-``release.published``イベントは入口にしません。標準の``GITHUB_TOKEN``でReleaseを作成した場合、GitHubは
-連鎖的なworkflow実行を防ぐため、そのイベントから別のworkflowを開始しないためです。GitHubが
-``GITHUB_TOKEN``からの起動を許可する``repository_dispatch``を使用し、個別の公開workflowは列挙しません。
-イベント送信をRelease作成jobから分けることで、通知だけが失敗した場合は成果物とReleaseを作り直さずに
-専用jobを再実行できます。GitHub APIが応答を返す前に通信が失われた場合は、再実行によって同じ通知が届く場合が
-あります。受信側はtag単位のconcurrencyと、公開済み内容を検証して送信を省略する処理によって、同じ通知を
-繰り返し受けても公開済みの内容を変更しません。
+外部公開jobはRelease workflowの一部であり、いずれかが失敗するとRelease workflow全体も失敗します。外部サービスへの
+送信だけが失敗した場合は、GitHub Actionsの標準操作``Re-run failed jobs``を使用します。成功済みのRelease作成jobと
+公開jobはそのままにし、失敗した再利用workflowと後続jobだけを再実行します。公開workflowはtag単位のconcurrencyと、
+公開済み内容を検証して送信を省略する処理を持つため、同じtagとcommitで繰り返しても公開済みの内容を変更しません。
 
 一度作成したstable tagとReleaseは削除、置換または自動的な差戻しを行いません。GitHub Releaseの公開前に
 一時的な原因でworkflowが失敗した場合は、同じtagとcommitに対して再実行します。sourceの修正が必要な場合と、
@@ -168,8 +167,8 @@ Release、完全なtag ref、tagのcommit、``main``との祖先関係およびw
 対応付ける理由は
 xref:adr/0032-same-run-release-publication.adoc[ADR 0032]を参照してください。
 
-外部サービスへの送信だけが失敗した場合は、GitHub Releaseを作り直しません。同じtagを指定して該当workflowを
-手動実行し、同じ成果物の送信だけをやり直します。npmは公開済みversionを上書きしません。npmで問題が見つかった場合は
+外部サービスへの送信だけが失敗した場合は、GitHub Releaseを作り直しません。``Re-run failed jobs``で同じ成果物の
+送信だけをやり直します。npmは公開済みversionを上書きしません。npmで問題が見つかった場合は
 ``deprecate``で警告を表示し、修正は新しいversionで行います。``unpublish``は安全上必要な場合に限ります。
 一度``unpublish``したversion番号は再利用しません。
 
