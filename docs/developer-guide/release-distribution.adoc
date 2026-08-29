@@ -49,6 +49,10 @@ Open VSX RegistryとVisual Studio Marketplaceへ、WebAssembly packageとtextlin
 公開します。registry向けに構築し直しません。Zed拡張はGitHub Releaseへの添付だけを対象とします。
 Rust crateはcrates.ioへ公開しません。
 
+Visual Studio Marketplaceは公開後のVSIXへ署名情報を追加するため、取得したVSIX archive全体のbyte列は送信元と
+異なる場合があります。公開後の検査では拡張ID、version、target、署名以外のfile一覧および各fileの内容を照合し、
+Marketplaceが追加したOPC署名領域だけを比較から除きます。
+
 外部サービスへの送信はGitHub Releaseの公開後に、公開先ごとのworkflowで行います。一つの送信が失敗しても
 別の公開先を差し戻しません。同じ``vX.Y.Z``タグを指定して、失敗した送信だけを再実行できます。
 この公開単位を選んだ理由はxref:adr/0040-unified-release-and-native-executable.adoc[ADR 0040]、公開先と
@@ -109,12 +113,14 @@ planの生成、構築および成果物検査はrepositoryの読取り権限だ
 GitHub Releaseへ添付するjobだけが、Releaseへの書込みとArtifact Attestationに必要なOIDC権限を持ちます。
 外部actionは完全なcommit SHAへ固定します。
 
-Open VSX RegistryとVisual Studio Marketplaceへ公開するworkflowだけが、それぞれの専用tokenを使用します。
-これらのworkflowはGitHub Releaseから取得したVSIXのchecksumとattestationを確認し、別の成果物を公開しません。
+Open VSX Registryへの公開workflowだけが専用tokenを使用します。Visual Studio MarketplaceはTrusted Publisherと
+``vsce publish --oidc``を使用し、長期tokenを持ちません。MarketplaceのTrusted Publisherにはrepository、
+``marketplace-publish.yml``および同名のGitHub environmentを登録します。両workflowともGitHub Releaseから取得した
+VSIXのchecksumとattestationを確認し、別の成果物を公開しません。
 
-npmへ公開するworkflowだけが``id-token``の書込みを受け取ります。npmのTrusted Publishingは長期tokenの代わりに
-OIDCで公開元を確認します。workflowはGitHub Releaseから取得したarchiveのchecksumとattestationを確認してから
-送信し、送信後はregistryが記録したintegrityとReleaseの成果物を照合します。
+npmの公開workflowも``id-token``の書込みを受け取り、Trusted Publishingで長期tokenの代わりにOIDCで公開元を
+確認します。workflowはGitHub Releaseから取得したarchiveのchecksumとattestationを確認してから送信し、送信後は
+registryが記録したintegrityとReleaseの成果物を照合します。
 
 stable Releaseの公開後に、Cachix用workflowだけが``CACHIX_AUTH_TOKEN``を使用します。workflowは公開済みの
 tagとcommit、成果物のchecksumおよびattestationを再確認し、同じcommitから構築したNix packageの依存物一式を
@@ -157,5 +163,6 @@ taskの現在の入口とReleaseの操作手順はxref:../../CONTRIBUTING.adoc[�
 xref:adr/0033-make-task-boundary.adoc[ADR 0033]を参照してください。
 
 GitHub Releaseの公開後は、成果物を実際のRelease URLから取得してchecksumとattestationを確認します。
-外部registryへ公開したpackageと拡張はregistryから導入し直し、公開したbyte列、基本操作および固定consumerでの
-動作を確認します。これらの確認は公開済みの成果物に対して行い、公開前の検査と役割を分けます。
+外部registryへ公開したpackageと拡張はregistryから導入し直し、署名などregistry固有のmetadataを除く内容、
+基本操作および固定consumerでの動作を確認します。これらの確認は公開済みの成果物に対して行い、公開前の検査と
+役割を分けます。

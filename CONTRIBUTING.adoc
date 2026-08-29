@@ -310,6 +310,26 @@ xref:docs/developer-guide/release-distribution.adoc[GitHub Releases配布仕様]
 公開後に問題が見つかった場合は、既存のtagやassetを置換せず、修正をpull requestで``main``へ統合して
 新しいバージョンで最初から実行します。
 
+[#marketplace-publication]
+=== Visual Studio Marketplaceへの公開
+
+Visual Studio Marketplaceのpublisher設定でTrusted PublisherへGitHubのorganizationまたはuser、repository、
+workflow file``marketplace-publish.yml``およびenvironment``marketplace-publish``を登録します。workflowは
+GitHub ReleaseのVSIXをchecksumとattestationで確認した後、対象versionが未公開の場合だけ
+``vsce publish --oidc``で送信します。PAT、Azure loginおよびEntra ID用のrepository変数は使用しません。
+
+Marketplaceへの公開はGitHub Releaseを公開した後に次を実行します。送信だけが失敗した場合も、同じtagで
+同じworkflowを実行します。
+
+[source,console]
+----
+gh workflow run marketplace-publish.yml -f tag=vX.Y.Z
+----
+
+対象versionが公開済みの場合は送信せず、MarketplaceからVSIXを取得してReleaseのVSIXと照合します。
+Marketplaceが追加する署名領域はarchive全体のbyte列を変えるため比較から除きますが、拡張ID、version、target、
+署名以外のfile一覧および内容が異なる場合は失敗します。公開直後にも同じ検査を行います。
+
 [#npm-publication]
 === npm Registryへの公開
 
@@ -384,5 +404,5 @@ clean環境で、公開assetだけを使って実行します。
 * [ ] Nix: 利用側flakeへtagのコミットを固定し、通常のCLI操作と``adocweave lsp``の``nix run``を確認する。
 
 公開assetの完全性は自動で確認します。asset集合と0バイトではないこと、checksum、attestation、``--version --json``、
-binary cacheへの登録、Open VSXへ公開したfileがGitHub Release assetと同一であることは、公開workflowと
-公開後の検証で機械的に判定できるため、この一覧には含めません。
+binary cacheへの登録、Open VSXへ公開したfileのbyte一致およびVisual Studio Marketplaceへ公開したVSIXの
+署名以外の内容一致は、公開workflowと公開後の検証で機械的に判定できるため、この一覧には含めません。

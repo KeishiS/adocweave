@@ -19,6 +19,7 @@ const RELEASE_HOST = {
   "id-token": "write",
 };
 const OIDC_PUBLICATION = { "id-token": "write" };
+const MARKETPLACE_OIDC_PUBLICATION = { contents: "read", "id-token": "write" };
 const EXTERNAL_PUBLICATION_WORKFLOWS = new Set([
   "binary-cache-publish.yml",
   "marketplace-publish.yml",
@@ -112,7 +113,11 @@ export function validatePermissions(workflows) {
         continue;
       }
       if (OIDC_PUBLICATION_WORKFLOWS.has(name) && jobName === "publish") {
-        expectPermissions(job.permissions, OIDC_PUBLICATION, `${name} publish permissions`);
+        expectPermissions(
+          job.permissions,
+          name === "marketplace-publish.yml" ? MARKETPLACE_OIDC_PUBLICATION : OIDC_PUBLICATION,
+          `${name} publish permissions`,
+        );
         continue;
       }
       for (const [scope, level] of Object.entries(job.permissions ?? {})) {
@@ -221,6 +226,32 @@ export function validateExternalPublicationIsolation(workflows) {
     if (workflow.jobs?.publish === undefined || Object.keys(workflow.jobs).length !== 1) {
       fail(`${name} must contain only its isolated publish job`);
     }
+  }
+
+  const marketplace = workflows["marketplace-publish.yml"]?.jobs?.publish;
+  if (marketplace?.environment !== "marketplace-publish") {
+    fail("marketplace-publish.yml must use the marketplace-publish environment");
+  }
+  for (const [workflowName, workflow] of Object.entries(workflows)) {
+    for (const [jobName, job] of Object.entries(workflow.jobs ?? {})) {
+      if (
+        job.environment === "marketplace-publish" &&
+        (workflowName !== "marketplace-publish.yml" || jobName !== "publish")
+      ) {
+        fail("marketplace-publish environment must be isolated to marketplace-publish.yml");
+      }
+    }
+  }
+  const publication = jobRuns(marketplace);
+  const marketplaceConfiguration = JSON.stringify(marketplace);
+  if (
+    !publication.includes("vsce publish") ||
+    !publication.includes("--oidc") ||
+    /--azure-credential|AZURE_CLIENT_ID|AZURE_TENANT_ID|Azure\/login/iu.test(
+      marketplaceConfiguration,
+    )
+  ) {
+    fail("Marketplace publication must use only vsce trusted publishing with OIDC");
   }
 }
 
