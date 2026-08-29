@@ -230,6 +230,26 @@ impl<'request> Processor<'request> {
             limits,
         } = request;
         let (project_root, mut authority) = authority.into_parts();
+        if let Some(roots) = &mut overrides.resource_roots {
+            for path in roots.iter_mut() {
+                *path = absolute_lexical(&project_root, path).map_err(project_authority_error)?;
+                if authority.policy_for_path(path).is_none() {
+                    return Err(project_authority_error(ResourceError::OutsideRoots(
+                        path.clone(),
+                    )));
+                }
+            }
+            roots.sort();
+            roots.dedup();
+        }
+        if let Some(path) = &mut overrides.local_target_project_root {
+            *path = absolute_lexical(&project_root, path).map_err(project_authority_error)?;
+            if authority.policy_for_path(path).is_none() {
+                return Err(project_authority_error(ResourceError::OutsideRoots(
+                    path.clone(),
+                )));
+            }
+        }
         for path in &mut overrides.stylesheet_files {
             *path = absolute_lexical(&project_root, path).map_err(project_authority_error)?;
             if authority.policy_for_path(path).is_none() {
@@ -994,6 +1014,13 @@ impl<'request> Processor<'request> {
         if let Some(include) = self.overrides.include {
             config.resources.include = include;
             config.preprocess.enable_includes = include;
+        }
+        if let Some(roots) = &self.overrides.resource_roots {
+            config.resources.roots.clone_from(roots);
+        }
+        if let Some(root) = &self.overrides.local_target_project_root {
+            config.local_targets.enabled = true;
+            config.local_targets.project_root = Some(root.clone());
         }
         for rule in &self.overrides.enable_lint_rules {
             let current = config.analysis.diagnostics.lint.rule(*rule);
@@ -3034,6 +3061,8 @@ mod tests {
                 overrides: ProjectOverrides {
                     include: Some(true),
                     enable_lint_rules: Vec::new(),
+                    resource_roots: None,
+                    local_target_project_root: None,
                     stylesheet_files: Vec::new(),
                 },
                 authority: ProjectAuthority::open(root.clone(), [root])

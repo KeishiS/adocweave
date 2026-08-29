@@ -214,6 +214,56 @@ fn request_lint_overrides_apply_to_configuration_and_analysis() {
 }
 
 #[test]
+fn request_path_overrides_replace_resource_and_local_target_roots() {
+    let project = tempfile::tempdir().expect("project directory");
+    let external = tempfile::tempdir().expect("external directory");
+    fs::write(
+        project.path().join(".adocweave.toml"),
+        "schema-version = 2\n[resources]\nroots = [\"configured\"]\n",
+    )
+    .expect("configuration fixture");
+    let result = resolve_config(
+        ProjectConfigRequest {
+            authority: ProjectAuthority::open(
+                project.path().to_owned(),
+                [project.path().to_owned(), external.path().to_owned()],
+            )
+            .expect("authority"),
+            search_from: project.path().to_owned(),
+            search_from_is_directory: true,
+            config: ConfigSelection::Discover,
+            overrides: ProjectOverrides {
+                resource_roots: Some(vec![external.path().to_owned()]),
+                local_target_project_root: Some(external.path().to_owned()),
+                ..ProjectOverrides::default()
+            },
+            limits: request_with(Vec::new()).limits,
+        },
+        &NeverCancel,
+    )
+    .expect("configuration resolves with request path overrides");
+
+    assert_eq!(
+        result.config.config.resource_roots(),
+        [external
+            .path()
+            .canonicalize()
+            .expect("canonical external root")]
+    );
+    assert!(result.config.config.local_targets_enabled());
+    assert_eq!(
+        result.config.config.local_target_root(),
+        Some(
+            external
+                .path()
+                .canonicalize()
+                .expect("canonical local-target root")
+                .as_path()
+        )
+    );
+}
+
+#[test]
 fn pathless_input_does_not_replace_a_real_file_with_a_synthetic_name() {
     let directory = tempfile::tempdir().expect("temporary directory");
     fs::write(

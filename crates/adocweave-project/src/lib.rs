@@ -214,6 +214,10 @@ pub struct ProjectOverrides {
     pub include: Option<bool>,
     /// Lint rules enabled for this request in addition to project settings.
     pub enable_lint_rules: Vec<LintRuleId>,
+    /// Include roots which replace project settings for this request.
+    pub resource_roots: Option<Vec<PathBuf>>,
+    /// Local-target root which enables local-target checks for this request.
+    pub local_target_project_root: Option<PathBuf>,
     /// Additional stylesheet files resolved from the project root and observed
     /// under the same budgets as configured stylesheets.
     pub stylesheet_files: Vec<PathBuf>,
