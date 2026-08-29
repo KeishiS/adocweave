@@ -12,18 +12,20 @@ export interface SelectedServer {
 
 export interface SelectionOptions {
   readonly configuredPath?: string;
-  /** 自動取得した実行ファイルを置くディレクトリ。省略すると自動取得を行いません。 */
-  readonly storageDirectory?: string;
+  /** 自動取得した実行ファイルを置くディレクトリです。 */
+  readonly storageDirectory: string;
 }
 
 export interface SelectionDependencies {
   readonly findOnPath: typeof findOnPath;
   readonly downloadServer: typeof downloadServer;
+  readonly log: (message: string) => void;
 }
 
 const defaultDependencies: SelectionDependencies = {
   findOnPath,
   downloadServer,
+  log: () => undefined,
 };
 
 /**
@@ -44,7 +46,11 @@ export async function selectServer(
   const pathCandidate = await dependencies.findOnPath("adocweave-lsp");
   if (pathCandidate && isAbsolute(pathCandidate)) return { command: pathCandidate, source: "path" };
 
-  if (!options.storageDirectory) throw new Error("language-server-not-found");
+  // どの段で決まったかを残す。起動しなかったときに、設定、PATH、自動取得のどこで
+  // 止まったのかをログだけで切り分けられるようにするため。
+  dependencies.log(
+    `adocweave-lsp is not configured and not on PATH; downloading into ${options.storageDirectory}.`,
+  );
   return {
     command: await dependencies.downloadServer(options.storageDirectory),
     source: "downloaded",

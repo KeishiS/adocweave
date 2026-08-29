@@ -5,6 +5,8 @@ import {
   type ServerOptions,
 } from "vscode-languageclient/node";
 
+import { findOnPath } from "./path-search.js";
+import { downloadServer } from "./server-download.js";
 import { selectServer, type SelectedServer } from "./server-selection.js";
 
 const STOP_TIMEOUT_MS = 5_000;
@@ -16,34 +18,24 @@ const MANUAL_INSTALLATION =
   " Install adocweave-lsp and add it to PATH, or set adocweave.server.path to its absolute path.";
 
 /**
- * 失敗の種類ごとに、利用者が次に取れる操作を示します。
+ * 自動取得の失敗に、利用者が次に取れる操作を添えます。
  *
- * 自動取得の失敗は、手元へ導入すれば回避できます。checksumが一致しない場合は
- * 取得元の問題なので、再試行ではなく手元への導入を案内します。
+ * 取得の失敗はどれも手元へ導入すれば回避できます。失敗の理由はcodeそのものが
+ * 示すため、種類ごとの言い換えはしません。設定pathの誤りは案内の対象外です。
  */
 function installationGuidance(code: string): string {
-  if (code === "language-server-not-found") return MANUAL_INSTALLATION;
-  if (code.startsWith("unsupported-platform:")) {
-    return ` This platform has no distributed Language Server.${MANUAL_INSTALLATION}`;
-  }
-  if (code.startsWith("checksum-mismatch:") || code.startsWith("checksum-entry-missing:")) {
-    return ` The downloaded archive did not match its published checksum and was discarded.${MANUAL_INSTALLATION}`;
-  }
-  if (code.startsWith("download-failed:") || code.startsWith("release-asset-missing:")) {
-    return ` The Language Server could not be downloaded.${MANUAL_INSTALLATION}`;
-  }
-  return "";
+  return code === "configured-server-path-not-absolute" ? "" : MANUAL_INSTALLATION;
 }
 
 export class ServerController implements vscode.Disposable {
   readonly #output: vscode.LogOutputChannel;
-  readonly #storageDirectory?: string;
+  readonly #storageDirectory: string;
   #client?: LanguageClient;
   #disposed = false;
   #generation = 0;
   #queue: Promise<void> = Promise.resolve();
 
-  constructor(output: vscode.LogOutputChannel, storageDirectory?: string) {
+  constructor(output: vscode.LogOutputChannel, storageDirectory: string) {
     this.#output = output;
     this.#storageDirectory = storageDirectory;
   }
@@ -83,10 +75,10 @@ export class ServerController implements vscode.Disposable {
   async #select(generation: number): Promise<SelectedServer | undefined> {
     const configuration = vscode.workspace.getConfiguration("adocweave");
     const configuredPath = configuration.get<string>("server.path")?.trim() || undefined;
-    const selected = await selectServer({
-      configuredPath,
-      storageDirectory: this.#storageDirectory,
-    });
+    const selected = await selectServer(
+      { configuredPath, storageDirectory: this.#storageDirectory },
+      { findOnPath, downloadServer, log: (message) => this.#output.appendLine(message) },
+    );
     if (generation !== this.#generation) return undefined;
     return selected;
   }
