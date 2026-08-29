@@ -119,8 +119,12 @@ impl Processor {
         let filesystem = authority.session().map_err(ProjectError::Authority)?;
         let read_operations = u64::try_from(limits.filesystem_reads.max_files).unwrap_or(u64::MAX);
         // One scan session per selector, one common read session and at most one
-        // confined local-target session per selected document.
-        let max_sessions = targets.len().saturating_mul(2).saturating_add(1);
+        // confined local-target session per document admitted by the file limit.
+        let max_sessions = limits
+            .filesystem_reads
+            .max_files
+            .saturating_add(targets.len())
+            .saturating_add(1);
         let job = IncludeFilesystemJob::new(FilesystemJobLimits {
             max_read_operations: read_operations,
             max_read_bytes: limits.filesystem_reads.max_total_bytes,

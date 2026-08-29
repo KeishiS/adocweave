@@ -53,7 +53,10 @@ stylesheet-files = ["styles/manual.css"]
         root.join("guide.adoc"),
         "= Guide\n\ninclude::part.adoc[]\n\nimage::asset.txt[]\n",
     );
-    write(root.join("part.adoc"), "Included text.\n");
+    write(
+        root.join("part.adoc"),
+        "Included text.\n\nimage::asset.txt[]\n",
+    );
     write(root.join("styles/manual.css"), "body {}\n");
     write(root.join("asset.txt"), "asset\n");
 
@@ -82,6 +85,7 @@ stylesheet-files = ["styles/manual.css"]
         resource.kind == ProjectResourceKind::LocalTarget
             && resource.outcome == ProjectResourceOutcome::Present
     }));
+    assert!(result.targets.iter().all(|target| target.outcome.is_ok()));
 }
 
 #[test]
