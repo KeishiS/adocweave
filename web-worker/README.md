@@ -21,7 +21,7 @@ GitHub Releaseへ添付したarchiveと同じbyte列をnpmへ公開します。c
 
 ブラウザーで文書を編集しながら結果を更新する場合は、既定の入口を使います。Web Workerで実行するため、入力の続く間もUIが止まらず、前の解析を取り消せます。
 
-静的サイト生成のようにビルド時へ組み込む場合は `direct` を使います。同じprocessで同期的に実行し、Web Workerを必要としません。処理を1つずつ順に実行する用途に限ります。
+静的サイト生成のようにビルド時へ組み込む場合は `direct` を使います。同じNode.jsプロセスで同期的に実行し、Web Workerを必要としません。処理を1つずつ順に実行する用途に限ります。
 
 ## ビルド時の利用
 
@@ -29,8 +29,7 @@ GitHub Releaseへ添付したarchiveと同じbyte列をnpmへ公開します。c
 import { analyze } from "@adocweave/wasm/direct";
 
 const result = await analyze({
-  sourceId: "docs/example.adoc",
-  source,
+  source: { id: "docs/example.adoc", text: source },
   products: { html: true },
 });
 ```
@@ -44,8 +43,8 @@ import { analyze } from "@adocweave/wasm/direct";
 
 // 1. 問い合わせと診断を受け取る
 const queried = await analyze({
-  sourceId, source,
-  products: { resourceQueries: true, diagnostics: true, projection: true },
+  source: { id: sourceId, text: source },
+  products: { resourceQueries: true, diagnostics: true, document: true },
 });
 
 // 2. 利用側が解決する。存在確認、配置先の決定、公開URLの組み立ては利用側の責務
@@ -53,14 +52,15 @@ const resources = queried.resourceQueries.map((query) => resolve(query));
 
 // 3. 解決済みresourceでHTMLへ変換する
 const rendered = await analyze({
-  sourceId, source,
-  products: { html: true },
-  renderInputs: { resources },
-  renderPolicy: { activeUrls: { allowedSchemes: ["http", "https"] } },
+  source: { id: sourceId, text: source },
+  products: {
+    html: { activeUrls: { allowedSchemes: ["http", "https"] } },
+  },
+  resources: { assets: resources },
 });
 ```
 
-WASMがtrapした場合、`direct` は同じprocessで実行しているため以降の結果を保証しません。`createDirectAnalyzer()` で新しいanalyzerを作り直してください。
+WASMがtrapした場合、`direct` は同じNode.jsプロセスで実行しているため以降の結果を保証しません。`createDirectAnalyzer()` で新しいanalyzerを作り直してください。
 
 ## 内容
 
@@ -83,7 +83,8 @@ const client = new AdocWeaveClient(defaultAssetUrls(entryUrl));
 const controller = new AbortController();
 
 const result = await client.analyze({
-  source: "= Title\n\nAsciiDoc text",
+  source: { text: "= Title\n\nAsciiDoc text" },
+  products: { html: true },
 }, { signal: controller.signal });
 
 // HTMLの信頼方針はホストが決めます。この例では文字列として表示します。
@@ -92,7 +93,7 @@ preview.textContent = result.html;
 
 公開する解析入口は `analyze(request, { signal })` だけです。この関数は解析結果をPromiseで返します。一つのclientは同時に一つの解析だけを実行します。異なる文書を並行して解析する場合はclientを分けます。
 
-入力欄などの連続更新をまとめる待ち時間、文書の版および古い結果を採用するかどうかは、入力を持つ利用側アプリが管理します。利用側は処理ごとに `AbortController` を作り、前の処理が不要になったときは `abort()` を呼びます。取消しまたはWASMのtrapが発生するとclientはそのWorkerを終了し、対応するPromiseをrejectします。同じWorkerとWASM instanceを次の解析に再利用しません。
+入力欄などの連続更新をまとめる待ち時間、文書の版および古い結果を採用するかどうかは、入力を持つ利用側アプリが管理します。利用側は処理ごとに `AbortController` を作り、前の処理が不要になったときは `abort()` を呼びます。取消しを含む全ての失敗では、`code`と英語の`message`を持つ`AdocWeaveError`でPromiseをrejectします。取消しまたはWASMのtrapが発生するとclientはそのWorkerを終了し、同じWorkerとWASM instanceを次の解析に再利用しません。
 
 clientとWorkerの要求番号は内部実装であり、結果へ公開しません。JavaScriptとWASMの組合せはWASM protocolのschema handshakeで検査します。Worker内部の封筒やpackageのバージョンを、利用側の互換性判定には使用しません。
 

@@ -1,7 +1,7 @@
 // Workerの封筒では、解析要求を内部requestId一つだけで識別します。
 // payloadとresultのschemaはWebAssembly境界で検査します。
 
-export const PROTOCOL_SCHEMA_VERSION = 15;
+export const PROTOCOL_SCHEMA_VERSION = 16;
 export const WORKER_PROTOCOL_VERSION = 3;
 
 const string = (value) => typeof value === "string";

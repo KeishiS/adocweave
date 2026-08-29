@@ -27,13 +27,13 @@ export class AdocWeaveClient {
 
   analyze(request, { signal } = {}) {
     if (this.#disposed) {
-      return Promise.reject(new AdocWeaveClientError({
+      return Promise.reject(new AdocWeaveError({
         code: "disposed",
         message: "AdocWeaveClient was disposed",
       }));
     }
     if (this.#active !== null) {
-      return Promise.reject(new AdocWeaveClientError({
+      return Promise.reject(new AdocWeaveError({
         code: "analysis-in-progress",
         message: "an analysis is already in progress",
       }));
@@ -85,7 +85,7 @@ export class AdocWeaveClient {
   dispose() {
     if (this.#disposed) return;
     this.#disposed = true;
-    const error = new AdocWeaveClientError({
+    const error = new AdocWeaveError({
       code: "disposed",
       message: "AdocWeaveClient was disposed",
     });
@@ -154,8 +154,8 @@ export class AdocWeaveClient {
   #handleMessage(worker, data, resolveReady) {
     if (worker !== this.#worker || this.#disposed) return;
     if (!validateWorkerMessage(data, "responses")) {
-      this.#failTerminal(new AdocWeaveClientError({
-        code: "invalid-worker-response",
+      this.#failTerminal(new AdocWeaveError({
+        code: "worker-failed",
         message: "worker returned a response outside the internal protocol",
       }), worker);
       return;
@@ -163,14 +163,14 @@ export class AdocWeaveClient {
 
     if (data.type === "ready") {
       if (this.#readyReject === null) {
-        this.#failTerminal(new AdocWeaveClientError({
-          code: "invalid-worker-response",
+        this.#failTerminal(new AdocWeaveError({
+          code: "worker-failed",
           message: "worker became ready outside initialization",
         }), worker);
         return;
       }
       if (data.protocolVersion !== WORKER_PROTOCOL_VERSION) {
-        this.#failTerminal(new AdocWeaveClientError({
+        this.#failTerminal(new AdocWeaveError({
           code: "unsupported-worker-protocol",
           message: `expected worker protocol ${WORKER_PROTOCOL_VERSION}`,
         }), worker);
@@ -183,27 +183,27 @@ export class AdocWeaveClient {
 
     if (data.type === "initialization-error") {
       if (this.#readyReject === null) {
-        this.#failTerminal(new AdocWeaveClientError({
-          code: "invalid-worker-response",
+        this.#failTerminal(new AdocWeaveError({
+          code: "worker-failed",
           message: "worker reported initialization failure after becoming ready",
         }), worker);
         return;
       }
-      this.#failTerminal(new AdocWeaveClientError(data.error), worker);
+      this.#failTerminal(new AdocWeaveError(data.error), worker);
       return;
     }
 
     const active = this.#active;
     if (active === null || active.worker !== worker) {
-      this.#failTerminal(new AdocWeaveClientError({
-        code: "invalid-worker-response",
+      this.#failTerminal(new AdocWeaveError({
+        code: "worker-failed",
         message: "worker returned a response without an active request",
       }), worker);
       return;
     }
     if (data.requestId !== active.requestId) {
-      this.#failTerminal(new AdocWeaveClientError({
-        code: "invalid-worker-response",
+      this.#failTerminal(new AdocWeaveError({
+        code: "worker-failed",
         message: "worker response requestId does not match its request",
       }), worker);
       return;
@@ -212,9 +212,9 @@ export class AdocWeaveClient {
     if (data.type === "result") {
       this.#settleActive("resolve", data.result);
     } else if (data.type === "error") {
-      this.#settleActive("reject", new AdocWeaveClientError(data.error));
+      this.#settleActive("reject", new AdocWeaveError(data.error));
     } else {
-      this.#failTerminal(new AdocWeaveClientError(data.error), worker);
+      this.#failTerminal(new AdocWeaveError(data.error), worker);
     }
   }
 
@@ -267,39 +267,42 @@ export class AdocWeaveClient {
   }
 }
 
-export class AdocWeaveClientError extends Error {
+export class AdocWeaveError extends Error {
   constructor({ code, message }) {
     super(message);
-    this.name = "AdocWeaveClientError";
+    this.name = "AdocWeaveError";
     this.code = code;
   }
 }
 
 const LIFECYCLE_ERROR_CODES = new Set([
+  "cancelled",
   "analysis-in-progress",
   "disposed",
-  "invalid-worker-response",
   "unsupported-worker-protocol",
   "wasm-trapped",
   "worker-failed",
 ]);
 
-export function isAdocWeaveClientLifecycleError(error) {
-  return error instanceof AdocWeaveClientError &&
+export function isAdocWeaveLifecycleError(error) {
+  return error instanceof AdocWeaveError &&
     LIFECYCLE_ERROR_CODES.has(error.code);
 }
 
 function workerError(cause) {
-  return new AdocWeaveClientError({
+  return new AdocWeaveError({
     code: "worker-failed",
     message: cause instanceof Error ? cause.message : String(cause),
   });
 }
 
 function asClientError(error) {
-  return error instanceof AdocWeaveClientError ? error : workerError(error);
+  return error instanceof AdocWeaveError ? error : workerError(error);
 }
 
 function abortError() {
-  return new DOMException("The analysis was aborted", "AbortError");
+  return new AdocWeaveError({
+    code: "cancelled",
+    message: "The analysis was cancelled",
+  });
 }
