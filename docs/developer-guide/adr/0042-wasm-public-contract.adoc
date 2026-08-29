@@ -92,12 +92,12 @@ Web Workerを使いません。この実行方法の違いは維持しますが�
 |``text``
 |``string``
 |必須
-|解析するUTF-8の文字列です。
+|解析するJavaScript文字列です。
 
 |``id``
 |``string``
 |省略可
-|結果中で主文書を識別する論理IDです。省略時は``null``として扱います。空文字列と制御文字を含む値は拒否します。
+|結果中で主文書を識別する論理IDです。省略時は論理IDを持ちません。空文字列と制御文字を含む値は拒否します。
 
 |``attributes``
 |``Record<string, string | null>``
@@ -113,6 +113,7 @@ Web Workerを使いません。この実行方法の違いは維持しますが�
 
 構文解析、属性展開および出力量の安全上限はpackageが固定します。利用側が上限を増やす項目は公開しません。
 小さい上限を必要とする利用側は、``source.text``と``resources.documents``を呼出し前に制限できます。
+原文中の範囲は、対象のJavaScript文字列をUTF-8へencodeした後のバイト位置で表します。
 
 ==== ``products``
 
@@ -164,10 +165,10 @@ Web Workerを使いません。この実行方法の違いは維持しますが�
 |``DocumentSymbol[]``
 |文書タイトル、見出しおよびlist itemの階層です。
 
-|``projection``
+|``document``
 |``true``
-|``DocumentProjection | null``
-|利用側アプリ向けの意味情報です。
+|``DocumentView | null``
+|文書全体から得た、利用側アプリ向けの意味情報です。
 |===
 
 ``HtmlOptions``は現行のHTML安全方針を維持し、次の項目を持ちます。各項目と、項目に指定する方針objectの
@@ -304,12 +305,12 @@ type DiagnosticOptions = {
 |``documents``
 |``Record<string, string>``
 |空のobject
-|include先の論理IDとUTF-8本文です。同じIDは一つだけ指定できます。
+|include先の論理IDとJavaScript文字列です。同じIDは一つだけ指定できます。
 
 |``baseUri``
 |``string``
-|``null``
-|相対参照を解決する基準URIです。指定する場合は絶対URIだけを受理します。
+|基準URIなし
+|相対参照を解決する基準URIです。省略時は基準URIを持ちません。指定する場合は絶対URIだけを受理します。
 
 |``safeMode``
 |``"unsafe" | "server" | "safe" | "secure"``
@@ -352,7 +353,8 @@ type DiagnosticOptions = {
 現行の公開項目と``status``で種類を区別する形式を維持し、型名から``Wasm``接頭辞だけを除きます。
 
 ``documents``と解決済みの各配列も、packageが固定する件数とバイト数の上限に含めます。解決済みの値は、
-現在と同様に元の範囲を半開区間のUTF-8バイト位置で指定します。範囲外、逆順または重複して競合する値は
+対応するJavaScript文字列をUTF-8へencodeした後の範囲を、半開区間のバイト位置で指定します。
+範囲外、逆順または重複して競合する値は
 ``invalid-request``として拒否します。
 
 === 応答
@@ -464,6 +466,7 @@ Rustの公開Serde型から既存の一般的なlibraryを使って生成しま�
 
 公開TypeScript名に``Wasm``接頭辞を付けません。``WasmRequest``、``WasmResponse``、正規化用型、境界用型、
 コアの処理段階およびWorker内の通信objectはRustまたはpackage内部の実装です。これらを公開型の階層へ写しません。
+同様に、既存のRust内部型の名前は新しい公開名を制約しません。
 
 独自IDL、独自serializer、独自コード生成器、汎用的な変換traitおよび新しいclient階層は追加しません。
 Worker内の通信objectだけはADR 0029のとおり内部で検証し、要求と応答の値はWebAssembly境界のSerdeで検証します。
@@ -537,7 +540,8 @@ await analyze({
 旧``analysisOptions.attributes``は``source.attributes``へ、``analysisOptions.syntax.syntaxMode``は
 ``source.syntaxMode``へ移します。旧``analysisOptions.diagnostics``は``products.diagnostics``の設定objectへ、
 旧``renderPolicy``は``products.html``の設定objectへ移します。処理上限の項目は移行先を設けず、packageの固定値を
-使用します。
+使用します。旧``products.projection``と応答の``projection``は、新しい``products.document``と応答の
+``document``へ移します。公開型の``DocumentProjection``は``DocumentView``へ変更します。
 
 == 検討した代替案
 
