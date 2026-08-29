@@ -39,6 +39,7 @@ pub(crate) enum CliError {
     ConcurrentModification(PathBuf),
     FixConflict(adocweave::output::diagnostics::EditConflict),
     Preview(preview::Error),
+    LanguageServer(adocweave_lsp::StdioError),
     Serialize(String),
 }
 
@@ -83,6 +84,7 @@ impl fmt::Display for CliError {
             ),
             Self::FixConflict(source) => write!(formatter, "conflicting automatic fixes: {source}"),
             Self::Preview(source) => source.fmt(formatter),
+            Self::LanguageServer(source) => source.fmt(formatter),
             Self::Serialize(message) => {
                 write!(formatter, "cannot serialize diagnostics: {message}")
             }
@@ -102,6 +104,7 @@ impl Error for CliError {
             Self::Config(source) => Some(source),
             Self::FixConflict(source) => Some(source),
             Self::Preview(source) => Some(source),
+            Self::LanguageServer(source) => Some(source),
             Self::Usage(_)
             | Self::Serialize(_)
             | Self::InvalidUtf8 { .. }
@@ -118,7 +121,7 @@ impl Error for CliError {
 
 impl CliError {
     /// Names the category a caller sees as the exit status.
-    pub(crate) const fn exit_status(&self) -> ExitStatus {
+    pub(crate) fn exit_status(&self) -> ExitStatus {
         match self {
             // What the caller asked for cannot be acted on as written.
             Self::Arguments(_)
@@ -135,6 +138,7 @@ impl CliError {
             | Self::Config(_)
             | Self::ConcurrentModification(_)
             | Self::Preview(_) => ExitStatus::InputOutput,
+            Self::LanguageServer(source) => source.exit_status(),
             // A configured bound was reached, so the work stopped rather than
             // grew without limit.
             Self::OutputLimit { .. } | Self::ResourceLimit(_) => ExitStatus::LimitExceeded,

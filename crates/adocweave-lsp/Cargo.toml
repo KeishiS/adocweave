@@ -1,6 +1,6 @@
 [package]
 name = "adocweave-lsp"
-version = "0.47.0"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
 homepage.workspace = true
@@ -37,10 +37,3 @@ tower = "0.5"
 
 [lib]
 path = "src/lib.rs"
-
-[[bin]]
-name = "adocweave-lsp"
-path = "src/main.rs"
-
-[package.metadata.dist]
-dist = true

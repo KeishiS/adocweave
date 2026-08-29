@@ -11,7 +11,8 @@ fn frame(message: &Value) -> Vec<u8> {
 }
 
 fn run_server(messages: &[Value]) -> std::process::Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_adocweave-lsp"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_adocweave"))
+        .arg("lsp")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -24,21 +25,6 @@ fn run_server(messages: &[Value]) -> std::process::Output {
         }
     }
     child.wait_with_output().expect("wait for language server")
-}
-
-#[test]
-fn version_json_reports_the_product_version() {
-    let output = Command::new(env!("CARGO_BIN_EXE_adocweave-lsp"))
-        .args(["--version", "--json"])
-        .output()
-        .expect("run language server version command");
-
-    assert!(output.status.success());
-    assert!(output.stderr.is_empty());
-    let value: Value = serde_json::from_slice(&output.stdout).expect("version JSON");
-    assert_eq!(value["name"], "adocweave-lsp");
-    assert_eq!(value["packageVersion"], env!("CARGO_PKG_VERSION"));
-    assert_eq!(value.as_object().expect("version object").len(), 2);
 }
 
 #[test]
@@ -76,4 +62,16 @@ fn shutdown_then_exit_uses_a_zero_process_status() {
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[test]
+fn lsp_subcommand_rejects_arguments_before_starting_the_server() {
+    let output = Command::new(env!("CARGO_BIN_EXE_adocweave"))
+        .args(["lsp", "unexpected"])
+        .output()
+        .expect("run invalid language server command");
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unexpected"));
 }

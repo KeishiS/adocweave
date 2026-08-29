@@ -1,9 +1,9 @@
 /**
  * 自動取得の実地検査を起動します。
  *
- * `adocweave.server.path`を設定せず、`PATH`から`adocweave-lsp`が見つからない状態で拡張を
- * 起動し、GitHub Releaseからの取得と起動を確かめます。networkへ出るため、通常の
- * `npm test`には含めません。
+ * `adocweave.server.path`を設定せず、`PATH`から`adocweave`が見つからない状態で拡張を
+ * 起動し、GitHub Releaseと同じ応答からの取得と起動を確かめます。実際のVS Codeを
+ * 起動するため、通常の`npm test`には含めません。
  */
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -20,10 +20,10 @@ if (process.platform === "linux" && process.env.GITHUB_ACTIONS === "true") {
 
 const extensionRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
 
-/** `adocweave-lsp`を含むディレクトリを除いたPATHです。 */
+/** `adocweave`を含むディレクトリを除いたPATHです。 */
 function pathWithoutServer(): string {
   const delimiter = process.platform === "win32" ? ";" : ":";
-  const executable = process.platform === "win32" ? "adocweave-lsp.exe" : "adocweave-lsp";
+  const executable = process.platform === "win32" ? "adocweave.exe" : "adocweave";
   return (process.env.PATH ?? "")
     .split(delimiter)
     .filter((directory) => directory && !existsSync(join(directory, executable)))
@@ -48,7 +48,7 @@ try {
     extensionTestsPath: join(extensionRoot, "dist-test", "test", "acquire-suite", "index.js"),
     extensionTestsEnv: {
       ADOCWEAVE_EXPECTED_STORAGE: expectedStorage,
-      // 開発環境のadocweave-lspが見つからないよう、PATHから該当ディレクトリを除く。
+      // 開発環境のadocweaveが見つからないよう、PATHから該当ディレクトリを除く。
       // 空にするとElectron自体が起動できない。
       PATH: pathWithoutServer(),
     },

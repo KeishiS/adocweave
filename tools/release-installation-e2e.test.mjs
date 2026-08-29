@@ -3,31 +3,30 @@ import test from "node:test";
 
 import {
   missingInstallationAssets,
-  requiredProductInstallationAssets,
+  requiredInstallationAssets,
 } from "./platform-contract.mjs";
 
 const target = "x86_64-unknown-linux-musl";
 const version = "0.46.2";
 
-for (const [product, expected] of [
-  ["cli", `adocweave-cli-${target}.zip`],
-  ["lsp", `adocweave-lsp-${target}.zip`],
+for (const [kind, expected] of [
+  ["native", `adocweave-${target}.zip`],
   ["wasm", `adocweave-wasm-${version}.tgz`],
   ["textlint", `adocweave-textlint-plugin-asciidoc-${version}.tgz`],
   ["vscode", `adocweave-vscode-${version}.vsix`],
   ["zed", `adocweave-zed-${version}.tar.xz`],
 ]) {
-  test(`${product}は自製品の1 assetだけを要求する`, () => {
-    const required = requiredProductInstallationAssets(product, target, version, "zip");
+  test(`${kind}は対応する一つのassetだけを要求する`, () => {
+    const required = requiredInstallationAssets(kind, target, version);
     assert.deepEqual(required, [expected]);
     assert.deepEqual(missingInstallationAssets([], required), [expected]);
     assert.deepEqual(missingInstallationAssets([expected], required), []);
   });
 }
 
-test("未知の製品を拒否する", () => {
+test("未知の導入種別を拒否する", () => {
   assert.throws(
-    () => requiredProductInstallationAssets("unknown", target, version, "zip"),
-    /unsupported installation product/,
+    () => requiredInstallationAssets("unknown", target, version),
+    /unsupported installation kind/,
   );
 });

@@ -6,9 +6,9 @@
  */
 import { createHash } from "node:crypto";
 
-const TAG_PREFIX = "adocweave-lsp/v";
+const TAG_PREFIX = "v";
 const CHECKSUM_ASSET = "sha256.sum";
-const EXECUTABLE = "adocweave-lsp";
+const EXECUTABLE = "adocweave";
 
 /** 配布しているtarget。ここにない環境では自動取得へ進みません。 */
 const TARGETS = new Map<string, string>([
@@ -41,7 +41,7 @@ export interface SelectedRelease {
 /**
  * 公開済みのLanguage Server releaseから最新版を選びます。
  *
- * 製品ごとにrelease trainを分けているため、tagの接頭辞で絞ってから比較します。
+ * `vX.Y.Z`形式のtagに絞ってから比較します。
  * draftとprereleaseは選びません。
  */
 export function latestServerRelease(body: string): SelectedRelease {

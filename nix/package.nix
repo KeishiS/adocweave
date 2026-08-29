@@ -1,6 +1,5 @@
-# The released native package: the command-line converter and the Language
-# Server, built from this repository's own Cargo.lock.
-{ pkgs, src, cliVersion, rustVersion, stableRust }:
+# The released native package, built from this repository's own Cargo.lock.
+{ pkgs, src, version, rustVersion, stableRust }:
 let
   rust = stableRust pkgs;
   rustPlatform = pkgs.makeRustPlatform {
@@ -14,12 +13,11 @@ in
 assert rust.version == rustVersion;
 rustPlatform.buildRustPackage {
   pname = "adocweave";
-  version = cliVersion;
+  inherit version;
   inherit src;
   cargoLock.lockFile = ../Cargo.lock;
   cargoBuildFlags = [
     "-p=adocweave-cli"
-    "-p=adocweave-lsp"
   ];
   doCheck = false;
   strictDeps = true;
@@ -27,7 +25,6 @@ rustPlatform.buildRustPackage {
     runHook preInstall
     releaseDir="target/${pkgs.stdenv.hostPlatform.rust.rustcTarget}/release"
     install -Dm755 "$releaseDir/adocweave" "$out/bin/adocweave"
-    install -Dm755 "$releaseDir/adocweave-lsp" "$out/bin/adocweave-lsp"
     runHook postInstall
   '';
   meta = {

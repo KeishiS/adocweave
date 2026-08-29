@@ -51,16 +51,24 @@ jobs:
           test "$(jq -r .draft <<<"$release")" = false
           test "$(jq -r .prerelease <<<"$release")" = false
           test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)"
+
+          workspace_version="$(sed -n '/^\[workspace\.package\]/,/^\[/ s/^version = "\([^"]*\)"/\1/p' Cargo.toml)"
+          [[ "$workspace_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          test "$RELEASE_TAG" = "v$workspace_version"
+          test "$(jq -er .version editors/vscode/package.json)" = "$workspace_version"
+
           mkdir -p open-vsx
-          node tools/release-contract.mjs --product=vscode "--tag=$RELEASE_TAG"
-          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir open-vsx
-          node tools/product-release.mjs --verify-candidate vscode open-vsx
-          node tools/release-metadata.mjs verify vscode open-vsx "$(git rev-parse HEAD)"
-          vsix="$(ls open-vsx/adocweave-vscode-*.vsix)"
+          asset="adocweave-vscode-$workspace_version.vsix"
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir open-vsx \
+            --pattern sha256.sum --pattern "$asset"
+          vsix="open-vsx/$asset"
+          test -f "$vsix"
           (cd open-vsx && grep -F "$(basename "$vsix")" sha256.sum | sha256sum --check --strict -)
-          for file in open-vsx/*; do
-            gh attestation verify "$file" --repo "$GITHUB_REPOSITORY"
-          done
+          vsix_manifest="$(unzip -p "$vsix" extension/package.json)"
+          test "$(jq -er .name <<<"$vsix_manifest")" = "$(jq -er .name editors/vscode/package.json)"
+          test "$(jq -er .version <<<"$vsix_manifest")" = "$workspace_version"
+          gh attestation verify "$vsix" --repo "$GITHUB_REPOSITORY"
+          gh attestation verify open-vsx/sha256.sum --repo "$GITHUB_REPOSITORY"
           echo "vsix=$vsix" >> "$GITHUB_ENV"
       - name: Open VSX publication
         env:

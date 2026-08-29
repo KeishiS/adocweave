@@ -38,21 +38,62 @@ export function pathImplementation(os) {
   return os === "win32" ? path.win32 : path.posix;
 }
 
-export function executableNames(executableSuffix) {
-  return [`adocweave${executableSuffix}`, `adocweave-lsp${executableSuffix}`];
+export function nativeExecutableName(executableSuffix) {
+  return `adocweave${executableSuffix}`;
 }
 
-export function requiredProductInstallationAssets(product, target, version, archiveType) {
+export function targetPlatform(target) {
+  const architecture = target.startsWith("aarch64-")
+    ? "arm64"
+    : target.startsWith("x86_64-") ? "x64" : undefined;
+  const platform = target.endsWith("-unknown-linux-musl")
+    ? { os: "linux", executableSuffix: "", minimumOsVersion: null }
+    : target.endsWith("-apple-darwin")
+      ? { os: "darwin", executableSuffix: "", minimumOsVersion: "14.0" }
+      : target.endsWith("-pc-windows-msvc")
+        ? { os: "win32", executableSuffix: ".exe", minimumOsVersion: "10.0.17763" }
+        : undefined;
+  if (!architecture || !platform) throw new Error(`unsupported native target: ${target}`);
+  return Object.freeze({ architecture, archive: "zip", ...platform, target });
+}
+
+export function nativeArtifactFromPlan(plan, target) {
+  const platform = targetPlatform(target);
+  const releases = plan?.releases ?? [];
+  if (releases.length !== 1 || releases[0]?.app_name !== "adocweave") {
+    throw new Error("dist plan must contain exactly one adocweave release");
+  }
+  const matches = Object.values(plan?.artifacts ?? {}).filter((artifact) =>
+    artifact?.kind === "executable-zip" &&
+    artifact.target_triples?.length === 1 &&
+    artifact.target_triples[0] === target
+  );
+  if (matches.length !== 1) {
+    throw new Error(`dist plan must contain exactly one native archive for ${target}`);
+  }
+  const artifact = matches[0];
+  const expectedName = `adocweave-${target}.zip`;
+  if (artifact.name !== expectedName) {
+    throw new Error(`dist plan native archive name mismatch: ${artifact.name}`);
+  }
+  const executables = artifact.assets?.filter(({ kind }) => kind === "executable") ?? [];
+  const executable = nativeExecutableName(platform.executableSuffix);
+  if (executables.length !== 1 || executables[0].name !== "adocweave" || executables[0].path !== executable) {
+    throw new Error(`dist plan native executable mismatch: ${target}`);
+  }
+  return Object.freeze({ artifact, executable, platform });
+}
+
+export function requiredInstallationAssets(kind, target, version) {
   const names = {
+    native: `adocweave-${target}.zip`,
     wasm: `adocweave-wasm-${version}.tgz`,
-    cli: `adocweave-cli-${target}.${archiveType}`,
-    lsp: `adocweave-lsp-${target}.${archiveType}`,
     textlint: `adocweave-textlint-plugin-asciidoc-${version}.tgz`,
     vscode: `adocweave-vscode-${version}.vsix`,
     zed: `adocweave-zed-${version}.tar.xz`,
   };
-  if (!Object.hasOwn(names, product)) throw new Error(`unsupported installation product: ${product}`);
-  return [names[product]];
+  if (!Object.hasOwn(names, kind)) throw new Error(`unsupported installation kind: ${kind}`);
+  return [names[kind]];
 }
 
 export function missingInstallationAssets(available, required) {
@@ -61,13 +102,13 @@ export function missingInstallationAssets(available, required) {
 }
 
 export function installationLayout(prefix, version, pathApi) {
-  const productRoot = pathApi.join(prefix, "lib", "adocweave");
+  const nativeRoot = pathApi.join(prefix, "lib", "adocweave");
   const shareRoot = pathApi.join(prefix, "share", "adocweave", version);
   return {
     binDirectory: pathApi.join(prefix, "bin"),
-    versionRoot: pathApi.join(productRoot, version),
-    currentLink: pathApi.join(productRoot, "current"),
-    activeMarker: pathApi.join(productRoot, "active-version"),
+    versionRoot: pathApi.join(nativeRoot, version),
+    currentLink: pathApi.join(nativeRoot, "current"),
+    activeMarker: pathApi.join(nativeRoot, "active-version"),
     wasmRoot: pathApi.join(shareRoot, "wasm"),
     zedRoot: pathApi.join(shareRoot, "zed"),
     vscodeRoot: pathApi.join(shareRoot, "vscode"),

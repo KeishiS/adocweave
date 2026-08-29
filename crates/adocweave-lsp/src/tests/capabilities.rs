@@ -18,7 +18,7 @@ fn initialize_negotiates_encoding_and_advertises_existing_features() {
         value["capabilities"]["renameProvider"]["prepareProvider"],
         true
     );
-    assert_eq!(value["serverInfo"]["name"], "adocweave-lsp");
+    assert_eq!(value["serverInfo"]["name"], "adocweave");
     assert_eq!(value["serverInfo"]["version"], env!("CARGO_PKG_VERSION"));
     assert!(value["capabilities"].get("experimental").is_none());
 }

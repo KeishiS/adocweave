@@ -1,6 +1,6 @@
 = ADR 0036: 利用要件のないSBOM公開を廃止
 
-:status: accepted; release unit amended by ADR 0040; メタデータ amended by ADR 0040
+:status: accepted; release unit and metadata amended by ADR 0040
 
 == 文脈
 

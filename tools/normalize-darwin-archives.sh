@@ -2,12 +2,12 @@
 set -euo pipefail
 
 if [ "$#" -ne 3 ]; then
-  echo "使用方法: tools/normalize-darwin-archives.sh ARTIFACT_DIRECTORY PRODUCT TARGET" >&2
+  echo "使用方法: tools/normalize-darwin-archives.sh ARTIFACT_DIRECTORY DIST_PLAN TARGET" >&2
   exit 2
 fi
 
 artifact_directory="$(cd "$1" && pwd)"
-product="$2"
+plan_file="$2"
 target="$3"
 case "$target" in
   *-apple-darwin) ;;
@@ -17,51 +17,35 @@ case "$target" in
     ;;
 esac
 
-if ! jq -e --arg target "$target" \
-  '.targets | any(.triple == $target and .os == "darwin")' \
-  release/distribution-plan.json >/dev/null; then
-  echo "配布計画にDarwin targetがありません: $target" >&2
+if [ ! -f "$plan_file" ]; then
+  echo "cargo-distの配布計画がありません: $plan_file" >&2
   exit 2
 fi
 
-if ! jq -e --arg product "$product" \
-  '.products | any(.product == $product and .build == "cargo-dist" and .executable != null)' \
-  release/distribution-plan.json >/dev/null; then
-  echo "Darwin実行fileを持つ製品ではありません: $product" >&2
-  exit 2
-fi
-
-while IFS= read -r other_archive_name; do
-  if [ -e "$artifact_directory/$other_archive_name" ]; then
-    echo "別製品のDarwin archiveが混在しています: $artifact_directory/$other_archive_name" >&2
-    exit 1
-  fi
-done < <(
-  jq -r --arg product "$product" --arg target "$target" \
-    '. as $plan |
-     $plan.products[] |
-       select(.product != $product and .build == "cargo-dist" and .executable != null) as $route |
-     $plan.targets[] | select(.triple == $target) as $platform |
-     $route.assetName | gsub("\\{target\\}"; $platform.triple)' \
-    release/distribution-plan.json
-)
-
-selected="$(
-  jq -er --arg product "$product" --arg target "$target" \
-    '. as $plan |
-     [$plan.products[] |
-       select(.product == $product and .build == "cargo-dist" and .executable != null)] as $routes |
-     [$plan.targets[] | select(.triple == $target and .os == "darwin")] as $platforms |
-     if ($routes | length) != 1 or ($platforms | length) != 1 then
-       error("Darwin archive selection must resolve to one product and one target")
+if ! selected="$(
+  jq -er --arg target "$target" \
+    '[.releases[]? | select(.app_name == "adocweave")] as $releases |
+     [.artifacts[]? |
+       select(.kind == "executable-zip" and .target_triples == [$target])] as $artifacts |
+     if ($releases | length) != 1 or ($artifacts | length) != 1 then
+       error("Darwin archive selection must resolve to one release and one target")
      else
-       $routes[0] as $route |
-       $platforms[0] as $platform |
-       [($route.assetName | gsub("\\{target\\}"; $platform.triple)),
-        ($route.executable | gsub("\\{executableSuffix\\}"; $platform.executableSuffix))] | @tsv
+       $artifacts[0] as $artifact |
+       [$artifact.assets[]? | select(.kind == "executable")] as $executables |
+       if $artifact.name != ("adocweave-" + $target + ".zip") or
+          ($executables | length) != 1 or
+          $executables[0].name != "adocweave" or
+          $executables[0].path != "adocweave" then
+         error("Darwin archive does not match the native distribution contract")
+       else
+         [$artifact.name, $executables[0].path] | @tsv
+       end
      end' \
-    release/distribution-plan.json
-)"
+    "$plan_file"
+)"; then
+  echo "cargo-distの配布計画からDarwin archiveを一つに特定できません: $target" >&2
+  exit 2
+fi
 IFS=$'\t' read -r archive_name executable <<< "$selected"
 
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/adocweave-darwin-archives.XXXXXX")"
@@ -73,7 +57,7 @@ if [ ! -f "$archive" ]; then
   exit 1
 fi
 
-destination="$scratch/$executable"
+destination="$scratch/archive"
 mkdir "$destination"
 unzip -q "$archive" -d "$destination"
 binary="$destination/$executable"
@@ -87,7 +71,7 @@ while IFS= read -r dependency; do
 done < <(otool -L "$binary" | tail -n +2 | awk '{print $1}')
 
 if otool -L "$binary" | tail -n +2 | awk '{print $1}' | grep -q '^/nix/store/'; then
-  echo "Darwin実行fileにNix storeの動的依存が残っています: $executable" >&2
+  echo "Darwin実行ファイルにNix storeの動的依存が残っています: $executable" >&2
   exit 1
 fi
 

@@ -1,6 +1,6 @@
 = インストールと更新
 
-この文書では、CLI、Language Server、WebAssemblyライブラリ、
+この文書では、native実行ファイル、WebAssemblyライブラリ、
 エディタ拡張およびtextlint用Processorの導入、更新、ロールバックおよび削除を説明します。
 
 [cols="2,3",options="header"]
@@ -12,7 +12,7 @@
 |xref:#nix-installation[Nixによる導入]
 
 |Nixを使わずにCLIまたはLanguage Serverを使用
-|「配布物の選択」「取得したファイルの検証」「CLIとLanguage Serverの導入」
+|「配布物の選択」「取得したファイルの検証」「native実行ファイルの導入」
 
 |Webアプリへの組込み
 |xref:#wasm-npm-installation[WebAssemblyパッケージの導入]、
@@ -36,8 +36,8 @@ GitHub Releaseから取得する場合は、導入前にチェックサムとArt
 [source,console]
 ----
 nix run github:KeishiS/adocweave -- --version --json
-nix run 'github:KeishiS/adocweave?ref=adocweave-cli/vX.Y.Z' -- convert document.adoc
-nix run github:KeishiS/adocweave#adocweave-lsp
+nix run 'github:KeishiS/adocweave?ref=vX.Y.Z' -- convert document.adoc
+nix run github:KeishiS/adocweave -- lsp
 ----
 
 利用者のprofileへ導入する場合は次のコマンドを使用します。
@@ -52,7 +52,7 @@ nix profile remove AdocWeave
 
 継続して使用する場合は、flake inputを利用側の``flake.lock``へ固定し、
 ``adocweave.packages.${system}.default``を使用します。
-このパッケージには``adocweave``と``adocweave-lsp``が含まれます。
+このパッケージには``adocweave``が含まれます。Language Serverは``adocweave lsp``で起動します。
 
 Linuxでは、リリースタグを指定すると``https://keishis.cachix.org``からビルド済みパッケージを取得できます。
 
@@ -70,6 +70,8 @@ NixOS以外では、同じ値をシステムの``nix.conf``へ記載します。
 
 == 配布物の選択
 
+すべての配布物は同じバージョンを使用し、一つの``vX.Y.Z``タグとGitHub Releaseから取得します。
+
 [cols="2,2,2,2",options="header"]
 |===
 |用途
@@ -77,15 +79,10 @@ NixOS以外では、同じ値をシステムの``nix.conf``へ記載します。
 |macOS
 |Windows
 
-|CLI
-|``adocweave-cli-<target>.zip``
-|``adocweave-cli-<target>.zip``
-|``adocweave-cli-x86_64-pc-windows-msvc.zip``
-
-|Language Server
-|``adocweave-lsp-<target>.zip``
-|``adocweave-lsp-<target>.zip``
-|``adocweave-lsp-x86_64-pc-windows-msvc.zip``
+|CLIとLanguage Server
+|``adocweave-<target>.zip``
+|``adocweave-<target>.zip``
+|``adocweave-x86_64-pc-windows-msvc.zip``
 
 |WebAssemblyライブラリ
 3+|``adocweave-wasm-<version>.tgz``
@@ -117,22 +114,19 @@ quarantine属性を削除してください。親ディレクトリへ再帰的�
 [source,console]
 ----
 xattr -d com.apple.quarantine "$ROOT/bin/adocweave"
-xattr -d com.apple.quarantine "$ROOT/bin/adocweave-lsp"
 ----
 
 == 取得したファイルの検証
 
-製品、バージョンおよび配布ファイルを決め、
-その製品のReleaseにある``sha256.sum``と一緒に空のディレクトリへダウンロードします。
-次の例では``PRODUCT``、``VERSION``および``ASSET``を置き換えてください。
+バージョンと配布ファイルを決め、そのバージョンのReleaseにある``sha256.sum``と一緒に
+空のディレクトリへダウンロードします。次の例では``VERSION``と``ASSET``を置き換えてください。
 
 [source,console]
 ----
 VERSION=X.Y.Z
-PRODUCT=adocweave-cli
-ASSET=adocweave-cli-x86_64-unknown-linux-musl.zip
+ASSET=adocweave-x86_64-unknown-linux-musl.zip
 mkdir "adocweave-$VERSION"
-gh release download "$PRODUCT/v$VERSION" \
+gh release download "v$VERSION" \
   --repo KeishiS/adocweave \
   --pattern "$ASSET" \
   --pattern sha256.sum \
@@ -153,7 +147,7 @@ gh attestation verify sha256.sum --repo KeishiS/adocweave
 
 Release画面から手動で保存した場合は、配布ファイルを正常に展開できることも確認してください。
 
-== CLIとLanguage Serverの導入
+== native実行ファイルの導入
 
 === LinuxとmacOS
 
@@ -167,15 +161,12 @@ PREFIX="$HOME/.local"
 ROOT="$PREFIX/lib/adocweave/$VERSION"
 
 mkdir -p "$ROOT/bin" "$PREFIX/bin"
-mkdir "cli-$VERSION" "lsp-$VERSION"
-unzip "adocweave-cli-$TARGET.zip" -d "cli-$VERSION"
-unzip "adocweave-lsp-$TARGET.zip" -d "lsp-$VERSION"
-install -m 0755 "cli-$VERSION/adocweave" "$ROOT/bin/adocweave"
-install -m 0755 "lsp-$VERSION/adocweave-lsp" "$ROOT/bin/adocweave-lsp"
+mkdir "native-$VERSION"
+unzip "adocweave-$TARGET.zip" -d "native-$VERSION"
+install -m 0755 "native-$VERSION/adocweave" "$ROOT/bin/adocweave"
 
 ln -sfn "$ROOT" "$PREFIX/lib/adocweave/current"
 ln -sfn "$PREFIX/lib/adocweave/current/bin/adocweave" "$PREFIX/bin/adocweave"
-ln -sfn "$PREFIX/lib/adocweave/current/bin/adocweave-lsp" "$PREFIX/bin/adocweave-lsp"
 ----
 
 ``$HOME/.local/bin``が``PATH``に含まれていない場合は、シェルの起動ファイルへ追加します。導入後は次を確認します。
@@ -183,9 +174,8 @@ ln -sfn "$PREFIX/lib/adocweave/current/bin/adocweave-lsp" "$PREFIX/bin/adocweave
 [source,console]
 ----
 command -v adocweave
-command -v adocweave-lsp
 adocweave --version --json
-adocweave-lsp --version --json
+adocweave lsp --help
 ----
 
 補完用ファイルは xref:command-line.adoc[コマンドライン]の``adocweave completion``で生成できます。
@@ -197,7 +187,7 @@ adocweave-lsp --version --json
 === Windows
 
 検証済みZIPをバージョン別のディレクトリへ展開し、
-CLIとLanguage Serverのディレクトリを利用者の``PATH``へ追加します。
+実行ファイルのディレクトリを利用者の``PATH``へ追加します。
 
 [source,powershell]
 ----
@@ -205,19 +195,17 @@ $Version = "X.Y.Z"
 $Target = "x86_64-pc-windows-msvc"
 $Root = Join-Path $env:LOCALAPPDATA "AdocWeave\$Version"
 New-Item -ItemType Directory -Force $Root | Out-Null
-Expand-Archive "adocweave-cli-$Target.zip" (Join-Path $Root "cli")
-Expand-Archive "adocweave-lsp-$Target.zip" (Join-Path $Root "lsp")
-& (Join-Path $Root "cli\adocweave.exe") --version --json
-& (Join-Path $Root "lsp\adocweave-lsp.exe") --version --json
+Expand-Archive "adocweave-$Target.zip" $Root
+& (Join-Path $Root "adocweave.exe") --version --json
+& (Join-Path $Root "adocweave.exe") lsp --help
 
 $ManagedRoot = [Regex]::Escape((Join-Path $env:LOCALAPPDATA "AdocWeave\"))
 $Previous = [Environment]::GetEnvironmentVariable("Path", "User") -split ";" |
-  Where-Object { $_ -and $_ -notmatch "^$ManagedRoot.*\\(cli|lsp)$" }
-$Next = @((Join-Path $Root "cli"), (Join-Path $Root "lsp")) + $Previous
+  Where-Object { $_ -and $_ -notmatch "^$ManagedRoot" }
+$Next = @($Root) + $Previous
 [Environment]::SetEnvironmentVariable("Path", ($Next -join ";"), "User")
 $env:Path = $Next -join ";"
 Get-Command adocweave.exe
-Get-Command adocweave-lsp.exe
 ----
 
 更新時は別のバージョン別ディレクトリへ展開し、動作確認後に``PATH``を切り替えます。
@@ -229,9 +217,9 @@ Get-Command adocweave-lsp.exe
 LinuxとmacOSでは``current``、Windowsでは``PATH``を切り替えた後に``--version --json``を確認してください。
 ロールバックの確認が終わるまで、以前のディレクトリは削除しません。
 
-CLI、Language Server、WebAssembly、Zed拡張、VS Code拡張およびtextlint用Processorは、
-それぞれ独立したバージョンを持ちます。
-エディタ拡張とLanguage Serverのバージョンを一致させる必要はありません。
+native実行ファイル、WebAssembly、Zed拡張、VS Code拡張およびtextlint用Processorは、
+一つの``vX.Y.Z``タグとGitHub Releaseで公開し、同じバージョンを使用します。
+エディタ拡張は起動時に実行ファイルのバージョンを比較せず、LSPの初期化で利用できる機能を判断します。
 
 [#textlint-plugin-installation]
 == textlint用Processorの導入
@@ -345,8 +333,9 @@ HTML結果をDOMへ挿入する場合は、利用側で内容を検証し、表�
 VS Code拡張とZed拡張は、必要なLanguage Serverを自動取得します。VS Code拡張は取得時にチェックサムを
 確認しますが、Zed拡張は確認しません。Artifact Attestationはどちらも確認しません。
 
-自分で検証した版や特定の版を使用する場合は、この文書の手順で``adocweave-lsp``を導入し、エディタの設定へ
-絶対パスを指定してください。``PATH``上にある実行ファイルも自動取得より優先されます。
+自分で検証した版や特定の版を使用する場合は、この文書の手順で``adocweave``を導入し、エディタの設定へ
+その実行ファイルの絶対パスを指定してください。``PATH``上にある``adocweave``も自動取得より優先されます。
+どの経路で選んだ場合も、拡張は``adocweave lsp``として起動します。
 
 [#zed-installation]
 === Zedへの導入
@@ -398,7 +387,7 @@ LinuxとmacOSでは、導入したバージョンとAdocWeaveが管理するシ�
 ----
 VERSION=X.Y.Z
 PREFIX="$HOME/.local"
-rm "$PREFIX/bin/adocweave" "$PREFIX/bin/adocweave-lsp"
+rm "$PREFIX/bin/adocweave"
 rm "$PREFIX/lib/adocweave/current"
 rm -rf "$PREFIX/lib/adocweave/$VERSION"
 rmdir --ignore-fail-on-non-empty "$PREFIX/lib/adocweave"
@@ -407,13 +396,13 @@ rmdir --ignore-fail-on-non-empty "$PREFIX/lib/adocweave"
 ``$PREFIX/bin``やエディタの保存領域全体を再帰的に削除しないでください。別のバージョンを残す場合は、先に
 ``current``をそのバージョンへ切り替えます。
 
-Windowsでは利用者の``PATH``からAdocWeaveの2件だけを除き、対象バージョンのディレクトリを削除します。
+Windowsでは利用者の``PATH``からAdocWeaveのディレクトリだけを除き、対象バージョンのディレクトリを削除します。
 
 [source,powershell]
 ----
 $ManagedRoot = [Regex]::Escape((Join-Path $env:LOCALAPPDATA "AdocWeave\"))
 $Next = [Environment]::GetEnvironmentVariable("Path", "User") -split ";" |
-  Where-Object { $_ -and $_ -notmatch "^$ManagedRoot.*\\(cli|lsp)$" }
+  Where-Object { $_ -and $_ -notmatch "^$ManagedRoot" }
 [Environment]::SetEnvironmentVariable("Path", ($Next -join ";"), "User")
 Remove-Item -Recurse (Join-Path $env:LOCALAPPDATA "AdocWeave\$Version")
 ----

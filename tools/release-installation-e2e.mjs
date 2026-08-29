@@ -11,16 +11,13 @@ import {
   installationLayout,
   isPathInside,
   missingInstallationAssets,
-  requiredProductInstallationAssets,
+  nativeArtifactFromPlan,
+  requiredInstallationAssets,
+  targetPlatform,
   validateArchiveEntries,
   vscodePackageContract,
 } from "./platform-contract.mjs";
-import {
-  loadDistributionPlan,
-  productIdentity,
-  selectProduct,
-  validateDistributionManifest,
-} from "./product-release.mjs";
+import { workspaceVersion } from "./release-version.mjs";
 
 const runtime = createRuntimeAdapters({
   fileSystem: nodeFileSystem,
@@ -52,45 +49,41 @@ const {
 const { execFileSync } = runtime.processControl;
 const { basename, delimiter, dirname, join, resolve } = runtime.pathApi;
 
-const [product, candidateArgument, target, manifestArgument] = process.argv.slice(2);
-if (!product || !candidateArgument || !target) {
+const [kind, candidateArgument, target, planArgument] = process.argv.slice(2);
+if (!kind || !candidateArgument || !target) {
   process.stderr.write(
-    "usage: node tools/release-installation-e2e.mjs PRODUCT CANDIDATE_DIRECTORY TARGET [MANIFEST]\n",
+    "usage: node tools/release-installation-e2e.mjs KIND CANDIDATE_DIRECTORY TARGET [DIST_PLAN]\n",
   );
   process.exit(2);
 }
 
-const installationProducts = new Set(["cli", "lsp", "wasm", "vscode", "zed"]);
-if (!installationProducts.has(product)) {
-  throw new Error(`unsupported installation E2E product: ${product}`);
+const installationKinds = new Set(["native", "wasm", "vscode", "zed"]);
+if (!installationKinds.has(kind)) {
+  throw new Error(`unsupported installation E2E kind: ${kind}`);
 }
-const distributionPlan = loadDistributionPlan();
-selectProduct(distributionPlan, product);
-const platform = distributionPlan.targets.find(({ triple }) => triple === target);
-if (!platform) throw new Error(`unsupported installation target: ${target}`);
+const platform = targetPlatform(target);
 if (runtime.platform.os !== platform.os || runtime.platform.architecture !== platform.architecture) {
   throw new Error(`installation host ${runtime.platform.architecture} does not match ${target}`);
 }
 
 const candidate = realpathSync(resolve(candidateArgument));
-const manifestPath = manifestArgument
-  ? resolve(manifestArgument)
-  : join(candidate, "adocweave-dist-manifest.json");
-if (manifestArgument && !existsSync(manifestPath)) {
-  throw new Error(`distribution manifest does not exist: ${manifestPath}`);
-}
-const identity = productIdentity(product, { plan: distributionPlan });
-const manifest = existsSync(manifestPath)
-  ? JSON.parse(readFileSync(manifestPath, "utf8"))
-  : undefined;
-if (manifest) {
-  validateDistributionManifest(manifest, distributionPlan);
-  if (manifest.product !== product || manifest.productVersion !== identity.version) {
-    throw new Error(`distribution manifest does not describe ${product}`);
+const version = workspaceVersion();
+let nativeArtifact;
+let nativeExecutable;
+if (kind === "native") {
+  const planSource = planArgument
+    ? readFileSync(resolve(planArgument), "utf8")
+    : runtime.platform.environment.DIST_PLAN;
+  if (!planSource) {
+    throw new Error("DIST_PLAN or a dist plan file is required for native installation E2E");
+  }
+  const plan = JSON.parse(planSource);
+  ({ artifact: nativeArtifact, executable: nativeExecutable } = nativeArtifactFromPlan(plan, target));
+  if (plan.releases[0].app_version !== version) {
+    throw new Error("dist plan version does not match the workspace version");
   }
 }
-const version = manifest?.productVersion ?? identity.version;
-const requiredAssets = requiredProductInstallationAssets(product, target, version, platform.archive);
+const requiredAssets = requiredInstallationAssets(kind, target, version);
 const missingAssets = missingInstallationAssets(
   readdirSync(candidate, { withFileTypes: true })
     .filter((entry) => entry.isFile())
@@ -221,11 +214,10 @@ function activateNative(root, label, executables) {
   renameSync(markerStaging, activeMarker);
 }
 
-function installNative(packageName, executable) {
-  const archiveRoot = `${packageName}-${target}`;
+function installNative(artifact, executable) {
   const extracted = extract(
-    archive(`${archiveRoot}.${platform.archive}`),
-    join(scratch, "extract", packageName),
+    archive(artifact.name),
+    join(scratch, "extract", "native"),
     null,
     platform.archive,
   );
@@ -342,15 +334,12 @@ try {
   mkdirSync(home);
   const before = files(home).map((path) => path.slice(home.length + 1));
 
-  const native = product === "cli" || product === "lsp";
-  const executable = product === "cli"
-    ? `adocweave${platform.executableSuffix}`
-    : product === "lsp" ? `adocweave-lsp${platform.executableSuffix}` : null;
-  if (native) installNative(`adocweave-${product}`, executable);
-  else if (product === "wasm") installWasm();
-  else if (product === "zed") installZed();
-  else if (product === "vscode") installVSCode();
-  const executables = native ? [executable] : [];
+  const native = kind === "native";
+  if (native) installNative(nativeArtifact, nativeExecutable);
+  else if (kind === "wasm") installWasm();
+  else if (kind === "zed") installZed();
+  else if (kind === "vscode") installVSCode();
+  const executables = native ? [nativeExecutable] : [];
   if (native) {
     cpSync(versionRoot, previousRoot, { recursive: true });
     activateNative(versionRoot, version, executables);
@@ -379,15 +368,15 @@ try {
       throw new Error("failed native update changed the active version");
     }
   }
-  if (product === "wasm") {
+  if (kind === "wasm") {
     if (!existsSync(join(wasmRoot, "worker", "index.mjs"))) throw new Error("public entry point is missing");
     if (!existsSync(join(wasmRoot, "wasm", "adocweave_wasm_bg.wasm"))) throw new Error("WASM is missing");
     await verifyWasmContract();
   }
-  if (product === "zed") {
+  if (kind === "zed") {
     if (!existsSync(join(zedRoot, "extension.toml"))) throw new Error("Zed extension manifest is missing");
   }
-  if (product === "vscode") {
+  if (kind === "vscode") {
     const vscodeManifest = JSON.parse(readFileSync(join(vscodeRoot, "package.json"), "utf8"));
     if (!vscodePackageContract(vscodeManifest, version)) {
       throw new Error("VS Code extension manifest mismatch");
@@ -401,7 +390,7 @@ try {
     rmSync(versionRoot, { recursive: true });
     rmSync(previousRoot, { recursive: true });
   }
-  if (["wasm", "zed", "vscode"].includes(product)) {
+  if (["wasm", "zed", "vscode"].includes(kind)) {
     rmSync(join(prefix, "share", "adocweave", version), { recursive: true });
   }
   for (const directory of [
@@ -419,7 +408,7 @@ try {
   if (JSON.stringify(after) !== JSON.stringify(before)) {
     throw new Error(`managed files remain after uninstall: ${after.join(", ")}`);
   }
-  process.stdout.write(`release installation E2E passed: ${product} ${version} ${target}\n`);
+  process.stdout.write(`release installation E2E passed: ${kind} ${version} ${target}\n`);
 } finally {
   rmSync(scratch, TEMPORARY_DIRECTORY_REMOVAL_OPTIONS);
 }

@@ -1,5 +1,5 @@
 = ADR 0027: 配布製品ごとのバージョンと公開単位
-:status: accepted; to be superseded by ADR 0040
+:status: superseded by ADR 0040
 
 == 文脈
 

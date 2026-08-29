@@ -203,10 +203,9 @@ Nix入力はDependabotの対象外であり、``flake.lock``を手動で更新�
 * 新しい文書を追加する前に、既存の文書へ統合できないか確認します。
 * 利用者向けの手順は代表的な経路だけを書きます。成果物ごとの網羅した手順を並べず、詳細はCLIのhelpと
   Release Notesへ委ねます。
-* バージョン固有の変更内容と移行手順は、原則としてGitHub Release Notesへ記載します。その本文は
-  ``release/notes.md``に書き、版を上げるときに書き直します。Release本文がMarkdownであるため、このfileだけは
-  ``.adoc``ではなく``.md``です。VS Code拡張の``editors/vscode/README.md``も、拡張registryとeditorの拡張画面が
-  Markdownだけを表示するため``.md``です。
+* バージョン固有の変更内容と移行手順は、rootの``CHANGELOG.md``へ記載します。cargo-distは対象版の項目を
+  GitHub Release Notesへ取り込みます。VS Code拡張の``editors/vscode/README.md``も、拡張registryとeditorの
+  拡張画面がMarkdownだけを表示するため``.md``です。
 * CLI option、診断code、パッケージバージョン、対応target、公開APIおよびschemaなど、codeやJSON形式の
   manifestから取得できる情報を文書へ重複して記載しません。
 * 現行仕様、設計理由および作業計画を同じ文書に混在させません。現行仕様は``docs/``、設計理由はADR、
@@ -255,65 +254,54 @@ required status checkを``verify``一件へ置き換えます。
 [#tag]
 == Tag
 
-安定版には``adocweave-<product>/vX.Y.Z``形式のtagを使用します。人がtagを直接作成またはpushしてはいけません。
-``main``を指定して開始した公開workflowが検査とcandidate構築を完了した後、同じrunがtagを作成します。
-公開済みtagの更新と削除は行いません。tagの作成条件と公開失敗時の扱いは
+安定版には``vX.Y.Z``形式のtagを使用します。リリース用Pull Requestを``main``へ統合し、そのcommitに対する
+release gateが成功した後にtagを作成して``upstream``へpushします。tagのpushを契機にcargo-distが成果物を構築し、
+GitHub Releaseを作成します。公開済みtagの更新と削除は行いません。tagの作成条件と公開失敗時の扱いは
 xref:docs/developer-guide/release-distribution.adoc[GitHub Releases配布仕様]を基準とします。
 
 == Release
 
 release作業も通常の変更と同様に、短命なブランチとpull requestから開始します。
 
-. 公開する製品を選び、変更の互換性および利用者への影響に応じたSemantic Versioningのバージョンを決めます。
-  続いて、その製品について登録済みのversion記録を同期します。``PRODUCT``には
-  link:release/version-sync.json[バージョン同期対象]に登録した製品IDを指定します。
+. リポジトリ全体の変更について、互換性および利用者への影響に応じたSemantic Versioningのバージョンを決めます。
+  続いて、workspace版と登録済みのmanifestを一括更新します。
 +
 [source,console]
 ----
-node tools/sync-release-version.mjs --product PRODUCT --version X.Y.Z
+node tools/sync-release-version.mjs --version X.Y.Z
 ----
 +
-このtoolはバージョン同期対象に明示したmanifest、lockfile、公開仕様のfixtureおよび生成物だけを
+このtoolはlink:release/version-sync.json[バージョン同期対象]に明示したmanifestとlockfileだけを
 更新します。更新前に部分的なバージョン変更を検出した場合は、ファイルを書き換えず停止します。
-各製品内のversion記録が正本と一致することは``cargo make verify``内のrelease contractが別に照合します。
-. 差分を確認し、link:release/notes.template.md[Release Notesの雛形]を``release/notes.md``へ複製します。
-  題名の``PRODUCT``と``X.Y.Z``を置き換え、各節へ現在の変更内容を書きます。必要な仕様文書とテスト用入力も
-  更新してから、Release Notesと、選択した製品内のversion記録を検査します。
+. ``CHANGELOG.md``の先頭へ対象版の項目を追加します。利用者から見える変更、移行手順およびRustの公開APIに
+  互換性のない変更がある場合は、その内容を記載します。必要な仕様文書とテスト用入力も更新してから、
+  全manifestのversionがworkspace版と一致することを検査します。
 +
 [source,console]
 ----
-node tools/release-notes.mjs --check PRODUCT
-node tools/sync-release-version.mjs --product PRODUCT --check
+node tools/sync-release-version.mjs --check
 ----
 . ``cargo make release-check``を実行し、pull requestの必須checkが成功したことを確認して``main``へ統合します。
-. release対象のPull Requestをすべて統合し、公開対象が``main``の先端であることを確認して、次のように公開workflowを実行します。
+. release対象のPull Requestをすべて統合し、公開対象が``main``の先端であることと、そのcommitに対するrelease gateの
+  成功を確認します。対象commitへannotated tagを作成し、``upstream``へpushします。
 +
 [source,console]
 ----
-gh workflow run release.yml \
-  --ref main \
-  -f product=PRODUCT
+git tag -a vX.Y.Z -m "AdocWeave vX.Y.Z"
+git push upstream vX.Y.Z
 ----
-. workflowの検査と選択製品のcandidate構築が成功したら、``github-release`` Environmentで公開を承認します。
+. cargo-distのworkflowが、4つのnative成果物と追加成果物を構築して検査し、一つのGitHub Releaseへ添付します。
 . 公開workflowの検証が成功し、予定されたassetを含むstableなGitHub Releaseが作成されたことを確認します。
   必要に応じて、xref:#release-checklist[Release checklist]の任意の受入確認を行います。
 
-Release Notesの題名、見出しおよび順序は``release/notes.template.md``を正本とします。製品と版の
-placeholderを置き換え、各節の本文を``release/notes.md``に人が書きます。選択した製品のversionと
-互換性判断に使うAPI世代は
-``tools/release-notes.mjs``が製品情報を記録したファイルから生成し、``対応関係``の節にだけ追記します。
-``cargo make verify``に含まれるrelease contractが、題名から判定した製品、製品version、見出し、順序および
-未記入の案内文が残っていないことを検査します。公開workflowも同じtoolでGitHub Releaseの本文を生成します。
-
 CLI引数、Language Server protocol、設定schemaなど、外部から利用する仕様を変更した場合は、変更内容と影響を
-``主な変更``へ記載します。ほかの製品や外部APIとの併用条件が変わる場合は``対応関係``へ、利用者の作業が
-必要な場合はその版への移行を説明する節へ記載します。
+``CHANGELOG.md``へ記載します。利用者の作業が必要な場合は``Migration``、Rustの公開APIに互換性のない変更が
+ある場合は``Rust API``へ記載します。
 前の版と比較していない仕様を「変更していません」と機械生成しません。
 
-雛形の``PRODUCT``と``X.Y.Z``は公開する製品と版へ置き換えます。「記載してから公開」を含む案内文は、
-書き終えたら削除します。残っている場合は``release-contract``が未記入として拒否します。
-``tools/sync-release-version.mjs``は``release/version-sync.json``に登録したfileだけを変更し、
-``release/notes.md``の題名、見出しおよび本文は変更しません。
+``tools/sync-release-version.mjs``は``release/version-sync.json``に登録したfileだけを変更します。
+``CHANGELOG.md``の本文と日付は人が確認します。cargo-distは対象版の項目をGitHub Release Notesへ直接取り込むため、
+別のRelease Notes生成器は使用しません。
 
 公開処理の権限、同一runでのcandidate検証およびReleaseの状態遷移は
 xref:docs/developer-guide/release-distribution.adoc[GitHub Releases配布仕様]を基準とします。
@@ -336,7 +324,7 @@ npmのTrusted Publisherはpackage単位の設定で、packageが実在しない�
 
 [source,console]
 ----
-gh release download adocweave-PRODUCT/vX.Y.Z --pattern '*.tgz' --pattern 'sha256.sum'
+gh release download vX.Y.Z --pattern '*.tgz' --pattern 'sha256.sum'
 sha256sum --check --strict sha256.sum
 npm publish PACKAGE-X.Y.Z.tgz
 ----
@@ -349,7 +337,8 @@ npmへの公開は、GitHub Releaseを公開したあとに次を実行します
 
 [source,console]
 ----
-gh workflow run npm-publish.yml -f tag=adocweave-PRODUCT/vX.Y.Z -f product=PRODUCT
+gh workflow run npm-publish.yml -f tag=vX.Y.Z -f package=wasm
+gh workflow run npm-publish.yml -f tag=vX.Y.Z -f package=textlint
 ----
 
 再利用workflowとして呼び出すと、npmは実際に``npm publish``を実行するworkflowではなく、呼び出し元の
@@ -357,7 +346,7 @@ workflow file名で公開元を照合します。Trusted Publisherはpackageご�
 ``release.yml``を登録すると、送信だけが失敗したときにRelease全体を再実行しなければ回復できません。
 ``npm-publish.yml``を登録して単独で実行すれば、通常の公開と復旧が同じ操作になります。
 
-npmへの送信だけが失敗した場合は、同じtagと製品を指定して``npm-publish.yml``を実行します。公開済みversionの
+npmへの送信だけが失敗した場合は、同じtagとpackageを指定して``npm-publish.yml``を実行します。公開済みversionの
 上書きはnpmが拒否するため、再実行しても公開済みの版は変わりません。公開後に問題が見つかった場合は
 ``npm deprecate``で警告を表示し、修正は新しいversionで行います。``unpublish``は安全上必要な場合に限ります。
 一度``unpublish``したversion番号は再利用できません。
@@ -377,9 +366,8 @@ clean環境で、公開assetだけを使って実行します。
 
 === 公開前
 
-* [ ] ``github-release`` Environmentにrequired reviewerがあり、``main``だけを許可しています。workflowはこの外部設定を
-      検査しないため、dispatch前にGitHubの設定画面で確認します。
-* [ ] 公開する変更をすべて統合し、``main``の先端と公開する製品を確認してworkflowを開始しています。
+* [ ] 公開する変更をすべて統合し、対象commitの``main``向けrelease gateが成功しています。
+* [ ] workspace版、``CHANGELOG.md``の対象項目および作成する``vX.Y.Z``tagが一致しています。
 
 === 公開後（任意）
 
@@ -392,9 +380,9 @@ clean環境で、公開assetだけを使って実行します。
       取消し後の再解析を確認する。
 * [ ] textlint用Processor: 新しいプロジェクトへ導入し、``.adoc``の検査と``textlint --fix``で入力が変化しないことを
       確認する。
-* [ ] CLIとLSP: clean ``PATH``へ導入し、バージョンの選択、更新、rollbackおよび完全削除を確認する。
-* [ ] Nix: 利用側flakeへtagのコミットを固定し、CLIとLSPの``nix run``を確認する。
+* [ ] native実行ファイル: clean ``PATH``へ導入し、CLI操作と``adocweave lsp``、更新、rollbackおよび完全削除を確認する。
+* [ ] Nix: 利用側flakeへtagのコミットを固定し、通常のCLI操作と``adocweave lsp``の``nix run``を確認する。
 
-公開assetの完全性は自動で確認します。asset集合と非0 byte、checksum、attestation、``--version --json``、
+公開assetの完全性は自動で確認します。asset集合と0バイトではないこと、checksum、attestation、``--version --json``、
 binary cacheへの登録、Open VSXへ公開したfileがGitHub Release assetと同一であることは、公開workflowと
 公開後の検証で機械的に判定できるため、この一覧には含めません。

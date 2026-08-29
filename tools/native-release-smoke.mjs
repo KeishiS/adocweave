@@ -10,6 +10,7 @@ import {
   macosMinimumVersion,
   unexpectedMacosDependencies,
   importedWindowsDlls,
+  nativeArtifactFromPlan,
   unexpectedWindowsDlls,
   validateArchiveEntries,
 } from "./platform-contract.mjs";
@@ -19,12 +20,7 @@ import {
   removeNativeSmokeDirectory,
   smokeLsp,
 } from "./native-lsp-smoke.mjs";
-import {
-  loadDistributionPlan,
-  productIdentity,
-  selectProduct,
-  validateDistributionManifest,
-} from "./product-release.mjs";
+import { workspaceVersion } from "./release-version.mjs";
 
 const runtime = createRuntimeAdapters({
   fileSystem: nodeFileSystem,
@@ -39,7 +35,6 @@ const runtime = createRuntimeAdapters({
 });
 const {
   copyFileSync,
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -51,33 +46,20 @@ const {
 const { execFileSync, spawn } = runtime.processControl;
 const { basename, join, resolve, sep } = runtime.pathApi;
 
-const [product, artifactDirectory, target] = process.argv.slice(2);
-if (!product || !artifactDirectory || !target) {
-  process.stderr.write("usage: node tools/native-release-smoke.mjs PRODUCT ARTIFACT_DIRECTORY TARGET\n");
+const [artifactDirectory, target] = process.argv.slice(2);
+if (!artifactDirectory || !target || !process.env.DIST_PLAN) {
+  process.stderr.write("usage: DIST_PLAN=JSON node tools/native-release-smoke.mjs ARTIFACT_DIRECTORY TARGET\n");
   process.exit(2);
 }
-if (product !== "cli" && product !== "lsp") throw new Error(`native smoke does not support ${product}`);
-
-const plan = loadDistributionPlan();
-selectProduct(plan, product);
-const platform = plan.targets.find(({ triple }) => triple === target);
-if (!platform) throw new Error(`unsupported smoke target: ${target}`);
+const plan = JSON.parse(process.env.DIST_PLAN);
+const { artifact, executable, platform } = nativeArtifactFromPlan(plan, target);
 if (runtime.platform.os !== platform.os || runtime.platform.architecture !== platform.architecture) {
   throw new Error(`smoke host ${runtime.platform.architecture} does not match ${target}`);
 }
-
-const manifestPath = join(resolve(artifactDirectory), "adocweave-dist-manifest.json");
-const identity = productIdentity(product, { plan });
-const manifest = existsSync(manifestPath)
-  ? JSON.parse(readFileSync(manifestPath, "utf8"))
-  : undefined;
-if (manifest) {
-  validateDistributionManifest(manifest, plan);
-  if (manifest.product !== product || manifest.productVersion !== identity.version) {
-    throw new Error(`distribution manifest does not describe ${product}`);
-  }
+const packageVersion = workspaceVersion();
+if (plan.releases[0].app_version !== packageVersion) {
+  throw new Error("dist plan version does not match the workspace version");
 }
-const productVersion = manifest?.productVersion ?? identity.version;
 const workspaceRoot = realpathSync(fileURLToPath(new URL("../", import.meta.url)));
 const scratch = mkdtempSync(join(tmpdir(), "adocweave-native-smoke-"));
 
@@ -88,26 +70,21 @@ function filesRecursively(directory) {
   });
 }
 
-function archive(name) {
-  const expected = `${name}-${target}.${platform.archive}`;
-  const matches = filesRecursively(resolve(artifactDirectory)).filter((path) => basename(path) === expected);
-  if (matches.length !== 1) throw new Error(`expected exactly one ${expected}, found ${matches.length}`);
+function archive() {
+  const matches = filesRecursively(resolve(artifactDirectory)).filter((path) => basename(path) === artifact.name);
+  if (matches.length !== 1) {
+    throw new Error(`expected exactly one ${artifact.name}, found ${matches.length}`);
+  }
   return matches[0];
 }
 
-function extract(archivePath, executable) {
+function extract(archivePath) {
   const destination = join(scratch, `extract-${executable}`);
   mkdirSync(destination);
   const entries = archiveEntries(platform.archive === "zip"
     ? execFileSync("unzip", ["-Z1", archivePath], { encoding: "utf8" })
     : execFileSync("tar", ["-tJf", archivePath], { encoding: "utf8" }));
-  const expectedEntries = [
-    "LICENSE-APACHE",
-    "LICENSE-MIT",
-    "README.adoc",
-    "THIRD_PARTY_NOTICES.adoc",
-    executable,
-  ].sort();
+  const expectedEntries = artifact.assets.map(({ path }) => path).sort();
   if (JSON.stringify(entries.sort()) !== JSON.stringify(expectedEntries)) {
     throw new Error(`${basename(archivePath)} has an unexpected archive layout:\n${entries.join("\n")}`);
   }
@@ -190,7 +167,7 @@ function run(binary, args, options = {}) {
 
 function version(binary) {
   const value = JSON.parse(run(binary, ["--version", "--json"]));
-  if (value.packageVersion !== productVersion) throw new Error(`${value.name} package version mismatch`);
+  if (value.packageVersion !== packageVersion) throw new Error(`${value.name} package version mismatch`);
 }
 
 async function smokeForcedProcessLifecycle(binary, deadline) {
@@ -198,7 +175,7 @@ async function smokeForcedProcessLifecycle(binary, deadline) {
   const replaced = `${lifecycle}.replaced`;
   copyFileSync(binary, lifecycle);
   if (platform.os !== "win32") execFileSync("chmod", ["755", lifecycle]);
-  const child = spawn(lifecycle, [], { stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(lifecycle, ["lsp"], { stdio: ["pipe", "pipe", "pipe"] });
   try {
     await deadline.run(new Promise((resolvePromise, reject) => {
       child.once("spawn", resolvePromise);
@@ -227,26 +204,20 @@ async function smokeForcedProcessLifecycle(binary, deadline) {
 let smokeDeadline;
 let operationError;
 try {
-  const executable = product === "cli"
-    ? `adocweave${platform.executableSuffix}`
-    : `adocweave-lsp${platform.executableSuffix}`;
-  const binary = extract(archive(`adocweave-${product}`), executable);
+  const binary = extract(archive());
   version(binary);
   const fixtureRoot = join(scratch, "space 日本語");
   mkdirSync(fixtureRoot);
   const fixture = join(fixtureRoot, "fixture.adoc");
   writeFileSync(fixture, "= Title\r\n\r\ntext\r\n");
-  if (product === "cli") {
-    run(binary, ["check", fixture]);
-    if (!run(binary, ["convert", fixture]).includes("<h1")) throw new Error("CLI convert produced no heading");
-    run(binary, ["format", "--check", fixture]);
-  } else {
-    smokeDeadline = createNativeSmokeDeadline();
-    await smokeLsp(binary, productVersion, smokeDeadline, {
-      documentUri: pathToFileURL(fixture).href,
-    });
-    await smokeForcedProcessLifecycle(binary, smokeDeadline);
-  }
+  run(binary, ["check", fixture]);
+  if (!run(binary, ["convert", fixture]).includes("<h1")) throw new Error("CLI convert produced no heading");
+  run(binary, ["format", "--check", fixture]);
+  smokeDeadline = createNativeSmokeDeadline();
+  await smokeLsp(binary, ["lsp"], packageVersion, smokeDeadline, {
+    documentUri: pathToFileURL(fixture).href,
+  });
+  await smokeForcedProcessLifecycle(binary, smokeDeadline);
 } catch (error) {
   operationError = error;
 } finally {
@@ -262,4 +233,4 @@ try {
   }
 }
 if (operationError) throw operationError;
-process.stdout.write(`native release smoke passed: ${product} ${target}\n`);
+process.stdout.write(`native release smoke passed: ${target}\n`);

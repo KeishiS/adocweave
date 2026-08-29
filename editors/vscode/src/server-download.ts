@@ -126,7 +126,7 @@ async function removeOtherVersions(storageDirectory: string, keep: string): Prom
     return;
   }
   for (const entry of entries) {
-    if (entry === keep || !entry.startsWith("adocweave-lsp-")) continue;
+    if (entry === keep || !entry.startsWith("adocweave-")) continue;
     await rm(join(storageDirectory, entry), { force: true, recursive: true }).catch(
       () => undefined,
     );

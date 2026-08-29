@@ -72,6 +72,7 @@ export function createNativeSmokeDeadline(
 
 export async function smokeLsp(
   binary,
+  binaryArguments,
   packageVersion,
   deadline,
   {
@@ -86,7 +87,7 @@ export async function smokeLsp(
     LSP_SMOKE_TEARDOWN_RESERVE_MS,
     deadline.timeoutMs / 2,
   );
-  const child = spawnProcess(binary, [], { stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawnProcess(binary, binaryArguments, { stdio: ["pipe", "pipe", "pipe"] });
   const lifecycle = observeLifecycle(child);
   const reader = createJsonRpcReader(child, lifecycle);
   let completed = false;

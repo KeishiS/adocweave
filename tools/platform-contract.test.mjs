@@ -5,13 +5,15 @@ import {
   TEMPORARY_DIRECTORY_REMOVAL_OPTIONS,
   archiveEntries,
   createRuntimeAdapters,
-  executableNames,
   importedWindowsDlls,
   installationLayout,
   isPathInside,
   macosMinimumVersion,
+  nativeArtifactFromPlan,
+  nativeExecutableName,
   pathImplementation,
   shouldRetryRemoval,
+  targetPlatform,
   unexpectedMacosDependencies,
   unexpectedWindowsDlls,
   validateArchiveEntries,
@@ -21,7 +23,7 @@ import {
 test("Windowsの実行ファイル名とインストール先を計算する", () => {
   const pathApi = pathImplementation("win32");
   assert.equal(pathApi, path.win32);
-  assert.deepEqual(executableNames(".exe"), ["adocweave.exe", "adocweave-lsp.exe"]);
+  assert.equal(nativeExecutableName(".exe"), "adocweave.exe");
   assert.deepEqual(installationLayout("C:\\Users\\tester\\.local", "0.16.0", pathApi), {
     binDirectory: "C:\\Users\\tester\\.local\\bin",
     versionRoot: "C:\\Users\\tester\\.local\\lib\\adocweave\\0.16.0",
@@ -36,11 +38,43 @@ test("Windowsの実行ファイル名とインストール先を計算する", (
 test("macOSの実行ファイル名とインストール先を計算する", () => {
   const pathApi = pathImplementation("darwin");
   assert.equal(pathApi, path.posix);
-  assert.deepEqual(executableNames(""), ["adocweave", "adocweave-lsp"]);
+  assert.equal(nativeExecutableName(""), "adocweave");
   assert.equal(
     installationLayout("/Users/tester/.local", "0.16.0", pathApi).versionRoot,
     "/Users/tester/.local/lib/adocweave/0.16.0",
   );
+});
+
+test("cargo-dist planから単一native成果物を取得する", () => {
+  const target = "x86_64-pc-windows-msvc";
+  const name = `adocweave-${target}.zip`;
+  const plan = {
+    releases: [{ app_name: "adocweave", app_version: "0.51.0" }],
+    artifacts: {
+      [name]: {
+        name,
+        kind: "executable-zip",
+        target_triples: [target],
+        assets: [{ name: "adocweave", path: "adocweave.exe", kind: "executable" }],
+      },
+    },
+  };
+  const resolved = nativeArtifactFromPlan(plan, target);
+  assert.equal(resolved.artifact.name, name);
+  assert.equal(resolved.executable, "adocweave.exe");
+  assert.deepEqual(targetPlatform(target), {
+    architecture: "x64",
+    archive: "zip",
+    executableSuffix: ".exe",
+    minimumOsVersion: "10.0.17763",
+    os: "win32",
+    target,
+  });
+  assert.throws(
+    () => nativeArtifactFromPlan({ ...plan, releases: [{ app_name: "other" }] }, target),
+    /exactly one adocweave release/,
+  );
+  assert.throws(() => nativeArtifactFromPlan(plan, "x86_64-apple-darwin"), /exactly one native archive/);
 });
 
 test("WindowsとPOSIXのpath境界をそれぞれ判定する", () => {

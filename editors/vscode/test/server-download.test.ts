@@ -18,14 +18,14 @@ import { zipSync } from "fflate";
 import { downloadServer, type DownloadDependencies } from "../src/server-download.js";
 
 const target = "x86_64-unknown-linux-musl";
-const archiveName = `adocweave-lsp-${target}.zip`;
+const archiveName = `adocweave-${target}.zip`;
 const releasesUrl = "https://api.github.com/repos/KeishiS/adocweave/releases?per_page=100";
 const archiveUrl = `https://example.test/${archiveName}`;
 const sumsUrl = "https://example.test/sha256.sum";
 
 const releases = JSON.stringify([
   {
-    tag_name: "adocweave-lsp/v0.47.0",
+    tag_name: "v0.47.0",
     draft: false,
     prerelease: false,
     assets: [
@@ -35,7 +35,7 @@ const releases = JSON.stringify([
   },
 ]);
 
-function archive(entries: Record<string, string> = { "adocweave-lsp": "#!/bin/sh\n" }): Uint8Array {
+function archive(entries: Record<string, string> = { adocweave: "#!/bin/sh\n" }): Uint8Array {
   const encoder = new TextEncoder();
   return zipSync(
     Object.fromEntries(Object.entries(entries).map(([name, body]) => [name, encoder.encode(body)])),
@@ -77,7 +77,7 @@ test("checksumを照合してから展開し、実行できる状態にします
     const bytes = archive();
     const executable = await downloadServer(storage, dependencies(bytes, sums(bytes)));
 
-    assert.equal(executable, join(storage, `adocweave-lsp-0.47.0-${target}`, "adocweave-lsp"));
+    assert.equal(executable, join(storage, `adocweave-0.47.0-${target}`, "adocweave"));
     assert.equal(readFileSync(executable, "utf8"), "#!/bin/sh\n");
     // 展開したままでは起動できないため、実行権限を与える。
     assert.equal(statSync(executable).mode & 0o111, 0o111);
@@ -104,7 +104,7 @@ test("sha256.sumに対象archiveの行がない場合は失敗します", async 
 
     await assert.rejects(
       downloadServer(storage, dependencies(bytes, sums(bytes, "other.zip"))),
-      /checksum-entry-missing: adocweave-lsp-x86_64-unknown-linux-musl\.zip/,
+      /checksum-entry-missing: adocweave-x86_64-unknown-linux-musl\.zip/,
     );
     assert.deepEqual(readdirSync(storage), []);
   });
@@ -131,17 +131,17 @@ test("取得済みの版を再取得しません", async () => {
 
 test("取得した版だけを残し、利用者のfileへ触れません", async () => {
   await withStorage(async (storage) => {
-    const stale = join(storage, `adocweave-lsp-0.46.2-${target}`);
+    const stale = join(storage, `adocweave-0.46.2-${target}`);
     const unrelated = join(storage, "notes.txt");
     mkdirSync(stale, { recursive: true });
-    writeFileSync(join(stale, "adocweave-lsp"), "old\n");
+    writeFileSync(join(stale, "adocweave"), "old\n");
     writeFileSync(unrelated, "keep\n");
     const bytes = archive();
 
     await downloadServer(storage, dependencies(bytes, sums(bytes)));
 
     // 更新のたびに保存領域が増え続けないよう、以前の版を消す。
-    assert.deepEqual(readdirSync(storage).sort(), [`adocweave-lsp-0.47.0-${target}`, "notes.txt"]);
+    assert.deepEqual(readdirSync(storage).sort(), [`adocweave-0.47.0-${target}`, "notes.txt"]);
   });
 });
 

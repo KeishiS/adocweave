@@ -85,7 +85,7 @@ args = ["--test", "web-worker/protocol-wasm.test.mjs"]
 
 [tasks.release-contract]
 private = true
-description = "Verify release train versions, targets, tags, and distribution manifest schema"
+description = "Verify the unified version, release tag, artifacts, and Cargo metadata"
 dependencies = [
   "release-version-check",
   "release-workflow-policy",
@@ -94,20 +94,17 @@ script_runner = "@shell"
 script = '''
 node --test \
   tools/generate-third-party-notices.test.mjs \
-  tools/release-metadata.test.mjs \
-  tools/release-notes.test.mjs \
+  tools/release-contract.test.mjs \
   tools/verify-vscode-dependencies.test.mjs
-node tools/release-notes.mjs --check
-args=""
 metadata="$(mktemp "${TMPDIR:-/tmp}/adocweave-release-metadata.XXXXXX.json")"
 zed_metadata="$(mktemp "${TMPDIR:-/tmp}/adocweave-zed-release-metadata.XXXXXX.json")"
 notice="$(mktemp "${TMPDIR:-/tmp}/adocweave-third-party-notices.XXXXXX.adoc")"
 trap 'rm -f "$metadata" "$zed_metadata" "$notice"' EXIT
 if [ -n "${RELEASE_TAG:-}" ]; then
-  args="--tag=$RELEASE_TAG"
+  node tools/release-contract.mjs "--tag=$RELEASE_TAG"
+else
+  node tools/release-contract.mjs
 fi
-node tools/release-contract.mjs $args
-node tools/release-contract.test.mjs
 cargo metadata --locked --format-version=1 > "$metadata"
 cargo metadata --manifest-path editors/zed/Cargo.toml --locked --format-version=1 > "$zed_metadata"
 node tools/verify-cargo-release-metadata.mjs "$metadata" "$zed_metadata"
@@ -131,15 +128,13 @@ args = ["tools/security-audit.sh"]
 
 [tasks.release-workflow-policy]
 private = true
-description = "Verify action pins, permissions, secret access, and product release routing"
+description = "Verify release workflow pins, permissions, gates, and publication isolation"
 script_runner = "@shell"
 script = '''
 node tools/release-workflow-policy.mjs
 node --test \
   tools/wasm-release-budget.test.mjs \
   tools/normalize-darwin-archives.test.mjs \
-  tools/product-candidate-plan.test.mjs \
-  tools/product-release.test.mjs \
   tools/release-workflow-policy.test.mjs \
   tools/security-audit.test.mjs
 '''
@@ -152,6 +147,10 @@ command = "actionlint"
 args = [
   "-ignore",
   'unknown permission scope "vulnerability-alerts"',
+  "-ignore",
+  "SC2086",
+  "-ignore",
+  "SC2129",
 ]
 
 [tasks.release-ci-contract]
@@ -206,18 +205,17 @@ dependencies = ["check-windows-target", "check-macos-target"]
 
 [tasks.dist-plan]
 private = true
-description = "Run each pinned native product dist plan without publishing"
+description = "Run the pinned cargo-dist plan for the unified release"
 script_runner = "@shell"
 script = '''
 node tools/generate-third-party-notices.mjs THIRD_PARTY_NOTICES.adoc
 root="$(mktemp -d "${TMPDIR:-/tmp}/adocweave-dist-plan.XXXXXX")"
 trap 'rm -rf "$root"' EXIT
-for product in cli lsp; do
-  tag="$(node tools/product-release.mjs "$product" | jq -r .tag)"
-  plan="$root/$product.json"
-  dist plan --tag="$tag" --output-format=json > "$plan"
-  node tools/verify-dist-plan.mjs "$plan" "$tag"
-done
+version="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\([^"]*\)"/\1/p' Cargo.toml)"
+tag="v$version"
+plan="$root/plan.json"
+dist plan --tag="$tag" --output-format=json > "$plan"
+node tools/verify-dist-plan.mjs "$plan" "$tag"
 '''
 
 [tasks.compile-wasm-release]
@@ -313,19 +311,6 @@ description = "Observe the clean install and public entry resolution from the np
 command = "node"
 args = ["tools/wasm-npm-smoke.mjs"]
 
-[tasks.package-lib-release]
-private = true
-description = "Build the deterministic library source archive consumed by dist"
-command = "bash"
-args = ["tools/package-lib-release.sh"]
-
-[tasks.test-lib-release-package]
-category = "CI entry points"
-description = "Verify the library release archive layout and deterministic bytes"
-dependencies = ["package-lib-release"]
-command = "bash"
-args = ["tools/verify-lib-release-package.sh"]
-
 [tasks.test-zed-release-package]
 private = true
 description = "Verify the Zed release archive layout and deterministic bytes"
@@ -373,22 +358,6 @@ dependencies = [
   "test-vscode-release-determinism",
   "test-zed-release-candidate",
 ]
-
-[tasks.test-global-product-candidate]
-category = "CI entry points"
-description = "Build and completely verify PRODUCT as one global release candidate"
-script_runner = "@shell"
-script = '''
-case "${PRODUCT:-}" in
-  lib) task=test-lib-release-package ;;
-  wasm) task=test-wasm-release-candidate ;;
-  textlint) task=textlint-plugin-release-consumer-e2e ;;
-  vscode) task=test-vscode-release-determinism ;;
-  zed) task=test-zed-release-candidate ;;
-  *) echo "unsupported global candidate product: ${PRODUCT:-<unset>}" >&2; exit 2 ;;
-esac
-cargo make "$task"
-'''
 
 [tasks.wasm-runtime-check]
 private = true
@@ -632,7 +601,7 @@ args = ["test", "--prefix", "editors/vscode"]
 [tasks.test-vscode-extension-host]
 private = true
 description = "Run the official VS Code extension host against the real AdocWeave Language Server"
-dependencies = ["build-lsp", "vscode-dependencies"]
+dependencies = ["build-adoc-check", "vscode-dependencies"]
 script_runner = "@shell"
 script = '''
 # The host loads the extension from dist and its test suite from dist-test, so
@@ -685,7 +654,7 @@ private = true
 description = "Reject documentation .md files except repository metadata"
 script_runner = "@shell"
 script = '''
-unexpected="$(rg --files --hidden -g '*.md' -g '!.git/**' | rg -v '^(AGENTS\.md|\.claude/skills/[^/]+/SKILL\.md|\.github/pull_request_template\.md|\.github/SECURITY\.md|release/notes\.md|release/notes\.template\.md|editors/vscode/README\.md|packages/[^/]+/README\.md|web-worker/README\.md)$' || true)"
+unexpected="$(rg --files --hidden -g '*.md' -g '!.git/**' | rg -v '^(AGENTS\.md|CHANGELOG\.md|\.claude/skills/[^/]+/SKILL\.md|\.github/pull_request_template\.md|\.github/SECURITY\.md|editors/vscode/README\.md|packages/[^/]+/README\.md|web-worker/README\.md)$' || true)"
 if [ -n "$unexpected" ]; then
   echo "repository documentation must use .adoc except repository metadata:" >&2
   echo "$unexpected" >&2
@@ -709,12 +678,6 @@ description = "Check every tracked AsciiDoc file for crashes, losslessness, and 
 dependencies = ["build-adoc-check", "adoc-check-targets"]
 command = "node"
 args = ["tools/adoc-check.mjs"]
-
-[tasks.build-lsp]
-private = true
-description = "Build the Language Server binary used by editor integration tests"
-command = "cargo"
-args = ["build", "-p", "adocweave-lsp", "--bin", "adocweave-lsp"]
 
 [tasks.nix-package-check]
 private = true
@@ -748,12 +711,11 @@ dependencies = [
 
 [tasks.test-vscode-acquisition]
 private = true
-description = "Start the VS Code extension without a configured or PATH Language Server and verify it downloads one from GitHub Releases"
-dependencies = ["vscode-dependencies"]
+description = "Start the VS Code extension without a configured or PATH Language Server and verify release-style acquisition"
+dependencies = ["build-adoc-check", "vscode-dependencies"]
 script_runner = "@shell"
 script = '''
-# 単体試験は取得経路を差し替えており、実際のnetworkとfilesystemを通らない。
-# 0.48.0はその隙間で失敗した。この検査は公開済みReleaseへ実際に接続する。
+# 未公開のsourceからReleaseと同じ応答を作り、filesystem、展開、実行およびLSP通信を検査する。
 npm run build --prefix editors/vscode
 npm run build:test --prefix editors/vscode
 if [ "$(uname -s)" = Linux ]; then

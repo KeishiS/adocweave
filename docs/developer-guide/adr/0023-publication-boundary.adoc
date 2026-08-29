@@ -17,8 +17,9 @@ xref:../release-distribution.adoc[配布仕様]を基準とし、このADRへ一
 GitHub Releaseを全製品の一次公開先とします。registryへも公開する製品では、GitHub Releaseで検証した同じbyte列を
 使用し、registry向けに構築し直しません。registryへの公開に必要なcredentialは、対象の専用jobだけが参照します。
 
-配布manifestの形式はlink:../../../release/adocweave-dist-manifest.schema.json[JSON Schema]、製品と成果物は
-link:../../../release/distribution-plan.json[配布計画]を正本とします。task名と操作手順は
+製品別の配布manifestと配布計画を正本とする決定は
+xref:0040-unified-release-and-native-executable.adoc[ADR 0040]で置き換えました。現在の配布情報は
+xref:../release-distribution.adoc[配布仕様]、task名と操作手順は
 xref:../../../CONTRIBUTING.adoc[コントリビューションガイド]を基準とします。
 
 [#publication-authority]
