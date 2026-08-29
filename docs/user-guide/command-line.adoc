@@ -2,6 +2,7 @@
 
 ``adocweave``はAsciiDoc文書の変換、確認、整形およびプレビューを行います。
 入力ファイルを省略すると、標準入力を読み、結果を標準出力へ書きます。
+help、診断、要約およびエラーは英語で表示します。
 
 == よく使うコマンド
 
@@ -23,7 +24,17 @@
 
 |`adocweave symbols manual.adoc`
 |見出しなどの文書構造をJSONで出力します。
+
+|`adocweave rules`
+|利用できる診断規則を表示します。
 |===
+
+``-``から始まるファイル名は、``--``より後ろへ指定します。
+
+[source,console]
+----
+adocweave check -- -manual.adoc
+----
 
 [#diagnostics]
 == 診断
@@ -31,7 +42,7 @@
 ``check``は問題の位置、重要度、codeおよびmessageを表示します。自動処理では、変更される可能性がある
 messageではなくcodeを使用してください。
 
-出力形式は``--format human|json|github|sarif``で選びます。``--json``は``--format json``と同じです。
+出力形式は``--format human|json|github|sarif``で選びます。
 
 [cols="1,3",options="header"]
 |===
@@ -87,7 +98,8 @@ adocweave check --fail-on warning --format sarif docs > adocweave.sarif
 
 [source,console]
 ----
-adocweave check --list-rules --format json
+adocweave rules
+adocweave rules --format json
 adocweave check --enable-rule macro-boundary document.adoc
 ----
 
@@ -152,7 +164,6 @@ adocweave format --write docs README.adoc
 
 ディレクトリを指定すると``.adoc``ファイルを再帰的に処理します。symlinkはたどりません。
 ``--write``は書換え直前に元ファイルが変更されていないことを確認し、ファイル単位で置換します。
-``--dry-run``を併用すると書き換えません。
 
 整形するのは、安全に意味を保てる段落、空行、行末空白および改行です。
 sourceブロック、数式、macro、インライン書式、見出し、属性、アンカー、リスト
@@ -162,12 +173,12 @@ sourceブロック、数式、macro、インライン書式、見出し、属性
 
 ``check --fix``は、常に安全と判定された修正だけを適用します。
 修正範囲が重なる場合は、そのファイルを変更せずエラーにします。
-変更内容を確認するには``--dry-run --summary``を使用します。
+変更内容を確認するには``--diff``を併用します。この場合はファイルを書き換えません。
 
 [source,console]
 ----
 adocweave check --fix docs
-adocweave check --fix --dry-run --summary docs
+adocweave check --fix --diff --summary docs
 ----
 
 == 色とshell completion
@@ -203,12 +214,12 @@ adocweave convert docs/manual.adoc
 adocweave convert --no-include docs/manual.adoc
 ----
 
-ファイル入力では、root文書の親ディレクトリを基準にinclude先を解決します。標準入力では``--base-dir``が必要です。
+ファイル入力では、root文書の親ディレクトリを基準にinclude先を解決します。標準入力では``--stdin-base``が必要です。
 許可するディレクトリを追加する場合は``--allow-root``を複数回指定できます。
 
 [source,console]
 ----
-adocweave convert --include --base-dir docs --allow-root docs - < root.adoc
+adocweave convert --include --stdin-base docs --allow-root docs - < root.adoc
 ----
 
 絶対パス、`..`、scheme付きtarget、制御文字および許可したディレクトリの外側を指すsymlinkは拒否します。

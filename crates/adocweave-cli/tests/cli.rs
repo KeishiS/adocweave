@@ -834,6 +834,53 @@ fn every_subcommand_displays_help() {
 }
 
 #[test]
+fn unknown_options_are_rejected_and_double_dash_accepts_hyphenated_paths() {
+    let unknown_root = adocweave()
+        .arg("--unknown")
+        .output()
+        .expect("unknown root option");
+    assert!(!unknown_root.status.success());
+    assert!(unknown_root.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&unknown_root.stderr).contains("unknown option: --unknown"));
+
+    let unknown = adocweave()
+        .args(["check", "--unknown"])
+        .output()
+        .expect("unknown option");
+    assert!(!unknown.status.success());
+    assert!(unknown.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("unknown option: --unknown"));
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-double-dash-{unique}"));
+    std::fs::create_dir(&root).expect("project");
+    std::fs::write(root.join("-manual.adoc"), "text\n").expect("document");
+
+    let rejected = adocweave()
+        .current_dir(&root)
+        .args(["check", "-manual.adoc"])
+        .output()
+        .expect("hyphenated path without delimiter");
+    assert!(!rejected.status.success());
+
+    let accepted = adocweave()
+        .current_dir(&root)
+        .args(["check", "--format", "json", "--", "-manual.adoc"])
+        .output()
+        .expect("hyphenated path after delimiter");
+    assert!(
+        accepted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+    assert_eq!(accepted.stdout, b"[]");
+    std::fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
 fn public_help_paths_match_the_command_model_snapshots() {
     let expected_root = include_bytes!("snapshots/help-root.txt");
     for arguments in [&["--help"][..], &["help"][..]] {
@@ -850,7 +897,9 @@ fn public_help_paths_match_the_command_model_snapshots() {
         &["check"][..],
         &["format"][..],
         &["symbols"][..],
+        &["rules"][..],
         &["config", "show"][..],
+        &["completion"][..],
     ] {
         let marker = format!("=== {} ===\n", path.join(" "));
         let section = expected_commands
@@ -981,7 +1030,7 @@ fn missing_file_is_a_user_facing_error() {
 fn check_supports_human_and_json_diagnostics() {
     let source = b"trailing \n";
     let human = run_with_stdin(&["check", "-"], source);
-    let json = run_with_stdin(&["check", "--json", "-"], source);
+    let json = run_with_stdin(&["check", "--format", "json", "-"], source);
 
     assert!(human.status.success());
     assert!(
@@ -1243,7 +1292,7 @@ fn project_config_bounds_cli_diagnostics_before_json_projection() {
 
     let output = adocweave()
         .current_dir(&root)
-        .args(["check", "--json", "manual.adoc"])
+        .args(["check", "--format", "json", "manual.adoc"])
         .output()
         .expect("run configured check");
     assert!(
@@ -1411,7 +1460,7 @@ fn format_write_recurses_deterministically_and_preserves_file_mode() {
 }
 
 #[test]
-fn format_diff_and_dry_run_do_not_modify_inputs() {
+fn format_diff_does_not_modify_inputs_and_dry_run_is_rejected() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock after epoch")
@@ -1438,7 +1487,7 @@ fn format_diff_and_dry_run_do_not_modify_inputs() {
         .arg(&document)
         .output()
         .expect("dry run");
-    assert!(dry_run.status.success());
+    assert!(!dry_run.status.success());
     assert_eq!(std::fs::read_to_string(&document).unwrap(), "text  \n");
     std::fs::remove_dir_all(root).expect("cleanup");
 }
@@ -1456,15 +1505,16 @@ fn check_fix_applies_only_always_safe_non_conflicting_edits() {
     std::fs::write(&first, "first  \n").expect("first");
     std::fs::write(&second, "second  \n").expect("second");
 
-    let dry_run = adocweave()
-        .args(["check", "--fix", "--dry-run", "--summary"])
+    let diff = adocweave()
+        .args(["check", "--fix", "--diff", "--summary"])
         .args([&first, &second])
         .output()
-        .expect("dry-run fix");
-    assert!(dry_run.status.success());
+        .expect("fix diff");
+    assert!(diff.status.success());
     assert_eq!(std::fs::read_to_string(&first).unwrap(), "first  \n");
+    assert!(String::from_utf8_lossy(&diff.stdout).contains("--- a/"));
     assert_eq!(
-        String::from_utf8_lossy(&dry_run.stderr),
+        String::from_utf8_lossy(&diff.stderr),
         "adocweave check: errors=0, warnings=0, information=0, hints=0, changed=2\n"
     );
 
@@ -1520,7 +1570,7 @@ fn check_glob_deduplicates_files_and_emits_source_ids() {
 }
 
 #[test]
-fn multi_file_check_resolves_relative_include_base_once() {
+fn multi_file_check_resolves_includes_from_each_file_parent() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock after epoch")
@@ -1529,19 +1579,12 @@ fn multi_file_check_resolves_relative_include_base_once() {
     let resources = root.join("resources");
     std::fs::create_dir_all(&resources).expect("resources");
     std::fs::write(resources.join("part.adoc"), "part\n").expect("include");
-    std::fs::write(root.join("a.adoc"), "include::part.adoc[]\n").expect("first");
-    std::fs::write(root.join("b.adoc"), "include::part.adoc[]\n").expect("second");
+    std::fs::write(root.join("a.adoc"), "include::resources/part.adoc[]\n").expect("first");
+    std::fs::write(root.join("b.adoc"), "include::resources/part.adoc[]\n").expect("second");
 
     let output = adocweave()
         .current_dir(&root)
-        .args([
-            "check",
-            "--include",
-            "--base-dir",
-            "resources",
-            "a.adoc",
-            "b.adoc",
-        ])
+        .args(["check", "--include", "a.adoc", "b.adoc"])
         .output()
         .expect("multi-file check");
 
@@ -1591,7 +1634,7 @@ fn explicit_symlink_inputs_are_rejected_without_modifying_the_target() {
 #[test]
 fn check_enables_macro_boundary_as_an_opt_in_rule() {
     let source = "本文xref:guide.adoc[Guide]\n".as_bytes();
-    let default = run_with_stdin(&["check", "--json", "-"], source);
+    let default = run_with_stdin(&["check", "--format", "json", "-"], source);
     let human = run_with_stdin(
         &[
             "check",
@@ -1604,7 +1647,14 @@ fn check_enables_macro_boundary_as_an_opt_in_rule() {
         source,
     );
     let json = run_with_stdin(
-        &["check", "--json", "--enable-rule", "macro-boundary", "-"],
+        &[
+            "check",
+            "--format",
+            "json",
+            "--enable-rule",
+            "macro-boundary",
+            "-",
+        ],
         source,
     );
 
@@ -1629,13 +1679,6 @@ fn check_rejects_unknown_default_and_catalog_rule_enabling() {
     for arguments in [
         vec!["check", "--enable-rule", "unknown-rule", "-"],
         vec!["check", "--enable-rule", "trailing-whitespace", "-"],
-        vec![
-            "check",
-            "--list-rules",
-            "--json",
-            "--enable-rule",
-            "macro-boundary",
-        ],
     ] {
         let output = run_with_stdin(&arguments, b"");
         assert!(!output.status.success(), "{arguments:?}");
@@ -1643,7 +1686,7 @@ fn check_rejects_unknown_default_and_catalog_rule_enabling() {
     }
 
     let output = adocweave()
-        .args(["check", "--list-rules", "--json"])
+        .args(["rules", "--format", "json"])
         .output()
         .expect("catalog");
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("catalog JSON");
@@ -1659,9 +1702,9 @@ fn check_rejects_unknown_default_and_catalog_rule_enabling() {
 }
 
 #[test]
-fn check_lists_the_typed_rule_catalog_without_reading_input() {
+fn rules_lists_the_typed_catalog_without_reading_input() {
     let output = adocweave()
-        .args(["check", "--list-rules", "--json"])
+        .args(["rules", "--format", "json"])
         .stdin(Stdio::null())
         .output()
         .expect("the adocweave binary should run");
@@ -1687,11 +1730,21 @@ fn check_lists_the_typed_rule_catalog_without_reading_input() {
 }
 
 #[test]
-fn list_rules_rejects_missing_json_and_document_options() {
+fn rules_has_human_output_and_rejects_document_options() {
+    let human = adocweave()
+        .args(["rules"])
+        .stdin(Stdio::null())
+        .output()
+        .expect("human catalog");
+    assert!(human.status.success());
+    let stdout = String::from_utf8_lossy(&human.stdout);
+    assert!(stdout.starts_with("CODE\tDEFAULT\tSEVERITY\tFIXABLE\tDESCRIPTION\n"));
+    assert!(stdout.contains("macro-boundary\tdisabled\twarning\tyes\t"));
+
     for arguments in [
-        vec!["check", "--list-rules"],
-        vec!["check", "--list-rules", "--json", "document.adoc"],
-        vec!["check", "--list-rules", "--json", "--include"],
+        vec!["rules", "document.adoc"],
+        vec!["rules", "--include"],
+        vec!["rules", "--format", "sarif"],
     ] {
         let output = adocweave()
             .args(arguments)
@@ -1703,34 +1756,16 @@ fn list_rules_rejects_missing_json_and_document_options() {
     }
 }
 
-/// `--list-rules` works with the canonical option, not only its compatibility alias.
 #[test]
-fn list_rules_accepts_the_canonical_format_option() {
-    let canonical = adocweave()
+fn removed_list_rules_option_is_rejected() {
+    let removed = adocweave()
         .args(["check", "--list-rules", "--format", "json"])
         .stdin(Stdio::null())
         .output()
         .expect("the adocweave binary should run");
-    let alias = adocweave()
-        .args(["check", "--list-rules", "--json"])
-        .stdin(Stdio::null())
-        .output()
-        .expect("the adocweave binary should run");
-
-    assert!(canonical.status.success());
-    assert_eq!(canonical.stdout, alias.stdout);
-
-    // The message names the option a caller should reach for.
-    let rejected = adocweave()
-        .args(["check", "--list-rules"])
-        .stdin(Stdio::null())
-        .output()
-        .expect("the adocweave binary should run");
-    assert!(
-        String::from_utf8_lossy(&rejected.stderr).contains("--format json"),
-        "{}",
-        String::from_utf8_lossy(&rejected.stderr)
-    );
+    assert!(!removed.status.success());
+    assert!(removed.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&removed.stderr).contains("--list-rules"));
 }
 
 #[test]
@@ -1776,11 +1811,12 @@ ifdef::never[]\n\
 include::missing-v011-inactive.adoc[]\n\
 endif::[]\n";
 
-    let default = run_with_stdin(&["check", "--json", "-"], source);
+    let default = run_with_stdin(&["check", "--format", "json", "-"], source);
     let checked = run_with_stdin(
         &[
             "check",
-            "--json",
+            "--format",
+            "json",
             "--project-root",
             root.to_str().expect("UTF-8 root"),
             "-",
@@ -1815,7 +1851,7 @@ fn run_permission_fixture(root: &std::path::Path, json: bool) -> Output {
             .current_dir(root)
             .args(["check", "--project-root", "."]);
         if json {
-            command.arg("--json");
+            command.args(["--format", "json"]);
         }
         command.arg("root.adoc");
         command
@@ -1922,7 +1958,7 @@ fn local_target_inspection_limit_has_stable_cli_contract() {
             command.arg("--no-include");
         }
         if json {
-            command.arg("--json");
+            command.args(["--format", "json"]);
         }
         command
             .arg("root.adoc")
@@ -2015,7 +2051,14 @@ fn local_target_check_accepts_every_supported_fixture_kind() {
         "/../../fixtures/local-target/all-kinds/root.adoc"
     );
     let output = adocweave()
-        .args(["check", "--project-root", root, "--json", document])
+        .args([
+            "check",
+            "--project-root",
+            root,
+            "--format",
+            "json",
+            document,
+        ])
         .output()
         .expect("all local target kinds");
 
@@ -2047,7 +2090,8 @@ fn local_target_check_classifies_paths_and_ignores_external_targets() {
             "check",
             "--project-root",
             root.to_str().expect("UTF-8 root"),
-            "--json",
+            "--format",
+            "json",
             document.to_str().expect("UTF-8 document"),
         ])
         .output()
@@ -2099,7 +2143,8 @@ fn local_target_columns_use_utf8_bytes() {
     let output = run_with_stdin(
         &[
             "check",
-            "--json",
+            "--format",
+            "json",
             "--project-root",
             root.to_str().expect("UTF-8 root"),
             "-",
@@ -2118,30 +2163,20 @@ fn local_target_columns_use_utf8_bytes() {
 }
 
 #[test]
-fn local_target_file_base_uses_the_invocation_directory_for_bare_paths() {
+fn local_target_file_base_uses_the_document_parent() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock")
         .as_nanos();
     let root = std::env::temp_dir().join(format!("adocweave-local-base-{unique}"));
     let docs = root.join("docs");
-    let include_base = root.join("include-base");
     std::fs::create_dir_all(&docs).expect("docs");
-    std::fs::create_dir_all(&include_base).expect("include base");
     std::fs::write(docs.join("root.adoc"), "xref:target.adoc[target]\n").expect("source");
     std::fs::write(docs.join("target.adoc"), "= Target\n").expect("target");
 
     let output = adocweave()
         .current_dir(&docs)
-        .args([
-            "check",
-            "--include",
-            "--base-dir",
-            "../include-base",
-            "--project-root",
-            "..",
-            "root.adoc",
-        ])
+        .args(["check", "--project-root", "..", "root.adoc"])
         .output()
         .expect("local target check");
     assert!(
@@ -2180,7 +2215,8 @@ fn local_target_check_rejects_symlink_escape_and_keeps_duplicate_positions() {
             "check",
             "--project-root",
             root.to_str().expect("UTF-8 root"),
-            "--json",
+            "--format",
+            "json",
             document.to_str().expect("UTF-8 document"),
         ])
         .output()
@@ -2217,7 +2253,14 @@ fn local_target_check_uses_the_explicit_project_root_for_parent_targets() {
 
     let output = adocweave()
         .current_dir(&project)
-        .args(["check", "--project-root", ".", "--json", "docs/root.adoc"])
+        .args([
+            "check",
+            "--project-root",
+            ".",
+            "--format",
+            "json",
+            "docs/root.adoc",
+        ])
         .output()
         .expect("local target check");
     let diagnostics: serde_json::Value =
@@ -2280,7 +2323,7 @@ fn release_fixture_works_across_convert_check_and_format() {
     let expected_html = include_bytes!("../../../fixtures/release/core.html");
 
     let converted = run_with_stdin(&["convert", "-"], source);
-    let checked = run_with_stdin(&["check", "--json", "-"], source);
+    let checked = run_with_stdin(&["check", "--format", "json", "-"], source);
     let formatted = run_with_stdin(&["format", "-"], source);
 
     assert!(converted.status.success());
@@ -2361,7 +2404,7 @@ fn standard_input_converts_without_a_base_directory_but_still_reports_an_explici
     assert_eq!(requested.status.code(), Some(2));
     assert!(
         String::from_utf8_lossy(&requested.stderr)
-            .contains("--include with standard input requires --base-dir")
+            .contains("--include with standard input requires --stdin-base")
     );
 }
 
@@ -2425,7 +2468,8 @@ fn local_include_with_literal_url_suffix_uses_the_shared_fixture() {
             "--include",
             "--project-root",
             project_root,
-            "--json",
+            "--format",
+            "json",
             root,
         ])
         .output()
@@ -2441,7 +2485,7 @@ fn local_include_with_literal_url_suffix_uses_the_shared_fixture() {
 }
 
 #[test]
-fn local_target_check_uses_the_explicit_include_base_fixture() {
+fn file_input_rejects_stdin_base() {
     let root = concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../fixtures/includes/separate-base/root.adoc"
@@ -2455,40 +2499,41 @@ fn local_target_check_uses_the_explicit_include_base_fixture() {
         .args([
             "check",
             "--include",
-            "--base-dir",
+            "--stdin-base",
             base,
             "--project-root",
             project_root,
-            "--json",
+            "--format",
+            "json",
             root,
         ])
         .output()
         .expect("separate include base check");
 
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
     assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stdout)
+        String::from_utf8_lossy(&output.stderr)
+            .contains("--stdin-base can be used only with standard input")
     );
-    assert_eq!(output.stdout, b"[]");
 }
 
 #[test]
 fn stdin_include_requires_a_base_and_rejects_traversal() {
     let missing_base = run_with_stdin(&["convert", "--include", "-"], b"text\n");
     assert!(!missing_base.status.success());
-    assert!(String::from_utf8_lossy(&missing_base.stderr).contains("requires --base-dir"));
+    assert!(String::from_utf8_lossy(&missing_base.stderr).contains("requires --stdin-base"));
 
     let base = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/includes");
     let traversal = run_with_stdin(
-        &["convert", "--include", "--base-dir", base, "-"],
+        &["convert", "--include", "--stdin-base", base, "-"],
         b"include::../plain/basic.adoc[]\n",
     );
     assert!(!traversal.status.success());
     assert!(String::from_utf8_lossy(&traversal.stderr).contains("unsafe include target"));
 
     let missing = run_with_stdin(
-        &["format", "--include", "--base-dir", base, "-"],
+        &["format", "--include", "--stdin-base", base, "-"],
         b"include::missing.adoc[]\n",
     );
     assert!(
@@ -2515,7 +2560,7 @@ fn stdin_and_include_share_the_project_retained_and_total_byte_boundary() {
         .expect("configuration");
         let mut child = adocweave()
             .current_dir(root.path())
-            .args(["check", "--base-dir", ".", "-"])
+            .args(["check", "--stdin-base", ".", "-"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -2573,7 +2618,8 @@ fn include_check_projects_diagnostics_to_the_resource_file() {
         .args([
             "check",
             "--include",
-            "--json",
+            "--format",
+            "json",
             document.to_str().expect("UTF-8 path"),
         ])
         .output()
@@ -2584,7 +2630,8 @@ fn include_check_projects_diagnostics_to_the_resource_file() {
             "--include",
             "--enable-rule",
             "macro-boundary",
-            "--json",
+            "--format",
+            "json",
             document.to_str().expect("UTF-8 path"),
         ])
         .output()
@@ -2645,7 +2692,8 @@ fn local_target_check_shares_include_resolution_and_honors_optional() {
             "--include",
             "--project-root",
             root.to_str().expect("UTF-8 root"),
-            "--json",
+            "--format",
+            "json",
             document.to_str().expect("UTF-8 document"),
         ])
         .output()
@@ -2691,7 +2739,8 @@ fn local_target_diagnostic_ids_include_the_fixture_source() {
             "--include",
             "--project-root",
             project_root,
-            "--json",
+            "--format",
+            "json",
             document,
         ])
         .output()
@@ -2739,7 +2788,8 @@ fn local_target_check_reports_include_read_failures() {
             "--include",
             "--project-root",
             root.to_str().expect("UTF-8 root"),
-            "--json",
+            "--format",
+            "json",
             document.to_str().expect("UTF-8 document"),
         ])
         .output()
@@ -2820,7 +2870,8 @@ fn include_diagnostics_use_logical_ids_for_canonical_file_aliases() {
         .args([
             "check",
             "--include",
-            "--json",
+            "--format",
+            "json",
             document.to_str().expect("UTF-8 document"),
         ])
         .output()

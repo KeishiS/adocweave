@@ -64,7 +64,7 @@ pub(crate) struct Arguments {
     pub(crate) glob_patterns: Vec<String>,
     pub(crate) include: bool,
     pub(crate) no_include: bool,
-    pub(crate) base_dir: Option<PathBuf>,
+    pub(crate) stdin_base: Option<PathBuf>,
     pub(crate) allowed_roots: Vec<PathBuf>,
     pub(crate) project_root: Option<PathBuf>,
     pub(crate) config_path: Option<PathBuf>,
@@ -77,6 +77,7 @@ pub(crate) enum Action {
     Help { command: Option<CommandId> },
     Version { json: bool },
     Completion { shell: CompletionShell },
+    Rules { json: bool },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -127,6 +128,9 @@ pub(crate) fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result
         };
         return Ok(Action::Version { json });
     }
+    if command.starts_with('-') {
+        return Err(CliError::Usage(format!("unknown option: {command}")));
+    }
     let (command_id, consumed) = commands::model::lookup(&arguments).map_err(|error| {
         CliError::Usage(match error {
             LookupError::UnknownCommand(value) => format!("unknown command: {value}"),
@@ -138,11 +142,24 @@ pub(crate) fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result
             }
         })
     })?;
-    let mut arguments = arguments.into_iter().skip(consumed);
+    let mut arguments = arguments.into_iter().skip(consumed).peekable();
     if command_id == CommandId::Help {
+        if let Some(argument) = arguments.next() {
+            return Err(CliError::Usage(format!(
+                "unexpected help argument: {argument}"
+            )));
+        }
         return Ok(Action::Help { command: None });
     }
     if command_id == CommandId::Completion {
+        if arguments.peek().is_some_and(|argument| {
+            commands::model::option_for_command(command_id, argument)
+                .is_some_and(|option| option.id == OptionId::Help)
+        }) {
+            return Ok(Action::Help {
+                command: Some(command_id),
+            });
+        }
         let shell = match arguments.next().as_deref() {
             Some("bash") => CompletionShell::Bash,
             Some("zsh") => CompletionShell::Zsh,
@@ -162,6 +179,49 @@ pub(crate) fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result
         }
         return Ok(Action::Completion { shell });
     }
+    if command_id == CommandId::Rules {
+        let mut json = false;
+        let mut format_selected = false;
+        while let Some(argument) = arguments.next() {
+            match commands::model::option_for_command(command_id, &argument).map(|option| option.id)
+            {
+                Some(OptionId::Help) => {
+                    return Ok(Action::Help {
+                        command: Some(command_id),
+                    });
+                }
+                Some(OptionId::RuleFormat) => {
+                    let value = take_option_value(
+                        commands::model::option(OptionId::RuleFormat),
+                        &mut arguments,
+                    )?;
+                    let parsed = match value.as_str() {
+                        "human" => false,
+                        "json" => true,
+                        _ => {
+                            return Err(CliError::Usage(format!("unknown rules format: {value}")));
+                        }
+                    };
+                    if format_selected && parsed != json {
+                        return Err(CliError::Usage(
+                            "--format cannot be specified with conflicting values".to_owned(),
+                        ));
+                    }
+                    json = parsed;
+                    format_selected = true;
+                }
+                _ if argument.starts_with('-') => {
+                    return Err(CliError::Usage(format!("unknown option: {argument}")));
+                }
+                _ => {
+                    return Err(CliError::Usage(format!(
+                        "unexpected rules argument: {argument}"
+                    )));
+                }
+            }
+        }
+        return Ok(Action::Rules { json });
+    }
 
     let mut input = None;
     let mut additional_inputs = Vec::new();
@@ -172,15 +232,14 @@ pub(crate) fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result
     let mut fail_on = FailOn::Error;
     let mut summary = false;
     let mut fix = false;
-    let mut list_rules = false;
     let mut enabled_rules = Vec::new();
     let mut format_check = false;
     let mut format_write = false;
     let mut format_diff = false;
-    let mut dry_run = false;
+    let mut fix_diff = false;
     let mut include = false;
     let mut no_include = false;
-    let mut base_dir = None;
+    let mut stdin_base = None;
     let mut allowed_roots = Vec::new();
     let mut project_root = None;
     let mut complete = false;
@@ -192,8 +251,15 @@ pub(crate) fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result
     let mut config_path = None;
     let mut no_config = false;
     let mut color = ColorChoice::Auto;
+    let mut positional_only = false;
     while let Some(argument) = arguments.next() {
-        let option = commands::model::option_for_command(command_id, &argument);
+        if !positional_only && argument == "--" {
+            positional_only = true;
+            continue;
+        }
+        let option = (!positional_only)
+            .then(|| commands::model::option_for_command(command_id, &argument))
+            .flatten();
         match option.map(|option| option.id) {
             Some(OptionId::Help) => {
                 return Ok(Action::Help {
@@ -243,15 +309,6 @@ pub(crate) fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result
                 )?;
                 glob_patterns.push(value);
             }
-            Some(OptionId::Json) => {
-                if format_selected && diagnostic_format != DiagnosticFormat::Json {
-                    return Err(CliError::Usage(
-                        "--json conflicts with another --format value".to_owned(),
-                    ));
-                }
-                diagnostic_format = DiagnosticFormat::Json;
-                format_selected = true;
-            }
             Some(OptionId::DiagnosticFormat) => {
                 let value = take_option_value(
                     option.expect("matched option id has a specification"),
@@ -275,8 +332,6 @@ pub(crate) fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result
             }
             Some(OptionId::Summary) => summary = true,
             Some(OptionId::Fix) => fix = true,
-            Some(OptionId::DryRun) => dry_run = true,
-            Some(OptionId::ListRules) => list_rules = true,
             Some(OptionId::EnableRule) => {
                 let code = take_option_value(
                     option.expect("matched option id has a specification"),
@@ -296,7 +351,8 @@ pub(crate) fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result
             }
             Some(OptionId::FormatCheck) => format_check = true,
             Some(OptionId::FormatWrite) => format_write = true,
-            Some(OptionId::FormatDiff) => format_diff = true,
+            Some(OptionId::Diff) if command_id == CommandId::Check => fix_diff = true,
+            Some(OptionId::Diff) => format_diff = true,
             Some(OptionId::Include) => {
                 if no_include {
                     return Err(CliError::Usage(
@@ -368,12 +424,12 @@ pub(crate) fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result
                 }
             }
             Some(OptionId::AllowExternal) => allow_external = true,
-            Some(OptionId::BaseDir) => {
+            Some(OptionId::StdinBase) => {
                 let value = take_option_value(
                     option.expect("matched option id has a specification"),
                     &mut arguments,
                 )?;
-                base_dir = Some(PathBuf::from(value));
+                stdin_base = Some(PathBuf::from(value));
             }
             Some(OptionId::AllowRoot) => {
                 let value = take_option_value(
@@ -385,6 +441,9 @@ pub(crate) fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result
             Some(OptionId::Version) => {
                 unreachable!("version is a root-only option")
             }
+            Some(OptionId::Json | OptionId::RuleFormat) => {
+                unreachable!("utility-only options are handled before document options")
+            }
             None if command_id == CommandId::ConfigShow
                 && commands::model::option_by_name(&argument).is_some() =>
             {
@@ -392,11 +451,21 @@ pub(crate) fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result
                     "config show only accepts --config or --no-config".to_owned(),
                 ));
             }
-            None if argument == "-" && input.is_none() && !stdin_selected => stdin_selected = true,
-            None if argument == "-" => {
+            None if !positional_only && argument == "-" && input.is_none() && !stdin_selected => {
+                stdin_selected = true
+            }
+            None if !positional_only && argument == "-" => {
                 return Err(CliError::Usage(
                     "standard input cannot be combined with file paths".to_owned(),
                 ));
+            }
+            None if !positional_only && argument.starts_with('-') => {
+                let message = if commands::model::option_by_name(&argument).is_some() {
+                    format!("option is not available for this command: {argument}")
+                } else {
+                    format!("unknown option: {argument}")
+                };
+                return Err(CliError::Usage(message));
             }
             None if input.is_none() && !stdin_selected => input = Some(PathBuf::from(argument)),
             None if matches!(command_id, CommandId::Check | CommandId::Format)
@@ -421,15 +490,17 @@ pub(crate) fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result
             "standard input cannot be combined with --glob".to_owned(),
         ));
     }
-    if dry_run
-        && !matches!(
-            command_id,
-            CommandId::Format if format_write
-        )
-        && !(command_id == CommandId::Check && fix)
-    {
+    if fix_diff && !fix {
+        return Err(CliError::Usage("check --diff requires --fix".to_owned()));
+    }
+    if fix_diff && diagnostic_format != DiagnosticFormat::Human {
         return Err(CliError::Usage(
-            "--dry-run requires format --write or check --fix".to_owned(),
+            "check --fix --diff requires --format human".to_owned(),
+        ));
+    }
+    if command_id == CommandId::Check && fix && input.is_none() {
+        return Err(CliError::Usage(
+            "check --fix requires at least one file or directory".to_owned(),
         ));
     }
     if command_id == CommandId::Preview {
@@ -457,7 +528,7 @@ pub(crate) fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result
             || stdin_selected
             || include
             || no_include
-            || base_dir.is_some()
+            || stdin_base.is_some()
             || !allowed_roots.is_empty()
             || project_root.is_some()
             || complete
@@ -468,29 +539,10 @@ pub(crate) fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result
             "config show only accepts --config or --no-config".to_owned(),
         ));
     }
-    if list_rules {
-        if diagnostic_format != DiagnosticFormat::Json {
-            return Err(CliError::Usage(
-                "--list-rules requires --format json".to_owned(),
-            ));
-        }
-        if input.is_some()
-            || !additional_inputs.is_empty()
-            || !glob_patterns.is_empty()
-            || stdin_selected
-            || include
-            || no_include
-            || base_dir.is_some()
-            || !allowed_roots.is_empty()
-            || project_root.is_some()
-            || !enabled_rules.is_empty()
-            || fix
-            || dry_run
-        {
-            return Err(CliError::Usage(
-                "--list-rules cannot be combined with document input or include options".to_owned(),
-            ));
-        }
+    if stdin_base.is_some() && input.is_some() {
+        return Err(CliError::Usage(
+            "--stdin-base can be used only with standard input".to_owned(),
+        ));
     }
 
     let command = match command_id {
@@ -506,20 +558,18 @@ pub(crate) fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result
             fail_on,
             summary,
             fix,
-            dry_run,
-            list_rules,
+            diff: fix_diff,
             enabled_rules,
         }),
         CommandId::Format => CommandOptions::Format(FormatOptions {
             check: format_check,
             write: format_write,
             diff: format_diff,
-            dry_run,
             summary,
         }),
         CommandId::Symbols => CommandOptions::Symbols,
         CommandId::ConfigShow => CommandOptions::ConfigShow,
-        CommandId::Completion | CommandId::Help => {
+        CommandId::Rules | CommandId::Completion | CommandId::Help => {
             unreachable!("public utility commands are handled before option parsing")
         }
     };
@@ -530,7 +580,7 @@ pub(crate) fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result
         glob_patterns,
         include,
         no_include,
-        base_dir,
+        stdin_base,
         allowed_roots,
         project_root,
         config_path,

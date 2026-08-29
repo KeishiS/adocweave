@@ -2,49 +2,103 @@
 Usage:
   adocweave convert [OPTIONS] [FILE]
 
+Arguments:
+  FILE  Input file; omit or use - for standard input
+
+Options:
+  --complete  Output a complete HTML document
+  --css FILE  Embed CSS from FILE; repeatable
+  --css-url URL  Link an allowed CSS URL; repeatable
+  --include  Process local includes even if disabled by configuration
+  --no-include  Leave include directives unresolved
+  --stdin-base DIR  Resolve standard-input includes from DIR
+  --allow-root DIR  Permit includes below DIR; repeatable
+  --config FILE  Use the specified project configuration
+  --no-config  Disable project configuration discovery
+  --color WHEN  Color output: auto, always, or never (default: auto)
+  -h, --help  Print help
+
 Example:
   adocweave convert --complete manual.adoc
 === preview ===
-使用法:
+Usage:
   adocweave preview [OPTIONS] FILE
 
-引数:
-  FILE  プレビューするAsciiDocファイル（標準入力とシンボリックリンクは使用不可）
+Arguments:
+  FILE  AsciiDoc file to preview; standard input and symbolic links are not supported
 
-オプション:
-  --bind ADDRESS  待ち受けるIPアドレス（既定値: 127.0.0.1）
-  --port PORT  待ち受けるポート（既定値: 4000）
-  --debounce-ms MILLISECONDS  連続した変更をまとめる待ち時間（既定値: 100）
-  --allow-external  ループバック以外のIPアドレスでの待ち受けを許可
-  --include  設定で無効にしていてもローカルincludeを展開
-  --no-include  include指示を展開しない
-  --base-dir DIR  起点文書のincludeをDIRから解決
-  --allow-root DIR  includeを許可する範囲（複数指定可）
-  --css FILE  完全なHTML文書へCSSを埋め込み（複数指定可）
-  --css-url URL  許可されたCSSのURLを追加（複数指定可）
-  --config FILE  指定したプロジェクト設定を使用
-  --no-config  プロジェクト設定の探索を無効化
-  --color WHEN  端末表示の色をauto、always、neverから選択（既定値: auto）
-  -h, --help  この説明を表示
+Options:
+  --bind ADDRESS  Listen address (default: 127.0.0.1)
+  --port PORT  Listen port (default: 4000)
+  --debounce-ms MILLISECONDS  Rebuild debounce interval (default: 100)
+  --allow-external  Permit an explicitly selected non-loopback address
+  --include  Process local includes even if disabled by configuration
+  --no-include  Leave include directives unresolved
+  --allow-root DIR  Permit includes below DIR; repeatable
+  --css FILE  Embed CSS from FILE; repeatable
+  --css-url URL  Link an allowed CSS URL; repeatable
+  --config FILE  Use the specified project configuration
+  --no-config  Disable project configuration discovery
+  --color WHEN  Color output: auto, always, or never (default: auto)
+  -h, --help  Print help
 
-安全性:
-  ループバック以外のIPアドレスには--allow-externalが必要です。
-  このサーバーは利用者認証とTLSによる通信の暗号化を提供しません。
+Security:
+  A non-loopback address requires --allow-external.
+  The server does not provide authentication or TLS encryption.
 
-例:
+Example:
   adocweave preview --port 8080 manual.adoc
 === check ===
 Usage:
   adocweave check [OPTIONS] [FILE...]
 
+Arguments:
+  FILE  Input file or directory; omit or use - for standard input
+
+Options:
+  --format FORMAT  Output format: human, json, github, or sarif (default: human)
+  --fail-on LEVEL  Fail on error, warning, or never (default: error)
+  --summary  Print counts to standard error
+  --fix  Write fixes that are always safe to apply
+  --diff  Print changes as a unified diff
+  --enable-rule CODE  Enable an opt-in rule; repeatable
+  --glob PATTERN  Add matching files; repeatable
+  --project-root DIR  Check local file targets below DIR
+  --include  Process local includes even if disabled by configuration
+  --no-include  Leave include directives unresolved
+  --stdin-base DIR  Resolve standard-input includes from DIR
+  --allow-root DIR  Permit includes below DIR; repeatable
+  --config FILE  Use the specified project configuration
+  --no-config  Disable project configuration discovery
+  --color WHEN  Color output: auto, always, or never (default: auto)
+  -h, --help  Print help
+
 Examples:
   adocweave check --fail-on warning docs
-  adocweave check --format github --summary manual.adoc
   adocweave check --format sarif docs > adocweave.sarif
   adocweave check --fix docs
+  adocweave check --fix --diff docs
 === format ===
 Usage:
   adocweave format [OPTIONS] [FILE...]
+
+Arguments:
+  FILE  Input file or directory; omit or use - for standard input
+
+Options:
+  --check  Check whether formatting changes are required
+  --diff  Print changes as a unified diff
+  --write  Write formatted output to files
+  --summary  Print counts to standard error
+  --glob PATTERN  Add matching files; repeatable
+  --include  Process local includes even if disabled by configuration
+  --no-include  Leave include directives unresolved
+  --stdin-base DIR  Resolve standard-input includes from DIR
+  --allow-root DIR  Permit includes below DIR; repeatable
+  --config FILE  Use the specified project configuration
+  --no-config  Disable project configuration discovery
+  --color WHEN  Color output: auto, always, or never (default: auto)
+  -h, --help  Print help
 
 Examples:
   adocweave format --check docs
@@ -52,13 +106,54 @@ Examples:
   adocweave format --write docs
 === symbols ===
 Usage:
-  adocweave symbols [FILE]
+  adocweave symbols [OPTIONS] [FILE]
+
+Arguments:
+  FILE  Input file; omit or use - for standard input
+
+Options:
+  --include  Process local includes even if disabled by configuration
+  --no-include  Leave include directives unresolved
+  --stdin-base DIR  Resolve standard-input includes from DIR
+  --allow-root DIR  Permit includes below DIR; repeatable
+  --config FILE  Use the specified project configuration
+  --no-config  Disable project configuration discovery
+  --color WHEN  Color output: auto, always, or never (default: auto)
+  -h, --help  Print help
 
 Example:
   adocweave symbols manual.adoc
+=== rules ===
+Usage:
+  adocweave rules [OPTIONS]
+
+Options:
+  --format FORMAT  Output format: human or json (default: human)
+  -h, --help  Print help
+
+Examples:
+  adocweave rules
+  adocweave rules --format json
 === config show ===
 Usage:
-  adocweave config show [--config FILE | --no-config]
+  adocweave config show [OPTIONS]
+
+Options:
+  --config FILE  Use the specified project configuration
+  --no-config  Disable project configuration discovery
+  -h, --help  Print help
 
 Example:
   adocweave config show
+=== completion ===
+Usage:
+  adocweave completion SHELL
+
+Arguments:
+  SHELL  One of bash, zsh, fish, or powershell
+
+Options:
+  -h, --help  Print help
+
+Example:
+  adocweave completion bash
