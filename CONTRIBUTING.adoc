@@ -207,7 +207,7 @@ Nix入力はDependabotの対象外であり、``flake.lock``を手動で更新�
   ``release/notes.md``に書き、版を上げるときに書き直します。Release本文がMarkdownであるため、このfileだけは
   ``.adoc``ではなく``.md``です。VS Code拡張の``editors/vscode/README.md``も、拡張registryとeditorの拡張画面が
   Markdownだけを表示するため``.md``です。
-* CLI option、診断code、パッケージバージョン、対応target、公開APIおよびschemaなど、codeや機械可読な
+* CLI option、診断code、パッケージバージョン、対応target、公開APIおよびschemaなど、codeやJSON形式の
   manifestから取得できる情報を文書へ重複して記載しません。
 * 現行仕様、設計理由および作業計画を同じ文書に混在させません。現行仕様は``docs/``、設計理由はADR、
   作業計画はGitHub Issuesを正本とします。
@@ -218,7 +218,7 @@ Nix入力はDependabotの対象外であり、``flake.lock``を手動で更新�
 == CLIの表示言語
 
 CLIが端末へ表示するhelp、診断、進捗、要約およびerrorは英語で記述します。JSON、SARIFなどの
-機械可読な出力に含める説明文も英語とします。設定名、option名、診断codeおよび出力schemaと同様に、
+出力に含める説明文も英語とします。設定名、option名、診断codeおよび出力schemaと同様に、
 表示言語を実行環境や文書の言語によって切り替えません。
 
 == Pull request
@@ -301,7 +301,7 @@ gh workflow run release.yml \
 Release Notesの題名、見出しおよび順序は``release/notes.template.md``を正本とします。製品と版の
 placeholderを置き換え、各節の本文を``release/notes.md``に人が書きます。選択した製品のversionと
 互換性判断に使うAPI世代は
-``tools/release-notes.mjs``が機械可読な正本から生成し、``対応関係``の節にだけ追記します。
+``tools/release-notes.mjs``が製品情報を記録したファイルから生成し、``対応関係``の節にだけ追記します。
 ``cargo make verify``に含まれるrelease contractが、題名から判定した製品、製品version、見出し、順序および
 未記入の案内文が残っていないことを検査します。公開workflowも同じtoolでGitHub Releaseの本文を生成します。
 

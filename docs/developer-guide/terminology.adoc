@@ -93,6 +93,14 @@ link:../../config/japanese-terminology.json[`config/japanese-terminology.json`]�
 日本語の地の文では使いません。取得または変換する情報を具体的に記載します。識別子、型名、設定名および
 コード内の名前は原綴りを保ちます。
 --
+
+[#abstract-machine-readable]
+`機械可読`::
++
+--
+何をどのプログラムが処理するのか分からないため使いません。JSON、schema、manifest、生成した型定義など、
+対象となる形式またはファイルを具体的に記載します。
+--
 // textlint-enable adocweave-terminology
 
 この節の規則は``cargo make verify``で検査します。``docs/``以下の``.adoc``は、Gitの追跡状態にかかわらず

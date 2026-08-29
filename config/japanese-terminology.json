@@ -63,6 +63,13 @@
             "match": "substring",
             "message": "取得または変換する情報を具体的に記載してください。",
             "documentation": "docs/developer-guide/terminology.adoc#english-projection"
+        },
+        {
+            "id": "abstract-machine-readable",
+            "term": "機械可読",
+            "match": "substring",
+            "message": "JSON、schema、manifestなど、プログラムが処理する対象を具体的に記載してください。",
+            "documentation": "docs/developer-guide/terminology.adoc#abstract-machine-readable"
         }
     ]
 }
