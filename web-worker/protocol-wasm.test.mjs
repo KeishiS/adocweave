@@ -3,13 +3,15 @@ import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { Worker } from "node:worker_threads";
 
 import { PROTOCOL_SCHEMA_VERSION } from "./worker-protocol.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
 const require = createRequire(import.meta.url);
-const wasm = require(resolve(root, "target/adocweave-wasm-node/adocweave_wasm.js"));
+const wasmModule = resolve(root, "target/adocweave-wasm-node/adocweave_wasm.js");
+const wasm = require(wasmModule);
 
 function wasmError(operation) {
   try {
@@ -158,14 +160,141 @@ test("generated wasm-bindgen rejects JavaScript-only invalid values", () => {
 
 test("generated wasm-bindgen preserves undefined as omission and rejects null", () => {
   const response = wasm.analyze({
-    source: { text: "Text", id: undefined },
+    source: { text: "Text", id: undefined, attributes: { unset: null } },
     products: { html: true },
-    resources: undefined,
+    resources: { bibliography: null },
   });
   assert.equal(typeof response.html, "string");
   assert.equal(wasmError(() => wasm.analyze({
     source: { text: "Text" }, products: { html: true }, resources: null,
   })).code, "invalid-request");
+});
+
+test("generated wasm-bindgen accepts only plain data objects and arrays", () => {
+  const valid = { source: { text: "Text" }, products: { symbols: true } };
+  for (const value of [
+    new Date(0),
+    new Map(),
+    new Set(),
+    new Uint8Array(0),
+    new Uint8Array([1]),
+  ]) {
+    assert.equal(wasmError(() => wasm.analyze({ ...valid, resources: value })).code, "invalid-request");
+  }
+
+  let getterCalls = 0;
+  const accessor = { ...valid };
+  Object.defineProperty(accessor, "resources", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      throw new Error("getter must not run");
+    },
+  });
+  assert.equal(wasmError(() => wasm.analyze(accessor)).code, "invalid-request");
+  assert.equal(getterCalls, 0);
+
+  const nullPrototypeRequest = Object.assign(Object.create(null), {
+    source: Object.assign(Object.create(null), { text: "Text" }),
+    products: Object.assign(Object.create(null), { symbols: true }),
+  });
+  assert.deepEqual(wasm.analyze(nullPrototypeRequest).symbols, []);
+});
+
+test("generated wasm-bindgen catches every reflection failure as invalid-request", () => {
+  const request = { source: { text: "Text" }, products: { symbols: true } };
+  const revoked = Proxy.revocable(request, {});
+  revoked.revoke();
+  const cases = [
+    new Proxy(request, { ownKeys() { throw new Error("ownKeys failed"); } }),
+    new Proxy(request, { getPrototypeOf() { throw new Error("getPrototypeOf failed"); } }),
+    new Proxy(request, {
+      getOwnPropertyDescriptor() { throw new Error("getOwnPropertyDescriptor failed"); },
+    }),
+    new Proxy(request, {
+      get(target, key, receiver) {
+        if (key === "source") throw new Error("get failed");
+        return Reflect.get(target, key, receiver);
+      },
+    }),
+    revoked.proxy,
+  ];
+  for (const value of cases) {
+    const error = wasmError(() => wasm.analyze(value));
+    assert.equal(error.code, "invalid-request");
+    assert.equal(error.constructor, Object);
+  }
+});
+
+test("generated wasm-bindgen rejects prototype-like unknown fields without changing identity", () => {
+  const request = JSON.parse(
+    '{"source":{"text":"Text"},"products":{"symbols":true},"__proto__":{"large":"value"}}',
+  );
+  assert.equal(Object.hasOwn(request, "__proto__"), true);
+  assert.equal(wasmError(() => wasm.analyze(request)).code, "invalid-request");
+});
+
+test("generated wasm-bindgen applies boundary limits before sparse arrays and strings are copied", () => {
+  const sparse = new Array(20_001);
+  assert.equal(wasmError(() => wasm.analyze({
+    source: { text: "Text" },
+    products: { symbols: true },
+    resources: { references: sparse },
+  })).code, "input-limit-exceeded");
+
+  const oversized = "x".repeat(16 * 1024 * 1024 + 1);
+  assert.equal(wasmError(() => wasm.analyze({
+    source: { text: oversized }, products: { symbols: true },
+  })).code, "input-limit-exceeded");
+});
+
+test("reflection errors do not stop a Worker using the same WASM instance", async (t) => {
+  const worker = new Worker(`
+    const { parentPort, workerData } = require("node:worker_threads");
+    const wasm = require(workerData.wasmModule);
+    parentPort.on("message", ({ requestId, kind, payload }) => {
+      const request = kind === "ownKeysProxy"
+        ? new Proxy(payload, { ownKeys() { throw new Error("ownKeys failed"); } })
+        : payload;
+      try {
+        parentPort.postMessage({ requestId, ok: true, value: wasm.analyze(request) });
+      } catch (error) {
+        parentPort.postMessage({
+          requestId,
+          ok: false,
+          error: { code: error?.code, message: error?.message },
+        });
+      }
+    });
+  `, { eval: true, workerData: { wasmModule } });
+  t.after(() => worker.terminate());
+  let nextRequestId = 0;
+  const run = (kind, payload) => new Promise((resolveResponse, rejectResponse) => {
+    const requestId = nextRequestId += 1;
+    const onMessage = (response) => {
+      if (response.requestId !== requestId) return;
+      worker.off("error", onError);
+      resolveResponse(response);
+    };
+    const onError = (error) => {
+      worker.off("message", onMessage);
+      rejectResponse(error);
+    };
+    worker.once("message", onMessage);
+    worker.once("error", onError);
+    worker.postMessage({ requestId, kind, payload });
+  });
+
+  const invalid = await run("ownKeysProxy", {
+    source: { text: "Text" }, products: { symbols: true },
+  });
+  assert.equal(invalid.ok, false);
+  assert.equal(invalid.error.code, "invalid-request");
+  const valid = await run("plain", {
+    source: { text: "Text" }, products: { symbols: true },
+  });
+  assert.equal(valid.ok, true);
+  assert.deepEqual(valid.value.symbols, []);
 });
 
 test("generated wasm-bindgen reports UTF-8 byte ranges", () => {

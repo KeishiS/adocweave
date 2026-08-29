@@ -126,85 +126,73 @@ pub enum CitationOutcome {
     },
 }
 
-#[cfg_attr(
-    feature = "ts-rs",
-    derive(ts_rs::TS),
-    ts(export, export_to = "protocol.d.mts")
-)]
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct CitationSegment {
-    pub text: String,
-    #[serde(default)]
-    pub anchor: Option<String>,
+serde_object_serializable! {
+    #[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+    #[derive(Clone, Debug, serde::Serialize, Eq, PartialEq)]
+    #[wire(rename_all = "camelCase", deny_unknown_fields)]
+    pub struct CitationSegment as CitationSegmentObject {
+        pub text: String,
+        #[wire_field(serde(default))]
+        pub anchor: Option<String>,
+    }
 }
 
-#[cfg_attr(
-    feature = "ts-rs",
-    derive(ts_rs::TS),
-    ts(export, export_to = "protocol.d.mts")
-)]
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct GeneratedBibliographyEntry {
-    pub citation_key: String,
-    pub text: String,
-    #[serde(default)]
-    pub label: Option<String>,
-    #[serde(default)]
-    pub number: Option<u32>,
+serde_object_serializable! {
+    #[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+    #[derive(Clone, Debug, serde::Serialize, Eq, PartialEq)]
+    #[wire(rename_all = "camelCase", deny_unknown_fields)]
+    pub struct GeneratedBibliographyEntry as GeneratedBibliographyEntryObject {
+        pub citation_key: String,
+        pub text: String,
+        #[wire_field(serde(default))]
+        pub label: Option<String>,
+        #[wire_field(serde(default))]
+        pub number: Option<u32>,
+    }
 }
 
-#[cfg_attr(
-    feature = "ts-rs",
-    derive(ts_rs::TS),
-    ts(export, export_to = "protocol.d.mts")
-)]
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct GeneratedBibliography {
-    pub title: String,
-    #[serde(default)]
-    pub entries: Vec<GeneratedBibliographyEntry>,
+serde_object_serializable! {
+    #[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+    #[derive(Clone, Debug, serde::Serialize, Eq, PartialEq)]
+    #[wire(rename_all = "camelCase", deny_unknown_fields)]
+    pub struct GeneratedBibliography as GeneratedBibliographyObject {
+        pub title: String,
+        #[wire_field(serde(default))]
+        pub entries: Vec<GeneratedBibliographyEntry>,
+    }
 }
 
-#[cfg_attr(
-    feature = "ts-rs",
-    derive(ts_rs::TS),
-    ts(export, export_to = "protocol.d.mts")
-)]
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ResolvedCitation {
-    pub source_start: u32,
-    pub source_end: u32,
-    pub outcome: CitationOutcome,
+serde_object_serializable! {
+    #[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+    #[derive(Clone, Debug, serde::Serialize, Eq, PartialEq)]
+    #[wire(rename_all = "camelCase", deny_unknown_fields)]
+    pub struct ResolvedCitation as ResolvedCitationObject {
+        pub source_start: u32,
+        pub source_end: u32,
+        pub outcome: CitationOutcome,
+    }
 }
 
-#[cfg_attr(
-    feature = "ts-rs",
-    derive(ts_rs::TS),
-    ts(export, export_to = "protocol.d.mts")
-)]
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ResolvedReference {
-    pub source_start: u32,
-    pub source_end: u32,
-    pub outcome: ReferenceOutcome,
+serde_object_serializable! {
+    #[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+    #[derive(Clone, Debug, serde::Serialize, Eq, PartialEq)]
+    #[wire(rename_all = "camelCase", deny_unknown_fields)]
+    pub struct ResolvedReference as ResolvedReferenceObject {
+        pub source_start: u32,
+        pub source_end: u32,
+        pub outcome: ReferenceOutcome,
+    }
 }
 
-#[cfg_attr(
-    feature = "ts-rs",
-    derive(ts_rs::TS),
-    ts(export, export_to = "protocol.d.mts")
-)]
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ResolvedResource {
-    pub source_start: u32,
-    pub source_end: u32,
-    pub outcome: ResourceOutcome,
+serde_object_serializable! {
+    #[cfg_attr(feature = "ts-rs", derive(ts_rs::TS), ts(export, export_to = "protocol.d.mts"))]
+    #[derive(Clone, Debug, serde::Serialize, Eq, PartialEq)]
+    #[wire(rename_all = "camelCase", deny_unknown_fields)]
+    pub struct ResolvedResource as ResolvedResourceObject {
+        pub source_start: u32,
+        pub source_end: u32,
+        pub outcome: ResourceOutcome,
+    }
 }
 
 #[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
@@ -219,3 +207,4 @@ pub(crate) struct RenderInputs {
     #[serde(default)]
     pub generated_bibliography: Option<GeneratedBibliography>,
 }
+use crate::object_deserialize::serde_object_serializable;

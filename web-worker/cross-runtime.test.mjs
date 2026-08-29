@@ -50,6 +50,12 @@ const cases = [
       },
     },
   },
+  {
+    name: "prototype名の未知項目を持つ要求",
+    request: JSON.parse(
+      '{"source":{"text":"Text"},"products":{"symbols":true},"__proto__":{"value":1}}',
+    ),
+  },
 ];
 
 function nativeResult(request) {

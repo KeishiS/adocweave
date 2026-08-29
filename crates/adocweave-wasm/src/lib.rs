@@ -6,6 +6,9 @@ use adocweave::preprocess::{
 };
 use adocweave::{CancellationCheck, NeverCancel, ParseError};
 
+#[cfg(target_arch = "wasm32")]
+mod js_input;
+mod object_deserialize;
 mod preprocess_wire;
 mod protocol;
 mod render_input_conversion;
@@ -199,7 +202,6 @@ fn serialize_error(error: &AdocWeaveError) -> String {
 
 #[cfg(target_arch = "wasm32")]
 mod bindings {
-    use js_sys::{Array, Object, Reflect, Set};
     use serde::Serialize as _;
     use wasm_bindgen::prelude::*;
 
@@ -212,16 +214,9 @@ mod bindings {
 
     #[wasm_bindgen(js_name = analyze)]
     pub fn analyze_js(request: JsValue) -> Result<JsValue, JsValue> {
-        // The generic value conversion enumerates every object key before the
-        // public Serde types enforce `deny_unknown_fields` at every level.
-        // Direct typed conversion only requests known JavaScript properties.
-        let request = serde_input(request)
-            .and_then(|request| {
+        let request = js_input::preflight(&request)
+            .and_then(|()| {
                 serde_wasm_bindgen::from_value(request)
-                    .map_err(|error| request_conversion::invalid_request(error.to_string()))
-            })
-            .and_then(|request| {
-                serde_json::from_value(request)
                     .map_err(|error| request_conversion::invalid_request(error.to_string()))
             })
             .map_err(error_to_js)?;
@@ -234,66 +229,5 @@ mod bindings {
     fn error_to_js(error: AdocWeaveError) -> JsValue {
         serde_wasm_bindgen::to_value(&error)
             .unwrap_or_else(|_| JsValue::from_str("failed to serialize error"))
-    }
-
-    fn serde_input(value: JsValue) -> Result<JsValue, AdocWeaveError> {
-        normalize_value(value, &Set::new(&JsValue::UNDEFINED), 0)
-    }
-
-    fn normalize_value(
-        value: JsValue,
-        ancestors: &Set,
-        depth: u16,
-    ) -> Result<JsValue, AdocWeaveError> {
-        if depth >= 128 {
-            return Err(request_conversion::invalid_request(
-                "request objects must not exceed 128 levels",
-            ));
-        }
-        if Array::is_array(&value) {
-            if ancestors.has(&value) {
-                return Err(request_conversion::invalid_request(
-                    "request must not contain a cycle",
-                ));
-            }
-            ancestors.add(&value);
-            let input = Array::from(&value);
-            let output = Array::new_with_length(input.length());
-            for index in 0..input.length() {
-                output.set(
-                    index,
-                    normalize_value(input.get(index), ancestors, depth + 1)?,
-                );
-            }
-            ancestors.delete(&value);
-            return Ok(output.into());
-        }
-        if value.is_object() && !value.is_null() {
-            if ancestors.has(&value) {
-                return Err(request_conversion::invalid_request(
-                    "request must not contain a cycle",
-                ));
-            }
-            ancestors.add(&value);
-            let output = Object::new();
-            for field in Object::keys(value.unchecked_ref::<Object>()).iter() {
-                let field_value = Reflect::get(&value, &field).map_err(|_| {
-                    request_conversion::invalid_request("request fields must be readable")
-                })?;
-                if !field_value.is_undefined() {
-                    Reflect::set(
-                        &output,
-                        &field,
-                        &normalize_value(field_value, ancestors, depth + 1)?,
-                    )
-                    .map_err(|_| {
-                        request_conversion::invalid_request("request fields must be writable")
-                    })?;
-                }
-            }
-            ancestors.delete(&value);
-            return Ok(output.into());
-        }
-        Ok(value)
     }
 }
