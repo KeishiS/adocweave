@@ -1,5 +1,5 @@
 = ADR 0005: Zed LSPのmonorepo管理
-:status: accepted; release unit amended by ADR 0027; editor/LSP boundary amended by ADR 0028
+:status: accepted; release unit amended by ADR 0027 and ADR 0040; editor/LSP boundary amended by ADR 0028
 
 == 文脈
 
