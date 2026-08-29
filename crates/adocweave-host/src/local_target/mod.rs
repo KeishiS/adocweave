@@ -97,6 +97,37 @@ pub(crate) struct CandidateReadCapacity {
     pub max_resource_bytes: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct LocalTargetTextCachePolicy {
+    lookup: bool,
+    publish_success: bool,
+    publish_failure: bool,
+    enforce_capacity_on_hit: bool,
+}
+
+impl LocalTargetTextCachePolicy {
+    pub(crate) const SHARED: Self = Self {
+        lookup: true,
+        publish_success: true,
+        publish_failure: true,
+        enforce_capacity_on_hit: false,
+    };
+
+    pub(crate) const BYPASS: Self = Self {
+        lookup: false,
+        publish_success: false,
+        publish_failure: false,
+        enforce_capacity_on_hit: false,
+    };
+
+    pub(crate) const ADDITIONAL_LIMIT: Self = Self {
+        lookup: true,
+        publish_success: true,
+        publish_failure: false,
+        enforce_capacity_on_hit: true,
+    };
+}
+
 #[derive(Debug)]
 pub(crate) enum CoordinatedLocalTargetError {
     Target(LocalTargetError),
@@ -1291,7 +1322,13 @@ impl LocalTargetSession {
         candidate: &Path,
     ) -> Result<LoadedLocalTarget, LocalTargetError> {
         let capacity = self.default_read_capacity();
-        self.read_candidate_utf8_with_capacity(candidate, true, true, || {}, |_| capacity)
+        self.read_candidate_utf8_with_capacity(
+            candidate,
+            LocalTargetTextCachePolicy::SHARED,
+            true,
+            || {},
+            |_| capacity,
+        )
     }
 
     /// Opens and reads a normalized path while rejecting every symbolic link.
@@ -1304,7 +1341,13 @@ impl LocalTargetSession {
         candidate: &Path,
     ) -> Result<LoadedLocalTarget, LocalTargetError> {
         let capacity = self.default_read_capacity();
-        self.read_candidate_utf8_with_capacity(candidate, true, false, || {}, |_| capacity)
+        self.read_candidate_utf8_with_capacity(
+            candidate,
+            LocalTargetTextCachePolicy::SHARED,
+            false,
+            || {},
+            |_| capacity,
+        )
     }
 
     /// Opens and reads bounded bytes from an already normalized path.
@@ -1371,8 +1414,13 @@ impl LocalTargetSession {
         candidate: &Path,
         capacity: impl FnOnce(&Path) -> CandidateReadCapacity,
     ) -> Result<(LoadedLocalTarget, LocalTargetTextRollback), LocalTargetError> {
-        let loaded =
-            self.read_candidate_utf8_with_capacity(candidate, false, true, || {}, capacity)?;
+        let loaded = self.read_candidate_utf8_with_capacity(
+            candidate,
+            LocalTargetTextCachePolicy::BYPASS,
+            true,
+            || {},
+            capacity,
+        )?;
         let canonical_path = loaded.canonical_path.clone();
         let previous = self
             .text
@@ -1394,7 +1442,7 @@ impl LocalTargetSession {
     ) -> Result<(LoadedLocalTarget, LocalTargetTextRollback), CoordinatedLocalTargetError> {
         let loaded = self.read_candidate_utf8_with_job_capacity(
             candidate,
-            false,
+            LocalTargetTextCachePolicy::BYPASS,
             true,
             || {},
             capacity,
@@ -1424,6 +1472,10 @@ impl LocalTargetSession {
         }
     }
 
+    pub(crate) fn cache_text_failure(&mut self, canonical_path: PathBuf, error: LocalTargetError) {
+        self.text.insert(canonical_path, Err(error));
+    }
+
     #[cfg(test)]
     pub(crate) fn read_utf8_after_open(
         &mut self,
@@ -1433,7 +1485,13 @@ impl LocalTargetSession {
     ) -> Result<LoadedLocalTarget, LocalTargetError> {
         let candidate = self.candidate(base, target)?;
         let capacity = self.default_read_capacity();
-        self.read_candidate_utf8_with_capacity(&candidate, true, true, after_open, |_| capacity)
+        self.read_candidate_utf8_with_capacity(
+            &candidate,
+            LocalTargetTextCachePolicy::SHARED,
+            true,
+            after_open,
+            |_| capacity,
+        )
     }
 
     fn default_read_capacity(&self) -> CandidateReadCapacity {
@@ -1448,14 +1506,14 @@ impl LocalTargetSession {
     pub(crate) fn read_candidate_utf8_with_capacity(
         &mut self,
         candidate: &Path,
-        reuse_cached_text: bool,
+        text_cache: LocalTargetTextCachePolicy,
         follow_symlinks: bool,
         after_open: impl FnOnce(),
         capacity: impl FnOnce(&Path) -> CandidateReadCapacity,
     ) -> Result<LoadedLocalTarget, LocalTargetError> {
         self.read_candidate_utf8_with_capacity_inner(
             candidate,
-            reuse_cached_text,
+            text_cache,
             follow_symlinks,
             after_open,
             capacity,
@@ -1472,7 +1530,7 @@ impl LocalTargetSession {
     pub(crate) fn read_candidate_utf8_with_job_capacity(
         &mut self,
         candidate: &Path,
-        reuse_cached_text: bool,
+        text_cache: LocalTargetTextCachePolicy,
         follow_symlinks: bool,
         after_open: impl FnOnce(),
         capacity: impl FnOnce(&Path) -> CandidateReadCapacity,
@@ -1480,7 +1538,7 @@ impl LocalTargetSession {
     ) -> Result<LoadedLocalTarget, CoordinatedLocalTargetError> {
         self.read_candidate_utf8_with_capacity_inner(
             candidate,
-            reuse_cached_text,
+            text_cache,
             follow_symlinks,
             after_open,
             capacity,
@@ -1491,20 +1549,39 @@ impl LocalTargetSession {
     fn read_candidate_utf8_with_capacity_inner(
         &mut self,
         candidate: &Path,
-        reuse_cached_text: bool,
+        text_cache: LocalTargetTextCachePolicy,
         follow_symlinks: bool,
         after_open: impl FnOnce(),
         capacity: impl FnOnce(&Path) -> CandidateReadCapacity,
         permit: Option<&mut FilesystemReadPermit>,
     ) -> Result<LoadedLocalTarget, CoordinatedLocalTargetError> {
         let (canonical, file) = self.open_candidate(candidate, follow_symlinks, after_open)?;
-        if reuse_cached_text && let Some(result) = self.text.get(&canonical) {
+        if text_cache.lookup
+            && !text_cache.enforce_capacity_on_hit
+            && let Some(result) = self.text.get(&canonical)
+        {
             return Ok(result.clone().map(|source| LoadedLocalTarget {
                 canonical_path: canonical,
                 source,
             })?);
         }
         let capacity = capacity(&canonical);
+        if text_cache.lookup
+            && text_cache.enforce_capacity_on_hit
+            && let Some(result) = self.text.get(&canonical)
+        {
+            let source = result.clone()?;
+            if !capacity.allow_file || source.len() as u64 > capacity.max_total_bytes {
+                return Err(LocalTargetError::ReadLimitExceeded.into());
+            }
+            if source.len() as u64 > capacity.max_resource_bytes {
+                return Err(LocalTargetError::ResourceTooLarge(canonical).into());
+            }
+            return Ok(LoadedLocalTarget {
+                canonical_path: canonical,
+                source,
+            });
+        }
         if !capacity.allow_file {
             return Err(LocalTargetError::ReadLimitExceeded.into());
         }
@@ -1526,15 +1603,15 @@ impl LocalTargetSession {
                 .map(Arc::<str>::from)
                 .map_err(|_| LocalTargetError::InvalidUtf8(canonical.clone()).into())
         })();
-        if reuse_cached_text {
+        if text_cache.publish_success || text_cache.publish_failure {
             match &result {
-                Ok(source) => {
+                Ok(source) if text_cache.publish_success => {
                     self.text.insert(canonical.clone(), Ok(Arc::clone(source)));
                 }
-                Err(CoordinatedLocalTargetError::Target(source)) => {
+                Err(CoordinatedLocalTargetError::Target(source)) if text_cache.publish_failure => {
                     self.text.insert(canonical.clone(), Err(source.clone()));
                 }
-                Err(CoordinatedLocalTargetError::Job(_)) => {}
+                Ok(_) | Err(_) => {}
             }
         }
         result.map(|source| LoadedLocalTarget {

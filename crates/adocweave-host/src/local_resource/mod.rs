@@ -7,7 +7,7 @@ use crate::filesystem_job::{FilesystemJobCoordinator, FilesystemJobError, Filesy
 use crate::filesystem_limits::FilesystemReadLimits;
 use crate::local_target::{
     CoordinatedLocalTargetError, FilesystemRaceResistance, LocalTargetError, LocalTargetPolicy,
-    LocalTargetSession, LocalTargetTextRollback,
+    LocalTargetSession, LocalTargetTextCachePolicy, LocalTargetTextRollback,
 };
 
 mod budget;
@@ -297,7 +297,7 @@ enum MissingDisposition {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct FilesystemReadOptions {
-    reuse_cached_text: bool,
+    text_cache: LocalTargetTextCachePolicy,
     follow_symlinks: bool,
     missing: MissingDisposition,
     additional_limits: Option<FilesystemReadLimits>,
@@ -942,13 +942,17 @@ impl LocalFilesystemSession {
         let binding_generation = self.reserve_binding_generation()?;
         let max_resource_bytes = self.state.limits.max_resource_bytes;
         let loaded = self.state.sessions[index]
-            .read_candidate_utf8_with_capacity(&candidate, true, true, after_open, |_| {
-                crate::local_target::CandidateReadCapacity {
+            .read_candidate_utf8_with_capacity(
+                &candidate,
+                LocalTargetTextCachePolicy::SHARED,
+                true,
+                after_open,
+                |_| crate::local_target::CandidateReadCapacity {
                     allow_file: true,
                     max_total_bytes: u64::MAX,
                     max_resource_bytes,
-                }
-            })
+                },
+            )
             .map_err(ResourceError::from)?;
         self.finish_read(
             self.session_id,
@@ -1135,10 +1139,7 @@ impl LocalFilesystemMutationCursor<'_> {
             path,
             || {},
             FilesystemReadOptions {
-                // An additional ceiling belongs only to this operation. Do
-                // not reuse or publish LocalTargetSession text entries under
-                // that narrower policy.
-                reuse_cached_text: false,
+                text_cache: LocalTargetTextCachePolicy::ADDITIONAL_LIMIT,
                 follow_symlinks: true,
                 missing: MissingDisposition::ApplyNotFound,
                 additional_limits: Some(limits),
@@ -1156,7 +1157,7 @@ impl LocalFilesystemMutationCursor<'_> {
             path,
             || {},
             FilesystemReadOptions {
-                reuse_cached_text: false,
+                text_cache: LocalTargetTextCachePolicy::BYPASS,
                 follow_symlinks: false,
                 missing: MissingDisposition::ApplyNotFound,
                 additional_limits: None,
@@ -1175,7 +1176,7 @@ impl LocalFilesystemMutationCursor<'_> {
             path,
             || {},
             FilesystemReadOptions {
-                reuse_cached_text: false,
+                text_cache: LocalTargetTextCachePolicy::BYPASS,
                 follow_symlinks: true,
                 missing: MissingDisposition::PreserveLegacyState,
                 additional_limits: None,
@@ -1287,7 +1288,7 @@ impl LocalFilesystemMutationCursor<'_> {
         let loaded = match read_candidate_with_optional_job(
             &mut self.state.sessions[index],
             &candidate,
-            false,
+            LocalTargetTextCachePolicy::BYPASS,
             true,
             || {},
             |canonical| {
@@ -1423,7 +1424,11 @@ impl LocalFilesystemMutationCursor<'_> {
             path,
             after_open,
             FilesystemReadOptions {
-                reuse_cached_text,
+                text_cache: if reuse_cached_text {
+                    LocalTargetTextCachePolicy::SHARED
+                } else {
+                    LocalTargetTextCachePolicy::BYPASS
+                },
                 follow_symlinks: true,
                 missing: MissingDisposition::ApplyNotFound,
                 additional_limits: None,
@@ -1440,7 +1445,7 @@ impl LocalFilesystemMutationCursor<'_> {
         options: FilesystemReadOptions,
     ) -> Result<FilesystemReadOutcome, FilesystemBoundedReadError> {
         let FilesystemReadOptions {
-            reuse_cached_text,
+            text_cache,
             follow_symlinks,
             missing,
             additional_limits,
@@ -1465,10 +1470,11 @@ impl LocalFilesystemMutationCursor<'_> {
         let limits = self.state.limits;
         let file_limit_denied = std::cell::Cell::new(false);
         let established_capacity = std::cell::Cell::new(None);
+        let resolved_canonical = std::cell::RefCell::new(None);
         let loaded = match read_candidate_with_optional_job(
             &mut self.state.sessions[index],
             &candidate,
-            reuse_cached_text,
+            text_cache,
             follow_symlinks,
             after_open,
             |canonical| {
@@ -1482,6 +1488,7 @@ impl LocalFilesystemMutationCursor<'_> {
                     &file_limit_denied,
                 );
                 established_capacity.set(Some(established));
+                resolved_canonical.replace(Some(canonical.to_owned()));
                 additional_limits.map_or(established, |additional| {
                     narrow_read_capacity(established, additional)
                 })
@@ -1505,6 +1512,12 @@ impl LocalFilesystemMutationCursor<'_> {
                     additional_limit_caused(&error, established_capacity.get(), additional)
                 }) {
                     return Err(FilesystemBoundedReadError::AdditionalLimit);
+                }
+                if additional_limits.is_some()
+                    && let CoordinatedLocalTargetError::Target(source) = &error
+                    && let Some(canonical) = resolved_canonical.borrow().clone()
+                {
+                    self.state.sessions[index].cache_text_failure(canonical, source.clone());
                 }
                 return Err(FilesystemBoundedReadError::Established(
                     map_coordinated_read_error(error, limits, file_limit_denied.get()),
@@ -2163,7 +2176,7 @@ impl PreparedFilesystemCommit<'_> {
 fn read_candidate_with_optional_job(
     session: &mut LocalTargetSession,
     candidate: &Path,
-    reuse_cached_text: bool,
+    text_cache: LocalTargetTextCachePolicy,
     follow_symlinks: bool,
     after_open: impl FnOnce(),
     capacity: impl FnOnce(&Path) -> crate::local_target::CandidateReadCapacity,
@@ -2172,7 +2185,7 @@ fn read_candidate_with_optional_job(
     match permit {
         Some(permit) => session.read_candidate_utf8_with_job_capacity(
             candidate,
-            reuse_cached_text,
+            text_cache,
             follow_symlinks,
             after_open,
             capacity,
@@ -2181,7 +2194,7 @@ fn read_candidate_with_optional_job(
         None => session
             .read_candidate_utf8_with_capacity(
                 candidate,
-                reuse_cached_text,
+                text_cache,
                 follow_symlinks,
                 after_open,
                 capacity,

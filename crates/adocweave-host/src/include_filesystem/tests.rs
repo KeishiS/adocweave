@@ -411,6 +411,144 @@ fn additional_limit_does_not_commit_a_failure_with_an_unrelated_read() {
     assert_eq!(session.budget().bytes(), 10);
 }
 
+#[cfg(unix)]
+#[test]
+fn additional_reads_share_one_success_across_aliases_and_source_ids() {
+    use std::os::unix::fs::symlink;
+
+    let root = TestDir::new("additional-alias-cache");
+    let path = root.path().join("source.adoc");
+    let alias = root.path().join("alias.adoc");
+    fs::write(&path, "first").expect("source");
+    symlink("source.adoc", &alias).expect("alias");
+    let mut session = session(root.path(), 1_024);
+    let job = IncludeFilesystemJob::new(FilesystemJobLimits::unbounded()).expect("job");
+    let mut transaction = job.transaction(&session).expect("transaction");
+    let limits = FilesystemReadLimits {
+        max_files: 16,
+        max_total_bytes: 1_024,
+        max_resource_bytes: 512,
+    };
+
+    let IncludeFilesystemLimitedOutcome::Found(first) =
+        transaction.read_utf8_within_limits(path_request("first-id", &path), limits)
+    else {
+        panic!("first read succeeds");
+    };
+    assert_eq!(first.source(), "first");
+    fs::write(&path, "later").expect("change source after first read");
+    let second = transaction.read_utf8_within_limits(path_request("alias-id", &alias), limits);
+    let IncludeFilesystemLimitedOutcome::Found(second) = second else {
+        panic!("alias read reuses the first snapshot: {second:?}");
+    };
+    assert_eq!(second.source(), "first");
+
+    transaction.commit(&mut session).expect("commit snapshot");
+    let usage = job.finish().expect("finish");
+    assert_eq!(usage.read_operations, 2);
+    assert_eq!(usage.read_bytes, 5);
+    assert_eq!(session.budget().bytes(), 5);
+}
+
+#[cfg(unix)]
+#[test]
+fn narrow_additional_rejection_does_not_pollute_a_cached_success() {
+    use std::os::unix::fs::symlink;
+
+    let root = TestDir::new("additional-cache-rejection");
+    let path = root.path().join("source.adoc");
+    let alias = root.path().join("alias.adoc");
+    fs::write(&path, "eight888").expect("source");
+    symlink("source.adoc", &alias).expect("alias");
+    let mut session = session(root.path(), 1_024);
+    let job = IncludeFilesystemJob::new(FilesystemJobLimits::unbounded()).expect("job");
+    let mut transaction = job.transaction(&session).expect("transaction");
+    let wide = FilesystemReadLimits {
+        max_files: 16,
+        max_total_bytes: 1_024,
+        max_resource_bytes: 512,
+    };
+    let narrow = FilesystemReadLimits {
+        max_files: 16,
+        max_total_bytes: 4,
+        max_resource_bytes: 4,
+    };
+
+    assert!(matches!(
+        transaction.read_utf8_within_limits(path_request("wide", &path), wide),
+        IncludeFilesystemLimitedOutcome::Found(_)
+    ));
+    assert!(matches!(
+        transaction.read_utf8_within_limits(path_request("narrow", &alias), narrow),
+        IncludeFilesystemLimitedOutcome::Limit {
+            cause: IncludeFilesystemReadLimit::Additional,
+            ..
+        }
+    ));
+    assert!(matches!(
+        transaction.read_utf8_within_limits(path_request("wide-again", &alias), wide),
+        IncludeFilesystemLimitedOutcome::Found(_)
+    ));
+
+    transaction
+        .commit(&mut session)
+        .expect("commit cached success");
+    let usage = job.finish().expect("finish");
+    assert_eq!(usage.read_operations, 3);
+    assert_eq!(usage.read_bytes, 8);
+    assert_eq!(session.budget().bytes(), 8);
+}
+
+#[test]
+fn established_request_failure_remains_cached_for_additional_reads() {
+    let root = TestDir::new("established-additional-cache");
+    let path = root.path().join("source.adoc");
+    fs::write(&path, "eight888").expect("source");
+    let mut session = session_with_limits(
+        root.path(),
+        FilesystemReadLimits {
+            max_files: 16,
+            max_total_bytes: 1_024,
+            max_resource_bytes: 4,
+        },
+    );
+    let job = IncludeFilesystemJob::new(FilesystemJobLimits::unbounded()).expect("job");
+    let mut transaction = job.transaction(&session).expect("transaction");
+    let additional = FilesystemReadLimits {
+        max_files: 16,
+        max_total_bytes: 1_024,
+        max_resource_bytes: 512,
+    };
+
+    assert!(matches!(
+        transaction.read_utf8_within_limits(path_request("first", &path), additional),
+        IncludeFilesystemLimitedOutcome::Limit {
+            cause: IncludeFilesystemReadLimit::Established(FilesystemDraftError::Resource(
+                ResourceError::ResourceTooLarge(_)
+            )),
+            ..
+        }
+    ));
+    fs::write(&path, "ok").expect("replace source after the established failure");
+    assert!(matches!(
+        transaction.read_utf8_within_limits(path_request("second", &path), additional),
+        IncludeFilesystemLimitedOutcome::Limit {
+            cause: IncludeFilesystemReadLimit::Established(FilesystemDraftError::Resource(
+                ResourceError::ResourceTooLarge(_)
+            )),
+            ..
+        }
+    ));
+
+    transaction
+        .commit(&mut session)
+        .expect("commit established failure");
+    let usage = job.finish().expect("finish");
+    assert_eq!(usage.read_operations, 2);
+    assert_eq!(usage.read_bytes, 5);
+    assert_eq!(session.budget().bytes(), 0);
+}
+
 #[test]
 fn simultaneous_request_file_limit_is_reported_as_established() {
     let root = TestDir::new("established-file-limit");

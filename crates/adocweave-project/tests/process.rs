@@ -736,6 +736,46 @@ fn simultaneous_request_resource_limit_is_cached_without_fixing_the_scope() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn cached_success_is_checked_and_charged_under_a_narrower_scope() {
+    use std::os::unix::fs::symlink;
+
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    fs::create_dir(root.join("a-wide")).expect("wide scope");
+    fs::create_dir(root.join("z-narrow")).expect("narrow scope");
+    let wide = "schema-version = 2\n[resources]\nmax-files = 2\nmax-total-bytes = 1024\nmax-resource-bytes = 512\n[html]\nstylesheet-files = [\"shared.css\"]\n";
+    let narrow = "schema-version = 2\n[resources]\nmax-files = 2\nmax-total-bytes = 1024\nmax-resource-bytes = 4\n[html]\nstylesheet-files = [\"shared.css\"]\n";
+    write(root.join("a-wide/.adocweave.toml"), wide);
+    write(root.join("z-narrow/.adocweave.toml"), narrow);
+    write(root.join("a-wide/guide.adoc"), "w\n");
+    write(root.join("z-narrow/guide.adoc"), "n\n");
+    write(root.join("shared.css"), "eight888");
+    symlink("../shared.css", root.join("a-wide/shared.css")).expect("wide alias");
+    symlink("../shared.css", root.join("z-narrow/shared.css")).expect("narrow alias");
+
+    let result = process(request(
+        root,
+        vec![
+            ProjectTarget::Path(PathBuf::from("a-wide/guide.adoc")),
+            ProjectTarget::Path(PathBuf::from("z-narrow/guide.adoc")),
+        ],
+    ))
+    .expect("narrow scope remains target-local");
+    assert!(result.targets[0].outcome.is_ok());
+    assert!(matches!(
+        result.targets[1].outcome,
+        Err(ProjectTargetError::Incomplete(ProjectLimit::ReadBytes {
+            limit: 4
+        }))
+    ));
+    assert_eq!(
+        result.usage.filesystem.read_bytes,
+        (wide.len() + narrow.len() + 12) as u64
+    );
+}
+
 #[test]
 fn request_total_limit_is_reported_when_it_has_less_read_capacity() {
     let directory = tempfile::tempdir().expect("temporary directory");
