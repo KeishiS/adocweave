@@ -1,10 +1,10 @@
 //! Owned contracts for processing one project request.
 //!
-//! A [`ProjectRequest`] contains every target selected for one run together
-//! with its configuration choice, verified filesystem authority and finite
-//! limits. All values are owned: callers may move a request between their own
-//! short-lived processing steps without keeping CLI arguments, LSP messages or
-//! borrowed paths alive.
+//! A [`ProjectRequest`] contains every selected target, caller-provided source,
+//! configuration choice, verified [`ProjectAuthority`] and finite limits for
+//! one run. The result owns analyses, dependency observations and safe watch
+//! candidates. LSP revisions remain in the caller's job state and are not
+//! echoed through this crate.
 //!
 //! A [`ProjectOutcome`] separates failures which invalidate the whole request
 //! from [`ProjectTargetError`] values for one selected document. Successful
@@ -19,51 +19,134 @@ mod process;
 mod selection;
 
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use adocweave::OutputLimits;
-use adocweave::preprocess::{PreprocessedAnalysis, PreprocessedAnalysisError};
-use adocweave_config::{ConfigError, ConfigSnapshot, ResolvedProjectConfig};
+use adocweave::output::formatter::FormatConfig;
+use adocweave::output::html::RenderPolicy;
+use adocweave::preprocess::PreprocessOptions;
+use adocweave::preprocess::{AnalysisProjection, PreprocessedAnalysis, PreprocessedAnalysisError};
+use adocweave::{Analysis, AnalysisOptions, SourceId};
+use adocweave_config::{ConfigError, ConfigErrorCode, ConfigSnapshot, ResolvedProjectConfig};
 use adocweave_host::{
-    FilesystemJobUsage, FilesystemReadLimits, LocalFilesystemPolicy, LogicalSourceId, ResourceError,
+    DerivedFilesystemRoots, FilesystemReadLimits, LocalFilesystemPolicy, ResourceError,
 };
 
-pub use process::process;
+pub use process::{process, resolve_config};
+
+pub(crate) fn project_authority_error(error: ResourceError) -> ProjectError {
+    ProjectError::Authority(ProjectResourceError::from_host(error))
+}
+
+pub(crate) fn project_config_error(error: ConfigError) -> ProjectError {
+    ProjectError::Config(ProjectConfigError::from_config(error))
+}
+
+pub(crate) fn project_target_read(error: ResourceError) -> ProjectTargetError {
+    ProjectTargetError::Read(ProjectResourceError::from_host(error))
+}
 
 /// Fixed request ceiling applied before compiling or scanning glob selectors.
 ///
 /// This is not part of [`ProjectLimits`]: accepting a request must itself stay
 /// bounded before request-controlled filesystem and processing limits can be
 /// applied.
-pub const MAX_DISTINCT_GLOB_SELECTORS: usize = 256;
+pub(crate) const MAX_DISTINCT_GLOB_SELECTORS: usize = 256;
 
 /// Fixed ceiling for the UTF-8 bytes in distinct authored glob patterns.
 ///
 /// Duplicate patterns are counted once. Exceeding this ceiling is a target
 /// selection error known before any glob is compiled or any directory is read.
-pub const MAX_TOTAL_GLOB_PATTERN_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_TOTAL_GLOB_PATTERN_BYTES: usize = 64 * 1024;
 
 /// One owned request covering every target selected for a single run.
 ///
-/// `authority` contains already verified directory handles and is the maximum
-/// filesystem scope available to the request. Paths read from configuration
-/// may narrow this scope but must never widen it. `project_root` is kept
-/// separately because it is the boundary for configuration discovery and
-/// target interpretation, not an additional grant of filesystem access.
+/// `authority` retains the opened project root and the maximum filesystem
+/// scope. Paths read from configuration may narrow this scope but cannot widen
+/// it. [`ProjectSource`] values replace primary/include bodies only; they never
+/// replace configuration, stylesheets or local-target inspection.
 #[derive(Debug)]
 pub struct ProjectRequest {
-    pub project_root: PathBuf,
     pub targets: Vec<ProjectTarget>,
+    /// In-memory sources available as primary documents or include overlays.
+    pub sources: Vec<ProjectSource>,
     pub config: ConfigSelection,
     pub overrides: ProjectOverrides,
-    pub authority: LocalFilesystemPolicy,
+    pub authority: ProjectAuthority,
     pub limits: ProjectLimits,
+}
+
+/// Verified filesystem authority for one project request.
+///
+/// Constructing this value opens the permitted roots. A project configuration
+/// may narrow those roots, but cannot add authority later.
+#[derive(Clone, Debug)]
+pub struct ProjectAuthority {
+    project_root: PathBuf,
+    policy: LocalFilesystemPolicy,
+}
+
+impl ProjectAuthority {
+    /// Opens `roots` and verifies that `project_root` is inside one of them.
+    pub fn open(
+        project_root: impl Into<PathBuf>,
+        roots: impl IntoIterator<Item = PathBuf>,
+    ) -> Result<Self, ProjectResourceError> {
+        let project_root = project_root.into();
+        if !project_root.is_absolute() {
+            return Err(ProjectResourceError::from_host(
+                ResourceError::PathNotAbsolute(project_root),
+            ));
+        }
+        let mut policy = LocalFilesystemPolicy::new(roots, FilesystemReadLimits::default())
+            .map_err(ProjectResourceError::from_host)?;
+        let project_root = project_root.canonicalize().map_err(|error| {
+            ProjectResourceError::from_host(ResourceError::Inspect {
+                path: project_root.clone(),
+                source: error.to_string(),
+            })
+        })?;
+        let anchor = policy
+            .policy_for_path(&project_root)
+            .map(|value| value.root().to_owned());
+        let Some(anchor) = anchor else {
+            return Err(ProjectResourceError::from_host(
+                ResourceError::OutsideRoots(project_root),
+            ));
+        };
+        if anchor != project_root {
+            policy
+                .access_derived(
+                    &anchor,
+                    DerivedFilesystemRoots {
+                        confined: vec![project_root.clone()],
+                        independent: Vec::new(),
+                    },
+                    FilesystemReadLimits::default(),
+                )
+                .map_err(ProjectResourceError::from_host)?;
+        }
+        Ok(Self {
+            project_root,
+            policy,
+        })
+    }
+
+    /// Returns the trusted project boundary.
+    pub fn project_root(&self) -> &Path {
+        &self.project_root
+    }
+
+    pub(crate) fn into_parts(self) -> (PathBuf, LocalFilesystemPolicy) {
+        (self.project_root, self.policy)
+    }
 }
 
 /// A target selector independent of command-line argument types.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProjectTarget {
+    /// One source supplied in [`ProjectRequest::sources`].
+    Source(SourceId),
     /// One authored file path.
     Path(PathBuf),
     /// Every supported document selected below one directory.
@@ -75,10 +158,43 @@ pub enum ProjectTarget {
     Workspace(PathBuf),
 }
 
+/// One fixed in-memory source and its include-resolution path.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectSource {
+    pub source_id: SourceId,
+    /// File replaced by this source, or `None` for standard input.
+    pub path: Option<PathBuf>,
+    /// Directory used to resolve relative includes.
+    pub base: PathBuf,
+    pub source: Arc<str>,
+}
+
+impl ProjectSource {
+    pub fn new(source_id: SourceId, path: PathBuf, source: impl Into<Arc<str>>) -> Self {
+        let base = path.parent().map(Path::to_owned).unwrap_or_default();
+        Self {
+            source_id,
+            path: Some(path),
+            base,
+            source: source.into(),
+        }
+    }
+
+    /// Creates a pathless source such as standard input.
+    pub fn memory(source_id: SourceId, base: PathBuf, source: impl Into<Arc<str>>) -> Self {
+        Self {
+            source_id,
+            path: None,
+            base,
+            source: source.into(),
+        }
+    }
+}
+
 /// How a request selects its project configuration.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub enum ConfigSelection {
-    /// Searches from each target towards `ProjectRequest::project_root`.
+    /// Searches from each target towards [`ProjectAuthority::project_root`].
     #[default]
     Discover,
     /// Uses one explicitly selected project file.
@@ -92,9 +208,12 @@ pub enum ConfigSelection {
 /// `None` preserves the configured value. This type contains only settings
 /// which currently have a caller-level override; it is not a second project
 /// configuration schema.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ProjectOverrides {
     pub include: Option<bool>,
+    /// Additional stylesheet files resolved from the project root and observed
+    /// under the same budgets as configured stylesheets.
+    pub stylesheet_files: Vec<PathBuf>,
 }
 
 /// Hard ceilings shared by every target and physical acquisition in one request.
@@ -105,13 +224,25 @@ pub struct ProjectOverrides {
 /// not replace these request-wide ceilings.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProjectLimits {
-    pub filesystem_reads: FilesystemReadLimits,
+    pub max_files: usize,
+    pub max_resource_bytes: u64,
+    pub max_read_bytes: u64,
     pub max_directory_entries: u64,
     pub max_processing_iterations: u32,
     /// Maximum UTF-8 bytes retained in returned expanded documents and loaded
     /// resource bodies. Rendered products added by later stages have their own
     /// output accounting and are not charged here.
-    pub output: OutputLimits,
+    pub max_output_bytes: u32,
+}
+
+impl ProjectLimits {
+    pub(crate) const fn filesystem_reads(self) -> FilesystemReadLimits {
+        FilesystemReadLimits {
+            max_files: self.max_files,
+            max_total_bytes: self.max_read_bytes,
+            max_resource_bytes: self.max_resource_bytes,
+        }
+    }
 }
 
 /// Result of attempting one complete project request.
@@ -126,24 +257,60 @@ pub type ProjectOutcome = Result<ProjectResult, ProjectError>;
 pub struct ProjectResult {
     /// Results in the stable target order established by project processing.
     pub targets: Vec<ProjectTargetResult>,
+    /// Request-wide configuration discovery observations, including missing
+    /// candidates that are safe to watch.
+    pub resources: Vec<ProjectResourceResult>,
     /// Recoverable request-wide conditions which leave partial results usable.
     pub warnings: Vec<ProjectWarning>,
     /// Resource use shared by all targets in this request.
     pub usage: ProjectUsage,
 }
 
+/// Request which resolves configuration without selecting or analyzing a document.
+#[derive(Debug)]
+pub struct ProjectConfigRequest {
+    pub authority: ProjectAuthority,
+    pub search_from: PathBuf,
+    pub search_from_is_directory: bool,
+    pub config: ConfigSelection,
+    pub overrides: ProjectOverrides,
+    pub limits: ProjectLimits,
+}
+
+/// Configuration-only result with the observations needed for invalidation.
+#[derive(Debug)]
+pub struct ProjectConfigResult {
+    pub config: Arc<ProjectConfigSnapshot>,
+    pub resources: Vec<ProjectResourceResult>,
+    pub warnings: Vec<ProjectWarning>,
+    pub usage: ProjectUsage,
+}
+
 /// Result for one concrete document selected from the request.
 #[derive(Debug)]
 pub struct ProjectTargetResult {
-    pub source_id: LogicalSourceId,
-    pub path: PathBuf,
-    /// Exact configuration used for this target, shared by every target in its scope.
-    pub config: Option<Arc<ConfigSnapshot>>,
-    /// Configuration after applying request-local overrides, shared by scope.
-    pub resolved_config: Arc<ResolvedProjectConfig>,
+    pub source_id: SourceId,
+    /// Filesystem path for file-backed input, or `None` for a source supplied
+    /// directly by the caller.
+    pub path: Option<PathBuf>,
+    /// Original main-document text when it fits the result limit.
+    pub source: Option<Arc<str>>,
+    /// Effective configuration and its optional source identity.
+    pub config: Arc<ProjectConfigSnapshot>,
     /// Files read or inspected on behalf of this target.
     pub resources: Vec<ProjectResourceResult>,
-    pub outcome: Result<PreprocessedAnalysis, ProjectTargetError>,
+    pub outcome: Result<ProjectAnalysis, ProjectTargetError>,
+}
+
+/// Analyses derived once from one fixed set of project inputs.
+#[derive(Debug)]
+pub struct ProjectAnalysis {
+    /// Analysis of the unexpanded primary source.
+    pub source: Analysis,
+    /// Analysis of the include-expanded document and its source map.
+    pub preprocessed: PreprocessedAnalysis,
+    /// Editor-facing facts mapped back to positions in the original sources.
+    pub source_mapping: AnalysisProjection,
 }
 
 /// Why one filesystem resource was acquired.
@@ -159,11 +326,28 @@ pub enum ProjectResourceKind {
 /// One fixed filesystem observation made during a request.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProjectResourceResult {
-    pub source_id: LogicalSourceId,
+    pub source_id: SourceId,
     pub path: PathBuf,
+    /// Authored or discovered path before filesystem resolution.
+    pub requested_path: PathBuf,
+    /// Path that is safe for a caller to watch for a later change.
+    ///
+    /// Missing and unreadable filesystem resources remain watchable so a
+    /// caller can observe their repair. Caller input, policy rejection and
+    /// limit failures do not expose a watch path.
+    pub watch_path: Option<PathBuf>,
     pub kind: ProjectResourceKind,
-    pub requested_by: Option<LogicalSourceId>,
+    pub origin: ProjectResourceOrigin,
+    /// Source which requested this resource, including each include edge.
+    pub requested_by: Option<SourceId>,
     pub outcome: ProjectResourceOutcome,
+}
+
+/// Origin of a fixed resource value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProjectResourceOrigin {
+    Filesystem,
+    Input,
 }
 
 /// Content or failure retained for one logical resource until the request ends.
@@ -184,8 +368,8 @@ pub enum ProjectResourceOutcome {
 /// A resource failure which callers can classify without parsing text.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProjectResourceFailure {
-    Unreadable(ResourceError),
-    Rejected(ResourceError),
+    Unreadable(ProjectResourceError),
+    Rejected(ProjectResourceError),
     Limit(ProjectLimit),
 }
 
@@ -201,7 +385,10 @@ impl fmt::Display for ProjectResourceFailure {
 /// Resource use accumulated over one request.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ProjectUsage {
-    pub filesystem: FilesystemJobUsage,
+    pub read_operations: u64,
+    pub read_bytes: u64,
+    pub directory_operations: u64,
+    pub directory_entries: u64,
     pub processing_iterations: u32,
     /// Expanded document and loaded resource bytes retained in this result.
     pub output_bytes: u64,
@@ -210,17 +397,35 @@ pub struct ProjectUsage {
 /// A safety ceiling reached while processing a request or target.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProjectLimit {
-    Files { limit: usize },
-    ReadBytes { limit: u64 },
-    DirectoryEntries { limit: u64 },
-    ProcessingIterations { limit: u32 },
-    OutputBytes { limit: u32 },
+    Files {
+        limit: usize,
+    },
+    /// Maximum bytes accepted from one resource body.
+    ResourceBytes {
+        limit: u64,
+    },
+    /// Aggregate bytes read across a request or configuration scope.
+    ReadBytes {
+        limit: u64,
+    },
+    DirectoryEntries {
+        limit: u64,
+    },
+    ProcessingIterations {
+        limit: u32,
+    },
+    OutputBytes {
+        limit: u32,
+    },
 }
 
 impl fmt::Display for ProjectLimit {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Files { limit } => write!(formatter, "project file limit exceeded: {limit}"),
+            Self::ResourceBytes { limit } => {
+                write!(formatter, "project resource byte limit exceeded: {limit}")
+            }
             Self::ReadBytes { limit } => {
                 write!(formatter, "project read byte limit exceeded: {limit}")
             }
@@ -253,8 +458,8 @@ pub enum ProjectWarning {
         kind: ProjectResourceKind,
         failure: ProjectResourceFailure,
     },
-    /// Local-reference projection could not produce verifiable candidates.
-    LocalTargetProjection { message: String },
+    /// A local reference could not be mapped to a verifiable source position.
+    LocalTargetMapping { message: String },
 }
 
 /// A target selection failure known before reading a selected document.
@@ -292,9 +497,12 @@ impl std::error::Error for TargetSelectionError {}
 /// Failure which prevents a coherent result for the entire request.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProjectError {
-    Config(ConfigError),
+    Config(ProjectConfigError),
     TargetSelection(TargetSelectionError),
-    Authority(ResourceError),
+    Authority(ProjectResourceError),
+    /// The caller cancelled the request before it completed.
+    Cancelled,
+    InvalidInput(ProjectInputError),
     Limit(ProjectLimit),
 }
 
@@ -305,6 +513,8 @@ impl fmt::Display for ProjectError {
             Self::TargetSelection(error) => error.fmt(formatter),
             Self::Authority(error) => error.fmt(formatter),
             Self::Limit(error) => error.fmt(formatter),
+            Self::Cancelled => formatter.write_str("project processing cancelled"),
+            Self::InvalidInput(error) => error.fmt(formatter),
         }
     }
 }
@@ -316,17 +526,266 @@ impl std::error::Error for ProjectError {
             Self::TargetSelection(error) => Some(error),
             Self::Authority(error) => Some(error),
             Self::Limit(error) => Some(error),
+            Self::Cancelled => None,
+            Self::InvalidInput(error) => Some(error),
         }
     }
 }
 
+/// Caller-owned request values are internally inconsistent.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectInputError {
+    pub code: &'static str,
+    message: String,
+}
+
+impl ProjectInputError {
+    pub(crate) fn new(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for ProjectInputError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for ProjectInputError {}
+
 /// Failure confined to one selected document.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProjectTargetError {
-    Read(ResourceError),
+    Read(ProjectResourceError),
     Analysis(PreprocessedAnalysisError),
     /// The result is incomplete and must not be presented as fully analyzed.
     Incomplete(ProjectLimit),
+}
+
+/// Stable category for a project-owned configuration error.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProjectConfigErrorCode {
+    ReadFailed,
+    OutsideBoundary,
+    InvalidToml,
+    UnsupportedSchema,
+    InvalidRule,
+    InvalidAttribute,
+    InvalidLimit,
+    InvalidPath,
+    InvalidRole,
+}
+
+/// Configuration failure without an `adocweave-config` type in the contract.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectConfigError {
+    pub code: ProjectConfigErrorCode,
+    pub field: Option<String>,
+    message: String,
+}
+
+impl ProjectConfigError {
+    fn from_config(error: ConfigError) -> Self {
+        let code = match error.code {
+            ConfigErrorCode::ReadFailed => ProjectConfigErrorCode::ReadFailed,
+            ConfigErrorCode::OutsideBoundary => ProjectConfigErrorCode::OutsideBoundary,
+            ConfigErrorCode::InvalidToml => ProjectConfigErrorCode::InvalidToml,
+            ConfigErrorCode::UnsupportedSchema => ProjectConfigErrorCode::UnsupportedSchema,
+            ConfigErrorCode::InvalidRule => ProjectConfigErrorCode::InvalidRule,
+            ConfigErrorCode::InvalidAttribute => ProjectConfigErrorCode::InvalidAttribute,
+            ConfigErrorCode::InvalidLimit => ProjectConfigErrorCode::InvalidLimit,
+            ConfigErrorCode::InvalidPath => ProjectConfigErrorCode::InvalidPath,
+            ConfigErrorCode::InvalidRole => ProjectConfigErrorCode::InvalidRole,
+        };
+        Self {
+            code,
+            field: error.field.clone(),
+            message: error.to_string(),
+        }
+    }
+}
+
+impl fmt::Display for ProjectConfigError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for ProjectConfigError {}
+
+/// Stable category for a project resource failure.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProjectResourceErrorCode {
+    Missing,
+    PermissionDenied,
+    InvalidUtf8,
+    OutsideAuthority,
+    InvalidPath,
+    ReadFailed,
+    Limit,
+    Unverifiable,
+}
+
+/// Project-owned resource failure.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectResourceError {
+    pub code: ProjectResourceErrorCode,
+    pub path: Option<PathBuf>,
+    message: String,
+    host: ResourceError,
+}
+
+impl ProjectResourceError {
+    pub(crate) fn from_host(error: ResourceError) -> Self {
+        let (code, path) = match &error {
+            ResourceError::Missing(path) => (ProjectResourceErrorCode::Missing, Some(path.clone())),
+            ResourceError::PermissionDenied(path) => (
+                ProjectResourceErrorCode::PermissionDenied,
+                Some(path.clone()),
+            ),
+            ResourceError::InvalidUtf8 { path, .. } => {
+                (ProjectResourceErrorCode::InvalidUtf8, Some(path.clone()))
+            }
+            ResourceError::OutsideRoots(path) => (
+                ProjectResourceErrorCode::OutsideAuthority,
+                Some(path.clone()),
+            ),
+            ResourceError::PathNotAbsolute(path) => {
+                (ProjectResourceErrorCode::InvalidPath, Some(path.clone()))
+            }
+            ResourceError::Read { path, .. } => {
+                (ProjectResourceErrorCode::ReadFailed, Some(path.clone()))
+            }
+            ResourceError::Inspect { path, .. } | ResourceError::NotRegularFile(path) => {
+                (ProjectResourceErrorCode::ReadFailed, Some(path.clone()))
+            }
+            ResourceError::FileLimit { .. }
+            | ResourceError::ByteLimit
+            | ResourceError::ResourceTooLarge(_)
+            | ResourceError::Job(_) => (ProjectResourceErrorCode::Limit, None),
+            ResourceError::Unverifiable(_) => (ProjectResourceErrorCode::Unverifiable, None),
+            ResourceError::NoRoots
+            | ResourceError::InvalidRoot
+            | ResourceError::RootLimit { .. } => (ProjectResourceErrorCode::OutsideAuthority, None),
+            ResourceError::InvalidSourceId
+            | ResourceError::SessionIdentityExhausted
+            | ResourceError::ScanEntryLimit { .. } => (ProjectResourceErrorCode::Limit, None),
+        };
+        Self {
+            code,
+            path,
+            message: error.to_string(),
+            host: error,
+        }
+    }
+
+    pub(crate) fn host(&self) -> &ResourceError {
+        &self.host
+    }
+}
+
+impl fmt::Display for ProjectResourceError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for ProjectResourceError {}
+
+/// Effective project configuration owned by this crate.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectConfig {
+    inner: ResolvedProjectConfig,
+}
+
+/// Effective retained-resource ceilings from project configuration.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProjectResourceLimits {
+    pub max_files: usize,
+    pub max_total_bytes: u64,
+    pub max_resource_bytes: u64,
+}
+
+impl ProjectConfig {
+    pub fn schema_version(&self) -> u32 {
+        self.inner.schema_version
+    }
+    pub fn analysis(&self) -> &AnalysisOptions {
+        &self.inner.analysis
+    }
+    pub fn preprocess(&self) -> &PreprocessOptions {
+        &self.inner.preprocess
+    }
+    pub fn include_enabled(&self) -> bool {
+        self.inner.resources.include
+    }
+    pub fn resource_roots(&self) -> &[PathBuf] {
+        &self.inner.resources.roots
+    }
+    pub fn resource_limits(&self) -> ProjectResourceLimits {
+        let limits = self.inner.resources.limit_plan.filesystem_reads;
+        ProjectResourceLimits {
+            max_files: limits.max_files,
+            max_total_bytes: limits.max_total_bytes,
+            max_resource_bytes: limits.max_resource_bytes,
+        }
+    }
+    pub fn workspace_excludes(&self) -> impl Iterator<Item = &str> {
+        self.inner.workspace.scan.exclude_patterns()
+    }
+    pub fn local_targets_enabled(&self) -> bool {
+        self.inner.local_targets.enabled
+    }
+    pub fn local_target_root(&self) -> Option<&Path> {
+        self.inner.local_targets.project_root.as_deref()
+    }
+    pub fn format(&self) -> &FormatConfig {
+        &self.inner.format
+    }
+    pub fn format_newline_explicit(&self) -> bool {
+        self.inner.format_newline_explicit
+    }
+    pub fn format_final_newline_explicit(&self) -> bool {
+        self.inner.format_final_newline_explicit
+    }
+    pub fn html_policy(&self) -> &RenderPolicy {
+        &self.inner.html.policy
+    }
+    pub fn stylesheet_files(&self) -> &[PathBuf] {
+        &self.inner.html.stylesheet_files
+    }
+    pub fn stylesheet_urls(&self) -> &[String] {
+        &self.inner.html.stylesheet_urls
+    }
+}
+
+/// Content-addressed effective configuration for one project scope.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectConfigSnapshot {
+    pub source_id: Option<SourceId>,
+    pub path: Option<PathBuf>,
+    pub content_sha256: Option<[u8; 32]>,
+    pub config: ProjectConfig,
+}
+
+impl ProjectConfigSnapshot {
+    pub(crate) fn from_resolved(
+        snapshot: Option<&ConfigSnapshot>,
+        config: &ResolvedProjectConfig,
+        source_id: Option<SourceId>,
+    ) -> Self {
+        Self {
+            source_id,
+            path: snapshot.map(|value| value.path.clone()),
+            content_sha256: snapshot.map(|value| value.content_sha256),
+            config: ProjectConfig {
+                inner: config.clone(),
+            },
+        }
+    }
 }
 
 impl fmt::Display for ProjectTargetError {

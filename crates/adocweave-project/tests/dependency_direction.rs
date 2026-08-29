@@ -56,10 +56,38 @@ fn project_contract_adds_no_service_or_runtime_abstraction() {
         "todo!",
         "unimplemented!",
         "NotImplemented",
+        "ProjectDependency",
     ] {
         assert!(
             !source.contains(forbidden),
             "project contract contains forbidden abstraction: {forbidden}"
         );
+    }
+}
+
+#[test]
+fn public_contract_does_not_name_lower_layer_types() {
+    let source = include_str!("../src/lib.rs");
+    for line in source
+        .lines()
+        .filter(|line| line.trim_start().starts_with("pub "))
+    {
+        let tokens = line
+            .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+            .collect::<BTreeSet<_>>();
+        for forbidden in [
+            "ConfigSnapshot",
+            "ResolvedProjectConfig",
+            "ResourceError",
+            "FilesystemReadLimits",
+            "LocalFilesystemPolicy",
+            "LogicalSourceId",
+            "adocweave_workspace",
+        ] {
+            assert!(
+                !tokens.contains(forbidden),
+                "public contract leaks {forbidden}: {line}"
+            );
+        }
     }
 }

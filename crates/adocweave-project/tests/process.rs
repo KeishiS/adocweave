@@ -2,35 +2,58 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use adocweave::OutputLimits;
-use adocweave_host::{FilesystemReadLimits, LocalFilesystemPolicy, ResourceError};
+use adocweave::NeverCancel;
+use adocweave_host::FilesystemReadLimits;
 use adocweave_project::{
-    ConfigSelection, MAX_DISTINCT_GLOB_SELECTORS, MAX_TOTAL_GLOB_PATTERN_BYTES, ProjectError,
-    ProjectLimit, ProjectLimits, ProjectOverrides, ProjectRequest, ProjectResourceFailure,
-    ProjectResourceKind, ProjectResourceOutcome, ProjectTarget, ProjectTargetError,
-    TargetSelectionError, process,
+    ConfigSelection, ProjectAuthority, ProjectError, ProjectLimit, ProjectLimits, ProjectOverrides,
+    ProjectRequest, ProjectResourceFailure, ProjectResourceKind, ProjectResourceOutcome,
+    ProjectTarget, ProjectTargetError, TargetSelectionError, process as process_project,
 };
+
+fn process(request: ProjectRequest) -> adocweave_project::ProjectOutcome {
+    process_project(request, &NeverCancel)
+}
 
 fn request(root: &Path, targets: Vec<ProjectTarget>) -> ProjectRequest {
     let filesystem_reads = FilesystemReadLimits::default();
     ProjectRequest {
-        project_root: root.to_owned(),
         targets,
+        sources: Vec::new(),
         config: ConfigSelection::Discover,
         overrides: ProjectOverrides::default(),
-        authority: LocalFilesystemPolicy::new([root.to_owned()], filesystem_reads)
+        authority: ProjectAuthority::open(root.to_owned(), [root.to_owned()])
             .expect("temporary project is valid authority"),
         limits: ProjectLimits {
-            filesystem_reads,
+            max_files: filesystem_reads.max_files,
+            max_resource_bytes: filesystem_reads.max_resource_bytes,
+            max_read_bytes: filesystem_reads.max_total_bytes,
             max_directory_entries: 10_000,
             max_processing_iterations: 100,
-            output: OutputLimits::default(),
+            max_output_bytes: u32::MAX,
         },
     }
 }
 
+fn request_with_roots(
+    root: &Path,
+    roots: impl IntoIterator<Item = PathBuf>,
+    targets: Vec<ProjectTarget>,
+) -> ProjectRequest {
+    let mut request = request(root, targets);
+    request.authority =
+        ProjectAuthority::open(root.to_owned(), roots).expect("project authority is valid");
+    request
+}
+
 fn write(path: impl AsRef<Path>, source: &str) {
     fs::write(path, source).expect("fixture is written");
+}
+
+fn target_path_ends(target: &adocweave_project::ProjectTargetResult, suffix: &str) -> bool {
+    target
+        .path
+        .as_ref()
+        .is_some_and(|path| path.ends_with(suffix))
 }
 
 #[test]
@@ -57,8 +80,9 @@ stylesheet-files = ["styles/manual.css"]
     );
     write(
         root.join("part.adoc"),
-        "Included text.\n\nimage::asset.txt[]\n",
+        "Included text.\n\ninclude::nested.adoc[]\n\nimage::asset.txt[]\n",
     );
+    write(root.join("nested.adoc"), "Nested text.\n");
     write(root.join("styles/manual.css"), "body {}\n");
     write(root.join("asset.txt"), "asset\n");
 
@@ -70,10 +94,16 @@ stylesheet-files = ["styles/manual.css"]
     let guide = result
         .targets
         .iter()
-        .find(|target| target.path.ends_with("guide.adoc"))
+        .find(|target| target_path_ends(target, "guide.adoc"))
         .expect("guide is selected");
     let analysis = guide.outcome.as_ref().expect("guide is analyzed");
-    assert!(analysis.document.source.contains("Included text."));
+    assert!(
+        analysis
+            .preprocessed
+            .document
+            .source
+            .contains("Included text.")
+    );
     for kind in [
         ProjectResourceKind::Config,
         ProjectResourceKind::Primary,
@@ -87,12 +117,30 @@ stylesheet-files = ["styles/manual.css"]
         resource.kind == ProjectResourceKind::LocalTarget
             && resource.outcome == ProjectResourceOutcome::Present
     }));
+    let include_edges = guide
+        .resources
+        .iter()
+        .filter(|resource| resource.kind == ProjectResourceKind::Include)
+        .map(|resource| {
+            (
+                resource
+                    .requested_by
+                    .as_ref()
+                    .expect("include requester")
+                    .as_str(),
+                resource.source_id.as_str(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert!(include_edges.contains(&("project:guide.adoc", "project:part.adoc")));
+    assert!(include_edges.contains(&("project:part.adoc", "project:nested.adoc")));
     assert!(result.targets.iter().all(|target| target.outcome.is_ok()));
 }
 
 #[test]
 fn missing_primary_is_confined_to_one_target() {
     let directory = tempfile::tempdir().expect("temporary directory");
+    let missing = directory.path().join("missing.adoc");
     let result = process(request(
         directory.path(),
         vec![ProjectTarget::Path(PathBuf::from("missing.adoc"))],
@@ -100,8 +148,12 @@ fn missing_primary_is_confined_to_one_target() {
     .expect("request remains coherent");
     assert!(matches!(
         result.targets[0].outcome,
-        Err(ProjectTargetError::Read(ResourceError::Missing(_)))
+        Err(ProjectTargetError::Read(ref error)) if error.code == adocweave_project::ProjectResourceErrorCode::Missing
     ));
+    assert!(result.targets[0].resources.iter().any(|resource| {
+        resource.outcome == ProjectResourceOutcome::Missing
+            && resource.watch_path.as_deref() == Some(missing.as_path())
+    }));
 }
 
 #[test]
@@ -162,6 +214,7 @@ fn symlinked_include_is_rejected() {
                 resource.outcome,
                 ProjectResourceOutcome::Failed(ProjectResourceFailure::Rejected(_))
             )
+            && resource.watch_path.is_none()
     }));
 }
 
@@ -175,12 +228,7 @@ fn request_read_budget_is_shared_between_targets() {
         vec![ProjectTarget::Directory(PathBuf::from("."))],
     );
     request.config = ConfigSelection::Disabled;
-    request.limits.filesystem_reads.max_files = 1;
-    request.authority = LocalFilesystemPolicy::new(
-        [directory.path().to_owned()],
-        request.limits.filesystem_reads,
-    )
-    .expect("limited authority");
+    request.limits.max_files = 1;
 
     assert!(matches!(
         process(request),
@@ -203,7 +251,7 @@ fn missing_config_discovery_is_fixed_and_charged_once() {
         ],
     ))
     .expect("processing succeeds");
-    assert_eq!(result.usage.filesystem.read_operations, 3);
+    assert_eq!(result.usage.read_operations, 3);
 }
 
 #[test]
@@ -224,7 +272,7 @@ fn workspace_excludes_apply_before_scan_but_explicit_directory_keeps_files() {
     ))
     .expect("workspace scan succeeds");
     assert_eq!(workspace.targets.len(), 1);
-    assert!(workspace.targets[0].path.ends_with("kept.adoc"));
+    assert!(target_path_ends(&workspace.targets[0], "kept.adoc"));
 
     let explicit = process(request(
         root,
@@ -283,7 +331,7 @@ fn selector_permutations_duplicates_and_overlaps_have_one_stable_result_set() {
                     .map(|target| target.path)
                     .collect::<Vec<_>>(),
                 result.warnings,
-                result.usage.filesystem,
+                result.usage,
             )
         };
         assert_eq!(summarize(first), summarize(second));
@@ -315,9 +363,7 @@ fn distinct_glob_selector_count_is_bounded_before_scanning() {
     assert!(matches!(
         process(request(directory.path(), targets)),
         Err(ProjectError::TargetSelection(
-            TargetSelectionError::TooManyGlobs {
-                limit: MAX_DISTINCT_GLOB_SELECTORS
-            }
+            TargetSelectionError::TooManyGlobs { limit: 256 }
         ))
     ));
 }
@@ -332,9 +378,7 @@ fn total_distinct_glob_pattern_bytes_are_bounded_before_compilation() {
     assert!(matches!(
         process(request(directory.path(), targets)),
         Err(ProjectError::TargetSelection(
-            TargetSelectionError::GlobPatternBytes {
-                limit: MAX_TOTAL_GLOB_PATTERN_BYTES
-            }
+            TargetSelectionError::GlobPatternBytes { limit: 65_536 }
         ))
     ));
 }
@@ -346,21 +390,20 @@ fn directory_selectors_under_independent_roots_keep_stable_authority() {
     write(project.path().join("a.adoc"), "project\n");
     write(external.path().join("b.adoc"), "external\n");
     let run = |mut targets: Vec<ProjectTarget>| {
-        let filesystem_reads = FilesystemReadLimits::default();
         let mut first_request = request(project.path(), targets.clone());
         first_request.config = ConfigSelection::Disabled;
-        first_request.authority = LocalFilesystemPolicy::new(
+        first_request.authority = ProjectAuthority::open(
+            project.path().to_owned(),
             [project.path().to_owned(), external.path().to_owned()],
-            filesystem_reads,
         )
         .expect("independent roots are retained");
         let first = process(first_request).expect("independent scans succeed");
         targets.reverse();
         let mut second_request = request(project.path(), targets);
         second_request.config = ConfigSelection::Disabled;
-        second_request.authority = LocalFilesystemPolicy::new(
+        second_request.authority = ProjectAuthority::open(
+            project.path().to_owned(),
             [project.path().to_owned(), external.path().to_owned()],
-            filesystem_reads,
         )
         .expect("independent roots are retained");
         let second = process(second_request).expect("reversed independent scans succeed");
@@ -433,32 +476,20 @@ fn external_primary_resolves_relative_include_from_its_own_authority() {
     let external = tempfile::tempdir().expect("external directory");
     write(external.path().join("guide.adoc"), "include::part.adoc[]\n");
     write(external.path().join("part.adoc"), "external include\n");
-    let filesystem_reads = FilesystemReadLimits::default();
-    let result = process(ProjectRequest {
-        project_root: project.path().to_owned(),
-        targets: vec![ProjectTarget::Path(external.path().join("guide.adoc"))],
-        config: ConfigSelection::Disabled,
-        overrides: ProjectOverrides {
-            include: Some(true),
-        },
-        authority: LocalFilesystemPolicy::new(
-            [project.path().to_owned(), external.path().to_owned()],
-            filesystem_reads,
-        )
-        .expect("two roots are retained"),
-        limits: ProjectLimits {
-            filesystem_reads,
-            max_directory_entries: 100,
-            max_processing_iterations: 10,
-            output: OutputLimits::default(),
-        },
-    })
-    .expect("external primary is processed");
+    let mut request = request_with_roots(
+        project.path(),
+        [project.path().to_owned(), external.path().to_owned()],
+        vec![ProjectTarget::Path(external.path().join("guide.adoc"))],
+    );
+    request.config = ConfigSelection::Disabled;
+    request.overrides.include = Some(true);
+    let result = process(request).expect("external primary is processed");
     assert!(
         result.targets[0]
             .outcome
             .as_ref()
             .expect("analysis succeeds")
+            .preprocessed
             .document
             .source
             .contains("external include")
@@ -494,6 +525,7 @@ fn non_utf8_parent_resolves_relative_include_without_lossy_paths() {
             .outcome
             .as_ref()
             .expect("analysis succeeds")
+            .preprocessed
             .document
             .source
             .contains("non-UTF-8 parent include")
@@ -504,24 +536,13 @@ fn non_utf8_parent_resolves_relative_include_without_lossy_paths() {
 fn workspace_selector_cannot_leave_the_project_root() {
     let project = tempfile::tempdir().expect("project directory");
     let outside = tempfile::tempdir().expect("outside directory");
-    let filesystem_reads = FilesystemReadLimits::default();
-    let result = process(ProjectRequest {
-        project_root: project.path().to_owned(),
-        targets: vec![ProjectTarget::Workspace(outside.path().to_owned())],
-        config: ConfigSelection::Disabled,
-        overrides: ProjectOverrides::default(),
-        authority: LocalFilesystemPolicy::new(
-            [project.path().to_owned(), outside.path().to_owned()],
-            filesystem_reads,
-        )
-        .expect("two roots are retained"),
-        limits: ProjectLimits {
-            filesystem_reads,
-            max_directory_entries: 100,
-            max_processing_iterations: 10,
-            output: OutputLimits::default(),
-        },
-    });
+    let mut request = request_with_roots(
+        project.path(),
+        [project.path().to_owned(), outside.path().to_owned()],
+        vec![ProjectTarget::Workspace(outside.path().to_owned())],
+    );
+    request.config = ConfigSelection::Disabled;
+    let result = process(request);
     assert!(matches!(
         result,
         Err(adocweave_project::ProjectError::Authority(_))
@@ -587,7 +608,7 @@ fn directory_selection_can_inspect_an_include_before_reading_it_as_a_target() {
     let part = result
         .targets
         .iter()
-        .find(|target| target.path.ends_with("z-part.adoc"))
+        .find(|target| target_path_ends(target, "z-part.adoc"))
         .expect("included part is also a target");
     assert!(part.resources.iter().any(|resource| {
         resource.kind == ProjectResourceKind::Primary
@@ -652,7 +673,7 @@ fn one_config_scope_combines_body_bytes_across_targets() {
             limit: 6
         }))
     ));
-    assert_eq!(result.usage.filesystem.read_bytes, config.len() as u64 + 7);
+    assert_eq!(result.usage.read_bytes, config.len() as u64 + 7);
 }
 
 #[test]
@@ -664,16 +685,24 @@ fn per_resource_scope_limit_bounds_io_and_reports_its_own_ceiling() {
     write(root.join("large.adoc"), &"x".repeat(64 * 1024));
     let mut request = request(root, vec![ProjectTarget::Path(PathBuf::from("large.adoc"))]);
     request.config = ConfigSelection::Explicit(PathBuf::from(".adocweave.toml"));
-    request.limits.filesystem_reads.max_files = 2;
+    request.limits.max_files = 2;
 
     let result = process(request).expect("configured limit remains target-local");
     assert!(matches!(
         result.targets[0].outcome,
-        Err(ProjectTargetError::Incomplete(ProjectLimit::ReadBytes {
-            limit: 4
-        }))
+        Err(ProjectTargetError::Incomplete(
+            ProjectLimit::ResourceBytes { limit: 4 }
+        ))
     ));
-    assert_eq!(result.usage.filesystem.read_bytes, config.len() as u64 + 5);
+    assert!(result.targets[0].resources.iter().any(|resource| {
+        matches!(
+            resource.outcome,
+            ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(
+                ProjectLimit::ResourceBytes { limit: 4 }
+            ))
+        ) && resource.watch_path.is_none()
+    }));
+    assert_eq!(result.usage.read_bytes, config.len() as u64 + 5);
 }
 
 #[test]
@@ -697,11 +726,11 @@ fn scope_limit_is_fixed_without_rereading_one_resource_for_later_targets() {
     let result = process(request).expect("scope limit remains target-local");
     assert!(result.targets.iter().all(|target| matches!(
         target.outcome,
-        Err(ProjectTargetError::Incomplete(ProjectLimit::ReadBytes {
-            limit: 4
-        }))
+        Err(ProjectTargetError::Incomplete(
+            ProjectLimit::ResourceBytes { limit: 4 }
+        ))
     )));
-    assert_eq!(result.usage.filesystem.read_bytes, config.len() as u64 + 9);
+    assert_eq!(result.usage.read_bytes, config.len() as u64 + 9);
 }
 
 #[test]
@@ -721,19 +750,16 @@ fn simultaneous_request_resource_limit_is_cached_without_fixing_the_scope() {
         ],
     );
     request.config = ConfigSelection::Explicit(PathBuf::from(".adocweave.toml"));
-    request.limits.filesystem_reads.max_resource_bytes = 1000;
+    request.limits.max_resource_bytes = 1000;
 
     let result = process(request).expect("resource limit remains target-local");
     assert!(result.targets.iter().all(|target| matches!(
         target.outcome,
-        Err(ProjectTargetError::Incomplete(ProjectLimit::ReadBytes {
-            limit: 1000
-        }))
+        Err(ProjectTargetError::Incomplete(
+            ProjectLimit::ResourceBytes { limit: 1000 }
+        ))
     )));
-    assert_eq!(
-        result.usage.filesystem.read_bytes,
-        config.len() as u64 + 1005
-    );
+    assert_eq!(result.usage.read_bytes, config.len() as u64 + 1005);
 }
 
 #[cfg(unix)]
@@ -766,12 +792,12 @@ fn cached_success_is_checked_and_charged_under_a_narrower_scope() {
     assert!(result.targets[0].outcome.is_ok());
     assert!(matches!(
         result.targets[1].outcome,
-        Err(ProjectTargetError::Incomplete(ProjectLimit::ReadBytes {
-            limit: 4
-        }))
+        Err(ProjectTargetError::Incomplete(
+            ProjectLimit::ResourceBytes { limit: 4 }
+        ))
     ));
     assert_eq!(
-        result.usage.filesystem.read_bytes,
+        result.usage.read_bytes,
         (wide.len() + narrow.len() + 12) as u64
     );
 }
@@ -786,7 +812,7 @@ fn request_total_limit_is_reported_when_it_has_less_read_capacity() {
     let mut request = request(root, vec![ProjectTarget::Path(PathBuf::from("large.adoc"))]);
     request.config = ConfigSelection::Explicit(PathBuf::from(".adocweave.toml"));
     let request_limit = config.len() as u64 + 4;
-    request.limits.filesystem_reads.max_total_bytes = request_limit;
+    request.limits.max_read_bytes = request_limit;
 
     assert!(matches!(
         process(request),
@@ -801,17 +827,17 @@ fn request_resource_limit_reports_its_resource_ceiling() {
     let root = directory.path();
     write(root.join("large.adoc"), &"x".repeat(64 * 1024));
     let mut request = request(root, vec![ProjectTarget::Path(PathBuf::from("large.adoc"))]);
-    request.limits.filesystem_reads.max_total_bytes = 1024;
-    request.limits.filesystem_reads.max_resource_bytes = 4;
+    request.limits.max_read_bytes = 1024;
+    request.limits.max_resource_bytes = 4;
 
     let result = process(request).expect("resource limit remains target-local");
     assert!(matches!(
         result.targets[0].outcome,
-        Err(ProjectTargetError::Incomplete(ProjectLimit::ReadBytes {
-            limit: 4
-        }))
+        Err(ProjectTargetError::Incomplete(
+            ProjectLimit::ResourceBytes { limit: 4 }
+        ))
     ));
-    assert_eq!(result.usage.filesystem.read_bytes, 5);
+    assert_eq!(result.usage.read_bytes, 5);
 }
 
 #[test]
@@ -822,9 +848,9 @@ fn config_total_limit_wins_when_its_read_also_reaches_the_file_count() {
     write(root.join("guide.adoc"), "text\n");
     let mut request = request(root, vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))]);
     request.config = ConfigSelection::Explicit(PathBuf::from(".adocweave.toml"));
-    request.limits.filesystem_reads.max_files = 1;
-    request.limits.filesystem_reads.max_total_bytes = 4;
-    request.limits.filesystem_reads.max_resource_bytes = 1024;
+    request.limits.max_files = 1;
+    request.limits.max_read_bytes = 4;
+    request.limits.max_resource_bytes = 1024;
 
     assert!(matches!(
         process(request),
@@ -840,13 +866,15 @@ fn config_resource_limit_wins_when_its_read_also_reaches_the_file_count() {
     write(root.join("guide.adoc"), "text\n");
     let mut request = request(root, vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))]);
     request.config = ConfigSelection::Explicit(PathBuf::from(".adocweave.toml"));
-    request.limits.filesystem_reads.max_files = 1;
-    request.limits.filesystem_reads.max_total_bytes = 1024;
-    request.limits.filesystem_reads.max_resource_bytes = 4;
+    request.limits.max_files = 1;
+    request.limits.max_read_bytes = 1024;
+    request.limits.max_resource_bytes = 4;
 
     assert!(matches!(
         process(request),
-        Err(ProjectError::Limit(ProjectLimit::ReadBytes { limit: 4 }))
+        Err(ProjectError::Limit(ProjectLimit::ResourceBytes {
+            limit: 4
+        }))
     ));
 }
 
@@ -858,7 +886,7 @@ fn config_file_limit_keeps_its_file_ceiling() {
     write(root.join("guide.adoc"), "text\n");
     let mut request = request(root, vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))]);
     request.config = ConfigSelection::Explicit(PathBuf::from(".adocweave.toml"));
-    request.limits.filesystem_reads.max_files = 0;
+    request.limits.max_files = 0;
 
     assert!(matches!(
         process(request),
@@ -887,21 +915,19 @@ fn one_large_config_is_shared_by_one_thousand_target_results() {
         .collect();
     let mut request = request(root, targets);
     request.config = ConfigSelection::Explicit(PathBuf::from(".adocweave.toml"));
-    request.limits.output.max_output_bytes = 128 * 1024 * 1024;
+    request.limits.max_output_bytes = 128 * 1024 * 1024;
 
     let result = process(request).expect("large shared configuration remains bounded");
     assert_eq!(result.targets.len(), 1_000);
     assert!(result.usage.output_bytes >= config.len() as u64);
     assert!(result.usage.output_bytes < (config.len() * 2) as u64);
-    let first_config = result.targets[0].config.as_ref().expect("configuration");
-    let first_resolved = &result.targets[0].resolved_config;
-    assert!(result.targets.iter().all(|target| {
-        target
-            .config
-            .as_ref()
-            .is_some_and(|config| Arc::ptr_eq(config, first_config))
-            && Arc::ptr_eq(&target.resolved_config, first_resolved)
-    }));
+    let first_config = &result.targets[0].config;
+    assert!(
+        result
+            .targets
+            .iter()
+            .all(|target| Arc::ptr_eq(&target.config, first_config))
+    );
 }
 
 #[test]
@@ -926,8 +952,7 @@ fn distinct_configuration_scopes_share_the_output_limit() {
             ProjectTarget::Path(PathBuf::from("second/guide.adoc")),
         ],
     );
-    request.limits.output.max_output_bytes =
-        u32::try_from(config.len() * 2 - 1).expect("small fixture");
+    request.limits.max_output_bytes = u32::try_from(config.len() * 2 - 1).expect("small fixture");
 
     assert!(matches!(
         process(request),
@@ -1081,7 +1106,7 @@ fn failed_local_target_observation_is_reused_by_a_later_primary() {
     assert_eq!(result.targets.len(), 2);
     assert!(matches!(
         result.targets[1].outcome,
-        Err(ProjectTargetError::Read(ResourceError::Missing(_)))
+        Err(ProjectTargetError::Read(ref error)) if error.code == adocweave_project::ProjectResourceErrorCode::Missing
     ));
 }
 
@@ -1096,7 +1121,7 @@ fn returned_resource_text_is_bounded_by_the_output_limit() {
     write(root.join("styles/large.css"), &"x".repeat(100));
     let mut request = request(root, vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))]);
     let output_limit = u32::try_from(config.len() + 64).expect("small fixture");
-    request.limits.output.max_output_bytes = output_limit;
+    request.limits.max_output_bytes = output_limit;
 
     let result = process(request).expect("request remains coherent");
     assert!(matches!(
@@ -1129,7 +1154,7 @@ fn repeated_loaded_resource_distinguishes_body_omission_from_acquisition_failure
     write(root.join("b.adoc"), "b\n");
     write(root.join("style.css"), "0123456789");
     let mut request = request(root, vec![ProjectTarget::Directory(PathBuf::from("."))]);
-    request.limits.output.max_output_bytes =
+    request.limits.max_output_bytes =
         u32::try_from(config.len() + 2 + 2 + 10).expect("small fixture");
     let result = process(request).expect("processing succeeds");
     let styles = result
@@ -1154,7 +1179,8 @@ fn repeated_loaded_resource_distinguishes_body_omission_from_acquisition_failure
 #[test]
 fn invalid_utf8_primary_is_reported_as_unreadable() {
     let directory = tempfile::tempdir().expect("temporary directory");
-    fs::write(directory.path().join("bad.adoc"), [0xff]).expect("binary fixture");
+    let bad = directory.path().join("bad.adoc");
+    fs::write(&bad, [0xff]).expect("binary fixture");
     let result = process(request(
         directory.path(),
         vec![ProjectTarget::Path(PathBuf::from("bad.adoc"))],
@@ -1168,6 +1194,36 @@ fn invalid_utf8_primary_is_reported_as_unreadable() {
         result.targets[0].resources[0].outcome,
         ProjectResourceOutcome::Failed(ProjectResourceFailure::Unreadable(_))
     ));
+    assert_eq!(
+        result.targets[0].resources[0].watch_path.as_deref(),
+        Some(bad.as_path())
+    );
+}
+
+#[test]
+fn invalid_utf8_include_is_reported_as_watchable_unreadable_input() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let bad = directory.path().join("bad.adoc");
+    write(directory.path().join("guide.adoc"), "include::bad.adoc[]\n");
+    fs::write(&bad, [0xff]).expect("binary include fixture");
+    let mut request = request(
+        directory.path(),
+        vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
+    );
+    request.config = ConfigSelection::Disabled;
+    request.overrides.include = Some(true);
+
+    let result = process(request).expect("unreadable include remains target-local");
+    let include = result.targets[0]
+        .resources
+        .iter()
+        .find(|resource| resource.kind == ProjectResourceKind::Include)
+        .expect("include observation");
+    assert!(matches!(
+        include.outcome,
+        ProjectResourceOutcome::Failed(ProjectResourceFailure::Unreadable(_))
+    ));
+    assert_eq!(include.watch_path.as_deref(), Some(bad.as_path()));
 }
 
 #[test]
@@ -1192,7 +1248,7 @@ fn failed_body_read_does_not_replace_local_target_presence() {
         .targets
         .iter()
         .filter(|target| {
-            target.path.ends_with("b-guide.adoc") || target.path.ends_with("c-guide.adoc")
+            target_path_ends(target, "b-guide.adoc") || target_path_ends(target, "c-guide.adoc")
         })
         .collect::<Vec<_>>();
     assert_eq!(guides.len(), 2);
@@ -1220,28 +1276,16 @@ fn multiple_authority_roots_receive_distinct_source_ids() {
     let external = tempfile::tempdir().expect("external directory");
     write(project.path().join("same.adoc"), "project\n");
     write(external.path().join("same.adoc"), "external\n");
-    let filesystem_reads = FilesystemReadLimits::default();
-    let result = process(ProjectRequest {
-        project_root: project.path().to_owned(),
-        targets: vec![
+    let mut request = request_with_roots(
+        project.path(),
+        [project.path().to_owned(), external.path().to_owned()],
+        vec![
             ProjectTarget::Path(PathBuf::from("same.adoc")),
             ProjectTarget::Path(external.path().join("same.adoc")),
         ],
-        config: ConfigSelection::Disabled,
-        overrides: ProjectOverrides::default(),
-        authority: LocalFilesystemPolicy::new(
-            [project.path().to_owned(), external.path().to_owned()],
-            filesystem_reads,
-        )
-        .expect("two roots are retained"),
-        limits: ProjectLimits {
-            filesystem_reads,
-            max_directory_entries: 100,
-            max_processing_iterations: 10,
-            output: OutputLimits::default(),
-        },
-    })
-    .expect("both roots are processed");
+    );
+    request.config = ConfigSelection::Disabled;
+    let result = process(request).expect("both roots are processed");
     assert_eq!(result.targets.len(), 2);
     assert_ne!(result.targets[0].source_id, result.targets[1].source_id);
 }
@@ -1267,24 +1311,13 @@ fn external_config_authority_does_not_grant_its_include_stylesheet_or_local_path
     ] {
         let config = external.path().join(name);
         write(&config, body);
-        let filesystem_reads = FilesystemReadLimits::default();
-        let result = process(ProjectRequest {
-            project_root: project.path().to_owned(),
-            targets: vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
-            config: ConfigSelection::Explicit(config),
-            overrides: ProjectOverrides::default(),
-            authority: LocalFilesystemPolicy::new(
-                [project.path().to_owned(), external.path().to_owned()],
-                filesystem_reads,
-            )
-            .expect("configuration authority is retained"),
-            limits: ProjectLimits {
-                filesystem_reads,
-                max_directory_entries: 100,
-                max_processing_iterations: 10,
-                output: OutputLimits::default(),
-            },
-        });
+        let mut request = request_with_roots(
+            project.path(),
+            [project.path().to_owned(), external.path().to_owned()],
+            vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
+        );
+        request.config = ConfigSelection::Explicit(config);
+        let result = process(request);
         assert!(
             matches!(result, Err(adocweave_project::ProjectError::Authority(_))),
             "external configuration path must not grant {name} resources"
@@ -1299,25 +1332,13 @@ fn external_config_authority_can_read_only_the_config_body() {
     write(project.path().join("guide.adoc"), "text\n");
     let config = external.path().join("adocweave.toml");
     write(&config, "schema-version = 2\n");
-    let filesystem_reads = FilesystemReadLimits::default();
-    let result = process(ProjectRequest {
-        project_root: project.path().to_owned(),
-        targets: vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
-        config: ConfigSelection::Explicit(config),
-        overrides: ProjectOverrides::default(),
-        authority: LocalFilesystemPolicy::new(
-            [project.path().to_owned(), external.path().to_owned()],
-            filesystem_reads,
-        )
-        .expect("configuration authority is retained"),
-        limits: ProjectLimits {
-            filesystem_reads,
-            max_directory_entries: 100,
-            max_processing_iterations: 10,
-            output: OutputLimits::default(),
-        },
-    })
-    .expect("external configuration body is readable");
+    let mut request = request_with_roots(
+        project.path(),
+        [project.path().to_owned(), external.path().to_owned()],
+        vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
+    );
+    request.config = ConfigSelection::Explicit(config);
+    let result = process(request).expect("external configuration body is readable");
     assert!(result.targets[0].outcome.is_ok());
 }
 
@@ -1440,7 +1461,7 @@ fn broad_cached_read_cannot_bypass_a_later_confined_include_root() {
     let guide = result
         .targets
         .iter()
-        .find(|target| target.path.ends_with("z-guide.adoc"))
+        .find(|target| target_path_ends(target, "z-guide.adoc"))
         .expect("guide result");
     assert!(guide.outcome.is_err());
     assert!(guide.resources.iter().any(|resource| {
@@ -1477,12 +1498,12 @@ fn broad_cached_local_target_cannot_bypass_a_later_confined_root() {
     let broad = result
         .targets
         .iter()
-        .find(|target| target.path.ends_with("a.adoc"))
+        .find(|target| target_path_ends(target, "a.adoc"))
         .expect("broad target");
     let narrow = result
         .targets
         .iter()
-        .find(|target| target.path.ends_with("z.adoc"))
+        .find(|target| target_path_ends(target, "z.adoc"))
         .expect("narrow target");
     assert!(broad.resources.iter().any(|resource| {
         resource.kind == ProjectResourceKind::LocalTarget
@@ -1523,7 +1544,7 @@ fn parent_root_body_does_not_prevent_a_child_root_inspection() {
     let guide = result
         .targets
         .iter()
-        .find(|target| target.path.ends_with("z-guide.adoc"))
+        .find(|target| target_path_ends(target, "z-guide.adoc"))
         .expect("guide result");
     assert!(guide.resources.iter().any(|resource| {
         resource.kind == ProjectResourceKind::LocalTarget
@@ -1554,15 +1575,14 @@ fn child_root_body_does_not_prevent_a_parent_root_inspection() {
             ProjectTarget::Path(PathBuf::from("z-guide.adoc")),
         ],
     );
-    request.authority =
-        LocalFilesystemPolicy::new([root.to_owned(), child], request.limits.filesystem_reads)
-            .expect("nested roots are retained");
+    request.authority = ProjectAuthority::open(root.to_owned(), [root.to_owned(), child])
+        .expect("nested roots are retained");
 
     let result = process(request).expect("request remains coherent");
     let guide = result
         .targets
         .iter()
-        .find(|target| target.path.ends_with("z-guide.adoc"))
+        .find(|target| target_path_ends(target, "z-guide.adoc"))
         .expect("guide result");
     assert!(guide.resources.iter().any(|resource| {
         resource.kind == ProjectResourceKind::LocalTarget
@@ -1611,12 +1631,12 @@ fn canonical_cached_body_cannot_hide_an_outside_local_target_request() {
     let broad = result
         .targets
         .iter()
-        .find(|target| target.path.ends_with("a.adoc"))
+        .find(|target| target_path_ends(target, "a.adoc"))
         .expect("broad target");
     let narrow = result
         .targets
         .iter()
-        .find(|target| target.path.ends_with("z.adoc"))
+        .find(|target| target_path_ends(target, "z.adoc"))
         .expect("narrow target");
     assert!(broad.resources.iter().any(|resource| {
         resource.kind == ProjectResourceKind::Stylesheet
@@ -1664,7 +1684,7 @@ fn same_authority_reuses_loaded_present_missing_and_failed_observations() {
     let second = result
         .targets
         .iter()
-        .find(|target| target.path.ends_with("b.adoc"))
+        .find(|target| target_path_ends(target, "b.adoc"))
         .expect("second target");
     let local = |name: &str| {
         &second
