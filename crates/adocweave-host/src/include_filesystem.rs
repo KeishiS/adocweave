@@ -401,9 +401,10 @@ impl IncludeFilesystemTransaction {
     pub fn discover_adoc_paths_within_budget(
         &self,
         exclude_directory: impl FnMut(&Path, &Path) -> bool,
+        is_cancelled: impl FnMut() -> bool,
     ) -> Result<(Vec<PathBuf>, bool), FilesystemDraftError> {
         self.draft_ref()
-            .discover_adoc_paths_within_budget(exclude_directory, || false)
+            .discover_adoc_paths_within_budget(exclude_directory, is_cancelled)
     }
 
     pub fn read(&mut self, request: IncludeFilesystemRequest) -> IncludeFilesystemOutcome {

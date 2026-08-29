@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::{Component, Path, PathBuf};
 
+use adocweave::CancellationCheck;
 use adocweave_config::WorkspaceScanSettings;
 use adocweave_host::{
     DerivedFilesystemRoots, IncludeFilesystemJob, LocalFilesystemPolicy, ResourceError,
@@ -9,7 +10,7 @@ use adocweave_host::{
 
 use crate::{
     MAX_DISTINCT_GLOB_SELECTORS, MAX_TOTAL_GLOB_PATTERN_BYTES, ProjectError, ProjectLimits,
-    ProjectTarget, ProjectWarning, TargetSelectionError,
+    ProjectTarget, ProjectWarning, TargetSelectionError, project_authority_error,
 };
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -33,6 +34,7 @@ struct ScanState<'request> {
     job: &'request IncludeFilesystemJob,
     warnings: &'request mut Vec<ProjectWarning>,
     scans: BTreeMap<(ScanMode, PathBuf, Vec<String>), Vec<PathBuf>>,
+    cancellation: &'request dyn CancellationCheck,
 }
 
 pub(crate) fn normalize_selectors(
@@ -84,10 +86,11 @@ pub(crate) fn normalize_selectors(
 
 fn selector_sort_key(selector: &ProjectTarget) -> (u8, String) {
     match selector {
-        ProjectTarget::Path(path) => (0, format!("{path:?}")),
-        ProjectTarget::Directory(path) => (1, format!("{path:?}")),
-        ProjectTarget::Glob(pattern) => (2, pattern.clone()),
-        ProjectTarget::Workspace(path) => (3, format!("{path:?}")),
+        ProjectTarget::Source(source_id) => (0, source_id.as_str().to_owned()),
+        ProjectTarget::Path(path) => (1, format!("{path:?}")),
+        ProjectTarget::Directory(path) => (2, format!("{path:?}")),
+        ProjectTarget::Glob(pattern) => (3, pattern.clone()),
+        ProjectTarget::Workspace(path) => (4, format!("{path:?}")),
     }
 }
 
@@ -96,30 +99,33 @@ fn normalize_selector(
     selector: &ProjectTarget,
 ) -> Result<NormalizedSelector, ProjectError> {
     match selector {
+        ProjectTarget::Source(_) => {
+            unreachable!("source targets are resolved before selector normalization")
+        }
         ProjectTarget::Path(path) => absolute_lexical(project_root, path)
             .map(NormalizedSelector::Path)
-            .map_err(ProjectError::Authority),
+            .map_err(project_authority_error),
         ProjectTarget::Directory(path) => absolute_lexical(project_root, path)
             .map(NormalizedSelector::Directory)
-            .map_err(ProjectError::Authority),
+            .map_err(project_authority_error),
         ProjectTarget::Workspace(path) => {
-            let path = absolute_lexical(project_root, path).map_err(ProjectError::Authority)?;
+            let path = absolute_lexical(project_root, path).map_err(project_authority_error)?;
             if !path.starts_with(project_root) {
-                return Err(ProjectError::Authority(ResourceError::OutsideRoots(path)));
+                return Err(project_authority_error(ResourceError::OutsideRoots(path)));
             }
             Ok(NormalizedSelector::Workspace(path))
         }
         ProjectTarget::Glob(authored) => {
             glob::Pattern::new(authored).map_err(|_| invalid_glob(authored))?;
             let absolute_pattern = absolute_lexical(project_root, Path::new(authored))
-                .map_err(ProjectError::Authority)?;
+                .map_err(project_authority_error)?;
             let pattern = absolute_pattern
                 .to_str()
                 .ok_or_else(|| invalid_glob(authored))?
                 .to_owned();
             glob::Pattern::new(&pattern).map_err(|_| invalid_glob(authored))?;
             let scan_root = absolute_lexical(project_root, &glob_scan_root(authored))
-                .map_err(ProjectError::Authority)?;
+                .map_err(project_authority_error)?;
             Ok(NormalizedSelector::Glob { pattern, scan_root })
         }
     }
@@ -208,6 +214,7 @@ pub(crate) fn select_targets(
     job: &IncludeFilesystemJob,
     scan_settings: &BTreeMap<PathBuf, WorkspaceScanSettings>,
     warnings: &mut Vec<ProjectWarning>,
+    cancellation: &dyn CancellationCheck,
 ) -> Result<Vec<PathBuf>, ProjectError> {
     let mut selected = BTreeSet::new();
     let mut scans = ScanState {
@@ -216,6 +223,7 @@ pub(crate) fn select_targets(
         job,
         warnings,
         scans: BTreeMap::new(),
+        cancellation,
     };
     for selector in selectors {
         match selector {
@@ -255,7 +263,7 @@ fn require_authority(authority: &LocalFilesystemPolicy, path: &Path) -> Result<(
     authority
         .policy_for_path(path)
         .map(|_| ())
-        .ok_or_else(|| ProjectError::Authority(ResourceError::OutsideRoots(path.to_owned())))
+        .ok_or_else(|| project_authority_error(ResourceError::OutsideRoots(path.to_owned())))
 }
 
 impl ScanState<'_> {
@@ -281,11 +289,11 @@ impl ScanState<'_> {
             .policy_for_path(directory)
             .map(|policy| policy.root().to_owned())
             .ok_or_else(|| {
-                ProjectError::Authority(ResourceError::OutsideRoots(directory.to_owned()))
+                project_authority_error(ResourceError::OutsideRoots(directory.to_owned()))
             })?;
         let policy = if anchor == directory {
             self.authority
-                .access_existing([anchor], self.limits.filesystem_reads)
+                .access_existing([anchor], self.limits.filesystem_reads())
         } else {
             self.authority.access_derived(
                 &anchor,
@@ -293,20 +301,30 @@ impl ScanState<'_> {
                     confined: vec![directory.to_owned()],
                     independent: Vec::new(),
                 },
-                self.limits.filesystem_reads,
+                self.limits.filesystem_reads(),
             )
         }
-        .map_err(ProjectError::Authority)?;
-        let session = policy.session().map_err(ProjectError::Authority)?;
-        let transaction = self
-            .job
-            .transaction(&session)
-            .map_err(|error| ProjectError::Authority(ResourceError::from(error)))?;
+        .map_err(project_authority_error)?;
+        let session = policy.session().map_err(project_authority_error)?;
+        let transaction = self.job.transaction(&session).map_err(|error| {
+            if self.cancellation.is_cancelled() {
+                ProjectError::Cancelled
+            } else {
+                project_authority_error(ResourceError::from(error))
+            }
+        })?;
         let (paths, complete) = transaction
-            .discover_adoc_paths_within_budget(|_, relative| {
-                scan_settings.is_some_and(|settings| settings.excludes(relative))
-            })
-            .map_err(|error| ProjectError::Authority(ResourceError::from(error)))?;
+            .discover_adoc_paths_within_budget(
+                |_, relative| scan_settings.is_some_and(|settings| settings.excludes(relative)),
+                || self.cancellation.is_cancelled(),
+            )
+            .map_err(|error| {
+                if self.cancellation.is_cancelled() {
+                    ProjectError::Cancelled
+                } else {
+                    project_authority_error(ResourceError::from(error))
+                }
+            })?;
         if !complete
             && !self
                 .warnings
