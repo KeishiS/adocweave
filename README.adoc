@@ -66,7 +66,7 @@ adocweave format --write docs
 
 * xref:docs/developer-guide/core-profile.adoc[コアAPIと対応範囲] — Rustから解析し、HTMLへ変換します。
 * xref:docs/developer-guide/core-profile.adoc#wasm-api[WebAssembly API] — ブラウザーやJavaScriptから解析結果を利用します。
-* xref:docs/user-guide/release-installation.adoc#browser-library-deployment[Browser libraryの配備]。
+* xref:docs/user-guide/release-installation.adoc#wasm-library-deployment[ブラウザーライブラリーの配備]。
 * xref:docs/developer-guide/extensions.adoc[独自機能を追加する]。
 
 === 開発

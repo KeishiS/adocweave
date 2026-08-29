@@ -153,13 +153,13 @@ Source blockの言語classは``SourceLanguagePolicy``で許可した言語だけ
 省略して診断を返します。
 
 Block titleまたは``linenums``を持つsource blockは``figure.source-block``で囲み、titleを``figcaption``へ
-inline装飾を除いた解決済みplain textとして安全に出力します。Projectionのtitleも同じplain textです。
+inline装飾を除いた解決済みplain textとして安全に出力します。構造情報のtitleも同じplain textです。
 文書が``listing-caption``属性を設定している場合は、titleを持つsource blockとlisting block（``----``）へ
 読み順の番号付きcaption語（``Listing 1. ``）を付け、xrefの空label表示にも使います。figureやtableと違い、
 属性が未定義なら番号を付けません。titleを持つlisting blockは``figure.listing-block``、literal block（``....``）は
 ``figure.literal-block``で囲み、titleを同じ形の``figcaption``へ出力します。
 ``pre``の``data-language``、``data-line-numbers="true"``および``data-line-start``は
-projectionと同じ言語、行番号指定および開始行を表します。行番号要素、構文強調、themeおよび操作buttonは
+構造情報と同じ言語、行番号指定および開始行を表します。行番号要素、構文強調、themeおよび操作buttonは
 生成しません。Titleも行番号指定もない従来のsource blockは既存の``pre > code.language-*``構造を維持します。
 
 数式engineは内蔵しません。許可した数式言語だけに固定class、``data-math-language``および
@@ -196,9 +196,9 @@ JSON/WASM protocolでは既存の言語enum値``latex``を維持し、``latexmat
 選択して検査します。
 
 Source blockではtitle、language、option、linenums、開始行およびsource本文と、対応する安全なHTML構造を
-保証します。数式ではprojectionのlanguage ``latex``、表示形式``inline``または``block``、source本文と、
+保証します。数式では構造情報のlanguage ``latex``、表示形式``inline``または``block``、source本文と、
 HTMLの``data-math-language="latexmath"``および``data-math-display``を保証します。Tableのcell構造、
-quoteの追加presentationおよびlist itemを表す未選択のprojection fieldは現行の公開仕様に含めず、tableとlistの
+quoteの追加presentationおよびlist itemを表す未選択の構造情報fieldは現行の公開仕様に含めず、tableとlistの
 HTML断片、およびquoteの既存``blockPresentations``だけを保証します。
 
 == golden fixtureの保守

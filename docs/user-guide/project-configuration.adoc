@@ -146,7 +146,7 @@ roles = ["definition", "theorem"]
 |``workspace.scan.exclude``
 |パターンの配列（既定値: 空の配列、最大256件）
 |Language Serverの初期走査から除外するディレクトリを指定します。
-詳細は xref:workspace-scan[Language Serverの初期走査]を参照してください。
+詳細は xref:#workspace-scan[Language Serverの初期走査]を参照してください。
 
 |``local-targets.enabled``
 |``true``または``false``（既定値は``false``）

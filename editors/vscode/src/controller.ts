@@ -5,6 +5,8 @@ import {
   type ServerOptions,
 } from "vscode-languageclient/node";
 
+import { findOnPath } from "./path-search.js";
+import { downloadServer } from "./server-download.js";
 import { selectServer, type SelectedServer } from "./server-selection.js";
 
 const STOP_TIMEOUT_MS = 5_000;
@@ -12,16 +14,30 @@ const INSTALLATION_GUIDE = vscode.Uri.parse(
   "https://github.com/KeishiS/adocweave/blob/main/docs/user-guide/release-installation.adoc#editor-language-server",
 );
 const OPEN_INSTALLATION_GUIDE = "Open installation guide";
+const MANUAL_INSTALLATION =
+  " Install adocweave-lsp and add it to PATH, or set adocweave.server.path to its absolute path.";
+
+/**
+ * 自動取得の失敗に、利用者が次に取れる操作を添えます。
+ *
+ * 取得の失敗はどれも手元へ導入すれば回避できます。失敗の理由はcodeそのものが
+ * 示すため、種類ごとの言い換えはしません。設定pathの誤りは案内の対象外です。
+ */
+function installationGuidance(code: string): string {
+  return code === "configured-server-path-not-absolute" ? "" : MANUAL_INSTALLATION;
+}
 
 export class ServerController implements vscode.Disposable {
   readonly #output: vscode.LogOutputChannel;
+  readonly #storageDirectory: string;
   #client?: LanguageClient;
   #disposed = false;
   #generation = 0;
   #queue: Promise<void> = Promise.resolve();
 
-  constructor(output: vscode.LogOutputChannel) {
+  constructor(output: vscode.LogOutputChannel, storageDirectory: string) {
     this.#output = output;
+    this.#storageDirectory = storageDirectory;
   }
 
   restart(): Promise<void> {
@@ -39,10 +55,7 @@ export class ServerController implements vscode.Disposable {
         if (generation !== this.#generation || this.#disposed) return;
         const code = error instanceof Error ? error.message : "unknown-error";
         this.#output.appendLine(`Cannot start the Language Server: ${code}`);
-        const guidance =
-          code === "language-server-not-found"
-            ? " Install adocweave-lsp and add it to PATH, or set adocweave.server.path to its absolute path."
-            : "";
+        const guidance = installationGuidance(code);
         const message = `AdocWeave cannot start the Language Server: ${code}.${guidance}`;
         void vscode.window.showErrorMessage(message, OPEN_INSTALLATION_GUIDE).then((selection) => {
           if (selection === OPEN_INSTALLATION_GUIDE)
@@ -62,9 +75,10 @@ export class ServerController implements vscode.Disposable {
   async #select(generation: number): Promise<SelectedServer | undefined> {
     const configuration = vscode.workspace.getConfiguration("adocweave");
     const configuredPath = configuration.get<string>("server.path")?.trim() || undefined;
-    const selected = await selectServer({
-      configuredPath,
-    });
+    const selected = await selectServer(
+      { configuredPath, storageDirectory: this.#storageDirectory },
+      { findOnPath, downloadServer, log: (message) => this.#output.appendLine(message) },
+    );
     if (generation !== this.#generation) return undefined;
     return selected;
   }

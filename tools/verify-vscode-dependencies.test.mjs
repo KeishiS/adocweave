@@ -57,7 +57,8 @@ test("VS Code runtime dependencyの取得元とlicenseを制限する", () => {
 test("repositoryのVS Code runtime dependencyは配布方針を満たす", () => {
   const repositoryManifest = JSON.parse(readFileSync(new URL("../editors/vscode/package.json", import.meta.url)));
   const repositoryLock = JSON.parse(readFileSync(new URL("../editors/vscode/package-lock.json", import.meta.url)));
-  assert.equal(validateVscodeRuntimeDependencies(repositoryManifest, repositoryLock).length, 9);
+  // vscode-languageclientの推移依存9件と、取得したarchiveの展開に使うfflateです。
+  assert.equal(validateVscodeRuntimeDependencies(repositoryManifest, repositoryLock).length, 10);
 });
 
 test("VSIXは同じruntime treeから生成した第三者依存の通知を同梱する", () => {

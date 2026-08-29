@@ -76,33 +76,33 @@
     "inline": {
       "patterns": [
         {
-          "begin": "(?<!\\w)(\\*{1,2})(?=\\S)",
+          "begin": "(?<![A-Za-z0-9_])(\\*{1,2})(?=\\S)",
           "beginCaptures": {
             "1": { "name": "punctuation.definition.bold.asciidoc" }
           },
-          "end": "(?<=\\S)(\\1)(?!\\w)",
+          "end": "(?<=\\S)(\\1)(?![A-Za-z0-9_])",
           "endCaptures": {
             "1": { "name": "punctuation.definition.bold.asciidoc" }
           },
           "name": "markup.bold.asciidoc"
         },
         {
-          "begin": "(?<!\\w)(_{1,2})(?=\\S)",
+          "begin": "(?<![A-Za-z0-9_])(_{1,2})(?=\\S)",
           "beginCaptures": {
             "1": { "name": "punctuation.definition.italic.asciidoc" }
           },
-          "end": "(?<=\\S)(\\1)(?!\\w)",
+          "end": "(?<=\\S)(\\1)(?![A-Za-z0-9_])",
           "endCaptures": {
             "1": { "name": "punctuation.definition.italic.asciidoc" }
           },
           "name": "markup.italic.asciidoc"
         },
         {
-          "begin": "(?<!\\w)(`{1,2})(?=\\S)",
+          "begin": "(?<![A-Za-z0-9_])(`{1,2})(?=\\S)",
           "beginCaptures": {
             "1": { "name": "punctuation.definition.raw.asciidoc" }
           },
-          "end": "(?<=\\S)(\\1)(?!\\w)",
+          "end": "(?<=\\S)(\\1)(?![A-Za-z0-9_])",
           "endCaptures": {
             "1": { "name": "punctuation.definition.raw.asciidoc" }
           },

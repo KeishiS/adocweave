@@ -9,19 +9,20 @@
 |参照する節
 
 |NixでCLIを使用
-|xref:nix-installation[Nixによる導入]
+|xref:#nix-installation[Nixによる導入]
 
 |Nixを使わずにCLIまたはLanguage Serverを使用
 |「配布物の選択」「取得したファイルの検証」「CLIとLanguage Serverの導入」
 
 |Webアプリへの組込み
-|xref:browser-library-deployment[WebAssemblyライブラリの配備]
+|xref:#wasm-npm-installation[WebAssemblyパッケージの導入]、
+xref:#browser-library-deployment[WebAssemblyライブラリの配備]
 
 |ZedまたはVS Codeで使用
-|xref:editor-language-server[エディタからLanguage Serverを使う]
+|xref:#editor-language-server[エディタからLanguage Serverを使う]
 
 |AsciiDoc文書をtextlintで検査
-|xref:textlint-plugin-installation[textlint用Processorの導入]
+|xref:#textlint-plugin-installation[textlint用Processorの導入]
 |===
 
 GitHub Releaseから取得する場合は、導入前にチェックサムとArtifact Attestationを確認してください。
@@ -274,6 +275,26 @@ includeの展開と自動修正には対応しません。
 [source,console]
 ----
 npm uninstall --save-dev @adocweave/textlint-plugin-asciidoc
+----
+
+[#wasm-npm-installation]
+== WebAssemblyパッケージの導入
+
+npmから導入する場合は、使用するバージョンを指定します。
+
+[source,console]
+----
+npm install @adocweave/wasm@X.Y.Z
+----
+
+ブラウザでは``@adocweave/wasm``を、Node.jsでは``@adocweave/wasm/direct``をimportします。
+APIの詳細はxref:../developer-guide/core-profile.adoc#wasm-api[WebAssembly API]を参照してください。
+
+更新する場合はバージョンを変更して``npm install``を実行します。削除は次のコマンドで行います。
+
+[source,console]
+----
+npm uninstall @adocweave/wasm
 ----
 
 [#browser-library-deployment]
