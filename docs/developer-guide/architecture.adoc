@@ -11,8 +11,7 @@ xref:core-profile.adoc[コアの対応範囲]、文法はxref:grammar.adoc[文�
 ----
 VS Code・Zed ──LSP──> adocweave lsp
 ブラウザークライアント ──> Web Worker ──> adocweave-wasm ──> adocweave
-textlint ──> adocweave-textlint-wasm ─┬─> adocweave-textlint ──> adocweave
-                                      └─> adocweave
+textlint ──> adocweave-textlint ──> adocweave
 
 adocweave-cli ──> adocweave-lsp, adocweave-config, adocweave-host, adocweave-workspace, adocweave
 adocweave-lsp ──> adocweave-config, adocweave-host, adocweave-workspace, adocweave
@@ -49,10 +48,8 @@ adocweave-workspace ──> adocweave
 |WebAssemblyの要求・応答の検証と、公開する通信型とコア型の相互変換
 
 |``adocweave-textlint``
-|解析結果からtextlint用TxtASTへの変換
-
-|``adocweave-textlint-wasm``
-|コア解析の実行とTxtAST変換をNode.jsへ公開するWebAssemblyインターフェイス
+|解析結果からtextlint用TxtASTへの変換と、コア解析およびTxtAST変換をNode.jsへ公開する
+WebAssemblyインターフェイス
 
 |ブラウザークライアントとWeb Worker
 |Promiseと取消を含む公開入口、Workerの生存期間およびWebAssemblyの隔離
