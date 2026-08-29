@@ -382,6 +382,8 @@ impl DocumentStore {
         for document in Arc::make_mut(&mut self.documents).values_mut() {
             document.input_revision = input_revision;
             document.cancellation.cancel();
+            document.view = None;
+            document.workspace_problem = None;
         }
     }
 

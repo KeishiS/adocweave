@@ -271,3 +271,132 @@ fn oversized_watch_batch_invalidates_jobs_before_recovery_scan() {
     assert_eq!(session.input_revision(), previous_revision + 1);
     assert_eq!(session.adopt(&job, result), Adoption::Stale);
 }
+
+fn session_with_published_result() -> (Session, lsp::Url) {
+    let mut session = Session::default();
+    initialize(&mut session, &["utf-16"]);
+    session
+        .update_configuration(json!({"enabledRules": ["macro-boundary"]}))
+        .expect("diagnostic configuration");
+    let document_uri = uri("file:///published.adoc");
+    open(
+        &mut session,
+        document_uri.as_str(),
+        1,
+        "= Published\n\n日xref:guide.adoc[Guide]\n",
+    );
+    assert!(session.documents.snapshot(document_uri.as_str()).is_some());
+    assert!(
+        !session
+            .diagnostics(&document_uri)
+            .expect("published diagnostics")
+            .diagnostics
+            .is_empty()
+    );
+    assert!(
+        session
+            .hover(&document_uri, lsp::Position::new(0, 3))
+            .expect("published hover")
+            .is_some()
+    );
+    (session, document_uri)
+}
+
+fn assert_published_result_is_cleared(session: &Session, document_uri: &lsp::Url) {
+    assert!(session.documents.snapshot(document_uri.as_str()).is_none());
+    assert!(
+        session
+            .diagnostics(document_uri)
+            .expect("diagnostics while rebuilding")
+            .diagnostics
+            .is_empty()
+    );
+    assert!(
+        session
+            .hover(document_uri, lsp::Position::new(0, 3))
+            .expect("hover while rebuilding")
+            .is_none()
+    );
+}
+
+#[test]
+fn rebuilding_clears_published_results_for_configuration_root_and_batch_changes() {
+    let (mut configuration, document_uri) = session_with_published_result();
+    let _ = configuration.handle_workspace_files_changed(typed(json!({
+        "changes": [{"uri": "file:///.adocweave.toml", "type": 2}]
+    })));
+    assert_published_result_is_cleared(&configuration, &document_uri);
+
+    let (mut roots, document_uri) = session_with_published_result();
+    assert!(roots.workspace_folders_changed(typed(json!({
+        "event": {
+            "removed": [],
+            "added": [{"uri": "file:///new-root/", "name": "new-root"}]
+        }
+    }))));
+    assert_published_result_is_cleared(&roots, &document_uri);
+
+    let (mut batch, document_uri) = session_with_published_result();
+    let changes = (0..=10_000)
+        .map(|index| {
+            lsp::FileEvent::new(
+                uri(&format!("file:///watched/{index}.adoc")),
+                lsp::FileChangeType::CHANGED,
+            )
+        })
+        .collect();
+    let _ = batch.handle_workspace_files_changed(lsp::DidChangeWatchedFilesParams { changes });
+    assert_published_result_is_cleared(&batch, &document_uri);
+}
+
+#[test]
+fn open_and_change_wait_for_rebuild_before_creating_analysis_jobs() {
+    let mut session = Session::default();
+    initialize(&mut session, &["utf-16"]);
+    open(&mut session, "file:///changed.adoc", 1, "= Before\n");
+    let _ = session.handle_workspace_files_changed(typed(json!({
+        "changes": [{"uri": "file:///.adocweave.toml", "type": 2}]
+    })));
+
+    let changed_jobs = session
+        .begin_change(typed(json!({
+            "textDocument": {"uri": "file:///changed.adoc", "version": 2},
+            "contentChanges": [{"text": "= After\n"}]
+        })))
+        .expect("change while rebuilding");
+    let opened_jobs = session.begin_open(typed(json!({
+        "textDocument": {
+            "uri": "file:///opened.adoc",
+            "languageId": "asciidoc",
+            "version": 1,
+            "text": "= Opened\n"
+        }
+    })));
+    assert!(changed_jobs.is_empty());
+    assert!(opened_jobs.is_empty());
+    assert_eq!(
+        session
+            .documents
+            .get("file:///changed.adoc")
+            .expect("changed document")
+            .request
+            .source
+            .as_ref(),
+        "= After\n"
+    );
+    assert!(session.documents.get("file:///opened.adoc").is_some());
+    assert!(session.documents.snapshot("file:///changed.adoc").is_none());
+    assert!(session.documents.snapshot("file:///opened.adoc").is_none());
+
+    let scan = session.plan_workspace_scan(&adocweave::NeverCancel);
+    let jobs = session.apply_workspace_scan(scan).jobs;
+    assert_eq!(jobs.len(), 2);
+    assert!(
+        jobs.iter()
+            .any(|job| job.request.source.as_ref() == "= After\n")
+    );
+    assert!(
+        jobs.iter()
+            .any(|job| job.request.source.as_ref() == "= Opened\n")
+    );
+}

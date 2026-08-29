@@ -237,6 +237,14 @@ pub(crate) struct Session {
     workspace_watch_recovery_required: bool,
     workspace_input_error: Option<String>,
     workspace_scans: Arc<Mutex<WorkspaceScanCoordinator>>,
+    workspace_input_status: WorkspaceInputStatus,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum WorkspaceInputStatus {
+    #[default]
+    Ready,
+    Rebuilding,
 }
 
 pub(crate) struct WorkspaceFileChanges {
@@ -270,6 +278,7 @@ impl fmt::Debug for Session {
             .field("input_revision", &self.input_revision)
             .field("client", &self.client)
             .field("settings", &self.settings)
+            .field("workspace_input_status", &self.workspace_input_status)
             .field("has_complete_host_index", &self.host_index.is_complete())
             .finish()
     }
@@ -294,6 +303,7 @@ impl Default for Session {
             workspace_watch_recovery_required: false,
             workspace_input_error: None,
             workspace_scans: Arc::new(Mutex::new(WorkspaceScanCoordinator::default())),
+            workspace_input_status: WorkspaceInputStatus::Ready,
         }
     }
 }
@@ -357,12 +367,14 @@ impl Session {
     }
 
     fn analysis_job_is_current(&self, job: &AnalysisJob) -> bool {
-        self.documents.job_is_current(job)
+        self.workspace_input_status == WorkspaceInputStatus::Ready
+            && self.documents.job_is_current(job)
     }
 
     fn invalidate_all_document_inputs(&mut self) {
         self.advance_input_revision();
         self.documents.invalidate_all_inputs(self.input_revision);
+        self.workspace_input_status = WorkspaceInputStatus::Rebuilding;
     }
 
     #[cfg(test)]
@@ -503,6 +515,17 @@ impl Session {
 
     pub fn begin_open(&mut self, params: lsp::DidOpenTextDocumentParams) -> Vec<AnalysisJob> {
         let document = params.text_document;
+        if self.workspace_input_status == WorkspaceInputStatus::Rebuilding {
+            self.advance_input_revision();
+            let _ = self.documents.begin_open_with_options(
+                document.uri.to_string(),
+                document.version,
+                document.text,
+                self.analysis_options_for(None),
+                self.input_revision,
+            );
+            return Vec::new();
+        }
         if let Some(error) = self.workspace_error.clone() {
             self.advance_input_revision();
             let options = self.analysis_options_for(None);
@@ -580,6 +603,16 @@ impl Session {
                     source.replace_range(start..end, &change.text);
                 }
             }
+        }
+        if self.workspace_input_status == WorkspaceInputStatus::Rebuilding {
+            self.advance_input_revision();
+            let _ = self.documents.begin_change(
+                params.text_document.uri.as_str(),
+                params.text_document.version,
+                source,
+                self.input_revision,
+            );
+            return Ok(Vec::new());
         }
         let affected = self.workspace.upsert_open(
             params.text_document.uri.clone(),
@@ -833,6 +866,45 @@ impl Session {
             };
         }
 
+        if self.workspace_input_status == WorkspaceInputStatus::Rebuilding {
+            let mut uris = std::collections::BTreeSet::new();
+            let mut uri_bytes = 0_usize;
+            let mut replay_complete = true;
+            for change in &params.changes {
+                if uris.insert(change.uri.as_str()) {
+                    uri_bytes = uri_bytes
+                        .checked_add(change.uri.as_str().len())
+                        .expect("workspace watch URI byte count exhausted");
+                    if uris.len() > MAX_WORKSPACE_WATCH_CHANGES
+                        || uri_bytes > MAX_WORKSPACE_WATCH_URI_BYTES
+                    {
+                        replay_complete = false;
+                        break;
+                    }
+                }
+            }
+            let changes = WorkspaceFileChanges {
+                jobs: Vec::new(),
+                journal: if replay_complete {
+                    params.changes
+                } else {
+                    Vec::new()
+                },
+                replay_complete,
+                recovery_required: !replay_complete,
+            };
+            if !replay_complete {
+                self.invalidate_all_document_inputs();
+            }
+            let recovery_generation = self.record_workspace_changes(&changes);
+            return WorkspaceFileEventOutcome {
+                jobs: Vec::new(),
+                recovery_generation,
+                rebuild: None,
+                cancel_recovery_timer: false,
+            };
+        }
+
         let changes = self.workspace_files_changed_with_journal(params);
         if changes.recovery_required && !changes.replay_complete {
             self.invalidate_all_document_inputs();
@@ -947,6 +1019,7 @@ impl Session {
             .workspace
             .apply_loaded_roots(scan.loaded, &parsed_open_sources);
         let installed = outcome.is_ok();
+        self.workspace_input_status = WorkspaceInputStatus::Ready;
         self.advance_input_revision();
         let jobs = self.finish_reload(outcome, open_sources);
         let notices = if installed {
@@ -970,6 +1043,11 @@ impl Session {
     /// Records an internal scan worker failure without replacing the last
     /// coherent workspace snapshot.
     pub fn workspace_scan_failed(&mut self, error: String) -> Vec<AnalysisJob> {
+        if self.workspace_input_status == WorkspaceInputStatus::Rebuilding {
+            self.workspace_error = Some(error);
+            self.workspace_watch_recovery_required = true;
+            return Vec::new();
+        }
         self.advance_input_revision();
         self.workspace_error = Some(error);
         self.workspace_watch_recovery_required = true;
@@ -1228,6 +1306,12 @@ impl Session {
 
     pub fn close(&mut self, uri: &lsp::Url) -> (bool, Vec<AnalysisJob>) {
         let closed = self.documents.close(uri.as_str());
+        if self.workspace_input_status == WorkspaceInputStatus::Rebuilding {
+            if closed {
+                self.advance_input_revision();
+            }
+            return (closed, Vec::new());
+        }
         let mut affected = self.workspace.close_open(uri).unwrap_or_else(|error| {
             self.workspace_error = Some(error);
             std::collections::BTreeSet::new()
@@ -1285,6 +1369,10 @@ impl Session {
         let diagnostics_changed = self.settings.enabled_rules != settings.enabled_rules;
         self.settings = settings;
         if !diagnostics_changed {
+            return Ok(Vec::new());
+        }
+        if self.workspace_input_status == WorkspaceInputStatus::Rebuilding {
+            self.invalidate_all_document_inputs();
             return Ok(Vec::new());
         }
         self.advance_input_revision();
