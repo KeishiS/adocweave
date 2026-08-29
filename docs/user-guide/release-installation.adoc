@@ -298,8 +298,11 @@ import { AdocWeaveClient, defaultAssetUrls } from "./worker/index.mjs";
 const entryUrl = new URL("./worker/index.mjs", import.meta.url);
 const client = new AdocWeaveClient(defaultAssetUrls(entryUrl));
 const result = await client.analyze({
-  source: "= Title\n\nText\n",
-  renderPolicy: { documentMode: "fragment" },
+  source: { text: "= Title\n\nText\n" },
+  products: {
+    html: { documentMode: "fragment" },
+    diagnostics: true,
+  },
 });
 console.log(result.html, result.diagnostics);
 ----
