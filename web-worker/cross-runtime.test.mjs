@@ -35,6 +35,21 @@ const cases = [
     name: "不正な要求",
     request: { source: { text: "Text" }, products: { html: false } },
   },
+  {
+    name: "入れ子の未知項目を持つ要求",
+    request: {
+      source: { text: "Text" },
+      products: { symbols: true },
+      resources: {
+        references: [{
+          sourceStart: 0,
+          sourceEnd: 1,
+          outcome: { status: "failed", kind: "missing-target" },
+          unknown: Array.from({ length: 10_001 }, () => "ignored"),
+        }],
+      },
+    },
+  },
 ];
 
 function nativeResult(request) {

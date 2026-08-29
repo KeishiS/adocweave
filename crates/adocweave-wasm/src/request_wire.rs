@@ -2,30 +2,13 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
+use crate::request_unknown::UnknownFields;
+
 use crate::{
     DocumentMode, GeneratedBibliography, MathLanguage, ResolvedCitation, ResolvedReference,
     ResolvedResource, SafeMode, Severity, SyntaxMode, UnknownRole, UnknownSourceLanguage,
     UnresolvedReferencePresentation,
 };
-
-// `serde_wasm_bindgen` 0.6 deserializes a typed struct by requesting known
-// properties and does not enumerate extra JavaScript properties for
-// `deny_unknown_fields`. Flattening this rejecting map forces map traversal at
-// the WASM boundary. `protocol-wasm.test.mjs` fixes that behavior with the
-// generated module; JSON deserialization rejects the same fields.
-type UnknownFields = BTreeMap<String, UnknownField>;
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct UnknownField;
-
-impl<'de> Deserialize<'de> for UnknownField {
-    fn deserialize<D>(_: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        Err(serde::de::Error::custom("unknown field"))
-    }
-}
 
 fn present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
 where
@@ -399,7 +382,7 @@ pub struct ResourceCapabilities {
     pub media: Option<bool>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, serde::Serialize, Eq, PartialEq)]
 #[serde(
     tag = "kind",
     rename_all = "kebab-case",
@@ -414,6 +397,37 @@ pub struct ResourceCapabilities {
 pub enum Stylesheet {
     External { url: String },
     Inline { css: String },
+}
+
+#[derive(Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
+enum StylesheetInput {
+    External {
+        #[serde(flatten)]
+        _unknown_fields: UnknownFields,
+        url: String,
+    },
+    Inline {
+        #[serde(flatten)]
+        _unknown_fields: UnknownFields,
+        css: String,
+    },
+}
+
+impl<'de> Deserialize<'de> for Stylesheet {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(match StylesheetInput::deserialize(deserializer)? {
+            StylesheetInput::External { url, .. } => Self::External { url },
+            StylesheetInput::Inline { css, .. } => Self::Inline { css },
+        })
+    }
 }
 
 #[cfg_attr(

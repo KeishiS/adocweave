@@ -13,6 +13,7 @@ mod render_input_normalization;
 mod render_input_wire;
 mod request_conversion;
 mod request_enums;
+mod request_unknown;
 mod request_wire;
 mod response_conversion;
 mod response_projection;
