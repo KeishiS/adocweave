@@ -182,7 +182,6 @@ pub(crate) fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result
     let mut no_include = false;
     let mut base_dir = None;
     let mut allowed_roots = Vec::new();
-    let mut local_targets = false;
     let mut project_root = None;
     let mut complete = false;
     let mut css = Vec::new();
@@ -314,7 +313,6 @@ pub(crate) fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result
                 }
                 no_include = true;
             }
-            Some(OptionId::LocalTargets) => local_targets = true,
             Some(OptionId::ProjectRoot) => {
                 let value = take_option_value(
                     option.expect("matched option id has a specification"),
@@ -434,11 +432,6 @@ pub(crate) fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result
             "--dry-run requires format --write or check --fix".to_owned(),
         ));
     }
-    if local_targets != project_root.is_some() {
-        return Err(CliError::Usage(
-            "--local-targets and --project-root must be used together".to_owned(),
-        ));
-    }
     if command_id == CommandId::Preview {
         if stdin_selected || input.is_none() || !additional_inputs.is_empty() {
             return Err(CliError::Usage(
@@ -451,9 +444,9 @@ pub(crate) fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result
             ));
         }
     }
-    if local_targets && !allowed_roots.is_empty() {
+    if project_root.is_some() && !allowed_roots.is_empty() {
         return Err(CliError::Usage(
-            "--allow-root cannot be combined with --local-targets; --project-root is the boundary"
+            "--allow-root cannot be combined with --project-root; --project-root is the boundary"
                 .to_owned(),
         ));
     }
@@ -489,7 +482,6 @@ pub(crate) fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result
             || no_include
             || base_dir.is_some()
             || !allowed_roots.is_empty()
-            || local_targets
             || project_root.is_some()
             || !enabled_rules.is_empty()
             || fix
