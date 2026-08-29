@@ -133,6 +133,7 @@ script_runner = "@shell"
 script = '''
 node tools/release-workflow-policy.mjs
 node --test \
+  tools/binary-cache-smoke.test.mjs \
   tools/wasm-release-budget.test.mjs \
   tools/npm-publication.test.mjs \
   tools/normalize-darwin-archives.test.mjs \

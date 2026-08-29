@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  validateBinaryCachePublication,
   validateCiGates,
   validateExternalPublicationIsolation,
   validateNpmPublication,
@@ -84,6 +85,67 @@ function npmPublicationWorkflow() {
   return workflow;
 }
 
+function binaryCachePublicationWorkflow() {
+  const matrix = {
+    "fail-fast": false,
+    matrix: {
+      include: [
+        { runner: "ubuntu-24.04", nixSystem: "x86_64-linux" },
+        { runner: "ubuntu-24.04-arm", nixSystem: "aarch64-linux" },
+      ],
+    },
+  };
+  return {
+    on: { workflow_call: {}, workflow_dispatch: {} },
+    permissions: { contents: "read" },
+    jobs: {
+      publish: {
+        strategy: matrix,
+        steps: [
+          {
+            run: `
+gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" | jq .draft,.prerelease
+git rev-parse "$RELEASE_TAG^{commit}"
+git rev-parse HEAD
+workspace_version=1.2.3
+test "$RELEASE_TAG" = "v$workspace_version"
+cachix push keishis "$package"
+`,
+          },
+          {
+            uses: "cachix/cachix-action@0000000000000000000000000000000000000000",
+            with: {
+              name: "keishis",
+              authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}",
+              skipPush: true,
+            },
+          },
+        ],
+      },
+      verify: {
+        needs: "publish",
+        strategy: structuredClone(matrix),
+        steps: [
+          {
+            uses: "cachix/cachix-action@0000000000000000000000000000000000000000",
+            with: { name: "keishis", skipPush: true },
+          },
+          {
+            run: `
+nix build ".#packages.\${NIX_SYSTEM}.default" \\
+  --option builders '' \\
+  --option fallback false \\
+  --option max-jobs 0 \\
+  --option substituters https://keishis.cachix.org
+node tools/binary-cache-smoke.mjs "$package/bin/adocweave"
+`,
+          },
+        ],
+      },
+    },
+  };
+}
+
 function workflows() {
   return {
     "release.yml": releaseWorkflow(),
@@ -93,7 +155,7 @@ function workflows() {
       permissions: { contents: "read" },
       jobs: { smoke: { steps: [] } },
     },
-    "binary-cache-publish.yml": publicationWorkflow(),
+    "binary-cache-publish.yml": binaryCachePublicationWorkflow(),
     "marketplace-publish.yml": {
       on: { workflow_call: {}, workflow_dispatch: {} },
       permissions: { contents: "read" },
@@ -211,6 +273,41 @@ test("Marketplace公開は専用environmentとOIDCだけを使う", () => {
   assert.throws(
     () => validateExternalPublicationIsolation(shared),
     /isolated to marketplace-publish/u,
+  );
+});
+
+test("Cachix公開は二つのLinux closureを送り別のtokenなしrunnerで取得する", () => {
+  const fixtures = workflows();
+  validateBinaryCachePublication(fixtures);
+
+  fixtures["binary-cache-publish.yml"].jobs.verify.steps[1].run =
+    fixtures["binary-cache-publish.yml"].jobs.verify.steps[1].run.replace(
+      "--option max-jobs 0",
+      "--option max-jobs 1",
+    );
+  assert.throws(
+    () => validateBinaryCachePublication(fixtures),
+    /acquire and smoke.*max-jobs/u,
+  );
+});
+
+test("Cachixの書込みtokenを公開job以外へ渡さない", () => {
+  const fixtures = workflows();
+  fixtures["binary-cache-publish.yml"].jobs.verify.steps[0].with.authToken =
+    "${{ secrets.CACHIX_AUTH_TOKEN }}";
+  assert.throws(
+    () => validateBinaryCachePublication(fixtures),
+    /without a write token/u,
+  );
+
+  const separateFixtures = workflows();
+  separateFixtures["open-vsx-publish.yml"].jobs.publish.steps.push({
+    env: { TOKEN: "${{ secrets.CACHIX_AUTH_TOKEN }}" },
+    run: "true",
+  });
+  assert.throws(
+    () => validateBinaryCachePublication(separateFixtures),
+    /used only by binary-cache-publish/u,
   );
 });
 

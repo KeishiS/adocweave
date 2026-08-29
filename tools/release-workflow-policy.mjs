@@ -30,6 +30,10 @@ const OIDC_PUBLICATION_WORKFLOWS = new Set([
   "marketplace-publish.yml",
   "npm-publish.yml",
 ]);
+const BINARY_CACHE_TARGETS = [
+  { runner: "ubuntu-24.04", nixSystem: "x86_64-linux" },
+  { runner: "ubuntu-24.04-arm", nixSystem: "aarch64-linux" },
+];
 
 function fail(message) {
   throw new Error(message);
@@ -223,8 +227,11 @@ export function validateExternalPublicationIsolation(workflows) {
     if (canonical(triggerNames) !== canonical(["workflow_call", "workflow_dispatch"])) {
       fail(`${name} must be isolated behind reusable and manual publication triggers`);
     }
-    if (workflow.jobs?.publish === undefined || Object.keys(workflow.jobs).length !== 1) {
-      fail(`${name} must contain only its isolated publish job`);
+    const expectedJobs = name === "binary-cache-publish.yml"
+      ? ["publish", "verify"]
+      : ["publish"];
+    if (canonical(Object.keys(workflow.jobs ?? {}).sort()) !== canonical(expectedJobs.sort())) {
+      fail(`${name} must contain only its isolated publication jobs`);
     }
   }
 
@@ -252,6 +259,79 @@ export function validateExternalPublicationIsolation(workflows) {
     )
   ) {
     fail("Marketplace publication must use only vsce trusted publishing with OIDC");
+  }
+}
+
+function cachixAction(job) {
+  return (job?.steps ?? []).find((step) =>
+    typeof step.uses === "string" && step.uses.startsWith("cachix/cachix-action@")
+  );
+}
+
+function validateBinaryCacheMatrix(job, location) {
+  if (job?.strategy?.["fail-fast"] !== false ||
+      canonical(job?.strategy?.matrix?.include) !== canonical(BINARY_CACHE_TARGETS)) {
+    fail(`${location} must process the fixed x86_64-linux and aarch64-linux targets`);
+  }
+}
+
+export function validateBinaryCachePublication(workflows) {
+  const workflow = workflows["binary-cache-publish.yml"];
+  if (!workflow) fail("binary-cache-publish.yml is required");
+  const publish = workflow.jobs?.publish;
+  const verify = workflow.jobs?.verify;
+  validateBinaryCacheMatrix(publish, "binary-cache-publish.yml publish");
+  validateBinaryCacheMatrix(verify, "binary-cache-publish.yml verify");
+  if (!needs(verify).includes("publish")) {
+    fail("binary-cache-publish.yml verify must run after every published closure");
+  }
+
+  const publishSource = jobRuns(publish);
+  for (const required of [
+    'releases/tags/$RELEASE_TAG',
+    ".draft",
+    ".prerelease",
+    'git rev-parse "$RELEASE_TAG^{commit}"',
+    "git rev-parse HEAD",
+    "workspace_version",
+    'test "$RELEASE_TAG" = "v$workspace_version"',
+    'cachix push keishis "$package"',
+  ]) {
+    if (!publishSource.includes(required)) {
+      fail(`binary-cache-publish.yml publish must verify and send the stable release: ${required}`);
+    }
+  }
+  const publishCachix = cachixAction(publish);
+  if (publishCachix?.with?.name !== "keishis" || publishCachix?.with?.skipPush !== true ||
+      publishCachix?.with?.authToken !== "${{ secrets.CACHIX_AUTH_TOKEN }}") {
+    fail("binary-cache-publish.yml publish must use only the dedicated Cachix token");
+  }
+
+  const verifySource = jobRuns(verify);
+  for (const required of [
+    '.#packages.${NIX_SYSTEM}.default',
+    "--option builders ''",
+    "--option fallback false",
+    "--option max-jobs 0",
+    "--option substituters https://keishis.cachix.org",
+    "node tools/binary-cache-smoke.mjs",
+  ]) {
+    if (!verifySource.includes(required)) {
+      fail(`binary-cache-publish.yml verify must acquire and smoke the public closure: ${required}`);
+    }
+  }
+  const verifyCachix = cachixAction(verify);
+  if (verifyCachix?.with?.name !== "keishis" || verifyCachix?.with?.skipPush !== true ||
+      verifyCachix?.with?.authToken !== undefined ||
+      JSON.stringify(verify).includes("CACHIX_AUTH_TOKEN")) {
+    fail("binary-cache-publish.yml verify must configure Cachix without a write token");
+  }
+
+  const tokenUsers = Object.entries(workflows)
+    .filter(([, candidate]) => JSON.stringify(candidate).includes("CACHIX_AUTH_TOKEN"))
+    .map(([name]) => name);
+  if (canonical(tokenUsers) !== canonical(["binary-cache-publish.yml"])) {
+    fail("CACHIX_AUTH_TOKEN must be used only by binary-cache-publish.yml");
   }
 }
 
@@ -310,6 +390,7 @@ export function validateReleaseWorkflowPolicy({ workflows, distConfiguration, re
   validateReleaseFlow(workflows, distConfiguration);
   validateCiGates(workflows);
   validateExternalPublicationIsolation(workflows);
+  validateBinaryCachePublication(workflows);
   validateNpmPublication(workflows);
   validateReleaseVersionCommands(releaseGuide);
 }

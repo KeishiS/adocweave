@@ -122,9 +122,13 @@ npmの公開workflowも``id-token``の書込みを受け取り、Trusted Publish
 確認します。workflowはGitHub Releaseから取得したarchiveのchecksumとattestationを確認してから送信し、送信後は
 registryが記録したintegrityとReleaseの成果物を照合します。
 
-stable Releaseの公開後に、Cachix用workflowだけが``CACHIX_AUTH_TOKEN``を使用します。workflowは公開済みの
-tagとcommit、成果物のchecksumおよびattestationを再確認し、同じcommitから構築したNix packageの依存物一式を
-Cachixへ送信します。ほかのjobはこのtokenを参照しません。
+stable Releaseの公開後に、Cachix用workflowの公開jobだけが``CACHIX_AUTH_TOKEN``を使用します。公開jobは
+公開済みのtag、commitおよびworkspace版を照合し、同じcommitから``x86_64-linux``と``aarch64-linux``向けに
+構築したNix packageと依存物一式をCachixへ送信します。
+
+送信後は、書込みtokenを持たない別のrunnerがローカルでの構築を禁止し、Cachixだけから対象packageを取得します。
+取得した``adocweave``のversionと``adocweave lsp``の起動を確認します。Nix store pathは内容から決まるため、
+同じtagでworkflowを再実行しても既存の内容は変わりません。
 
 repositoryへの書込み権限がある利用者による手元からのtag作成を、workflowだけで機械的に禁止することはできません。
 tag rulesetを追加せず、公開前検査によって権限を制限する理由は
