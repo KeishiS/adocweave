@@ -18,8 +18,8 @@ use adocweave::output::html::{HtmlDocumentMode, RenderPolicy};
 use adocweave::preprocess::PreprocessOptions;
 use adocweave::{AnalysisOptions, SyntaxMode};
 use adocweave_host::{
-    FilesystemReadLimits, IncludeFilesystemSource, LoadedFilesystemSource, LoadedLocalTarget,
-    LocalTargetError, LocalTargetPolicy, LocalTargetSession,
+    FilesystemReadLimits, LoadedFilesystemSource, LoadedLocalTarget, LocalTargetError,
+    LocalTargetPolicy, LocalTargetSession,
 };
 use adocweave_workspace::RetainedResourceLimits;
 use serde::Deserialize;
@@ -230,17 +230,6 @@ impl ConfigSnapshot {
     /// filesystem authority.
     pub fn from_filesystem_source(loaded: &LoadedFilesystemSource) -> Result<Self, ConfigError> {
         Self::from_source(loaded.canonical_path().to_owned(), loaded.source())
-    }
-
-    /// Parses configuration read through one request-scoped include filesystem
-    /// transaction.
-    pub fn from_include_filesystem_source(
-        loaded: &IncludeFilesystemSource,
-    ) -> Result<Self, ConfigError> {
-        Self::from_source(
-            loaded.provenance().canonical_path().to_owned(),
-            loaded.source(),
-        )
     }
 
     /// Parses configuration text whose path and contents were fixed by a

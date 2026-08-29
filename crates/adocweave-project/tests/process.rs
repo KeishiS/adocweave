@@ -523,6 +523,50 @@ fn invalid_utf8_primary_is_reported_as_unreadable() {
 }
 
 #[test]
+fn failed_body_read_does_not_replace_local_target_presence() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    write(
+        root.join(".adocweave.toml"),
+        "schema-version = 2\n[local-targets]\nenabled = true\nproject-root = \".\"\n[html]\nstylesheet-files = [\"bad.dat\"]\n",
+    );
+    write(root.join("a-body.adoc"), "body\n");
+    write(root.join("b-guide.adoc"), "image::bad.dat[]\n");
+    write(root.join("c-guide.adoc"), "image::bad.dat[]\n");
+    fs::write(root.join("bad.dat"), [0xff]).expect("invalid UTF-8 fixture");
+
+    let result = process(request(
+        root,
+        vec![ProjectTarget::Directory(PathBuf::from("."))],
+    ))
+    .expect("body failures and presence observations remain separate");
+    let guides = result
+        .targets
+        .iter()
+        .filter(|target| {
+            target.path.ends_with("b-guide.adoc") || target.path.ends_with("c-guide.adoc")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(guides.len(), 2);
+    for guide in guides {
+        assert!(guide.resources.iter().any(|resource| {
+            resource.kind == ProjectResourceKind::LocalTarget
+                && resource.path.ends_with("bad.dat")
+                && resource.outcome == ProjectResourceOutcome::Present
+        }));
+    }
+    assert!(result.targets.iter().all(|target| {
+        target.resources.iter().any(|resource| {
+            resource.kind == ProjectResourceKind::Stylesheet
+                && matches!(
+                    resource.outcome,
+                    ProjectResourceOutcome::Failed(ProjectResourceFailure::Unreadable(_))
+                )
+        })
+    }));
+}
+
+#[test]
 fn multiple_authority_roots_receive_distinct_source_ids() {
     let project = tempfile::tempdir().expect("project directory");
     let external = tempfile::tempdir().expect("external directory");
@@ -806,7 +850,7 @@ fn broad_cached_local_target_cannot_bypass_a_later_confined_root() {
 }
 
 #[test]
-fn parent_root_body_can_be_reused_for_the_same_child_path() {
+fn parent_root_body_does_not_prevent_a_child_root_inspection() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let root = directory.path();
     fs::create_dir(root.join("child")).expect("child directory");
@@ -841,7 +885,7 @@ fn parent_root_body_can_be_reused_for_the_same_child_path() {
 }
 
 #[test]
-fn child_root_body_can_be_reused_for_the_same_path_under_a_parent_root() {
+fn child_root_body_does_not_prevent_a_parent_root_inspection() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let root = directory.path();
     let child = root.join("child");

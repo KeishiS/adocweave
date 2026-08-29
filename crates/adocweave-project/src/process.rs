@@ -13,7 +13,7 @@ use adocweave_host::{
     DerivedFilesystemRoots, FilesystemJobError, FilesystemJobLimit, FilesystemJobLimits,
     IncludeFilesystemBudgetedOutcome, IncludeFilesystemInspectionOutcome, IncludeFilesystemJob,
     IncludeFilesystemPathRequest, IncludeFilesystemRequest, LocalFilesystemPolicy,
-    LocalFilesystemSession, LogicalSourceId, ResourceError,
+    LocalFilesystemSession, LocalTargetPolicy, LogicalSourceId, ResourceError,
 };
 
 use crate::selection::{absolute_lexical, identity_path, scan_root_for_selector, select_targets};
@@ -52,6 +52,7 @@ struct FixedResource {
     path: PathBuf,
     base: Option<PathBuf>,
     no_symlinks: bool,
+    authority: Option<LocalTargetPolicy>,
     outcome: ProjectResourceOutcome,
 }
 
@@ -60,6 +61,7 @@ struct FixedInspection {
     source_id: LogicalSourceId,
     requested_path: PathBuf,
     path: PathBuf,
+    authority: Option<LocalTargetPolicy>,
     outcome: ProjectResourceOutcome,
 }
 
@@ -517,6 +519,7 @@ impl Processor {
             return cached_for_session(fixed, &path, &self.filesystem, true);
         }
         let requested_path = path.clone();
+        let authority = self.filesystem.policy_for_path(&path).cloned();
         let transaction = self
             .job
             .transaction(&self.filesystem)
@@ -572,6 +575,7 @@ impl Processor {
             path: resolved_path,
             base,
             no_symlinks: true,
+            authority,
             outcome,
         };
         self.fixed.insert(source_id, fixed.clone());
@@ -641,6 +645,7 @@ impl Processor {
                     let fixed = read_fixed_from(
                         &self.job,
                         &mut self.fixed,
+                        &self.inspections,
                         self.limits,
                         include_id.clone(),
                         path,
@@ -882,6 +887,7 @@ impl Processor {
         read_fixed_from(
             &self.job,
             &mut self.fixed,
+            &self.inspections,
             self.limits,
             source_id,
             path,
@@ -898,24 +904,33 @@ impl Processor {
         target: &str,
         filesystem: &mut LocalFilesystemSession,
     ) -> FixedInspection {
-        if let Some(fixed) = self.fixed.get(&source_id) {
-            let fixed = cached_for_session(fixed, &path, filesystem, false);
-            return FixedInspection {
-                source_id,
-                requested_path: path,
-                path: fixed.path.clone(),
-                outcome: match &fixed.outcome {
-                    ProjectResourceOutcome::Loaded { .. }
-                    | ProjectResourceOutcome::LoadedOmitted { .. }
-                    | ProjectResourceOutcome::Present => ProjectResourceOutcome::Present,
-                    outcome => outcome.clone(),
-                },
-            };
-        }
         if let Some(fixed) = self.inspections.get(&source_id) {
             return cached_inspection_for_session(fixed, &path, filesystem);
         }
+        if let Some(fixed) = self.fixed.get(&source_id) {
+            let fixed = cached_for_session(fixed, &path, filesystem, false);
+            let outcome = match &fixed.outcome {
+                ProjectResourceOutcome::Loaded { .. }
+                | ProjectResourceOutcome::LoadedOmitted { .. } => {
+                    Some(ProjectResourceOutcome::Present)
+                }
+                ProjectResourceOutcome::Missing => Some(ProjectResourceOutcome::Missing),
+                ProjectResourceOutcome::Present | ProjectResourceOutcome::Failed(_) => None,
+            };
+            if let Some(outcome) = outcome {
+                let inspection = FixedInspection {
+                    source_id: source_id.clone(),
+                    requested_path: path,
+                    path: fixed.path,
+                    authority: fixed.authority,
+                    outcome,
+                };
+                self.inspections.insert(source_id, inspection.clone());
+                return inspection;
+            }
+        }
         let requested_path = path.clone();
+        let acquired_authority = filesystem.policy_for_path(&path).cloned();
         let outcome = self
             .job
             .transaction(filesystem)
@@ -955,21 +970,9 @@ impl Processor {
             source_id: source_id.clone(),
             requested_path,
             path: path.clone(),
+            authority: acquired_authority,
             outcome: outcome.clone(),
         };
-        if !matches!(outcome, ProjectResourceOutcome::Present) {
-            self.fixed.insert(
-                source_id.clone(),
-                FixedResource {
-                    source_id: source_id.clone(),
-                    requested_path: fixed.requested_path.clone(),
-                    path,
-                    base: None,
-                    no_symlinks: false,
-                    outcome,
-                },
-            );
-        }
         self.inspections.insert(source_id, fixed.clone());
         fixed
     }
@@ -994,6 +997,7 @@ impl Processor {
             path,
             base: None,
             no_symlinks: false,
+            authority: None,
             outcome: ProjectResourceOutcome::Failed(failure),
         };
         self.fixed.insert(source_id, fixed.clone());
@@ -1085,6 +1089,7 @@ impl Processor {
 fn read_fixed_from(
     job: &IncludeFilesystemJob,
     fixed_resources: &mut BTreeMap<LogicalSourceId, FixedResource>,
+    fixed_inspections: &BTreeMap<LogicalSourceId, FixedInspection>,
     limits: crate::ProjectLimits,
     source_id: LogicalSourceId,
     path: PathBuf,
@@ -1093,7 +1098,24 @@ fn read_fixed_from(
     if let Some(fixed) = fixed_resources.get(&source_id) {
         return cached_for_session(fixed, &path, filesystem, false);
     }
+    if let Some(inspection) = fixed_inspections.get(&source_id) {
+        let inspection = cached_inspection_for_session(inspection, &path, filesystem);
+        if matches!(inspection.outcome, ProjectResourceOutcome::Missing) {
+            let fixed = FixedResource {
+                source_id: source_id.clone(),
+                requested_path: path,
+                path: inspection.path,
+                base: None,
+                no_symlinks: false,
+                authority: inspection.authority,
+                outcome: ProjectResourceOutcome::Missing,
+            };
+            fixed_resources.insert(source_id, fixed.clone());
+            return fixed;
+        }
+    }
     let requested_path = path.clone();
+    let authority = filesystem.policy_for_path(&path).cloned();
     let outcome = job
         .transaction(filesystem)
         .map_err(ResourceError::from)
@@ -1146,6 +1168,7 @@ fn read_fixed_from(
         path: resolved_path,
         base,
         no_symlinks: false,
+        authority,
         outcome,
     };
     fixed_resources.insert(source_id, fixed.clone());
@@ -1187,6 +1210,7 @@ fn cached_for_session(
                 | ProjectResourceOutcome::LoadedOmitted { .. }
                 | ProjectResourceOutcome::Present
         ),
+        fixed.authority.as_ref(),
         filesystem,
     );
     if access.is_ok() && (!require_no_symlinks || fixed.no_symlinks) {
@@ -1216,6 +1240,7 @@ fn cached_inspection_for_session(
         &fixed.requested_path,
         &fixed.path,
         matches!(fixed.outcome, ProjectResourceOutcome::Present),
+        fixed.authority.as_ref(),
         filesystem,
     );
     if access.is_ok() {
@@ -1235,27 +1260,21 @@ fn validate_cached_authority(
     acquired_requested_path: &Path,
     acquired_path: &Path,
     acquired_path_is_verified: bool,
+    acquired_authority: Option<&LocalTargetPolicy>,
     filesystem: &LocalFilesystemSession,
 ) -> Result<(), ResourceError> {
-    let requested_root = authority_root_for_path(requested_path, filesystem);
-    let acquired_requested_root = authority_root_for_path(acquired_requested_path, filesystem);
-    let acquired_path_root = acquired_path_is_verified
-        .then(|| authority_root_for_path(acquired_path, filesystem))
-        .flatten();
-    if requested_root.is_none()
-        || requested_root != acquired_requested_root
-        || (acquired_path_is_verified && requested_root != acquired_path_root)
-    {
+    let requested_authority = filesystem.policy_for_path(requested_path);
+    let same_authority = requested_authority
+        .zip(acquired_authority)
+        .is_some_and(|(requested, acquired)| requested.has_same_authority(acquired));
+    let acquired_paths_are_valid = acquired_authority.is_some_and(|authority| {
+        acquired_requested_path.starts_with(authority.root())
+            && (!acquired_path_is_verified || acquired_path.starts_with(authority.root()))
+    });
+    if !same_authority || !acquired_paths_are_valid {
         return Err(ResourceError::OutsideRoots(requested_path.to_owned()));
     }
     Ok(())
-}
-
-fn authority_root_for_path<'path>(
-    path: &Path,
-    filesystem: &'path LocalFilesystemSession,
-) -> Option<&'path Path> {
-    filesystem.policy_for_path(path).map(|policy| policy.root())
 }
 
 fn current_read_limit(job: &IncludeFilesystemJob, limits: crate::ProjectLimits) -> ProjectLimit {
@@ -1464,8 +1483,8 @@ mod tests {
 
     use adocweave::OutputLimits;
     use adocweave_host::{
-        FilesystemReadLimits, LocalFilesystemPolicy, LocalFilesystemSession, LogicalSourceId,
-        ResourceError,
+        DerivedFilesystemRoots, FilesystemReadLimits, LocalFilesystemPolicy,
+        LocalFilesystemSession, LogicalSourceId, ResourceError,
     };
 
     use super::{
@@ -1503,24 +1522,36 @@ mod tests {
         ));
     }
 
-    fn loaded_resource(requested_path: PathBuf, path: PathBuf) -> FixedResource {
+    fn loaded_resource(
+        requested_path: PathBuf,
+        path: PathBuf,
+        filesystem: &LocalFilesystemSession,
+    ) -> FixedResource {
+        let authority = filesystem.policy_for_path(&requested_path).cloned();
         FixedResource {
             source_id: source_id(),
             requested_path,
             base: path.parent().map(Path::to_owned),
             path,
             no_symlinks: false,
+            authority,
             outcome: ProjectResourceOutcome::Loaded {
                 source: Arc::from("loaded"),
             },
         }
     }
 
-    fn present_inspection(requested_path: PathBuf, path: PathBuf) -> FixedInspection {
+    fn present_inspection(
+        requested_path: PathBuf,
+        path: PathBuf,
+        filesystem: &LocalFilesystemSession,
+    ) -> FixedInspection {
+        let authority = filesystem.policy_for_path(&requested_path).cloned();
         FixedInspection {
             source_id: source_id(),
             requested_path,
             path,
+            authority,
             outcome: ProjectResourceOutcome::Present,
         }
     }
@@ -1537,12 +1568,14 @@ mod tests {
         for (acquired_root, other_root) in [(&first, &second), (&second, &first)] {
             let acquired_request = acquired_root.join("resource");
             let other_request = other_root.join("resource");
-            let loaded = loaded_resource(acquired_request.clone(), other_request.clone());
+            let loaded =
+                loaded_resource(acquired_request.clone(), other_request.clone(), &filesystem);
             assert_rejected(
                 &cached_for_session(&loaded, &acquired_request, &filesystem, false).outcome,
             );
 
-            let present = present_inspection(acquired_request.clone(), other_request.clone());
+            let present =
+                present_inspection(acquired_request.clone(), other_request.clone(), &filesystem);
             assert_rejected(
                 &cached_inspection_for_session(&present, &acquired_request, &filesystem).outcome,
             );
@@ -1554,6 +1587,7 @@ mod tests {
                     path: acquired_request.clone(),
                     base: None,
                     no_symlinks: false,
+                    authority: filesystem.policy_for_path(&acquired_request).cloned(),
                     outcome,
                 };
                 assert_rejected(
@@ -1564,60 +1598,161 @@ mod tests {
     }
 
     #[test]
-    fn cached_authority_rejects_both_directions_between_parent_and_child_roots() {
+    fn cached_authority_rejects_parent_observations_after_narrowing_to_the_same_path() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let parent = directory.path().to_owned();
+        let child = directory.path().join("child");
+        fs::create_dir(&child).expect("child root");
+        let path = child.join("resource");
+        let mut policy =
+            LocalFilesystemPolicy::new([parent.clone()], FilesystemReadLimits::default())
+                .expect("parent policy");
+        let parent_filesystem = policy.session().expect("parent session");
+        let child_filesystem = policy
+            .access_derived(
+                &parent,
+                DerivedFilesystemRoots {
+                    confined: vec![child],
+                    independent: Vec::new(),
+                },
+                FilesystemReadLimits::default(),
+            )
+            .expect("derived child policy")
+            .session()
+            .expect("child session");
+
+        let loaded = loaded_resource(path.clone(), path.clone(), &parent_filesystem);
+        assert_rejected(&cached_for_session(&loaded, &path, &child_filesystem, false).outcome);
+        let present = present_inspection(path.clone(), path.clone(), &parent_filesystem);
+        assert_rejected(&cached_inspection_for_session(&present, &path, &child_filesystem).outcome);
+    }
+
+    #[test]
+    fn cached_authority_rejects_child_observations_under_a_parent_only_session() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let parent = directory.path().to_owned();
         let child = parent.join("child");
         fs::create_dir(&child).expect("child root");
-        let filesystem = filesystem_session([parent.clone(), child.clone()]);
+        let path = child.join("resource");
+        let policy =
+            LocalFilesystemPolicy::new([parent.clone(), child], FilesystemReadLimits::default())
+                .expect("nested policy");
+        let nested_filesystem = policy.session().expect("nested session");
+        let parent_filesystem = policy
+            .access_existing([parent], FilesystemReadLimits::default())
+            .expect("parent access")
+            .session()
+            .expect("parent session");
 
-        for (acquired_root, other_root) in [(&parent, &child), (&child, &parent)] {
-            let acquired_request = acquired_root.join("resource");
-            let other_request = other_root.join("resource");
-            let loaded = loaded_resource(acquired_request.clone(), other_request.clone());
-            assert_rejected(
-                &cached_for_session(&loaded, &acquired_request, &filesystem, false).outcome,
-            );
-
-            let present = present_inspection(acquired_request.clone(), other_request.clone());
-            assert_rejected(
-                &cached_inspection_for_session(&present, &acquired_request, &filesystem).outcome,
-            );
-
-            for outcome in [ProjectResourceOutcome::Missing, failed_outcome()] {
-                let fixed = FixedResource {
-                    source_id: source_id(),
-                    requested_path: acquired_request.clone(),
-                    path: acquired_request.clone(),
-                    base: None,
-                    no_symlinks: false,
-                    outcome,
-                };
-                assert_rejected(
-                    &cached_for_session(&fixed, &other_request, &filesystem, false).outcome,
-                );
-            }
-        }
+        let loaded = loaded_resource(path.clone(), path.clone(), &nested_filesystem);
+        assert_rejected(&cached_for_session(&loaded, &path, &parent_filesystem, false).outcome);
+        let present = present_inspection(path.clone(), path.clone(), &nested_filesystem);
+        assert_rejected(
+            &cached_inspection_for_session(&present, &path, &parent_filesystem).outcome,
+        );
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
-    fn cached_authority_allows_loaded_and_present_after_narrowing_to_the_same_path() {
+    fn cached_parent_observation_is_rejected_after_the_child_directory_is_replaced() {
         let directory = tempfile::tempdir().expect("temporary directory");
-        let child = directory.path().join("child");
+        let parent = directory.path().to_owned();
+        let child = parent.join("child");
+        let old_child = parent.join("old-child");
         fs::create_dir(&child).expect("child root");
         let path = child.join("resource");
-        let filesystem = filesystem_session([child]);
+        fs::write(&path, "old").expect("old resource");
+        let mut policy =
+            LocalFilesystemPolicy::new([parent.clone()], FilesystemReadLimits::default())
+                .expect("parent policy");
+        let parent_filesystem = policy.session().expect("parent session");
+        let loaded = loaded_resource(path.clone(), path.clone(), &parent_filesystem);
 
-        let loaded = loaded_resource(path.clone(), path.clone());
-        assert!(matches!(
-            cached_for_session(&loaded, &path, &filesystem, false).outcome,
-            ProjectResourceOutcome::Loaded { .. }
-        ));
-        let present = present_inspection(path.clone(), path.clone());
-        assert_eq!(
-            cached_inspection_for_session(&present, &path, &filesystem).outcome,
-            ProjectResourceOutcome::Present
-        );
+        fs::rename(&child, &old_child).expect("replace old child root");
+        fs::create_dir(&child).expect("replacement child root");
+        fs::write(child.join("resource"), "new").expect("replacement resource");
+        let child_filesystem = policy
+            .access_derived(
+                &parent,
+                DerivedFilesystemRoots {
+                    confined: vec![child],
+                    independent: Vec::new(),
+                },
+                FilesystemReadLimits::default(),
+            )
+            .expect("replacement child authority")
+            .session()
+            .expect("replacement child session");
+
+        assert_rejected(&cached_for_session(&loaded, &path, &child_filesystem, false).outcome);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn processing_reinspects_a_replaced_child_instead_of_reusing_a_parent_body() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let root = directory.path().to_owned();
+        let child = root.join("child");
+        let old_child = root.join("old-child");
+        let resource = child.join("a-resource.adoc");
+        fs::create_dir(&child).expect("child directory");
+        fs::write(
+            root.join(".adocweave.toml"),
+            "schema-version = 2\n[local-targets]\nenabled = true\nproject-root = \"child\"\n",
+        )
+        .expect("project configuration");
+        fs::write(&resource, "old resource\n").expect("old resource");
+        fs::write(child.join("z-guide.adoc"), "old guide\n").expect("old guide");
+        let observed_resource = resource.clone();
+        let replacement_child = child.clone();
+        FIXED_OBSERVER.with(|observer| {
+            let mut replaced = false;
+            *observer.borrow_mut() = Some(Box::new(move |fixed| {
+                if !replaced && fixed.path == observed_resource {
+                    fs::rename(&replacement_child, &old_child).expect("move observed child");
+                    fs::create_dir(&replacement_child).expect("replacement child");
+                    fs::write(
+                        replacement_child.join("z-guide.adoc"),
+                        "image::a-resource.adoc[]\n",
+                    )
+                    .expect("replacement guide");
+                    replaced = true;
+                }
+            }));
+        });
+        let filesystem_reads = FilesystemReadLimits::default();
+        let outcome = process(ProjectRequest {
+            project_root: root.clone(),
+            targets: vec![
+                ProjectTarget::Path(PathBuf::from("child/a-resource.adoc")),
+                ProjectTarget::Path(PathBuf::from("child/z-guide.adoc")),
+            ],
+            config: ConfigSelection::Discover,
+            overrides: ProjectOverrides::default(),
+            authority: LocalFilesystemPolicy::new([root], filesystem_reads)
+                .expect("parent authority"),
+            limits: ProjectLimits {
+                filesystem_reads,
+                max_directory_entries: 100,
+                max_processing_iterations: 10,
+                output: OutputLimits::default(),
+            },
+        });
+        FIXED_OBSERVER.with(|observer| {
+            observer.borrow_mut().take();
+        });
+
+        let result = outcome.expect("replacement remains inside the request authority");
+        let guide = result
+            .targets
+            .iter()
+            .find(|target| target.path.ends_with("z-guide.adoc"))
+            .expect("replacement guide result");
+        assert!(guide.resources.iter().any(|resource| {
+            resource.kind == crate::ProjectResourceKind::LocalTarget
+                && resource.path.ends_with("a-resource.adoc")
+                && resource.outcome == ProjectResourceOutcome::Missing
+        }));
     }
 
     #[test]
@@ -1641,6 +1776,7 @@ mod tests {
                 path: path.clone(),
                 base: path.parent().map(Path::to_owned),
                 no_symlinks: false,
+                authority: filesystem.policy_for_path(&path).cloned(),
                 outcome: outcome.clone(),
             };
             assert_eq!(
@@ -1658,6 +1794,7 @@ mod tests {
                 source_id: source_id(),
                 requested_path: path.clone(),
                 path: path.clone(),
+                authority: filesystem.policy_for_path(&path).cloned(),
                 outcome: outcome.clone(),
             };
             assert_eq!(

@@ -162,6 +162,26 @@ struct OpenedTarget {
 }
 
 impl LocalTargetPolicy {
+    /// Returns whether both values retain the same filesystem authority.
+    ///
+    /// This is deliberately distinct from [`PartialEq`], which compares only
+    /// the configured canonical root. On Linux, cloned policies share the same
+    /// retained directory handle and independently opened policies do not. On
+    /// other platforms, the canonical root is the available authority identity.
+    pub fn has_same_authority(&self, other: &Self) -> bool {
+        if self.root != other.root {
+            return false;
+        }
+        #[cfg(target_os = "linux")]
+        {
+            Arc::ptr_eq(&self.root_handle, &other.root_handle)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            true
+        }
+    }
+
     pub fn new(root: &Path) -> Result<Self, LocalTargetError> {
         #[cfg(target_os = "linux")]
         {
@@ -1987,6 +2007,31 @@ mod tests {
             policy.derive_confined_directory(&outside.0),
             Err(LocalTargetError::OutsideRoot(_))
         ));
+    }
+
+    #[test]
+    fn cloned_policy_retains_the_same_authority() {
+        let root = TestDir::new();
+        let policy = LocalTargetPolicy::new(&root.0).expect("policy");
+
+        assert!(policy.has_same_authority(&policy.clone()));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn independently_opened_replacement_is_not_the_same_authority() {
+        let root = TestDir::new();
+        let old_root = root.0.with_extension("replaced");
+        let original = LocalTargetPolicy::new(&root.0).expect("original policy");
+        fs::rename(&root.0, &old_root).expect("move original root");
+        fs::create_dir(&root.0).expect("replacement root");
+        let replacement = LocalTargetPolicy::new(&root.0).expect("replacement policy");
+
+        assert_eq!(original, replacement);
+        assert!(!original.has_same_authority(&replacement));
+
+        drop(original);
+        fs::remove_dir_all(&old_root).expect("remove original root");
     }
 
     #[cfg(unix)]
