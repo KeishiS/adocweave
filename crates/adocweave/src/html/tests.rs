@@ -2,9 +2,8 @@ use std::collections::BTreeSet;
 
 use super::{
     ALLOWED_ATTRIBUTES, ALLOWED_CLASSES, ALLOWED_ELEMENTS, ExternalLinkPresentation,
-    HtmlDocumentMode, MathLanguagePolicy, RenderPolicy, ResolvedReference, ResourceCapabilities,
-    SourceLanguagePolicy, StylesheetPolicy, StylesheetSource, UnknownSourceLanguage,
-    UnresolvedReferencePresentation,
+    HtmlDocumentMode, MathLanguagePolicy, RenderPolicy, ResourceCapabilities, SourceLanguagePolicy,
+    StylesheetPolicy, StylesheetSource, UnknownSourceLanguage, UnresolvedReferencePresentation,
 };
 use crate::block_model::AstBlock;
 use crate::diagnostic::{Diagnostic, Severity};
@@ -12,7 +11,7 @@ use crate::inline_model::Inline;
 use crate::parser::parse;
 use crate::reference::ReferenceKey;
 use crate::render::RenderInputs;
-use crate::resolution::{GeneratedBibliography, GeneratedBibliographyEntry};
+use crate::resolution::{GeneratedBibliography, GeneratedBibliographyEntry, ResolvedReference};
 use crate::resource::{MediaType, ResolvedResource};
 use crate::url::{UrlDecision, UrlProvenance};
 

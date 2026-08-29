@@ -2,6 +2,9 @@ use adocweave::{AnalysisOptions, Engine, NeverCancel};
 use adocweave_wasm::{AnalyzeRequest, analyze_request};
 use serde_json::json;
 
+#[path = "../src/canonical.rs"]
+mod canonical;
+
 #[test]
 fn native_and_wasm_boundary_produce_the_same_canonical_products() {
     let source = "= Title\n\n== Section\n\nText *strong*.\n";
@@ -17,11 +20,11 @@ fn native_and_wasm_boundary_produce_the_same_canonical_products() {
 
     assert_eq!(
         boundary.syntax.as_deref(),
-        Some(adocweave::output::canonical::canonical_syntax(&native).as_str())
+        Some(canonical::canonical_syntax(&native).as_str())
     );
     assert_eq!(
         boundary.canonical_ast.as_deref(),
-        Some(adocweave::output::canonical::canonical_ast(&native).as_str())
+        Some(canonical::canonical_ast(&native).as_str())
     );
 }
 

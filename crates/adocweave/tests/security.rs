@@ -565,12 +565,20 @@ fn formula_limit_recovers_as_text_and_reports_a_diagnostic() {
     let source = "stem:[12345<script>]";
     let analysis = analyze_with_limits(source, limits).expect("formula overflow is recoverable");
     let html = render(analysis.document(), &RenderPolicy::default()).html;
-    let diagnostics = adocweave::output::diagnostics::render_json(analysis.diagnostics());
+    let diagnostics = analysis.diagnostics();
 
     assert!(!html.contains("<script>"));
     assert!(html.contains("&lt;script&gt;"));
-    assert!(diagnostics.contains("invalid-stem"));
-    assert!(diagnostics.contains("size limit"));
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code.as_str() == "invalid-stem")
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("size limit"))
+    );
 }
 
 #[test]
@@ -586,10 +594,14 @@ fn list_depth_limit_recovers_with_a_diagnostic() {
 ";
     let analysis = analyze_with_limits(source, limits).expect("list depth overflow is recoverable");
     let html = render(analysis.document(), &RenderPolicy::default()).html;
-    let diagnostics = adocweave::output::diagnostics::render_json(analysis.diagnostics());
+    let diagnostics = analysis.diagnostics();
 
     assert!(html.contains("three"));
-    assert!(diagnostics.contains("configured limit"));
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("configured limit"))
+    );
 }
 
 #[test]

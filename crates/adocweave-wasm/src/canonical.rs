@@ -1,78 +1,11 @@
-//! Stable, backend-neutral products used by cross-runtime conformance tests.
+//! Canonical string products exposed by the WebAssembly protocol.
 
 use std::fmt::Write as _;
 
-use crate::Analysis;
-use crate::block_model::{AstBlock, AstDocument, BlockMetadata, ListBlock, ListItem};
-use crate::diagnostic::render_json as render_diagnostics_json;
-use crate::document::{document_symbols, render_symbols_json};
-use crate::html::{RenderPolicy, render_with_inputs};
-use crate::inline_model::Inline;
-use crate::reference::ReferenceKey;
-use crate::render::RenderInputs;
-use crate::source::TextRange;
-
-/// Returns an inline source fixture from the shared cross-runtime manifest at
-/// the core crate's bundled runtime contract.
-/// File-backed fixtures deliberately return `None`: consumers should retain
-/// compile-time inclusion for those files, while inline cases can be reused
-/// without duplicating source text in every test suite. Test consumers resolve
-/// those file names from the repository fixture root `fixtures/conformance`.
-#[doc(hidden)]
-pub fn fixture_source(name: &str) -> Option<String> {
-    #[derive(serde::Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct FixtureCase {
-        name: String,
-        source: Option<String>,
-    }
-
-    #[derive(serde::Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct FixtureManifest {
-        cases: Vec<FixtureCase>,
-    }
-
-    let manifest: FixtureManifest = serde_json::from_str(include_str!("../conformance/cases.json"))
-        .expect("repository conformance fixture manifest is valid");
-    manifest
-        .cases
-        .into_iter()
-        .find(|case| case.name == name)
-        .and_then(|case| case.source)
-}
-
-/// Canonical products derived from exactly one owned analysis snapshot.
-///
-/// Strings are used at this boundary so native, WASM, and non-Rust hosts compare
-/// the same bytes without depending on host object-key ordering.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ConformanceSnapshot {
-    pub package_version: &'static str,
-    pub syntax: String,
-    pub ast: String,
-    pub diagnostics_json: String,
-    pub render_diagnostics_json: String,
-    pub symbols_json: String,
-    pub html: String,
-}
-
-pub fn snapshot(
-    analysis: &Analysis,
-    policy: &RenderPolicy,
-    inputs: &RenderInputs,
-) -> ConformanceSnapshot {
-    let html = render_with_inputs(analysis.document(), policy, inputs);
-    ConformanceSnapshot {
-        package_version: crate::VERSION,
-        syntax: canonical_syntax(analysis),
-        ast: canonical_ast(analysis),
-        diagnostics_json: render_diagnostics_json(analysis.diagnostics()),
-        render_diagnostics_json: render_diagnostics_json(&html.diagnostics),
-        symbols_json: render_symbols_json(&document_symbols(analysis.document())),
-        html: html.html,
-    }
-}
+use adocweave::Analysis;
+use adocweave::resolution::ReferenceKey;
+use adocweave::semantic::{Block, BlockMetadata, Inline, ListBlock, ListItem};
+use adocweave::text::TextRange;
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -93,12 +26,12 @@ struct CanonicalNode {
     children: Vec<CanonicalNode>,
 }
 
-fn canonical_ast_document(document: &AstDocument) -> String {
+fn canonical_ast_document(document: &adocweave::semantic::Document) -> String {
     let dto = CanonicalAst {
         schema_version: 2,
         blocks: document.blocks().iter().map(block_node).collect(),
         attributes: document
-            .attributes()
+            .attribute_occurrences()
             .iter()
             .map(|attribute| CanonicalNode {
                 kind: "attribute",
@@ -128,24 +61,24 @@ fn canonical_ast_document(document: &AstDocument) -> String {
 ///
 /// This focused serializer is also used by production adapters whose public
 /// protocol intentionally exposes the canonical AST as a JSON string.
-pub fn canonical_ast(analysis: &Analysis) -> String {
-    canonical_ast_document(analysis.ast())
+pub(crate) fn canonical_ast(analysis: &Analysis) -> String {
+    canonical_ast_document(analysis.document())
 }
 
-fn block_node(block: &AstBlock) -> CanonicalNode {
+fn block_node(block: &Block) -> CanonicalNode {
     let mut node = match block {
-        AstBlock::Heading(node) => CanonicalNode {
+        Block::Heading(node) => CanonicalNode {
             kind: match node.kind {
-                crate::block_model::HeadingKind::DocumentTitle => "document-title",
-                crate::block_model::HeadingKind::Part => "part",
-                crate::block_model::HeadingKind::Section { .. } => "section",
-                crate::block_model::HeadingKind::Discrete { .. } => "discrete-heading",
+                adocweave::semantic::HeadingKind::DocumentTitle => "document-title",
+                adocweave::semantic::HeadingKind::Part => "part",
+                adocweave::semantic::HeadingKind::Section { .. } => "section",
+                adocweave::semantic::HeadingKind::Discrete { .. } => "discrete-heading",
             },
             range: range(node.range),
             value: Some(node.text.clone()),
             children: inline_nodes(&node.inlines),
         },
-        AstBlock::Paragraph(node) => CanonicalNode {
+        Block::Paragraph(node) => CanonicalNode {
             kind: "paragraph",
             range: range(node.range),
             value: Some(node.value.clone()),
@@ -161,47 +94,47 @@ fn block_node(block: &AstBlock) -> CanonicalNode {
                 .chain(inline_nodes(&node.inlines))
                 .collect(),
         },
-        AstBlock::LiteralParagraph(node) => leaf("literal-paragraph", node.range, &node.value),
-        AstBlock::Break(node) => CanonicalNode {
+        Block::LiteralParagraph(node) => leaf("literal-paragraph", node.range, &node.value),
+        Block::Break(node) => CanonicalNode {
             kind: match node.kind {
-                crate::block_model::BreakKind::Thematic => "thematic-break",
-                crate::block_model::BreakKind::Page => "page-break",
+                adocweave::semantic::BreakKind::Thematic => "thematic-break",
+                adocweave::semantic::BreakKind::Page => "page-break",
             },
             range: range(node.range),
             value: None,
             children: Vec::new(),
         },
-        AstBlock::Verbatim(node) => CanonicalNode {
+        Block::Verbatim(node) => CanonicalNode {
             kind: match node.kind {
-                crate::block_model::VerbatimKind::Listing => "listing-block",
-                crate::block_model::VerbatimKind::Literal => "literal-block",
-                crate::block_model::VerbatimKind::Source(_) => "source-block",
+                adocweave::semantic::VerbatimKind::Listing => "listing-block",
+                adocweave::semantic::VerbatimKind::Literal => "literal-block",
+                adocweave::semantic::VerbatimKind::Source(_) => "source-block",
             },
             range: range(node.range),
             value: Some(match &node.kind {
-                crate::block_model::VerbatimKind::Source(source) => format!(
+                adocweave::semantic::VerbatimKind::Source(source) => format!(
                     "{}:{}",
                     source.language.as_deref().unwrap_or(""),
                     node.value
                 ),
-                crate::block_model::VerbatimKind::Listing
-                | crate::block_model::VerbatimKind::Literal => node.value.clone(),
+                adocweave::semantic::VerbatimKind::Listing
+                | adocweave::semantic::VerbatimKind::Literal => node.value.clone(),
             }),
             children: Vec::new(),
         },
-        AstBlock::List(node) => list_node(node),
-        AstBlock::Math(node) => leaf("math-block", node.range, &node.value),
-        AstBlock::Delimited(node) => {
+        Block::List(node) => list_node(node),
+        Block::Math(node) => leaf("math-block", node.range, &node.value),
+        Block::Delimited(node) => {
             let (value, mut children) = match &node.content {
-                crate::block_model::DelimitedContent::Compound(children) => (
+                adocweave::semantic::DelimitedContent::Compound(children) => (
                     Some(node.delimiter.clone()),
                     children.iter().map(block_node).collect(),
                 ),
-                crate::block_model::DelimitedContent::Verbatim(value)
-                | crate::block_model::DelimitedContent::Passthrough(value) => {
+                adocweave::semantic::DelimitedContent::Verbatim(value)
+                | adocweave::semantic::DelimitedContent::Passthrough(value) => {
                     (Some(value.clone()), Vec::new())
                 }
-                crate::block_model::DelimitedContent::Table(table) => (
+                adocweave::semantic::DelimitedContent::Table(table) => (
                     Some(format!("{:?}", table.format).to_ascii_lowercase()),
                     std::iter::once(CanonicalNode {
                         kind: "table-presentation",
@@ -219,13 +152,15 @@ fn block_node(block: &AstBlock) -> CanonicalNode {
                                 .iter()
                                 .map(|cell| {
                                     let children = match &cell.content {
-                                        crate::table::TableCellContent::Inlines(inlines) => {
+                                        adocweave::semantic::TableCellContent::Inlines(inlines) => {
                                             inline_nodes(inlines)
                                         }
-                                        crate::table::TableCellContent::AsciiDoc(blocks) => {
+                                        adocweave::semantic::TableCellContent::AsciiDoc(blocks) => {
                                             blocks.iter().map(block_node).collect()
                                         }
-                                        crate::table::TableCellContent::Verbatim(_) => Vec::new(),
+                                        adocweave::semantic::TableCellContent::Verbatim(_) => {
+                                            Vec::new()
+                                        }
                                     };
                                     CanonicalNode {
                                         kind: "table-cell",
@@ -245,29 +180,29 @@ fn block_node(block: &AstBlock) -> CanonicalNode {
                     0,
                     CanonicalNode {
                         kind: match presentation {
-                            crate::block_model::DelimitedPresentation::Admonition(_) => {
+                            adocweave::semantic::DelimitedPresentation::Admonition(_) => {
                                 "admonition-presentation"
                             }
-                            crate::block_model::DelimitedPresentation::Quote(_) => {
+                            adocweave::semantic::DelimitedPresentation::Quote(_) => {
                                 "quote-presentation"
                             }
-                            crate::block_model::DelimitedPresentation::Collapsible(_) => {
+                            adocweave::semantic::DelimitedPresentation::Collapsible(_) => {
                                 "collapsible-presentation"
                             }
                         },
                         range: range(node.range),
                         value: Some(match presentation {
-                            crate::block_model::DelimitedPresentation::Admonition(value) => {
+                            adocweave::semantic::DelimitedPresentation::Admonition(value) => {
                                 value.kind.label().to_owned()
                             }
-                            crate::block_model::DelimitedPresentation::Collapsible(value) => {
+                            adocweave::semantic::DelimitedPresentation::Collapsible(value) => {
                                 if value.open { "open" } else { "closed" }.to_owned()
                             }
-                            crate::block_model::DelimitedPresentation::Quote(value) => format!(
+                            adocweave::semantic::DelimitedPresentation::Quote(value) => format!(
                                 "{}:{}:{}",
                                 match value.kind {
-                                    crate::block_model::QuoteKind::Quote => "quote",
-                                    crate::block_model::QuoteKind::Verse => "verse",
+                                    adocweave::semantic::QuoteKind::Quote => "quote",
+                                    adocweave::semantic::QuoteKind::Verse => "verse",
                                 },
                                 value.attribution.as_ref().map_or("", |value| &value.value),
                                 value.citation.as_ref().map_or("", |value| &value.value),
@@ -279,22 +214,22 @@ fn block_node(block: &AstBlock) -> CanonicalNode {
             }
             CanonicalNode {
                 kind: match node.kind {
-                    crate::block_model::DelimitedBlockKind::Comment => "comment-block",
-                    crate::block_model::DelimitedBlockKind::Example => "example-block",
-                    crate::block_model::DelimitedBlockKind::Listing => "listing-block",
-                    crate::block_model::DelimitedBlockKind::Literal => "literal-block",
-                    crate::block_model::DelimitedBlockKind::Open => "open-block",
-                    crate::block_model::DelimitedBlockKind::Sidebar => "sidebar-block",
-                    crate::block_model::DelimitedBlockKind::Pass => "pass-block",
-                    crate::block_model::DelimitedBlockKind::Quote => "quote-block",
-                    crate::block_model::DelimitedBlockKind::Table => "table-block",
+                    adocweave::semantic::DelimitedBlockKind::Comment => "comment-block",
+                    adocweave::semantic::DelimitedBlockKind::Example => "example-block",
+                    adocweave::semantic::DelimitedBlockKind::Listing => "listing-block",
+                    adocweave::semantic::DelimitedBlockKind::Literal => "literal-block",
+                    adocweave::semantic::DelimitedBlockKind::Open => "open-block",
+                    adocweave::semantic::DelimitedBlockKind::Sidebar => "sidebar-block",
+                    adocweave::semantic::DelimitedBlockKind::Pass => "pass-block",
+                    adocweave::semantic::DelimitedBlockKind::Quote => "quote-block",
+                    adocweave::semantic::DelimitedBlockKind::Table => "table-block",
                 },
                 range: range(node.range),
                 value,
                 children,
             }
         }
-        AstBlock::Unsupported(node) => leaf("unsupported", node.range, &node.raw),
+        Block::Unsupported(node) => leaf("unsupported", node.range, &node.raw),
     };
     let mut children = metadata_nodes(block.metadata());
     children.append(&mut node.children);
@@ -302,27 +237,27 @@ fn block_node(block: &AstBlock) -> CanonicalNode {
     node
 }
 
-fn table_presentation_value(presentation: &crate::table::TablePresentation) -> String {
+fn table_presentation_value(presentation: &adocweave::semantic::TablePresentation) -> String {
     format!(
         "frame={};grid={};stripes={};width={};autowidth={}",
         match presentation.frame {
-            crate::table::TableFrame::All => "all",
-            crate::table::TableFrame::Ends => "ends",
-            crate::table::TableFrame::None => "none",
-            crate::table::TableFrame::Sides => "sides",
+            adocweave::semantic::TableFrame::All => "all",
+            adocweave::semantic::TableFrame::Ends => "ends",
+            adocweave::semantic::TableFrame::None => "none",
+            adocweave::semantic::TableFrame::Sides => "sides",
         },
         match presentation.grid {
-            crate::table::TableGrid::All => "all",
-            crate::table::TableGrid::Columns => "cols",
-            crate::table::TableGrid::None => "none",
-            crate::table::TableGrid::Rows => "rows",
+            adocweave::semantic::TableGrid::All => "all",
+            adocweave::semantic::TableGrid::Columns => "cols",
+            adocweave::semantic::TableGrid::None => "none",
+            adocweave::semantic::TableGrid::Rows => "rows",
         },
         match presentation.stripes {
-            crate::table::TableStripes::All => "all",
-            crate::table::TableStripes::Even => "even",
-            crate::table::TableStripes::Hover => "hover",
-            crate::table::TableStripes::None => "none",
-            crate::table::TableStripes::Odd => "odd",
+            adocweave::semantic::TableStripes::All => "all",
+            adocweave::semantic::TableStripes::Even => "even",
+            adocweave::semantic::TableStripes::Hover => "hover",
+            adocweave::semantic::TableStripes::None => "none",
+            adocweave::semantic::TableStripes::Odd => "odd",
         },
         presentation
             .width
@@ -371,10 +306,10 @@ fn metadata_nodes(metadata: &BlockMetadata) -> Vec<CanonicalNode> {
 fn list_node(list: &ListBlock) -> CanonicalNode {
     CanonicalNode {
         kind: match list.kind {
-            crate::block_model::ListKind::Unordered => "unordered-list",
-            crate::block_model::ListKind::Ordered => "ordered-list",
-            crate::block_model::ListKind::Description => "description-list",
-            crate::block_model::ListKind::Callout => "callout-list",
+            adocweave::semantic::ListKind::Unordered => "unordered-list",
+            adocweave::semantic::ListKind::Ordered => "ordered-list",
+            adocweave::semantic::ListKind::Description => "description-list",
+            adocweave::semantic::ListKind::Callout => "callout-list",
         },
         range: range(list.range),
         value: None,
@@ -400,10 +335,10 @@ fn list_item_node(item: &ListItem) -> CanonicalNode {
         kind: "list-item",
         range: range(item.range),
         value: Some(match (item.checklist, item.callout_id) {
-            (Some(crate::block_model::ChecklistState::Checked), _) => {
+            (Some(adocweave::semantic::ChecklistState::Checked), _) => {
                 format!("checked:{}", item.text)
             }
-            (Some(crate::block_model::ChecklistState::Unchecked), _) => {
+            (Some(adocweave::semantic::ChecklistState::Unchecked), _) => {
                 format!("unchecked:{}", item.text)
             }
             (_, Some(id)) => format!("callout-{id}:{}", item.text),
@@ -432,13 +367,13 @@ fn inline_node(inline: &Inline) -> CanonicalNode {
             ..
         } => CanonicalNode {
             kind: match style {
-                crate::inline_model::InlineStyle::Strong => "strong",
-                crate::inline_model::InlineStyle::Emphasis => "emphasis",
-                crate::inline_model::InlineStyle::Highlight => "highlight",
-                crate::inline_model::InlineStyle::Subscript => "subscript",
-                crate::inline_model::InlineStyle::Superscript => "superscript",
-                crate::inline_model::InlineStyle::CurvedDoubleQuote => "curved-double-quote",
-                crate::inline_model::InlineStyle::CurvedSingleQuote => "curved-single-quote",
+                adocweave::semantic::InlineStyle::Strong => "strong",
+                adocweave::semantic::InlineStyle::Emphasis => "emphasis",
+                adocweave::semantic::InlineStyle::Highlight => "highlight",
+                adocweave::semantic::InlineStyle::Subscript => "subscript",
+                adocweave::semantic::InlineStyle::Superscript => "superscript",
+                adocweave::semantic::InlineStyle::CurvedDoubleQuote => "curved-double-quote",
+                adocweave::semantic::InlineStyle::CurvedSingleQuote => "curved-single-quote",
             },
             range: range(*node_range),
             value: None,
@@ -496,7 +431,7 @@ fn range(value: TextRange) -> [u32; 2] {
     [value.start().to_u32(), value.end().to_u32()]
 }
 
-pub fn canonical_syntax(analysis: &Analysis) -> String {
+pub(crate) fn canonical_syntax(analysis: &Analysis) -> String {
     let mut output = analysis.syntax().snapshot();
     output.push_str("Tokens\n");
     for token in analysis.syntax().tokens() {
@@ -514,32 +449,20 @@ pub fn canonical_syntax(analysis: &Analysis) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::{AnalysisOptions, Engine};
+    use adocweave::{AnalysisOptions, Engine};
 
     use super::*;
 
     #[test]
-    fn snapshot_is_deterministic_and_owns_every_product() {
+    fn canonical_products_are_deterministic() {
         let analysis = Engine::new(AnalysisOptions::default())
             .analyze("= Title\n\n[[target]]\n== Section\n\n<<target,Here>>\n")
             .expect("analysis");
-        let first = snapshot(
-            &analysis,
-            &RenderPolicy::default(),
-            &RenderInputs::default(),
-        );
-        let second = snapshot(
-            &analysis,
-            &RenderPolicy::default(),
-            &RenderInputs::default(),
-        );
 
-        assert_eq!(first, second);
-        assert_eq!(first.package_version, crate::VERSION);
-        assert!(first.syntax.contains("Document@"));
-        assert!(first.ast.contains("\"schemaVersion\":2"));
-        assert!(first.ast.contains("local-reference"));
-        assert!(first.html.contains("href=\"#target\""));
+        assert_eq!(canonical_syntax(&analysis), canonical_syntax(&analysis));
+        assert_eq!(canonical_ast(&analysis), canonical_ast(&analysis));
+        assert!(canonical_syntax(&analysis).contains("Document@"));
+        assert!(canonical_ast(&analysis).contains("local-reference"));
     }
 
     #[test]
