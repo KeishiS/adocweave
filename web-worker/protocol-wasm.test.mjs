@@ -170,6 +170,54 @@ test("generated wasm-bindgen preserves undefined as omission and rejects null", 
   })).code, "invalid-request");
 });
 
+test("generated wasm-bindgen aligns omitted render defaults with optional TypeScript fields", () => {
+  const base = { source: { text: "Text" }, products: { html: true } };
+  const resolvedAsset = (outcome) => ({
+    sourceStart: 0, sourceEnd: 1, outcome,
+  });
+  for (const outcome of [
+    { status: "resolved", href: "https://example.test", notices: [] },
+    { status: "resolved", href: "https://example.test" },
+  ]) {
+    assert.equal(typeof wasm.analyze({
+      ...base, resources: { references: [resolvedAsset(outcome)] },
+    }).html, "string");
+  }
+  for (const byteLength of [undefined, 42]) {
+    const outcome = {
+      status: "resolved",
+      href: "https://example.test/image.png",
+      mediaType: "image/png",
+      ...(byteLength === undefined ? {} : { byteLength }),
+    };
+    assert.equal(typeof wasm.analyze({
+      ...base, resources: { assets: [resolvedAsset(outcome)] },
+    }).html, "string");
+  }
+  assert.equal(typeof wasm.analyze({
+    ...base,
+    resources: {
+      citations: [resolvedAsset({ status: "resolved" })],
+      bibliography: { title: "References" },
+    },
+  }).html, "string");
+
+  const invalidResources = [
+    { references: [resolvedAsset({ status: "resolved", href: "https://example.test", displayText: null })] },
+    { references: [resolvedAsset({ status: "resolved", href: "https://example.test", notices: null })] },
+    { assets: [resolvedAsset({ status: "resolved", href: "https://example.test/a", mediaType: "text/plain", byteLength: null })] },
+    { assets: [resolvedAsset({ status: "resolved", href: "https://example.test/a", mediaType: "text/plain", byteLength: 42n })] },
+    { citations: [resolvedAsset({ status: "resolved", segments: null })] },
+    { citations: [resolvedAsset({ status: "resolved", segments: [{ text: "citation", anchor: null }] })] },
+    { bibliography: { title: "References", entries: null } },
+    { bibliography: { title: "References", entries: [{ citationKey: "key", text: "entry", label: null }] } },
+    { bibliography: { title: "References", entries: [{ citationKey: "key", text: "entry", number: null }] } },
+  ];
+  for (const resources of invalidResources) {
+    assert.equal(wasmError(() => wasm.analyze({ ...base, resources })).code, "invalid-request");
+  }
+});
+
 test("generated wasm-bindgen accepts only plain data objects and arrays", () => {
   const valid = { source: { text: "Text" }, products: { symbols: true } };
   for (const value of [
@@ -199,6 +247,15 @@ test("generated wasm-bindgen accepts only plain data objects and arrays", () => 
     products: Object.assign(Object.create(null), { symbols: true }),
   });
   assert.deepEqual(wasm.analyze(nullPrototypeRequest).symbols, []);
+
+  const symbolProperty = { ...valid };
+  symbolProperty[Symbol("unknown")] = true;
+  assert.equal(wasmError(() => wasm.analyze(symbolProperty)).code, "invalid-request");
+  const customArray = [];
+  customArray.extra = true;
+  assert.equal(wasmError(() => wasm.analyze({
+    ...valid, resources: { references: customArray },
+  })).code, "invalid-request");
 });
 
 test("generated wasm-bindgen catches every reflection failure as invalid-request", () => {
@@ -211,12 +268,6 @@ test("generated wasm-bindgen catches every reflection failure as invalid-request
     new Proxy(request, {
       getOwnPropertyDescriptor() { throw new Error("getOwnPropertyDescriptor failed"); },
     }),
-    new Proxy(request, {
-      get(target, key, receiver) {
-        if (key === "source") throw new Error("get failed");
-        return Reflect.get(target, key, receiver);
-      },
-    }),
     revoked.proxy,
   ];
   for (const value of cases) {
@@ -224,6 +275,45 @@ test("generated wasm-bindgen catches every reflection failure as invalid-request
     assert.equal(error.code, "invalid-request");
     assert.equal(error.constructor, Object);
   }
+});
+
+test("generated wasm-bindgen snapshots descriptor values without a second Proxy read", () => {
+  const request = { source: { text: "Text" }, products: { symbols: true } };
+  let reads = 0;
+  const changing = new Proxy(request, {
+    get(target, key, receiver) {
+      if (key === "source") {
+        reads += 1;
+        return reads === 1 ? target.source : { text: Symbol("changed") };
+      }
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  assert.deepEqual(wasm.analyze(changing).symbols, []);
+  assert.equal(reads, 0);
+});
+
+test("generated wasm-bindgen creates snapshots without inherited setters", () => {
+  const request = { source: { text: "Text" }, products: { symbols: true } };
+  const names = ["source", "value", "writable", "enumerable", "configurable", "get", "set"];
+  let setterCalls = 0;
+  for (const name of names) {
+    const previous = Object.getOwnPropertyDescriptor(Object.prototype, name);
+    try {
+      Object.defineProperty(Object.prototype, name, {
+        configurable: true,
+        set() {
+          setterCalls += 1;
+          throw new Error("inherited setter must not run");
+        },
+      });
+      assert.deepEqual(wasm.analyze(request).symbols, []);
+    } finally {
+      if (previous === undefined) delete Object.prototype[name];
+      else Object.defineProperty(Object.prototype, name, previous);
+    }
+  }
+  assert.equal(setterCalls, 0);
 });
 
 test("generated wasm-bindgen rejects prototype-like unknown fields without changing identity", () => {
@@ -246,6 +336,12 @@ test("generated wasm-bindgen applies boundary limits before sparse arrays and st
   assert.equal(wasmError(() => wasm.analyze({
     source: { text: oversized }, products: { symbols: true },
   })).code, "input-limit-exceeded");
+
+  const tooManyProperties = {};
+  for (let index = 0; index < 20_001; index += 1) tooManyProperties[`key${index}`] = true;
+  assert.equal(wasmError(() => wasm.analyze({
+    source: { text: "Text" }, products: { symbols: true }, unknown: tooManyProperties,
+  })).code, "input-limit-exceeded");
 });
 
 test("reflection errors do not stop a Worker using the same WASM instance", async (t) => {
@@ -253,16 +349,35 @@ test("reflection errors do not stop a Worker using the same WASM instance", asyn
     const { parentPort, workerData } = require("node:worker_threads");
     const wasm = require(workerData.wasmModule);
     parentPort.on("message", ({ requestId, kind, payload }) => {
-      const request = kind === "ownKeysProxy"
-        ? new Proxy(payload, { ownKeys() { throw new Error("ownKeys failed"); } })
-        : payload;
+      const rssBefore = process.memoryUsage().rss;
+      let request = payload;
+      if (kind === "ownKeysProxy") {
+        request = new Proxy(payload, { ownKeys() { throw new Error("ownKeys failed"); } });
+      } else if (kind === "hugeUnknownKey") {
+        request = { source: { text: "Text" }, products: { symbols: true } };
+        request["x".repeat(16 * 1024 * 1024)] = true;
+      } else if (kind === "changingProxy") {
+        let reads = 0;
+        request = new Proxy(payload, {
+          get(target, key, receiver) {
+            if (key === "source") {
+              reads += 1;
+              return reads === 1 ? target.source : { text: Symbol("changed") };
+            }
+            return Reflect.get(target, key, receiver);
+          },
+        });
+      }
       try {
-        parentPort.postMessage({ requestId, ok: true, value: wasm.analyze(request) });
+        parentPort.postMessage({
+          requestId, ok: true, value: wasm.analyze(request), rssDelta: process.memoryUsage().rss - rssBefore,
+        });
       } catch (error) {
         parentPort.postMessage({
           requestId,
           ok: false,
           error: { code: error?.code, message: error?.message },
+          rssDelta: process.memoryUsage().rss - rssBefore,
         });
       }
     });
@@ -290,6 +405,16 @@ test("reflection errors do not stop a Worker using the same WASM instance", asyn
   });
   assert.equal(invalid.ok, false);
   assert.equal(invalid.error.code, "invalid-request");
+  const hugeKey = await run("hugeUnknownKey");
+  assert.equal(hugeKey.ok, false);
+  assert.equal(hugeKey.error.code, "input-limit-exceeded");
+  assert.ok(hugeKey.error.message.length < 256);
+  assert.ok(hugeKey.rssDelta < 128 * 1024 * 1024);
+  const changing = await run("changingProxy", {
+    source: { text: "Text" }, products: { symbols: true },
+  });
+  assert.equal(changing.ok, true);
+  assert.deepEqual(changing.value.symbols, []);
   const valid = await run("plain", {
     source: { text: "Text" }, products: { symbols: true },
   });

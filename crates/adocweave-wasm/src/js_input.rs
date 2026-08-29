@@ -10,6 +10,7 @@ const MAX_ARRAY_LENGTH: u32 = 20_000;
 const MAX_OBJECT_KEYS: u32 = 20_000;
 const MAX_TOTAL_NODES: u32 = 100_000;
 const MAX_TOTAL_KEYS: u32 = 100_000;
+const MAX_PROPERTY_NAME_UTF16_UNITS: u64 = 1_024;
 const MAX_STRING_UTF16_UNITS: u64 = 16 * 1024 * 1024;
 const MAX_TOTAL_STRING_UTF16_UNITS: u64 = 32 * 1024 * 1024;
 const MAX_TOTAL_STRING_UTF8_BYTES: u64 = 32 * 1024 * 1024;
@@ -28,11 +29,11 @@ struct Budget {
     string_utf8_bytes: u64,
 }
 
-pub(crate) fn preflight(value: &JsValue) -> Result<(), AdocWeaveError> {
+pub(crate) fn preflight(value: &JsValue) -> Result<JsValue, AdocWeaveError> {
     let ancestors = Set::new(&JsValue::UNDEFINED);
     let plain_object_prototype = prototype_of(&Object::new().into())?;
     let plain_array_prototype = prototype_of(&Array::new().into())?;
-    inspect(
+    snapshot(
         value,
         &ancestors,
         plain_object_prototype.as_ref(),
@@ -44,7 +45,7 @@ pub(crate) fn preflight(value: &JsValue) -> Result<(), AdocWeaveError> {
     )
 }
 
-fn inspect(
+fn snapshot(
     value: &JsValue,
     ancestors: &Set,
     plain_object_prototype: &JsValue,
@@ -53,7 +54,7 @@ fn inspect(
     allow_null: bool,
     map_null_values: bool,
     budget: &mut Budget,
-) -> Result<(), AdocWeaveError> {
+) -> Result<JsValue, AdocWeaveError> {
     if depth >= MAX_DEPTH {
         return Err(limit_error("request nesting depth"));
     }
@@ -64,11 +65,12 @@ fn inspect(
         .ok_or_else(|| limit_error("request node count"))?;
 
     if value.is_string() {
-        return inspect_string(value.unchecked_ref(), budget);
+        inspect_string(value.unchecked_ref(), MAX_STRING_UTF16_UNITS, budget)?;
+        return Ok(value.clone());
     }
     if value.is_null() {
         return if allow_null {
-            Ok(())
+            Ok(value.clone())
         } else {
             Err(invalid_request(
                 "null is not allowed for this request field",
@@ -76,7 +78,7 @@ fn inspect(
         };
     }
     if value.is_undefined() || value.as_bool().is_some() || value.as_f64().is_some() {
-        return Ok(());
+        return Ok(value.clone());
     }
     if value.is_symbol() || value.is_function() || !value.is_object() {
         return Err(invalid_request(
@@ -91,17 +93,16 @@ fn inspect(
     }
     ancestors.add(value);
     let result = if is_array {
-        inspect_array(
+        snapshot_array(
             value,
             ancestors,
             plain_object_prototype,
             plain_array_prototype,
             depth,
-            map_null_values,
             budget,
         )
     } else {
-        inspect_object(
+        snapshot_object(
             value,
             ancestors,
             plain_object_prototype,
@@ -115,9 +116,13 @@ fn inspect(
     result
 }
 
-fn inspect_string(value: &JsString, budget: &mut Budget) -> Result<(), AdocWeaveError> {
+fn inspect_string(
+    value: &JsString,
+    maximum_utf16_units: u64,
+    budget: &mut Budget,
+) -> Result<(), AdocWeaveError> {
     let utf16_units = u64::from(value.length());
-    if utf16_units > MAX_STRING_UTF16_UNITS {
+    if utf16_units > maximum_utf16_units {
         return Err(limit_error("request string length"));
     }
     budget.string_utf16_units = budget
@@ -138,21 +143,25 @@ fn inspect_string(value: &JsString, budget: &mut Budget) -> Result<(), AdocWeave
     Ok(())
 }
 
-fn inspect_array(
+fn snapshot_array(
     value: &JsValue,
     ancestors: &Set,
     plain_object_prototype: &JsValue,
     plain_array_prototype: &JsValue,
     depth: u16,
-    _map_null_values: bool,
     budget: &mut Budget,
-) -> Result<(), AdocWeaveError> {
+) -> Result<JsValue, AdocWeaveError> {
     let prototype = prototype_of(value)?;
     if !Object::is(prototype.as_ref(), plain_array_prototype) {
         return Err(invalid_request("request arrays must be plain arrays"));
     }
-    let length = Reflect::get(value, &JsValue::from_str("length"))
-        .map_err(|_| invalid_request("request array length could not be read"))?
+    let keys = own_string_keys(
+        value,
+        budget,
+        "request arrays must not have symbol properties",
+    )?;
+    let length_key = JsValue::from_str("length");
+    let length = data_property_value(value, &length_key, false)?
         .as_f64()
         .filter(|length| length.is_finite() && *length >= 0.0 && length.fract() == 0.0)
         .ok_or_else(|| invalid_request("request array length is invalid"))?;
@@ -160,36 +169,9 @@ fn inspect_array(
         return Err(limit_error("request array length"));
     }
     let length = length as u32;
-    inspect_array_keys(value, length, budget)?;
-    for index in 0..length {
-        let element = Reflect::get_u32(value, index)
-            .map_err(|_| invalid_request("request array element could not be read"))?;
-        inspect(
-            &element,
-            ancestors,
-            plain_object_prototype,
-            plain_array_prototype,
-            depth + 1,
-            false,
-            false,
-            budget,
-        )?;
-    }
-    Ok(())
-}
-
-fn inspect_array_keys(
-    value: &JsValue,
-    length: u32,
-    budget: &mut Budget,
-) -> Result<(), AdocWeaveError> {
-    let keys = own_keys(value, budget)?;
-    for key in keys.iter() {
-        let Some(key_text) = key.as_string() else {
-            return Err(invalid_request(
-                "request arrays must not have symbol properties",
-            ));
-        };
+    let result = Array::new_with_length(length);
+    let result_object: &Object = result.unchecked_ref();
+    for (key, key_text) in keys {
         if key_text == "length" {
             continue;
         }
@@ -198,12 +180,23 @@ fn inspect_array_keys(
             .ok()
             .filter(|index| index.to_string() == key_text && *index < length)
             .ok_or_else(|| invalid_request("request arrays must not have custom properties"))?;
-        inspect_data_property(value, &key, true)?;
+        let field = data_property_value(value, &key, true)?;
+        let field = snapshot(
+            &field,
+            ancestors,
+            plain_object_prototype,
+            plain_array_prototype,
+            depth + 1,
+            false,
+            false,
+            budget,
+        )?;
+        define_data_property(result_object, &key, &field)?;
     }
-    Ok(())
+    Ok(result.into())
 }
 
-fn inspect_object(
+fn snapshot_object(
     value: &JsValue,
     ancestors: &Set,
     plain_object_prototype: &JsValue,
@@ -211,23 +204,21 @@ fn inspect_object(
     depth: u16,
     map_null_values: bool,
     budget: &mut Budget,
-) -> Result<(), AdocWeaveError> {
+) -> Result<JsValue, AdocWeaveError> {
     let prototype = prototype_of(value)?;
     let prototype_value: &JsValue = prototype.as_ref();
     if !prototype_value.is_null() && !Object::is(prototype_value, plain_object_prototype) {
         return Err(invalid_request("request objects must be plain objects"));
     }
-    let keys = own_keys(value, budget)?;
-    for key in keys.iter() {
-        let Some(key_text) = key.as_string() else {
-            return Err(invalid_request(
-                "request objects must not have symbol properties",
-            ));
-        };
-        inspect_data_property(value, &key, true)?;
-        let field = Reflect::get(value, &key)
-            .map_err(|_| invalid_request("request field could not be read"))?;
-        inspect(
+    let keys = own_string_keys(
+        value,
+        budget,
+        "request objects must not have symbol properties",
+    )?;
+    let result = Object::new();
+    for (key, key_text) in keys {
+        let field = data_property_value(value, &key, true)?;
+        let field = snapshot(
             &field,
             ancestors,
             plain_object_prototype,
@@ -237,11 +228,19 @@ fn inspect_object(
             matches!(key_text.as_str(), "attributes" | "protectedAttributes"),
             budget,
         )?;
+        define_data_property(&result, &key, &field)?;
     }
-    Ok(())
+    Ok(result.into())
 }
 
-fn own_keys(value: &JsValue, budget: &mut Budget) -> Result<Array, AdocWeaveError> {
+fn own_string_keys(
+    value: &JsValue,
+    budget: &mut Budget,
+    symbol_error: &'static str,
+) -> Result<Vec<(JsValue, String)>, AdocWeaveError> {
+    // ECMAScript has no lazy own-key API. Reflect.ownKeys necessarily creates the
+    // complete key array; the property-count check bounds all subsequent WASM
+    // traversal, string conversion, and snapshot allocation.
     let keys = Reflect::own_keys(value)
         .map_err(|_| invalid_request("request object keys could not be inspected"))?;
     if keys.length() > MAX_OBJECT_KEYS {
@@ -252,14 +251,27 @@ fn own_keys(value: &JsValue, budget: &mut Budget) -> Result<Array, AdocWeaveErro
         .checked_add(keys.length())
         .filter(|count| *count <= MAX_TOTAL_KEYS)
         .ok_or_else(|| limit_error("request object key count"))?;
-    Ok(keys)
+
+    let mut result = Vec::with_capacity(keys.length() as usize);
+    for key in keys.iter() {
+        if !key.is_string() {
+            return Err(invalid_request(symbol_error));
+        }
+        let key_string: &JsString = key.unchecked_ref();
+        inspect_string(key_string, MAX_PROPERTY_NAME_UTF16_UNITS, budget)?;
+        let key_text = key
+            .as_string()
+            .ok_or_else(|| invalid_request("request property name could not be read"))?;
+        result.push((key, key_text));
+    }
+    Ok(result)
 }
 
-fn inspect_data_property(
+fn data_property_value(
     value: &JsValue,
     key: &JsValue,
     require_enumerable: bool,
-) -> Result<(), AdocWeaveError> {
+) -> Result<JsValue, AdocWeaveError> {
     let descriptor = Reflect::get_own_property_descriptor(value.unchecked_ref::<Object>(), key)
         .map_err(|_| invalid_request("request property could not be inspected"))?;
     if descriptor.is_undefined() {
@@ -267,11 +279,16 @@ fn inspect_data_property(
             "request property changed during inspection",
         ));
     }
-    let getter = Reflect::get(&descriptor, &JsValue::from_str("get"))
-        .map_err(|_| invalid_request("request property descriptor could not be read"))?;
-    let setter = Reflect::get(&descriptor, &JsValue::from_str("set"))
-        .map_err(|_| invalid_request("request property descriptor could not be read"))?;
-    if !getter.is_undefined() || !setter.is_undefined() {
+    let descriptor_object: &Object = descriptor.unchecked_ref();
+    let has_getter =
+        !Reflect::get_own_property_descriptor(descriptor_object, &JsValue::from_str("get"))
+            .map_err(|_| invalid_request("request property descriptor could not be read"))?
+            .is_undefined();
+    let has_setter =
+        !Reflect::get_own_property_descriptor(descriptor_object, &JsValue::from_str("set"))
+            .map_err(|_| invalid_request("request property descriptor could not be read"))?
+            .is_undefined();
+    if has_getter || has_setter {
         return Err(invalid_request(
             "request properties must be data properties",
         ));
@@ -282,6 +299,32 @@ fn inspect_data_property(
         if enumerable.as_bool() != Some(true) {
             return Err(invalid_request("request properties must be enumerable"));
         }
+    }
+    Reflect::get(&descriptor, &JsValue::from_str("value"))
+        .map_err(|_| invalid_request("request property descriptor could not be read"))
+}
+
+fn define_data_property(
+    target: &Object,
+    key: &JsValue,
+    value: &JsValue,
+) -> Result<(), AdocWeaveError> {
+    let null = JsValue::NULL;
+    let null_prototype: &Object = null.unchecked_ref();
+    let descriptor = Object::create(null_prototype);
+    for (name, property_value) in [
+        ("value", value.clone()),
+        ("writable", JsValue::TRUE),
+        ("enumerable", JsValue::TRUE),
+        ("configurable", JsValue::TRUE),
+    ] {
+        Reflect::set(&descriptor, &JsValue::from_str(name), &property_value)
+            .map_err(|_| invalid_request("request snapshot could not be created"))?;
+    }
+    let defined = Reflect::define_property(target, key, &descriptor)
+        .map_err(|_| invalid_request("request snapshot could not be created"))?;
+    if !defined {
+        return Err(invalid_request("request snapshot could not be created"));
     }
     Ok(())
 }

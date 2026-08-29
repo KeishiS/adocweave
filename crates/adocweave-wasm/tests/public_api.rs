@@ -7,6 +7,22 @@ use adocweave_wasm::{
     ResolvedReference, ResolvedResource, ResourceCapabilities, ResourceInput, ResourceOutcome,
     RoleOptions, RuleOptions, SourceInput, SourceLanguageOptions, Stylesheet,
 };
+use serde::Serialize;
+use serde::de::DeserializeOwned;
+
+fn assert_omits_and_round_trips<T>(value: &T, omitted: &[&str])
+where
+    T: Serialize + DeserializeOwned + PartialEq + std::fmt::Debug,
+{
+    let json = serde_json::to_value(value).expect("serialize public value");
+    let object = json.as_object().expect("public value serializes as object");
+    for field in omitted {
+        assert!(!object.contains_key(*field), "{field} was serialized");
+    }
+    let decoded: T = serde_json::from_value(json)
+        .unwrap_or_else(|error| panic!("serialized public value did not deserialize: {error}"));
+    assert_eq!(&decoded, value);
+}
 
 #[test]
 fn public_request_types_are_constructible_with_struct_literals() {
@@ -134,4 +150,40 @@ fn public_request_types_are_constructible_with_struct_literals() {
     };
 
     assert_eq!(request.source.text, "Text");
+}
+
+#[test]
+fn omission_only_public_fields_serialize_without_null_and_round_trip() {
+    assert_omits_and_round_trips(
+        &ReferenceOutcome::Resolved {
+            href: "chapter.adoc".to_owned(),
+            display_text: None,
+            notices: Vec::new(),
+        },
+        &["displayText"],
+    );
+    assert_omits_and_round_trips(
+        &ResourceOutcome::Resolved {
+            href: "image.png".to_owned(),
+            media_type: "image/png".to_owned(),
+            byte_length: None,
+        },
+        &["byteLength"],
+    );
+    assert_omits_and_round_trips(
+        &CitationSegment {
+            text: "citation".to_owned(),
+            anchor: None,
+        },
+        &["anchor"],
+    );
+    assert_omits_and_round_trips(
+        &GeneratedBibliographyEntry {
+            citation_key: "key".to_owned(),
+            text: "entry".to_owned(),
+            label: None,
+            number: None,
+        },
+        &["label", "number"],
+    );
 }

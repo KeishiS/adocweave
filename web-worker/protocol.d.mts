@@ -32,9 +32,9 @@ export type CitationAttribute = { sourceRange: TextRange, name: string | null, v
 
 export type CitationKey = { sourceRange: TextRange, key: string, };
 
-export type CitationOutcome = { "status": "resolved", segments: Array<CitationSegment>, } | { "status": "failed", kind: ReferenceFailureKind, };
+export type CitationOutcome = { "status": "resolved", segments?: Array<CitationSegment>, } | { "status": "failed", kind: ReferenceFailureKind, };
 
-export type CitationSegment = { text: string, anchor: string | null, };
+export type CitationSegment = { text: string, anchor?: string, };
 
 export type Diagnostic = { id: string, code: string, severity: Severity, message: string, range: TextRange, related: Array<RelatedInformation>, fixes: Array<Fix>, };
 
@@ -83,9 +83,9 @@ export type Formula = { kind: FormulaKind, language: MathLanguage, sourceRange: 
 
 export type FormulaKind = "inline" | "block";
 
-export type GeneratedBibliography = { title: string, entries: Array<GeneratedBibliographyEntry>, };
+export type GeneratedBibliography = { title: string, entries?: Array<GeneratedBibliographyEntry>, };
 
-export type GeneratedBibliographyEntry = { citationKey: string, text: string, label: string | null, number: number | null, };
+export type GeneratedBibliographyEntry = { citationKey: string, text: string, label?: string, number?: number, };
 
 export type HtmlOptions = { documentMode?: DocumentMode, activeUrls?: ActiveUrlOptions, externalLinks?: ExternalLinkOptions, sourceLanguages?: SourceLanguageOptions, roles?: RoleOptions, mathLanguages?: Array<MathLanguage>, unresolvedReferences?: UnresolvedReferencePresentation, resourceCapabilities?: ResourceCapabilities, stylesheets?: Array<Stylesheet>, };
 
@@ -113,7 +113,7 @@ export type ReferenceKey = { "kind": "document", document: string, anchor: strin
 
 export type ReferenceNotice = "fallback";
 
-export type ReferenceOutcome = { "status": "resolved", href: string, displayText: string | null, notices: Array<ReferenceNotice>, } | { "status": "failed", kind: ReferenceFailureKind, };
+export type ReferenceOutcome = { "status": "resolved", href: string, displayText?: string, notices?: Array<ReferenceNotice>, } | { "status": "failed", kind: ReferenceFailureKind, };
 
 export type ReferenceTarget = { kind: ReferenceTargetKind, id: string, label: string, idRange: TextRange, targetRange: TextRange, };
 
@@ -133,7 +133,7 @@ export type ResourceFailureKind = "missing" | "outside-root" | "scheme-denied" |
 
 export type ResourceInput = { documents?: { [key in string]: string }, baseUri?: string, safeMode?: SafeMode, allowedSchemes?: Array<string>, includes?: IncludeHandling, references?: Array<ResolvedReference>, assets?: Array<ResolvedResource>, citations?: Array<ResolvedCitation>, bibliography?: GeneratedBibliography | null, };
 
-export type ResourceOutcome = { "status": "resolved", href: string, mediaType: string, byteLength: bigint | null, } | { "status": "failed", kind: ResourceFailureKind, };
+export type ResourceOutcome = { "status": "resolved", href: string, mediaType: string, byteLength?: number, } | { "status": "failed", kind: ResourceFailureKind, };
 
 export type ResourcePurpose = "image" | "icon" | "audio" | "video" | "video-poster";
 

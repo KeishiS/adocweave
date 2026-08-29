@@ -1,10 +1,40 @@
 pub(crate) const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 
+#[cfg(not(target_arch = "wasm32"))]
+fn deserialize_present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn deserialize_present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    #[derive(serde::Deserialize)]
+    #[serde(untagged)]
+    enum Present<T> {
+        Value(T),
+        Undefined(()),
+    }
+
+    Ok(
+        match <Present<T> as serde::Deserialize>::deserialize(deserializer)? {
+            Present::Value(value) => Some(value),
+            Present::Undefined(()) => None,
+        },
+    )
+}
+
 fn deserialize_optional_safe_integer<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    let value = <Option<u64> as serde::Deserialize>::deserialize(deserializer)?;
+    let value = deserialize_present(deserializer)?;
     if value.is_some_and(|value| value > MAX_SAFE_INTEGER) {
         return Err(serde::de::Error::custom(
             "safe integer exceeds the JavaScript maximum",
@@ -70,9 +100,15 @@ pub enum ResourceFailureKind {
 pub enum ReferenceOutcome {
     Resolved {
         href: String,
-        #[serde(default)]
+        #[serde(
+            default,
+            deserialize_with = "deserialize_present",
+            skip_serializing_if = "Option::is_none"
+        )]
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "string"))]
         display_text: Option<String>,
         #[serde(default)]
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "Array<ReferenceNotice>"))]
         notices: Vec<ReferenceNotice>,
     },
     Failed {
@@ -96,7 +132,12 @@ pub enum ResourceOutcome {
     Resolved {
         href: String,
         media_type: String,
-        #[serde(default, deserialize_with = "deserialize_optional_safe_integer")]
+        #[serde(
+            default,
+            deserialize_with = "deserialize_optional_safe_integer",
+            skip_serializing_if = "Option::is_none"
+        )]
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "number"))]
         byte_length: Option<u64>,
     },
     Failed {
@@ -119,6 +160,7 @@ pub enum ResourceOutcome {
 pub enum CitationOutcome {
     Resolved {
         #[serde(default)]
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "Array<CitationSegment>"))]
         segments: Vec<CitationSegment>,
     },
     Failed {
@@ -132,7 +174,8 @@ serde_object_serializable! {
     #[wire(rename_all = "camelCase", deny_unknown_fields)]
     pub struct CitationSegment as CitationSegmentObject {
         pub text: String,
-        #[wire_field(serde(default))]
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "string"))]
+        #[wire_field(serde(default, deserialize_with = "deserialize_present", skip_serializing_if = "Option::is_none"))]
         pub anchor: Option<String>,
     }
 }
@@ -144,9 +187,11 @@ serde_object_serializable! {
     pub struct GeneratedBibliographyEntry as GeneratedBibliographyEntryObject {
         pub citation_key: String,
         pub text: String,
-        #[wire_field(serde(default))]
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "string"))]
+        #[wire_field(serde(default, deserialize_with = "deserialize_present", skip_serializing_if = "Option::is_none"))]
         pub label: Option<String>,
-        #[wire_field(serde(default))]
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "number"))]
+        #[wire_field(serde(default, deserialize_with = "deserialize_present", skip_serializing_if = "Option::is_none"))]
         pub number: Option<u32>,
     }
 }
@@ -157,6 +202,7 @@ serde_object_serializable! {
     #[wire(rename_all = "camelCase", deny_unknown_fields)]
     pub struct GeneratedBibliography as GeneratedBibliographyObject {
         pub title: String,
+        #[cfg_attr(feature = "ts-rs", ts(optional, type = "Array<GeneratedBibliographyEntry>"))]
         #[wire_field(serde(default))]
         pub entries: Vec<GeneratedBibliographyEntry>,
     }

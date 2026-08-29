@@ -56,6 +56,57 @@ const cases = [
       '{"source":{"text":"Text"},"products":{"symbols":true},"__proto__":{"value":1}}',
     ),
   },
+  {
+    name: "省略可能なrender入力を省略した要求",
+    request: {
+      source: { text: "Text" },
+      products: { html: true },
+      resources: {
+        references: [{
+          sourceStart: 0,
+          sourceEnd: 1,
+          outcome: { status: "resolved", href: "https://example.test" },
+        }],
+        assets: [{
+          sourceStart: 1,
+          sourceEnd: 2,
+          outcome: {
+            status: "resolved",
+            href: "https://example.test/a",
+            mediaType: "text/plain",
+            byteLength: 42,
+          },
+        }],
+      },
+    },
+  },
+  {
+    name: "省略専用のrender入力へnullを指定した要求",
+    request: {
+      source: { text: "Text" },
+      products: { html: true },
+      resources: {
+        assets: [{
+          sourceStart: 0,
+          sourceEnd: 1,
+          outcome: {
+            status: "resolved",
+            href: "https://example.test/a",
+            mediaType: "text/plain",
+            byteLength: null,
+          },
+        }],
+      },
+    },
+  },
+  {
+    name: "bibliographyを明示的に解除した要求",
+    request: {
+      source: { text: "Text" },
+      products: { html: true },
+      resources: { bibliography: null },
+    },
+  },
 ];
 
 function nativeResult(request) {

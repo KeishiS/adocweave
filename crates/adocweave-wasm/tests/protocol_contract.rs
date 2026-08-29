@@ -69,6 +69,68 @@ fn unknown_fields_null_false_and_invalid_values_are_rejected() {
 }
 
 #[test]
+fn render_input_defaults_are_omission_only_except_bibliography_reset() {
+    let base = json!({
+        "source": { "text": "Text" },
+        "products": { "html": true }
+    });
+    let valid_resources = [
+        json!({
+            "references": [{
+                "sourceStart": 0,
+                "sourceEnd": 1,
+                "outcome": { "status": "resolved", "href": "https://example.test" }
+            }]
+        }),
+        json!({
+            "assets": [{
+                "sourceStart": 0,
+                "sourceEnd": 1,
+                "outcome": {
+                    "status": "resolved",
+                    "href": "https://example.test/a",
+                    "mediaType": "text/plain",
+                    "byteLength": 42
+                }
+            }]
+        }),
+        json!({
+            "citations": [{
+                "sourceStart": 0,
+                "sourceEnd": 1,
+                "outcome": { "status": "resolved" }
+            }],
+            "bibliography": { "title": "References" }
+        }),
+        json!({ "bibliography": null }),
+    ];
+    for resources in valid_resources {
+        let mut request = base.clone();
+        request["resources"] = resources;
+        serde_json::from_value::<AnalyzeRequest>(request).expect("valid omitted field");
+    }
+
+    let invalid_resources = [
+        json!({ "references": [{ "sourceStart": 0, "sourceEnd": 1, "outcome": { "status": "resolved", "href": "https://example.test", "displayText": null } }] }),
+        json!({ "references": [{ "sourceStart": 0, "sourceEnd": 1, "outcome": { "status": "resolved", "href": "https://example.test", "notices": null } }] }),
+        json!({ "assets": [{ "sourceStart": 0, "sourceEnd": 1, "outcome": { "status": "resolved", "href": "https://example.test/a", "mediaType": "text/plain", "byteLength": null } }] }),
+        json!({ "citations": [{ "sourceStart": 0, "sourceEnd": 1, "outcome": { "status": "resolved", "segments": null } }] }),
+        json!({ "citations": [{ "sourceStart": 0, "sourceEnd": 1, "outcome": { "status": "resolved", "segments": [{ "text": "citation", "anchor": null }] } }] }),
+        json!({ "bibliography": { "title": "References", "entries": null } }),
+        json!({ "bibliography": { "title": "References", "entries": [{ "citationKey": "key", "text": "entry", "label": null }] } }),
+        json!({ "bibliography": { "title": "References", "entries": [{ "citationKey": "key", "text": "entry", "number": null }] } }),
+    ];
+    for resources in invalid_resources {
+        let mut request = base.clone();
+        request["resources"] = resources;
+        assert!(
+            serde_json::from_value::<AnalyzeRequest>(request).is_err(),
+            "present null was accepted"
+        );
+    }
+}
+
+#[test]
 fn response_contains_only_requested_products() {
     let response = analyze(json!({
         "source": { "text": "= Title\n\nText" },

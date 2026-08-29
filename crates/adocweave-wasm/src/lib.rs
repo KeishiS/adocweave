@@ -215,7 +215,7 @@ mod bindings {
     #[wasm_bindgen(js_name = analyze)]
     pub fn analyze_js(request: JsValue) -> Result<JsValue, JsValue> {
         let request = js_input::preflight(&request)
-            .and_then(|()| {
+            .and_then(|request| {
                 serde_wasm_bindgen::from_value(request)
                     .map_err(|error| request_conversion::invalid_request(error.to_string()))
             })

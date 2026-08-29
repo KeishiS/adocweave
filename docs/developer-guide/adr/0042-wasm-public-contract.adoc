@@ -470,6 +470,10 @@ Rustの公開Serde型から既存の一般的なlibraryを使って生成しま�
 
 独自IDL、独自serializer、独自コード生成器、汎用的な変換traitおよび新しいclient階層は追加しません。
 Worker内の通信objectだけはADR 0029のとおり内部で検証し、要求と応答の値はWebAssembly境界のSerdeで検証します。
+JavaScriptから受け取った要求は、WebAssembly側の一回の走査で型と固定上限を検査し、検査したdata propertyの値だけを
+新しいobjectとarrayへ固定してからSerdeへ渡します。ECMAScriptにはproperty名を遅延列挙する標準APIがないため、
+``Reflect.ownKeys``が全property名の配列を作ること自体は避けられません。固定上限が保証する範囲は、その後の
+WebAssembly側の走査、文字列変換および固定snapshotの作成です。
 
 == 移行
 

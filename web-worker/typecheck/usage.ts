@@ -36,5 +36,29 @@ const request: AnalyzeRequest = {
   resources: { documents: { "part.adoc": "Text" } },
 };
 void client.analyze(request, { signal: new AbortController().signal });
+const renderDefaultsRequest: AnalyzeRequest = {
+  source: { text: "Text" },
+  products: { html: true },
+  resources: {
+    references: [{
+      sourceStart: 0,
+      sourceEnd: 1,
+      outcome: { status: "resolved", href: "https://example.test" },
+    }],
+    assets: [{
+      sourceStart: 1,
+      sourceEnd: 2,
+      outcome: {
+        status: "resolved",
+        href: "https://example.test/a",
+        mediaType: "text/plain",
+        byteLength: 42,
+      },
+    }],
+    citations: [{ sourceStart: 2, sourceEnd: 3, outcome: { status: "resolved" } }],
+    bibliography: { title: "References" },
+  },
+};
+void client.analyze(renderDefaultsRequest);
 console.log(PROTOCOL_SCHEMA_VERSION);
 client.dispose();

@@ -116,6 +116,7 @@ macro_rules! serde_object_serializable {
         $visibility struct $name {
             $(
                 $(#[cfg_attr($($field_cfg)*)])?
+                $(#[$wire_attribute])?
                 pub $field: $field_type,
             )*
         }
