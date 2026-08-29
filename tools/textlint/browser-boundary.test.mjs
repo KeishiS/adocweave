@@ -21,7 +21,7 @@ test("文章校正用exportをBrowser成果物から分離する", () => {
     "utf8"
   );
   const textlint = readFileSync(
-    `${repositoryRoot}target/adocweave-textlint-wasm-node/adocweave_textlint_wasm.js`,
+    `${repositoryRoot}target/adocweave-textlint-node/adocweave_textlint_wasm.js`,
     "utf8"
   );
   assert.doesNotMatch(browser, /parseText/);
@@ -29,7 +29,7 @@ test("文章校正用exportをBrowser成果物から分離する", () => {
   assert.deepEqual(
     Object.keys(
       require(
-        `${repositoryRoot}target/adocweave-textlint-wasm-node/adocweave_textlint_wasm.js`
+        `${repositoryRoot}target/adocweave-textlint-node/adocweave_textlint_wasm.js`
       )
     ),
     ["parseText"]
@@ -38,7 +38,7 @@ test("文章校正用exportをBrowser成果物から分離する", () => {
 
 test("実WebAssembly境界がrequest上限をcode付きで拒否する", () => {
   const { parseText } = require(
-    `${repositoryRoot}target/adocweave-textlint-wasm-node/adocweave_textlint_wasm.js`
+    `${repositoryRoot}target/adocweave-textlint-node/adocweave_textlint_wasm.js`
   );
   assert.equal(
     errorPayload(() => parseText({

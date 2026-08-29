@@ -1,7 +1,7 @@
 //! Node.js-only WebAssembly request, resource-limit, and binding boundary.
 
+use crate::{PlanError, PlanLimits, TxtAstPlan, plan};
 use adocweave::{AnalysisInputs, AnalysisOptions, Engine, SourceId};
-use adocweave_textlint::{PlanError, PlanLimits, TxtAstPlan, plan};
 use serde::{Deserialize, Serialize};
 
 /// Maximum accepted AsciiDoc input size.
@@ -188,7 +188,7 @@ mod bindings {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use adocweave_textlint::{DocumentType, TxtAstNode, Utf16Range};
+    use crate::{DocumentType, TxtAstNode, Utf16Range};
 
     fn request(source: &str) -> ParseTextRequest {
         ParseTextRequest {

@@ -17,11 +17,12 @@ readonly maximum_memory_bytes="$(node --input-type=module -e '
 ')"
 export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$root=. --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=cargo-home -C link-arg=--max-memory=$maximum_memory_bytes"
 cargo build \
-  -p adocweave-textlint-wasm \
+  -p adocweave-textlint \
   --release \
   --target wasm32-unknown-unknown \
   --target-dir "$target_directory"
 wasm-bindgen \
   --target nodejs \
+  --out-name adocweave_textlint_wasm \
   --out-dir "$output_directory" \
-  "$target_directory/wasm32-unknown-unknown/release/adocweave_textlint_wasm.wasm"
+  "$target_directory/wasm32-unknown-unknown/release/adocweave_textlint.wasm"

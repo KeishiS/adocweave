@@ -4,6 +4,8 @@
 //! `raw`, `value`, and `loc` without deciding which AsciiDoc constructs are
 //! prose.
 
+pub mod wasm;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use adocweave::Analysis;

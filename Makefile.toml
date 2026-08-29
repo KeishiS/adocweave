@@ -410,7 +410,7 @@ description = "Build the dedicated Node.js textlint WebAssembly adapter"
 command = "bash"
 args = [
   "tools/build-textlint-wasm-node.sh",
-  "target/adocweave-textlint-wasm-node",
+  "target/adocweave-textlint-node",
   "target/textlint-wasm-build",
 ]
 
