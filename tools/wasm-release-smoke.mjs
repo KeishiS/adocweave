@@ -85,7 +85,7 @@ async function runArchiveSmoke(archive, chromium, root) {
           let trapped = false;
           export default async function initialize() {}
           export function protocolSchemaVersion() { return PROTOCOL_SCHEMA_VERSION; }
-          export function process() {
+          export function analyze() {
             if (!trapped) {
               trapped = true;
               throw new WebAssembly.RuntimeError("browser smoke trap");
@@ -99,7 +99,7 @@ async function runArchiveSmoke(archive, chromium, root) {
         response.end(`
           export default async function initialize() { throw new Error("browser init failure"); }
           export function protocolSchemaVersion() { return 15; }
-          export function process() { return {}; }
+          export function analyze() { return {}; }
         `);
         return;
       }
@@ -107,7 +107,7 @@ async function runArchiveSmoke(archive, chromium, root) {
         response.end(`
           export default async function initialize() {}
           export function protocolSchemaVersion() { return 0; }
-          export function process() { return {}; }
+          export function analyze() { return {}; }
         `);
         return;
       }

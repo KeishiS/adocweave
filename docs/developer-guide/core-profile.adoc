@@ -74,16 +74,16 @@ book part・manpage headerの構造、および番号・TOC・captionなどの�
 ``reference_targets``、``catalogs``、``structure``および``presentation``から直接借用します。これらを一つの
 構造体へ複製して保持しません。
 
-WASM adapterは、利用者が構造情報を要求した場合だけ、これらのqueryと``Analysis``から借用した値を
-``WasmDocumentProjection``へ集約します。公開するWASM protocolのfield名、列挙値、配列順および
-構造情報を要求しない場合の``null``は、このadapterが保証します。Rustのqueryは公開protocolの構造へ依存しません。
+WASM adapterは、利用者が``document``を要求した場合だけ、これらのqueryと``Analysis``から借用した値を
+``DocumentView``へ集約します。公開するWASM protocolのfield名、列挙値、配列順および要求していないproductを
+応答から省く処理は、このadapterが保証します。Rustのqueryは公開protocolの構造へ依存しません。
 
 Language Serverはsemantic tokensやdocument linksの処理で必要なlinkやrangeだけを参照します。検索用文字列、数式、
 Source block、catalogなどを同時に生成しません。
 
 数式の``FormulaProjection.kind``は表示形式を表す``inline``または``block``です。Rust APIの
-``MathLanguage::Latex``は``as_asciidoc_name()``で``latexmath``を返します。JSON/WASM protocolの既存enum値は
-互換性のため``latex``を維持し、AsciiDoc構文名やHTMLの``data-math-language``と混同しません。
+``MathLanguage::Latex``は``as_asciidoc_name()``で``latexmath``を返します。JSON/WASM protocolでは``latex``を使い、
+AsciiDoc構文名やHTMLの``data-math-language``と混同しません。
 
 Source blockの``sourceRange``は、開始区切り行の行頭から終了区切り行の行末までを表します。
 先行するblock title、anchorおよび属性行は含みません。本文には``contentRange``、言語名には
