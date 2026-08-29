@@ -156,7 +156,17 @@ function workflows() {
       jobs: { smoke: { steps: [] } },
     },
     "binary-cache-publish.yml": binaryCachePublicationWorkflow(),
-    "marketplace-publish.yml": publicationWorkflow(true),
+    "marketplace-publish.yml": {
+      on: { workflow_call: {}, workflow_dispatch: {} },
+      permissions: { contents: "read" },
+      jobs: {
+        publish: {
+          environment: "marketplace-publish",
+          permissions: { contents: "read", "id-token": "write" },
+          steps: [{ run: "npx vsce publish --packagePath extension.vsix --oidc" }],
+        },
+      },
+    },
     "npm-publish.yml": npmPublicationWorkflow(),
     "open-vsx-publish.yml": publicationWorkflow(),
   };
@@ -235,6 +245,34 @@ test("外部公開workflowは個別の再利用・手動入口だけを持つ", 
   assert.throws(
     () => validateExternalPublicationIsolation(fixtures),
     /npm-publish.*isolated/,
+  );
+});
+
+test("Marketplace公開は専用environmentとOIDCだけを使う", () => {
+  const fixtures = workflows();
+  validateExternalPublicationIsolation(fixtures);
+
+  fixtures["marketplace-publish.yml"].jobs.publish.steps[0].run =
+    "npx vsce publish --packagePath extension.vsix --azure-credential";
+  assert.throws(
+    () => validateExternalPublicationIsolation(fixtures),
+    /trusted publishing with OIDC/u,
+  );
+
+  const azure = workflows();
+  azure["marketplace-publish.yml"].jobs.publish.steps.push({
+    uses: "Azure/login@0000000000000000000000000000000000000000",
+  });
+  assert.throws(
+    () => validateExternalPublicationIsolation(azure),
+    /trusted publishing with OIDC/u,
+  );
+
+  const shared = workflows();
+  shared["npm-publish.yml"].jobs.publish.environment = "marketplace-publish";
+  assert.throws(
+    () => validateExternalPublicationIsolation(shared),
+    /isolated to marketplace-publish/u,
   );
 });
 

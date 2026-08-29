@@ -3,21 +3,13 @@ name: Visual Studio Marketplace publication
 # 公開済みGitHub ReleaseのVSIXをVisual Studio Marketplaceへ公開する。成果物は作り直さず、
 # Releaseのassetをdownloadしてchecksumとattestationを検証してから送信する。
 #
-# 認証はMicrosoft Entra IDのworkload identity federationを使う。長期tokenを持たず、
-# GitHub ActionsのOIDCで公開元を確認する。Azure DevOpsのglobal Personal Access Tokenは
-# 2026-12-01に廃止されるため使わない。federated credentialのsubjectはenvironment
-# marketplace-publishで、branchやtagを対象にしない。main上で動くほかのworkflowが
-# 同じtokenを要求できないようにするため。
+# 認証はMarketplaceのTrusted PublisherとvsceのOIDC経路を使う。長期token、Azure login、
+# Entra ID用変数は持たない。Trusted Publisherにはこのrepository、workflow fileおよび
+# marketplace-publish environmentを登録し、ほかのworkflowから資格情報を要求できないようにする。
 #
-# stable releaseの公開workflowから呼び出すほか、tagを指定して単独で実行できる。
-# Marketplaceへの送信だけが失敗した場合、GitHub Releaseは公開済みで作り直せないため、
-# このworkflowを同じtagで実行して回復する。同じversionの再公開はMarketplaceが拒否するため、
-# 公開済みの版を上書きしない。
-#
-# tagを空にして実行すると、送信を行わず公開用identityだけを報告する。publisherのMembersへ
-# 登録するIDはAzure DevOpsが持つprofileのIDで、Entraのclient IDでもobject IDでもない。
-# このIDはidentity自身が認証しないと取得できず、手元から取得するにはclient secretが必要に
-# なるため、この経路で取得する。identityを入れ替えたときにも同じ手順で取り直す。
+# 同じversionが既に存在する場合は、Marketplaceから取得したVSIXをReleaseのVSIXと照合して
+# 送信せずに完了する。Marketplaceが追加する署名領域はbyte一致の対象外とするが、拡張ID、
+# version、targetおよび署名以外のfile一覧と内容は一致を必須とする。
 
 on:
   workflow_call:
@@ -29,8 +21,8 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Published stable tag whose VSIX is sent to the Marketplace. Leave empty to report the publishing identity without sending anything.
-        required: false
+        description: Published stable tag whose VSIX is sent to the Marketplace
+        required: true
         type: string
 
 permissions:
@@ -46,6 +38,7 @@ jobs:
     timeout-minutes: 15
     environment: marketplace-publish
     permissions:
+      contents: read
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -54,9 +47,13 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
           persist-credentials: false
-      # 公開用の資格情報は、送る成果物を検証したあとに取得する。
+      - name: Resolve the pinned Node.js version
+        id: node-version
+        run: echo "value=$(jq -er .nodeVersion toolchains.json)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ steps.node-version.outputs.value }}
       - name: Published VSIX download and verification
-        if: inputs.tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
@@ -77,45 +74,50 @@ jobs:
           asset="adocweave-vscode-$workspace_version.vsix"
           gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir marketplace \
             --pattern sha256.sum --pattern "$asset"
-          vsix="marketplace/$asset"
+          vsix="$(realpath "marketplace/$asset")"
           test -f "$vsix"
           (cd marketplace && grep -F "$(basename "$vsix")" sha256.sum | sha256sum --check --strict -)
           vsix_manifest="$(unzip -p "$vsix" extension/package.json)"
           test "$(jq -er .name <<<"$vsix_manifest")" = "$(jq -er .name editors/vscode/package.json)"
+          test "$(jq -er .publisher <<<"$vsix_manifest")" = "$(jq -er .publisher editors/vscode/package.json)"
           test "$(jq -er .version <<<"$vsix_manifest")" = "$workspace_version"
           gh attestation verify "$vsix" --repo "$GITHUB_REPOSITORY"
           gh attestation verify marketplace/sha256.sum --repo "$GITHUB_REPOSITORY"
-          # publish stepはeditors/vscodeで実行するため、相対pathでは届かない。
-          echo "vsix=$(realpath "$vsix")" >> "$GITHUB_ENV"
-      - uses: Azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2.3.1
-        with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          # このidentityはAzureのsubscriptionを持たず、Marketplaceへ送信するだけ。
-          allow-no-subscriptions: true
-      - name: Publishing identity report
-        run: |
-          # 499b84ac-1321-427f-aa17-267ca6975798 はAzure DevOpsのresource IDで、
-          # tenantによらない固定値。profileはこの呼び出しで作成または取得される。
-          az rest --method get --resource 499b84ac-1321-427f-aa17-267ca6975798 \
-            --url https://app.vssps.visualstudio.com/_apis/profile/profiles/me \
-            --output json > profile.json
-          echo "Azure DevOps profile id: $(jq -er .id profile.json)"
-          echo "publisher adocweaveのMembersへContributorとして登録するIDです。"
-      - name: Resolve the pinned Node.js version
-        if: inputs.tag != ''
-        id: node-version
-        run: echo "value=$(jq -er .nodeVersion toolchains.json)" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        if: inputs.tag != ''
-        with:
-          node-version: ${{ steps.node-version.outputs.value }}
-      - name: Visual Studio Marketplace publication
-        if: inputs.tag != ''
+          echo "vsix=$vsix" >> "$GITHUB_ENV"
+      - name: Install the pinned publication tool
+        working-directory: editors/vscode
+        run: npm ci
+      - name: Existing Marketplace publication verification
+        id: registry
         working-directory: editors/vscode
         run: |
-          npm ci
-          # --packagePath は検証済みのVSIXをそのまま送る。packageし直さないため、
-          # Open VSXとMarketplaceへ同じbyte列が届く。
-          npx --no-install vsce publish --packagePath "$vsix" --azure-credential
-          echo "Published $(basename "$vsix") to the Visual Studio Marketplace"
+          state="$(node scripts/marketplace-publication.mts \
+            --candidate "$vsix" --publisher adocweave --name adocweave-vscode \
+            --version "$(jq -er .version package.json)" --target universal)"
+          case "$state" in
+            missing|pending|published) echo "state=$state" >> "$GITHUB_OUTPUT" ;;
+            *) exit 1 ;;
+          esac
+      - name: Visual Studio Marketplace publication
+        if: steps.registry.outputs.state == 'missing'
+        working-directory: editors/vscode
+        run: |
+          npx --no-install vsce publish --packagePath "$vsix" --oidc
+          echo "Sent $(basename "$vsix") to the Visual Studio Marketplace"
+      - name: Published Marketplace extension verification
+        working-directory: editors/vscode
+        run: |
+          version="$(jq -er .version package.json)"
+          for _attempt in {1..12}; do
+            state="$(node scripts/marketplace-publication.mts \
+              --candidate "$vsix" --publisher adocweave --name adocweave-vscode \
+              --version "$version" --target universal)"
+            if [ "$state" = published ]; then
+              echo "Published and verified adocweave.adocweave-vscode $version on the Visual Studio Marketplace"
+              exit 0
+            fi
+            [ "$state" = missing ] || [ "$state" = pending ]
+            sleep 5
+          done
+          echo "Marketplace did not make adocweave.adocweave-vscode $version available within 60 seconds" >&2
+          exit 1

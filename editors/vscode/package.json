@@ -82,7 +82,7 @@
     "format": "biome format --write src test scripts",
     "format:check": "biome format src test scripts",
     "lint": "biome lint src test scripts",
-    "test": "npm run build:test && node --test dist-test/test/*.test.js",
+    "test": "npm run build:test && node --test dist-test/test/*.test.js scripts/*.test.mts",
     "build:test": "node scripts/build-test.mts",
     "package": "node scripts/package.mts",
     "test:vsix-installation": "node scripts/vsix-installation-smoke.mts",
