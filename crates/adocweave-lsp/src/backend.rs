@@ -26,8 +26,8 @@ use crate::service::Session;
 use crate::state::{Adoption, AnalysisJob, WorkspaceProblem};
 use crate::workspace::{AnalyzedRoot, WorkspaceScanNotice, document_analysis_job_limits};
 use crate::workspace_scan::{
-    WorkspaceRecoveryTimerUpdate, WorkspaceScanCoordinator, WorkspaceScanRecovery,
-    WorkspaceScanRecoveryTimer, WorkspaceScanStart, WorkspaceScanTransition, WorkspaceScanned,
+    WorkspaceRecoveryTimerUpdate, WorkspaceScanRecovery, WorkspaceScanRecoveryTimer,
+    WorkspaceScanStart, WorkspaceScanTransition, WorkspaceScanned,
 };
 use crate::{HostReferenceIndex, NoHostReferenceIndex};
 
@@ -41,12 +41,11 @@ pub(crate) struct Backend {
     cpu_limit: Arc<Semaphore>,
     analysis_tasks: BTreeMap<String, AnalysisTask>,
     workspace_analysis_gate: Arc<Semaphore>,
-    workspace_scans: WorkspaceScanCoordinator,
     workspace_scan_recovery_timer: WorkspaceScanRecoveryTimer,
 }
 
 struct AnalysisTask {
-    generation: u64,
+    cancellation: Arc<CancellationToken>,
     handle: tokio::task::JoinHandle<()>,
 }
 
@@ -120,7 +119,6 @@ impl Backend {
             cpu_limit: Arc::new(Semaphore::new(MAX_CONCURRENT_ANALYSES)),
             analysis_tasks: BTreeMap::new(),
             workspace_analysis_gate: Arc::new(Semaphore::new(1)),
-            workspace_scans: WorkspaceScanCoordinator::default(),
             workspace_scan_recovery_timer: WorkspaceScanRecoveryTimer::default(),
         });
 
@@ -184,8 +182,7 @@ impl Backend {
                     state.schedule_workspace_scan();
                 } else {
                     let changes = state.session.workspace_files_changed_with_journal(params);
-                    let recovery_generation =
-                        state.workspace_scans.record_workspace_changes(&changes);
+                    let recovery_generation = state.session.record_workspace_changes(&changes);
                     if let Some(generation) = recovery_generation {
                         state.schedule_workspace_scan_recovery(generation);
                     }
@@ -320,8 +317,7 @@ impl Backend {
             })
             .event::<AnalysisCompleted>(|state, completed| state.analysis_completed(completed))
             .event::<WorkspaceScanned>(|state, scanned| {
-                let Some(transition) = state.workspace_scans.complete(&mut state.session, scanned)
-                else {
+                let Some(transition) = state.session.complete_workspace_scan(scanned) else {
                     return ControlFlow::Continue(());
                 };
                 let WorkspaceScanTransition {
@@ -360,13 +356,13 @@ impl Backend {
             })
             .event::<WorkspaceScanRecovery>(|state, recovery| {
                 let generation = recovery.generation();
-                if state.workspace_scans.debouncing_generation() != Some(generation) {
+                if !state.session.workspace_scan_recovery_is_current(generation) {
                     return ControlFlow::Continue(());
                 }
-                if !state.workspace_scan_recovery_timer.complete(generation) {
+                if !state.workspace_scan_recovery_timer.complete() {
                     return ControlFlow::Continue(());
                 }
-                if let Some(start) = state.workspace_scans.request_recovery(generation) {
+                if let Some(start) = state.session.request_workspace_scan_recovery(recovery) {
                     state.spawn_workspace_scan(start);
                 }
                 ControlFlow::Continue(())
@@ -424,7 +420,7 @@ impl Backend {
     /// completion event before starting the next worker.
     fn schedule_workspace_scan(&mut self) {
         self.cancel_workspace_scan_recovery();
-        let Some(start) = self.workspace_scans.request_replacement() else {
+        let Some(start) = self.session.request_workspace_scan() else {
             return;
         };
         self.spawn_workspace_scan(start);
@@ -451,16 +447,14 @@ impl Backend {
     fn schedule_workspace_scan_recovery(&mut self, generation: u64) {
         self.cancel_workspace_scan_recovery();
         let client = self.client.clone();
-        self.workspace_scan_recovery_timer.replace(
-            generation,
-            tokio::spawn(async move {
+        self.workspace_scan_recovery_timer
+            .replace(tokio::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_millis(
                     WATCH_SCAN_RECOVERY_DEBOUNCE_MS,
                 ))
                 .await;
                 let _ = client.emit(WorkspaceScanRecovery::new(generation));
-            }),
-        );
+            }));
     }
 
     fn cancel_workspace_scan_recovery(&mut self) {
@@ -469,7 +463,7 @@ impl Backend {
 
     fn invalidate_workspace_scan(&mut self) {
         self.cancel_workspace_scan_recovery();
-        self.workspace_scans.cancel();
+        self.session.cancel_workspace_scan();
     }
 
     fn schedule_analysis(&mut self, job: AnalysisJob) {
@@ -485,7 +479,7 @@ impl Backend {
         let limit = self.cpu_limit.clone();
         let client = self.client.clone();
         let uri = job.uri.clone();
-        let generation = job.request.revision.generation;
+        let cancellation = Arc::clone(&job.cancellation);
         let workspace_gate = workspace_analysis_gate(&job, &self.workspace_analysis_gate);
         // The worker reads missing includes into this copy while the editor
         // keeps using the current workspace. Nothing it reads becomes visible
@@ -536,8 +530,13 @@ impl Backend {
                 workspace_permit: result.2,
             });
         });
-        self.analysis_tasks
-            .insert(uri, AnalysisTask { generation, handle });
+        self.analysis_tasks.insert(
+            uri,
+            AnalysisTask {
+                cancellation,
+                handle,
+            },
+        );
     }
 
     fn analysis_completed(
@@ -560,7 +559,7 @@ impl Backend {
         if self
             .analysis_tasks
             .get(&completed.job.uri)
-            .is_some_and(|task| task.generation == completed.job.request.revision.generation)
+            .is_some_and(|task| Arc::ptr_eq(&task.cancellation, &completed.job.cancellation))
         {
             self.analysis_tasks.remove(&completed.job.uri);
         }

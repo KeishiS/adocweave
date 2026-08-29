@@ -1,5 +1,6 @@
 use super::*;
 use crate::workspace::WorkspaceScanNotice;
+use adocweave::CancellationCheck;
 
 #[test]
 fn scan_notice_episode_ends_after_a_complete_scan() {
@@ -243,6 +244,10 @@ fn non_adoc_include_is_loaded_and_watched_without_becoming_an_analysis_root() {
         .expect("workspace analysis");
     assert!(analysis.analysis.source().contains("first marker"));
     assert_eq!(service.workspace_analysis_count(), 2);
+    let previous_revision = service.input_revision();
+    let previous_cancellation = service
+        .document_cancellation(&document_uri)
+        .expect("document cancellation");
 
     fs::write(&include_path, "second marker\n").expect("changed include");
     let jobs = service
@@ -251,6 +256,9 @@ fn non_adoc_include_is_loaded_and_watched_without_becoming_an_analysis_root() {
         })))
         .jobs;
     assert_eq!(jobs.len(), 1);
+    assert!(previous_cancellation.is_cancelled());
+    assert_eq!(service.input_revision(), previous_revision + 1);
+    assert_eq!(jobs[0].input_revision, service.input_revision());
     for job in jobs {
         adopt(&mut service, job);
     }
@@ -1375,6 +1383,13 @@ fn workspace_folder_changes_rebuild_roots_and_preserve_open_overlays() {
         3,
         "include::part.adoc[]\n\noverlay\n",
     );
+    let stale_job = service
+        .begin_reanalysis_for_test(&document_uri)
+        .expect("pending analysis");
+    let stale_result = stale_job
+        .request
+        .analyze(&adocweave::NeverCancel)
+        .expect("analysis before root change");
 
     assert!(service.workspace_folders_changed(typed(json!({
         "event": {
@@ -1382,6 +1397,8 @@ fn workspace_folder_changes_rebuild_roots_and_preserve_open_overlays() {
             "added": [{"uri": added_uri, "name": "added"}]
         }
     }))));
+    assert!(stale_job.cancellation.is_cancelled());
+    assert_eq!(service.adopt(&stale_job, stale_result), Adoption::Stale);
     let scan = service.plan_workspace_scan(&adocweave::NeverCancel);
     let jobs = service.apply_workspace_scan(scan).jobs;
     assert_eq!(jobs.len(), 1);

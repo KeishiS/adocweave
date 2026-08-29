@@ -1,7 +1,7 @@
 //! Runtime-independent language features over owned document analyses.
 
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use adocweave::CancellationCheck;
 use adocweave::output::diagnostics::{RuleSettings, lint_rule};
@@ -25,6 +25,10 @@ use crate::state::{
     WorkspaceProblem,
 };
 use crate::workspace::{WatchedFileKind, WorkspaceResources, WorkspaceScanNotice};
+use crate::workspace_scan::{
+    WorkspaceScanCoordinator, WorkspaceScanRecovery, WorkspaceScanStart, WorkspaceScanTransition,
+    WorkspaceScanned,
+};
 use crate::{SERVER_NAME, VERSION};
 
 const MAX_WORKSPACE_WATCH_ERRORS: usize = 128;
@@ -215,7 +219,6 @@ pub(crate) struct Session {
     #[cfg(test)]
     pub(crate) documents: DocumentStore,
     pub position_encoding: PositionEncoding,
-    phase: SessionPhase,
     input_revision: u64,
     client: ClientProfile,
     settings: ServerSettings,
@@ -233,14 +236,7 @@ pub(crate) struct Session {
     workspace_watch_errors_overflowed: bool,
     workspace_watch_recovery_required: bool,
     workspace_input_error: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-enum SessionPhase {
-    #[default]
-    Created,
-    Initialized,
-    ShuttingDown,
+    workspace_scans: Arc<Mutex<WorkspaceScanCoordinator>>,
 }
 
 pub(crate) struct WorkspaceFileChanges {
@@ -264,7 +260,6 @@ impl fmt::Debug for Session {
             .debug_struct("Session")
             .field("documents", &self.documents)
             .field("position_encoding", &self.position_encoding)
-            .field("phase", &self.phase)
             .field("input_revision", &self.input_revision)
             .field("client", &self.client)
             .field("settings", &self.settings)
@@ -278,7 +273,6 @@ impl Default for Session {
         Self {
             documents: DocumentStore::default(),
             position_encoding: PositionEncoding::Utf16,
-            phase: SessionPhase::Created,
             input_revision: 0,
             client: ClientProfile::default(),
             settings: ServerSettings::default(),
@@ -292,6 +286,7 @@ impl Default for Session {
             workspace_watch_errors_overflowed: false,
             workspace_watch_recovery_required: false,
             workspace_input_error: None,
+            workspace_scans: Arc::new(Mutex::new(WorkspaceScanCoordinator::default())),
         }
     }
 }
@@ -348,7 +343,14 @@ fn parse_open_sources(sources: &[(String, i32, String)]) -> Vec<(lsp::Url, i64, 
 
 impl Session {
     fn advance_input_revision(&mut self) {
-        self.input_revision = self.input_revision.saturating_add(1);
+        self.input_revision = self
+            .input_revision
+            .checked_add(1)
+            .expect("Language Server session input revision exhausted");
+    }
+
+    fn analysis_job_is_current(&self, job: &AnalysisJob) -> bool {
+        job.input_revision <= self.input_revision && self.documents.job_is_current(job)
     }
 
     #[cfg(test)]
@@ -357,18 +359,13 @@ impl Session {
     }
 
     #[cfg(test)]
+    pub(crate) fn set_input_revision_for_test(&mut self, revision: u64) {
+        self.input_revision = revision;
+    }
+
+    #[cfg(test)]
     pub(crate) fn workspace_roots(&self) -> Vec<lsp::Url> {
         self.workspace_roots.values().cloned().collect()
-    }
-
-    #[cfg(test)]
-    pub(crate) const fn is_initialized(&self) -> bool {
-        matches!(self.phase, SessionPhase::Initialized)
-    }
-
-    #[cfg(test)]
-    pub(crate) const fn is_shutting_down(&self) -> bool {
-        matches!(self.phase, SessionPhase::ShuttingDown)
     }
 
     pub fn with_host_index(host_index: Arc<dyn HostReferenceIndex>) -> Self {
@@ -413,7 +410,6 @@ impl Session {
             .collect();
         self.workspace_error = None;
         self.clear_workspace_watch_errors();
-        self.phase = SessionPhase::Initialized;
         self.advance_input_revision();
         lsp::InitializeResult {
             capabilities: lsp::ServerCapabilities {
@@ -496,15 +492,16 @@ impl Session {
     pub fn begin_open(&mut self, params: lsp::DidOpenTextDocumentParams) -> Vec<AnalysisJob> {
         let document = params.text_document;
         if let Some(error) = self.workspace_error.clone() {
+            self.advance_input_revision();
             let options = self.analysis_options_for(None);
             let mut job = self.documents.begin_open_with_options(
                 document.uri.to_string(),
                 document.version,
                 document.text,
                 options,
+                self.input_revision,
             );
             attach_workspace(&mut job, Err(error));
-            self.advance_input_revision();
             return vec![job];
         }
         let affected = match self.workspace.upsert_open(
@@ -519,6 +516,7 @@ impl Session {
             }
         };
         self.workspace_input_error = None;
+        self.advance_input_revision();
         let workspace = self.workspace.input(&document.uri);
         let options = self.analysis_options_for(workspace.as_ref().ok());
         let mut job = self.documents.begin_open_with_options(
@@ -526,11 +524,11 @@ impl Session {
             document.version,
             document.text,
             options,
+            self.input_revision,
         );
         attach_workspace(&mut job, self.workspace.input(&document.uri));
         let mut jobs = vec![job];
         self.append_dependent_jobs(&affected, document.uri.as_str(), &mut jobs);
-        self.advance_input_revision();
         jobs
     }
 
@@ -576,17 +574,18 @@ impl Session {
             i64::from(params.text_document.version),
             source.clone(),
         )?;
+        self.advance_input_revision();
         let Some(mut job) = self.documents.begin_change(
             params.text_document.uri.as_str(),
             params.text_document.version,
             source,
+            self.input_revision,
         ) else {
             return Ok(Vec::new());
         };
         attach_workspace(&mut job, self.workspace.input(&params.text_document.uri));
         let mut jobs = vec![job];
         self.append_dependent_jobs(&affected, params.text_document.uri.as_str(), &mut jobs);
-        self.advance_input_revision();
         Ok(jobs)
     }
 
@@ -600,7 +599,7 @@ impl Session {
             let Ok(parsed) = uri.parse() else {
                 continue;
             };
-            let Some(mut job) = self.documents.begin_reanalysis(uri) else {
+            let Some(mut job) = self.documents.begin_reanalysis(uri, self.input_revision) else {
                 continue;
             };
             attach_workspace(&mut job, self.workspace.input(&parsed));
@@ -770,6 +769,9 @@ impl Session {
             }
         }
         let mut jobs = Vec::new();
+        if !affected.is_empty() || watch_errors_changed {
+            self.advance_input_revision();
+        }
         self.append_dependent_jobs(&affected, "", &mut jobs);
         if watch_errors_changed {
             let queued = jobs
@@ -785,7 +787,10 @@ impl Session {
                 };
                 let workspace = self.workspace.input(&parsed);
                 let options = self.analysis_options_for(workspace.as_ref().ok());
-                if let Some(mut job) = self.documents.reconfigure(&uri, options) {
+                if let Some(mut job) =
+                    self.documents
+                        .reconfigure(&uri, options, self.input_revision)
+                {
                     attach_workspace(&mut job, workspace);
                     jobs.push(job);
                 }
@@ -830,6 +835,66 @@ impl Session {
         }
     }
 
+    pub(crate) fn request_workspace_scan(&mut self) -> Option<WorkspaceScanStart> {
+        self.workspace_scans
+            .lock()
+            .expect("workspace scan state lock is poisoned")
+            .request_replacement()
+    }
+
+    pub(crate) fn record_workspace_changes(
+        &mut self,
+        changes: &WorkspaceFileChanges,
+    ) -> Option<u64> {
+        self.workspace_scans
+            .lock()
+            .expect("workspace scan state lock is poisoned")
+            .record_workspace_changes(changes)
+    }
+
+    pub(crate) fn workspace_scan_recovery_is_current(&self, generation: u64) -> bool {
+        self.workspace_scans
+            .lock()
+            .expect("workspace scan state lock is poisoned")
+            .debouncing_generation()
+            == Some(generation)
+    }
+
+    pub(crate) fn request_workspace_scan_recovery(
+        &mut self,
+        recovery: WorkspaceScanRecovery,
+    ) -> Option<WorkspaceScanStart> {
+        self.workspace_scans
+            .lock()
+            .expect("workspace scan state lock is poisoned")
+            .request_recovery(recovery.generation())
+    }
+
+    pub(crate) fn complete_workspace_scan(
+        &mut self,
+        scanned: WorkspaceScanned,
+    ) -> Option<WorkspaceScanTransition> {
+        let scan_state = Arc::clone(&self.workspace_scans);
+        let mut coordinator = {
+            let mut state = scan_state
+                .lock()
+                .expect("workspace scan state lock is poisoned");
+            std::mem::take(&mut *state)
+        };
+        let transition = coordinator.complete(self, scanned);
+        *scan_state
+            .lock()
+            .expect("workspace scan state lock is poisoned") = coordinator;
+        transition
+    }
+
+    pub(crate) fn cancel_workspace_scan(&mut self) {
+        self.workspace_scans
+            .lock()
+            .expect("workspace scan state lock is poisoned")
+            .cancel();
+    }
+
     /// Installs a completed scan and returns the analyses it makes stale.
     ///
     /// The documents open at this moment are overlaid onto the read, not the
@@ -841,6 +906,7 @@ impl Session {
             .workspace
             .apply_loaded_roots(scan.loaded, &parsed_open_sources);
         let installed = outcome.is_ok();
+        self.advance_input_revision();
         let jobs = self.finish_reload(outcome, open_sources);
         let notices = if installed {
             let current = self.workspace.scan_notices().clone();
@@ -863,6 +929,7 @@ impl Session {
     /// Records an internal scan worker failure without replacing the last
     /// coherent workspace snapshot.
     pub fn workspace_scan_failed(&mut self, error: String) -> Vec<AnalysisJob> {
+        self.advance_input_revision();
         self.workspace_error = Some(error);
         self.workspace_watch_recovery_required = true;
         self.documents
@@ -872,7 +939,9 @@ impl Session {
                 let parsed = uri.parse().ok()?;
                 let workspace = self.workspace.input(&parsed);
                 let options = self.analysis_options_for(workspace.as_ref().ok());
-                let mut job = self.documents.reconfigure(&uri, options)?;
+                let mut job = self
+                    .documents
+                    .reconfigure(&uri, options, self.input_revision)?;
                 attach_workspace(&mut job, workspace);
                 Some(job)
             })
@@ -899,7 +968,9 @@ impl Session {
                         self.workspace.input(&parsed)
                     };
                     let options = self.analysis_options_for(workspace.as_ref().ok());
-                    let mut job = self.documents.reconfigure(&uri, options)?;
+                    let mut job = self
+                        .documents
+                        .reconfigure(&uri, options, self.input_revision)?;
                     attach_workspace(&mut job, workspace);
                     Some(job)
                 })
@@ -913,7 +984,9 @@ impl Session {
                 let parsed = uri.parse().ok()?;
                 let workspace = self.workspace.input(&parsed);
                 let options = self.analysis_options_for(workspace.as_ref().ok());
-                let mut job = self.documents.reconfigure(&uri, options)?;
+                let mut job = self
+                    .documents
+                    .reconfigure(&uri, options, self.input_revision)?;
                 attach_workspace(&mut job, workspace);
                 Some(job)
             })
@@ -940,6 +1013,7 @@ impl Session {
         self.workspace_roots = roots;
         self.active_scan_notices.clear();
         self.advance_input_revision();
+        self.documents.cancel_all();
         true
     }
 
@@ -983,6 +1057,9 @@ impl Session {
     }
 
     pub fn adopt(&mut self, job: &AnalysisJob, result: adocweave::AnalysisResult) -> Adoption {
+        if !self.analysis_job_is_current(job) {
+            return Adoption::Stale;
+        }
         if job
             .workspace
             .as_ref()
@@ -1017,6 +1094,9 @@ impl Session {
         job: &AnalysisJob,
         analyzed: crate::workspace::AnalyzedRoot,
     ) -> Vec<String> {
+        if !self.analysis_job_is_current(job) {
+            return Vec::new();
+        }
         if job
             .workspace
             .as_ref()
@@ -1070,7 +1150,7 @@ impl Session {
     /// Rebuilds a current document job when only its workspace input became
     /// stale while another document loaded or changed a resource.
     pub fn refresh_stale_workspace(&mut self, job: &AnalysisJob) -> Option<AnalysisJob> {
-        if !self.documents.job_is_current(job) {
+        if !self.analysis_job_is_current(job) {
             return None;
         }
         let input = job.workspace.as_ref()?;
@@ -1080,7 +1160,9 @@ impl Session {
         let uri = job.uri.parse().ok()?;
         let workspace = self.workspace.input(&uri);
         let options = self.analysis_options_for(workspace.as_ref().ok());
-        let mut retry = self.documents.reconfigure(&job.uri, options)?;
+        let mut retry = self
+            .documents
+            .reconfigure(&job.uri, options, self.input_revision)?;
         attach_workspace(&mut retry, workspace);
         Some(retry)
     }
@@ -1090,6 +1172,9 @@ impl Session {
         job: &AnalysisJob,
         problem: WorkspaceProblem,
     ) -> Adoption {
+        if !self.analysis_job_is_current(job) {
+            return Adoption::Stale;
+        }
         if job.workspace_problem.is_none()
             && job
                 .workspace
@@ -1111,17 +1196,17 @@ impl Session {
             Ok(pruned) => affected.extend(pruned),
             Err(error) => self.workspace_error = Some(error),
         }
-        let mut jobs = Vec::new();
-        self.append_dependent_jobs(&affected, uri.as_str(), &mut jobs);
         if closed {
             self.advance_input_revision();
         }
+        let mut jobs = Vec::new();
+        self.append_dependent_jobs(&affected, uri.as_str(), &mut jobs);
         (closed, jobs)
     }
 
     pub fn shutdown(&mut self) {
-        self.phase = SessionPhase::ShuttingDown;
         self.documents.cancel_all();
+        self.cancel_workspace_scan();
     }
 
     pub fn document_cancellation(
@@ -1129,6 +1214,15 @@ impl Session {
         uri: &lsp::Url,
     ) -> Option<Arc<adocweave::CancellationToken>> {
         self.documents.cancellation(uri.as_str())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn begin_reanalysis_for_test(&mut self, uri: &lsp::Url) -> Option<AnalysisJob> {
+        let mut job = self
+            .documents
+            .begin_reanalysis(uri.as_str(), self.input_revision)?;
+        attach_workspace(&mut job, self.workspace.input(uri));
+        Some(job)
     }
 
     pub fn update_configuration(
@@ -1165,7 +1259,9 @@ impl Session {
                 let parsed = uri.parse().ok()?;
                 let workspace = self.workspace.input(&parsed);
                 let options = self.analysis_options_for(workspace.as_ref().ok());
-                let mut job = self.documents.reconfigure(&uri, options)?;
+                let mut job = self
+                    .documents
+                    .reconfigure(&uri, options, self.input_revision)?;
                 attach_workspace(&mut job, workspace);
                 Some(job)
             })

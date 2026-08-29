@@ -15,6 +15,7 @@ use crate::workspace::WorkspaceInput;
 #[derive(Clone, Debug)]
 pub struct AnalysisJob {
     pub uri: String,
+    pub input_revision: u64,
     pub request: AnalysisRequest,
     pub cancellation: Arc<CancellationToken>,
     pub workspace: Option<WorkspaceInput>,
@@ -23,7 +24,8 @@ pub struct AnalysisJob {
 
 #[derive(Clone, Debug)]
 pub struct DocumentState {
-    pub uri: String,
+    pub source_id: SourceId,
+    pub input_revision: u64,
     pub request: AnalysisRequest,
     pub view: Option<Arc<DocumentView>>,
     pub workspace_problem: Option<WorkspaceProblem>,
@@ -100,7 +102,7 @@ impl DocumentStore {
             return None;
         }
         Some(DocumentSnapshot {
-            uri: document.uri.clone(),
+            uri: document.source_id.as_str().to_owned(),
             revision: document.request.revision.clone(),
             analysis: document.view.as_ref()?.root.clone(),
             format: document.view.as_ref()?.format,
@@ -110,7 +112,7 @@ impl DocumentStore {
     pub fn snapshots(&self) -> Vec<DocumentSnapshot> {
         self.documents
             .values()
-            .filter_map(|document| self.snapshot(&document.uri))
+            .filter_map(|document| self.snapshot(document.source_id.as_str()))
             .collect()
     }
 
@@ -119,7 +121,7 @@ impl DocumentStore {
             .values()
             .filter_map(|document| {
                 Some((
-                    document.uri.clone(),
+                    document.source_id.as_str().to_owned(),
                     i32::try_from(document.request.revision.version).ok()?,
                     document.request.source.to_string(),
                 ))
@@ -147,13 +149,15 @@ impl DocumentStore {
 
     pub fn job_is_current(&self, job: &AnalysisJob) -> bool {
         self.documents.get(&job.uri).is_some_and(|document| {
-            document.request.revision == job.request.revision && !job.cancellation.is_cancelled()
+            document.input_revision == job.input_revision
+                && document.request.revision == job.request.revision
+                && !job.cancellation.is_cancelled()
         })
     }
 
     #[cfg(test)]
     pub fn begin_open(&mut self, uri: String, version: i32, text: String) -> AnalysisJob {
-        self.begin_open_with_options(uri, version, text, AnalysisOptions::default())
+        self.begin_open_with_options(uri, version, text, AnalysisOptions::default(), 0)
     }
 
     pub fn begin_open_with_options(
@@ -162,15 +166,25 @@ impl DocumentStore {
         version: i32,
         text: String,
         options: AnalysisOptions,
+        input_revision: u64,
     ) -> AnalysisJob {
         if let Some(previous) = self.documents.get(&uri) {
             previous.cancellation.cancel();
         }
-        let job = self.new_job(uri.clone(), version, text, options);
+        let source_id = SourceId::new(uri.clone());
+        let job = self.new_job(
+            uri.clone(),
+            source_id.clone(),
+            version,
+            text,
+            options,
+            input_revision,
+        );
         Arc::make_mut(&mut self.documents).insert(
             uri.clone(),
             DocumentState {
-                uri,
+                source_id,
+                input_revision,
                 request: job.request.clone(),
                 view: None,
                 workspace_problem: None,
@@ -180,35 +194,70 @@ impl DocumentStore {
         job
     }
 
-    pub fn begin_change(&mut self, uri: &str, version: i32, text: String) -> Option<AnalysisJob> {
+    pub fn begin_change(
+        &mut self,
+        uri: &str,
+        version: i32,
+        text: String,
+        input_revision: u64,
+    ) -> Option<AnalysisJob> {
         let current = self.documents.get(uri)?;
         if i64::from(version) <= current.request.revision.version {
             return None;
         }
         let options = current.request.options.clone();
+        let source_id = current.source_id.clone();
         current.cancellation.cancel();
-        let job = self.new_job(uri.to_owned(), version, text, options);
+        let job = self.new_job(
+            uri.to_owned(),
+            source_id,
+            version,
+            text,
+            options,
+            input_revision,
+        );
         self.install_job(uri, &job);
         Some(job)
     }
 
-    pub fn begin_reanalysis(&mut self, uri: &str) -> Option<AnalysisJob> {
+    pub fn begin_reanalysis(&mut self, uri: &str, input_revision: u64) -> Option<AnalysisJob> {
         let current = self.documents.get(uri)?;
         current.cancellation.cancel();
         let version = i32::try_from(current.request.revision.version).ok()?;
         let text = current.request.source.to_string();
         let options = current.request.options.clone();
-        let job = self.new_job(uri.to_owned(), version, text, options);
+        let source_id = current.source_id.clone();
+        let job = self.new_job(
+            uri.to_owned(),
+            source_id,
+            version,
+            text,
+            options,
+            input_revision,
+        );
         self.install_job(uri, &job);
         Some(job)
     }
 
-    pub fn reconfigure(&mut self, uri: &str, options: AnalysisOptions) -> Option<AnalysisJob> {
+    pub fn reconfigure(
+        &mut self,
+        uri: &str,
+        options: AnalysisOptions,
+        input_revision: u64,
+    ) -> Option<AnalysisJob> {
         let current = self.documents.get(uri)?;
         current.cancellation.cancel();
         let version = i32::try_from(current.request.revision.version).ok()?;
         let text = current.request.source.to_string();
-        let job = self.new_job(uri.to_owned(), version, text, options);
+        let source_id = current.source_id.clone();
+        let job = self.new_job(
+            uri.to_owned(),
+            source_id,
+            version,
+            text,
+            options,
+            input_revision,
+        );
         self.install_job(uri, &job);
         Some(job)
     }
@@ -220,6 +269,7 @@ impl DocumentStore {
             .get_mut(uri)
             .expect("document existence checked");
         current.request = job.request.clone();
+        current.input_revision = job.input_revision;
         current.view = None;
         current.workspace_problem = None;
         current.cancellation = job.cancellation.clone();
@@ -331,13 +381,18 @@ impl DocumentStore {
     fn new_job(
         &mut self,
         uri: String,
+        source_id: SourceId,
         version: i32,
         text: String,
         options: AnalysisOptions,
+        input_revision: u64,
     ) -> AnalysisJob {
-        self.next_generation = self.next_generation.saturating_add(1);
+        self.next_generation = self
+            .next_generation
+            .checked_add(1)
+            .expect("document analysis generation exhausted");
         let request = AnalysisRequest::new(
-            Some(SourceId::new(uri.clone())),
+            Some(source_id),
             i64::from(version),
             self.next_generation,
             text,
@@ -345,6 +400,7 @@ impl DocumentStore {
         );
         AnalysisJob {
             uri,
+            input_revision,
             request,
             cancellation: Arc::new(CancellationToken::new()),
             workspace: None,
@@ -368,7 +424,7 @@ mod tests {
         let mut store = DocumentStore::default();
         let old = store.begin_open("file:///a.adoc".to_owned(), 1, "= Old".to_owned());
         let new = store
-            .begin_change("file:///a.adoc", 2, "= New".to_owned())
+            .begin_change("file:///a.adoc", 2, "= New".to_owned(), 1)
             .expect("new generation");
 
         assert!(old.cancellation.is_cancelled());
@@ -416,7 +472,7 @@ mod tests {
         let snapshot = store.clone();
 
         let second = store
-            .begin_change("file:///a.adoc", 2, "= New".to_owned())
+            .begin_change("file:///a.adoc", 2, "= New".to_owned(), 1)
             .expect("new generation");
         assert_eq!(store.adopt(&second, analyze(&second)), Adoption::Adopted);
 
@@ -436,5 +492,15 @@ mod tests {
                 .source(),
             "= New"
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "document analysis generation exhausted")]
+    fn analysis_generation_is_never_reused_after_exhaustion() {
+        let mut store = DocumentStore {
+            next_generation: u64::MAX,
+            ..DocumentStore::default()
+        };
+        let _ = store.begin_open("file:///a.adoc".to_owned(), 1, "= A".to_owned());
     }
 }

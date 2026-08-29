@@ -20,12 +20,9 @@ fn initialize_params(roots: &[&str]) -> lsp::InitializeParams {
 #[test]
 fn one_session_owns_connection_lifecycle_and_cancellation() {
     let mut session = Session::default();
-    assert!(!session.is_initialized());
-    assert!(!session.is_shutting_down());
     assert_eq!(session.input_revision(), 0);
 
     session.initialize(&initialize_params(&[]));
-    assert!(session.is_initialized());
     assert_eq!(session.input_revision(), 1);
 
     let jobs = session.begin_open(typed(json!({
@@ -40,7 +37,6 @@ fn one_session_owns_connection_lifecycle_and_cancellation() {
     assert!(!cancellation.is_cancelled());
 
     session.shutdown();
-    assert!(session.is_shutting_down());
     assert!(cancellation.is_cancelled());
 }
 
@@ -98,6 +94,11 @@ fn open_change_and_close_update_one_session_document() {
         .expect("open document");
     assert_eq!(document.request.revision.version, 3);
     assert_eq!(document.request.source.as_ref(), "= Old\n");
+    let source_id = document.source_id.clone();
+    assert_eq!(
+        document.analysis().and_then(adocweave::Analysis::source_id),
+        Some(&source_id)
+    );
     assert!(session.documents.snapshot("file:///guide.adoc").is_some());
 
     let open_revision = session.input_revision();
@@ -128,6 +129,11 @@ fn open_change_and_close_update_one_session_document() {
         .expect("changed document");
     assert_eq!(document.request.revision.version, 4);
     assert_eq!(document.request.source.as_ref(), "= New\n");
+    assert_eq!(document.source_id, source_id);
+    assert_eq!(
+        document.analysis().and_then(adocweave::Analysis::source_id),
+        Some(&source_id)
+    );
 
     let cancellation = session
         .document_cancellation(&uri("file:///guide.adoc"))
@@ -162,4 +168,19 @@ fn effective_server_setting_changes_advance_session_revision() {
     assert!(jobs.is_empty());
     assert_eq!(session.input_revision(), initialized_revision + 1);
     assert_eq!(session.debounce_ms(), 75);
+}
+
+#[test]
+#[should_panic(expected = "Language Server session input revision exhausted")]
+fn session_input_revision_is_never_reused_after_exhaustion() {
+    let mut session = Session::default();
+    session.set_input_revision_for_test(u64::MAX);
+    let _ = session.begin_open(typed(json!({
+        "textDocument": {
+            "uri": "file:///guide.adoc",
+            "languageId": "asciidoc",
+            "version": 1,
+            "text": "= Guide\n"
+        }
+    })));
 }

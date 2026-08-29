@@ -28,14 +28,16 @@ Language Serverはstdio上のLanguage Server Protocol 3.18を使用し、診断�
 開いた文書に対する要求へ応答します。
 
 一つのLSP接続には一つの``Session``を作ります。``Session``は、開いている文書のURI、LSP文書version、
-未保存本文、採用済み結果、クライアントのcapability、位置encoding、server設定、workspace folder、
-検証済みの読込範囲および実行中の解析を取り消すtokenを所有します。文書、設定またはworkspace folderが
+未保存本文、採用済み結果、クライアントのcapability、位置encoding、サーバ設定、ワークスペースフォルダ、
+検証済みの読込範囲および実行中の解析を取り消すtokenを所有します。文書、設定またはワークスペースフォルダが
 有効に変わるたびに、接続内で単調に増える入力revisionを更新します。古いLSP文書versionは本文と
 入力revisionのどちらも変更しません。
 
-プロトコルの``Backend``は通知と非同期taskを接続します。task handleと実行枠は``Backend``に置きますが、
-現在の入力、取消しtokenおよび採用済み結果を重ねて所有しません。移行中のworkspace読込状態も
-``Session``の非公開fieldとし、文書通知とworkspace読込結果を受け取る処理から更新します。
+プロトコルの``Backend``は通知と非同期taskを接続します。task handle、再走査を遅らせるtimer handleおよび
+実行枠は``Backend``に置きますが、現在の入力、取消しtokenおよび採用済み結果を重ねて所有しません。
+走査の順序、結果を採用できるか、再走査が必要か、走査中に届いた変更および取消しtokenは``Session``が
+判断して所有します。移行中のワークスペース読込状態も``Session``の非公開fieldとし、文書通知、
+ファイル変更通知およびワークスペース読込結果を受け取る処理からだけ更新します。
 
 [#lsp-concurrency]
 == 通知、要求および取消し
