@@ -4,9 +4,9 @@ name: Open VSX publication
 # Releaseのassetをdownloadしてchecksumとattestationを検証してから送信する。
 #
 # stable releaseの公開workflowから呼び出すほか、tagを指定して単独で実行できる。
-# Open VSXへの送信だけが失敗した場合、GitHub Releaseは公開済みで作り直せないため、
-# このworkflowを同じtagで実行して回復する。同じversionの再公開はOpen VSXが拒否するため、
-# 公開済みの版を上書きしない。
+# Open VSXへの送信だけが失敗した場合は、このworkflowを同じtagで実行して回復する。
+# 同じversionが既に存在する場合は公開済みVSIXを取得し、ReleaseのVSIXと同じであれば
+# 送信せずに完了する。内容が異なる場合は停止し、公開済みの版を上書きしない。
 
 on:
   workflow_call:
@@ -33,6 +33,7 @@ jobs:
   publish:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    environment: open-vsx-publish
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -70,10 +71,24 @@ jobs:
           gh attestation verify "$vsix" --repo "$GITHUB_REPOSITORY"
           gh attestation verify open-vsx/sha256.sum --repo "$GITHUB_REPOSITORY"
           echo "vsix=$vsix" >> "$GITHUB_ENV"
+      - name: Existing Open VSX publication verification
+        id: registry
+        run: |
+          state="$(node tools/open-vsx-publication.mjs \
+            --candidate "$vsix" --namespace adocweave --name adocweave-vscode \
+            --version "$(jq -er .version editors/vscode/package.json)")"
+          case "$state" in
+            missing|pending|published) echo "state=$state" >> "$GITHUB_OUTPUT" ;;
+            *) exit 1 ;;
+          esac
       - name: Open VSX publication
+        if: steps.registry.outputs.state == 'missing'
         env:
           OPEN_VSX_TOKEN: ${{ secrets.OPEN_VSX_TOKEN }}
         run: |
+          namespace=adocweave
+          name=adocweave-vscode
+          version="$(jq -er .version editors/vscode/package.json)"
           curl --silent --show-error --fail-with-body --max-time 120 \
             --get --data-urlencode "token=$OPEN_VSX_TOKEN" \
             --output verify-pat.json \
@@ -86,5 +101,24 @@ jobs:
             --url-query "token=$OPEN_VSX_TOKEN" \
             --data-binary "@$vsix" --output published.json \
             https://open-vsx.org/api/-/publish
-          jq -e '.namespace == "adocweave" and .name == "adocweave-vscode"' published.json
-          jq -r '"Published \(.namespace).\(.name) \(.version) to Open VSX"' published.json
+          jq -e \
+            --arg namespace "$namespace" --arg name "$name" --arg version "$version" \
+            '.namespace == $namespace and .name == $name and .version == $version' \
+            published.json
+      - name: Published Open VSX extension verification
+        run: |
+          namespace=adocweave
+          name=adocweave-vscode
+          version="$(jq -er .version editors/vscode/package.json)"
+          for _attempt in {1..12}; do
+            state="$(node tools/open-vsx-publication.mjs \
+              --candidate "$vsix" --namespace "$namespace" --name "$name" --version "$version")"
+            if [ "$state" = published ]; then
+              echo "Published and verified $namespace.$name $version on Open VSX"
+              exit 0
+            fi
+            [ "$state" = missing ] || [ "$state" = pending ]
+            sleep 5
+          done
+          echo "Open VSX did not make $namespace.$name $version available within 60 seconds" >&2
+          exit 1

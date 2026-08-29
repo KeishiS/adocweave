@@ -135,6 +135,7 @@ node tools/release-workflow-policy.mjs
 node --test \
   tools/wasm-release-budget.test.mjs \
   tools/normalize-darwin-archives.test.mjs \
+  tools/open-vsx-publication.test.mjs \
   tools/release-workflow-policy.test.mjs \
   tools/security-audit.test.mjs
 '''
