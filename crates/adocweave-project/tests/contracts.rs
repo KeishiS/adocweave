@@ -264,6 +264,168 @@ fn request_path_overrides_replace_resource_and_local_target_roots() {
 }
 
 #[test]
+fn pathless_input_keeps_include_and_local_target_bases_separate() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let include_base = directory.path().join("includes");
+    fs::create_dir(&include_base).expect("include directory");
+    fs::write(include_base.join("part.adoc"), "included\n").expect("include fixture");
+    fs::write(directory.path().join("asset.png"), "asset\n").expect("local target fixture");
+    let id = SourceId::new("stdin");
+    let mut request = ProjectRequest {
+        targets: vec![ProjectTarget::Source(id.clone())],
+        sources: vec![ProjectSource::memory(
+            id,
+            include_base.clone(),
+            "include::part.adoc[]\n\nimage::asset.png[]\n",
+        )],
+        config: ConfigSelection::Disabled,
+        overrides: ProjectOverrides {
+            include: Some(true),
+            local_target_project_root: Some(directory.path().to_owned()),
+            ..ProjectOverrides::default()
+        },
+        authority: ProjectAuthority::open(
+            directory.path().to_owned(),
+            [directory.path().to_owned()],
+        )
+        .expect("authority"),
+        limits: request_with(Vec::new()).limits,
+    };
+    request.limits.max_output_bytes = u32::MAX;
+
+    let result = process(request, &NeverCancel).expect("pathless input is processed");
+    let target = &result.targets[0];
+    assert!(target.outcome.is_ok());
+    let include = target
+        .resources
+        .iter()
+        .find(|resource| {
+            resource.kind == ProjectResourceKind::Include
+                && resource.path == include_base.join("part.adoc")
+        })
+        .expect("include observation");
+    assert_eq!(include.requested_by.as_ref(), Some(&SourceId::new("stdin")));
+    assert!(matches!(
+        include.outcome,
+        adocweave_project::ProjectResourceOutcome::Loaded { .. }
+    ));
+    let asset = target
+        .resources
+        .iter()
+        .find(|resource| {
+            resource.kind == ProjectResourceKind::LocalTarget
+                && resource.path == directory.path().join("asset.png")
+        })
+        .expect("local-target observation");
+    assert_eq!(asset.requested_by.as_ref(), Some(&SourceId::new("stdin")));
+    assert_eq!(
+        asset.outcome,
+        adocweave_project::ProjectResourceOutcome::Present
+    );
+    assert!(target.resources.iter().any(|resource| {
+        resource.kind == ProjectResourceKind::LocalTarget
+            && resource.path == include_base.join("part.adoc")
+            && resource.outcome == adocweave_project::ProjectResourceOutcome::Present
+    }));
+    assert!(target.resources.iter().all(|resource| {
+        resource.kind != ProjectResourceKind::LocalTarget
+            || resource.outcome == adocweave_project::ProjectResourceOutcome::Present
+    }));
+}
+
+#[test]
+fn pathless_input_checks_same_relative_target_against_each_base() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let include_base = directory.path().join("includes");
+    fs::create_dir(&include_base).expect("include directory");
+    fs::write(include_base.join("same.adoc"), "included\n").expect("include fixture");
+
+    for source in [
+        "include::same.adoc[]\n\nimage::same.adoc[]\n",
+        "image::same.adoc[]\n\ninclude::same.adoc[]\n",
+    ] {
+        let id = SourceId::new("stdin");
+        let mut request = ProjectRequest {
+            targets: vec![ProjectTarget::Source(id.clone())],
+            sources: vec![ProjectSource::memory(id, include_base.clone(), source)],
+            config: ConfigSelection::Disabled,
+            overrides: ProjectOverrides {
+                include: Some(true),
+                local_target_project_root: Some(directory.path().to_owned()),
+                ..ProjectOverrides::default()
+            },
+            authority: ProjectAuthority::open(
+                directory.path().to_owned(),
+                [directory.path().to_owned()],
+            )
+            .expect("authority"),
+            limits: request_with(Vec::new()).limits,
+        };
+        request.limits.max_output_bytes = u32::MAX;
+
+        let result = process(request, &NeverCancel).expect("pathless input is processed");
+        let local_targets = result.targets[0]
+            .resources
+            .iter()
+            .filter(|resource| resource.kind == ProjectResourceKind::LocalTarget)
+            .collect::<Vec<_>>();
+        assert!(local_targets.iter().any(|resource| {
+            resource.path == include_base.join("same.adoc")
+                && resource.outcome == adocweave_project::ProjectResourceOutcome::Present
+                && resource.requested_by.as_ref() == Some(&SourceId::new("stdin"))
+        }));
+        assert!(local_targets.iter().any(|resource| {
+            resource.path == directory.path().join("same.adoc")
+                && matches!(
+                    resource.outcome,
+                    adocweave_project::ProjectResourceOutcome::Missing
+                )
+                && resource.requested_by.as_ref() == Some(&SourceId::new("stdin"))
+        }));
+    }
+}
+
+#[test]
+fn pathless_bases_must_both_be_inside_the_request_authority() {
+    let project = tempfile::tempdir().expect("project directory");
+    let outside = tempfile::tempdir().expect("outside directory");
+    let limits = request_with(Vec::new()).limits;
+    let request = |base: PathBuf, local_root: PathBuf| {
+        let id = SourceId::new("stdin");
+        ProjectRequest {
+            targets: vec![ProjectTarget::Source(id.clone())],
+            sources: vec![ProjectSource::memory(id, base, "text\n")],
+            config: ConfigSelection::Disabled,
+            overrides: ProjectOverrides {
+                local_target_project_root: Some(local_root),
+                ..ProjectOverrides::default()
+            },
+            authority: ProjectAuthority::open(
+                project.path().to_owned(),
+                [project.path().to_owned()],
+            )
+            .expect("project authority"),
+            limits,
+        }
+    };
+
+    assert!(matches!(
+        process(
+            request(outside.path().to_owned(), project.path().to_owned()),
+            &NeverCancel
+        ),
+        Err(ProjectError::Authority(_))
+    ));
+    assert!(matches!(
+        process(
+            request(project.path().to_owned(), outside.path().to_owned()),
+            &NeverCancel
+        ),
+        Err(ProjectError::Authority(_))
+    ));
+}
+
+#[test]
 fn pathless_input_does_not_replace_a_real_file_with_a_synthetic_name() {
     let directory = tempfile::tempdir().expect("temporary directory");
     fs::write(

@@ -150,6 +150,7 @@ struct TargetAnalysisContext<'target> {
     allowed_roots: &'target [PathBuf],
     scope: &'target Path,
     bases: &'target mut BTreeMap<String, PathBuf>,
+    include_bases: &'target mut BTreeMap<String, PathBuf>,
     lookup_bases: &'target mut BTreeMap<String, PathBuf>,
     resources: &'target mut Vec<ProjectResourceResult>,
     filesystem: &'target mut LocalFilesystemSession,
@@ -649,6 +650,7 @@ impl<'request> Processor<'request> {
                 .clone()
                 .unwrap_or_else(|| self.project_root.clone()),
         )]);
+        let mut include_bases = bases.clone();
         let mut lookup_bases = BTreeMap::from([(
             "__adocweave_base__".to_owned(),
             primary
@@ -682,12 +684,20 @@ impl<'request> Processor<'request> {
             allowed_roots: &allowed_roots,
             scope: &scope,
             bases: &mut bases,
+            include_bases: &mut include_bases,
             lookup_bases: &mut lookup_bases,
             resources: &mut resources,
             filesystem: &mut include_filesystem,
         });
         if let Ok(analysis) = &outcome {
-            self.collect_local_targets(analysis, config.as_ref(), &scope, &bases, &mut resources);
+            self.collect_local_targets(
+                analysis,
+                config.as_ref(),
+                &scope,
+                &bases,
+                &include_bases,
+                &mut resources,
+            );
         }
         self.collect_stylesheets(&source_id, config.as_ref(), &scope, &mut resources);
         if let Some(limit) = resources
@@ -735,7 +745,15 @@ impl<'request> Processor<'request> {
                 Err(ProjectTargetError::Incomplete(limit)),
             ));
         }
-        let mut bases = BTreeMap::from([(input.source_id.as_str().to_owned(), input.base.clone())]);
+        let source_base = config
+            .local_targets
+            .project_root
+            .clone()
+            .filter(|_| config.local_targets.enabled)
+            .unwrap_or_else(|| input.base.clone());
+        let mut bases = BTreeMap::from([(input.source_id.as_str().to_owned(), source_base)]);
+        let mut include_bases =
+            BTreeMap::from([(input.source_id.as_str().to_owned(), input.base.clone())]);
         let mut lookup_bases =
             BTreeMap::from([("__adocweave_base__".to_owned(), input.base.clone())]);
         let allowed_roots = if config.resources.include {
@@ -762,12 +780,20 @@ impl<'request> Processor<'request> {
             allowed_roots: &allowed_roots,
             scope: &scope,
             bases: &mut bases,
+            include_bases: &mut include_bases,
             lookup_bases: &mut lookup_bases,
             resources: &mut resources,
             filesystem: &mut include_filesystem,
         });
         if let Ok(analysis) = &outcome {
-            self.collect_local_targets(analysis, config.as_ref(), &scope, &bases, &mut resources);
+            self.collect_local_targets(
+                analysis,
+                config.as_ref(),
+                &scope,
+                &bases,
+                &include_bases,
+                &mut resources,
+            );
         }
         self.collect_stylesheets(&input.source_id, config.as_ref(), &scope, &mut resources);
         if let Some(limit) = resources
@@ -1227,6 +1253,7 @@ impl<'request> Processor<'request> {
             allowed_roots,
             scope,
             bases,
+            include_bases,
             lookup_bases,
             resources,
             filesystem,
@@ -1307,6 +1334,7 @@ impl<'request> Processor<'request> {
                         ProjectResourceOutcome::Loaded { source } => {
                             if let Some(base) = &fixed.base {
                                 bases.insert(include_id.as_str().to_owned(), base.clone());
+                                include_bases.insert(include_id.as_str().to_owned(), base.clone());
                                 if let Some((lookup_base, _)) = target.rsplit_once('/') {
                                     lookup_bases.insert(lookup_base.to_owned(), base.clone());
                                 }
@@ -1403,6 +1431,7 @@ impl<'request> Processor<'request> {
         config: &ResolvedProjectConfig,
         scope: &Path,
         bases: &BTreeMap<String, PathBuf>,
+        include_bases: &BTreeMap<String, PathBuf>,
         resources: &mut Vec<ProjectResourceResult>,
     ) {
         if !config.local_targets.enabled {
@@ -1446,7 +1475,12 @@ impl<'request> Processor<'request> {
                 });
                 continue;
             };
-            let Some(base) = bases.get(owner).cloned() else {
+            let base_by_source = if target.value.kind == adocweave::LocalTargetKind::Include {
+                include_bases
+            } else {
+                bases
+            };
+            let Some(base) = base_by_source.get(owner).cloned() else {
                 self.warnings.push(ProjectWarning::LocalTargetMapping {
                     message: format!("local target owner has no verified base: {owner}"),
                 });
@@ -1456,7 +1490,7 @@ impl<'request> Processor<'request> {
         }
         let mut seen = BTreeSet::new();
         for (owner, base, target) in candidates {
-            if !seen.insert((owner.clone(), target.path.clone())) {
+            if !seen.insert((owner.clone(), base.clone(), target.path.clone())) {
                 continue;
             }
             let requested_by = match self.source_id_for_value(&owner) {
