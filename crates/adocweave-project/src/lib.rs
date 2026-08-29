@@ -11,19 +11,25 @@
 //! results may still contain [`ProjectWarning`] values when a bounded scan
 //! returns the targets it found before reaching its limit.
 //!
-//! This crate defines no long-lived service or shared state. It does not retain
-//! a request or result after the caller drops it, and currently exposes no
-//! filesystem processing entry point.
+//! This crate defines no long-lived service or shared state. [`process`]
+//! consumes one request, fixes each observed file result for that call and
+//! returns all owned results before it finishes.
+
+mod process;
+mod selection;
 
 use std::fmt;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use adocweave::OutputLimits;
 use adocweave::preprocess::{PreprocessedAnalysis, PreprocessedAnalysisError};
-use adocweave_config::{ConfigError, ConfigSnapshot};
+use adocweave_config::{ConfigError, ConfigSnapshot, ResolvedProjectConfig};
 use adocweave_host::{
     FilesystemJobUsage, FilesystemReadLimits, LocalFilesystemPolicy, LogicalSourceId, ResourceError,
 };
+
+pub use process::process;
 
 /// One owned request covering every target selected for a single run.
 ///
@@ -112,7 +118,48 @@ pub struct ProjectTargetResult {
     pub path: PathBuf,
     /// Exact configuration used for this target, or `None` for defaults.
     pub config: Option<ConfigSnapshot>,
+    /// Configuration after applying request-local overrides.
+    pub resolved_config: ResolvedProjectConfig,
+    /// Files read or inspected on behalf of this target.
+    pub resources: Vec<ProjectResourceResult>,
     pub outcome: Result<PreprocessedAnalysis, ProjectTargetError>,
+}
+
+/// Why one filesystem resource was acquired.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProjectResourceKind {
+    Config,
+    Primary,
+    Include,
+    Stylesheet,
+    LocalTarget,
+}
+
+/// One fixed filesystem observation made during a request.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectResourceResult {
+    pub source_id: LogicalSourceId,
+    pub path: PathBuf,
+    pub kind: ProjectResourceKind,
+    pub requested_by: Option<LogicalSourceId>,
+    pub outcome: ProjectResourceOutcome,
+}
+
+/// Content or failure retained for one logical resource until the request ends.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProjectResourceOutcome {
+    Loaded { source: Arc<str> },
+    Present,
+    Missing,
+    Failed(ProjectResourceFailure),
+}
+
+/// A resource failure which callers can classify without parsing text.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProjectResourceFailure {
+    Unreadable(ResourceError),
+    Rejected(ResourceError),
+    Limit(ProjectLimit),
 }
 
 /// Resource use accumulated over one request.

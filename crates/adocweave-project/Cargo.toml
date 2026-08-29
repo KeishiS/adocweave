@@ -14,5 +14,8 @@ adocweave = { path = "../adocweave" }
 adocweave-config = { path = "../adocweave-config" }
 adocweave-host = { path = "../adocweave-host" }
 
+[dev-dependencies]
+tempfile = "3"
+
 [lib]
 path = "src/lib.rs"
