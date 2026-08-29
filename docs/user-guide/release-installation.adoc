@@ -443,11 +443,12 @@ VS Code拡張とZed拡張はLanguage Serverを同梱しません。エディタ�
 
 . エディターで有効な設定に明示した絶対path
 . エディターprocessから見える``PATH``上の``adocweave-lsp``
-. 拡張ごとに定める三つ目の手段
+. GitHub Releaseからの自動取得
 
-三つ目はVS Code拡張とZed拡張で異なります。VS Code拡張はこの文書を参照する導入案内を表示し、Language Serverを
-起動しません。Zed拡張はGitHub Releaseから最新のLanguage Serverを取得します。取得の詳細と、その経路に
-検証がない理由は<<zed-language-server-selection>>で説明します。
+どちらの拡張も、最初の2つで見つからない場合はGitHub Releaseから最新のLanguage Serverを取得します。
+ただし完全性の確かめ方が異なります。VS Code拡張は同じReleaseの``sha256.sum``と照合してから展開します。
+Zed拡張は照合しません。Zedの拡張APIに検証手段がないためです。詳細は
+<<vscode-language-server-selection>>と<<zed-language-server-selection>>で説明します。
 
 いずれの拡張でも、導入済みの実行ファイルが見つかればそちらが優先されます。エディターをGUIから起動すると、
 shellの起動ファイルで設定した``PATH``が反映されない場合があります。その場合はエディターを起動する環境へ
@@ -527,8 +528,19 @@ VSIXを同じcommandで導入し、Windowを再読込します。rollbackでは�
 [#vscode-language-server-selection]
 === VS CodeのLanguage Server選択
 
-VS Codeではmachine scopeの``adocweave.server.path``へ導入済み実行ファイルの絶対pathを指定できます。
-未信頼ワークスペースでは拡張を起動しません。Language Serverの再起動には
+VS Code拡張はmachine scopeの``adocweave.server.path``に指定した絶対path、``PATH``、自動取得の順で
+Language Serverを探します。導入済みの実行ファイルがあれば、そちらが常に優先されます。
+
+どちらにも見つからない場合、拡張はGitHub Releaseから最新のLanguage Serverを取得します。取得したarchiveは、
+同じReleaseの``sha256.sum``に記載された値と照合してから展開します。一致しない場合は展開せず、理由を示して
+起動を中止します。attestationの検証は行いません。sigstoreの検証を拡張へ組み込む必要があるためです。
+
+自動取得した実行ファイルは、拡張のglobal storageにある``servers``内の
+``adocweave-lsp-<version>-<target>``形式のディレクトリへ置きます。同じ版を取得済みの場合は再取得しません。
+配布していないplatformでは自動取得へ進まず、対応するOSとarchitectureを示して失敗します。対応は
+linuxのx86-64とARM64、macOSのARM64、Windowsのx86-64です。
+
+未信頼ワークスペースでは拡張を起動しません。したがって自動取得も行いません。Language Serverの再起動には
 ``AdocWeave: Restart Language Server``を使用します（拡張のコマンド名は英語です）。
 
 [#legacy-editor-managed-cache-removal]

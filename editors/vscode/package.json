@@ -89,6 +89,7 @@
     "test:extension": "node scripts/run-extension-tests.mts"
   },
   "dependencies": {
+    "fflate": "0.8.3",
     "vscode-languageclient": "10.1.0"
   },
   "devDependencies": {
@@ -98,7 +99,6 @@
     "@vscode/test-electron": "3.1.0",
     "@vscode/vsce": "3.9.2",
     "esbuild": "0.28.1",
-    "fflate": "0.8.3",
     "typescript": "7.0.2",
     "vscode-oniguruma": "2.0.1",
     "vscode-textmate": "9.3.2"
