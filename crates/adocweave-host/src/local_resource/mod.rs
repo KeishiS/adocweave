@@ -1807,6 +1807,29 @@ impl LocalFilesystemDraft {
         self.record(result)
     }
 
+    /// Reads one policy-bearing file without following symbolic links and
+    /// reports an exhausted shared read budget without poisoning the draft.
+    pub fn read_utf8_no_symlinks_within_budget(
+        &mut self,
+        source_id: LogicalSourceId,
+        path: &Path,
+    ) -> Result<Option<FilesystemReadOutcome>, FilesystemDraftError> {
+        self.ensure_operation_can_start()?;
+        let result = self
+            .mutation_cursor()
+            .read_utf8_no_symlinks(source_id, path);
+        match result {
+            Ok(outcome) => Ok(Some(outcome)),
+            Err(FilesystemDraftError::Resource(
+                ResourceError::FileLimit { .. } | ResourceError::ByteLimit,
+            )) => Ok(None),
+            Err(error) => {
+                self.poisoned = true;
+                Err(error)
+            }
+        }
+    }
+
     pub fn reread_utf8(
         &mut self,
         source_id: LogicalSourceId,
@@ -1877,6 +1900,20 @@ impl LocalFilesystemDraft {
         let result = self
             .mutation_cursor()
             .inspect_target(source_id, base, target);
+        self.record(result)
+    }
+
+    pub(crate) fn inspect_target_within_outcome(
+        &mut self,
+        source_id: LogicalSourceId,
+        authority: &Path,
+        base: &Path,
+        target: &str,
+    ) -> Result<FilesystemInspectOutcome, FilesystemDraftError> {
+        self.ensure_operation_can_start()?;
+        let result = self
+            .mutation_cursor()
+            .inspect_target_within(source_id, authority, base, target);
         self.record(result)
     }
 

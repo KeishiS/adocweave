@@ -373,6 +373,16 @@ pub struct IncludeFilesystemTransaction {
 }
 
 impl IncludeFilesystemTransaction {
+    /// Lists safely discovered AsciiDoc paths and reports whether the bounded
+    /// walk reached its end.
+    pub fn discover_adoc_paths_within_budget(
+        &self,
+        exclude_directory: impl FnMut(&Path, &Path) -> bool,
+    ) -> Result<(Vec<PathBuf>, bool), FilesystemDraftError> {
+        self.draft_ref()
+            .discover_adoc_paths_within_budget(exclude_directory, || false)
+    }
+
     pub fn read(&mut self, request: IncludeFilesystemRequest) -> IncludeFilesystemOutcome {
         let IncludeFilesystemRequest {
             source_id,
@@ -411,6 +421,33 @@ impl IncludeFilesystemTransaction {
         }
     }
 
+    /// Reads a policy-bearing UTF-8 file while rejecting every symbolic link.
+    pub fn read_utf8_no_symlinks_within_budget(
+        &mut self,
+        request: IncludeFilesystemPathRequest,
+    ) -> IncludeFilesystemBudgetedOutcome {
+        let IncludeFilesystemPathRequest { source_id, path } = request;
+        match self
+            .draft_mut()
+            .read_utf8_no_symlinks_within_budget(source_id.clone(), &path)
+        {
+            Ok(Some(outcome)) => match map_read(outcome) {
+                IncludeFilesystemOutcome::Found(found) => {
+                    IncludeFilesystemBudgetedOutcome::Found(found)
+                }
+                IncludeFilesystemOutcome::NotFound(missing) => {
+                    IncludeFilesystemBudgetedOutcome::NotFound(missing)
+                }
+                IncludeFilesystemOutcome::Failed(_) => unreachable!("successful read mapping"),
+            },
+            Ok(None) => IncludeFilesystemBudgetedOutcome::BudgetExhausted { source_id },
+            Err(error) => IncludeFilesystemBudgetedOutcome::Failed(FailedIncludeFilesystemSource {
+                source_id,
+                error,
+            }),
+        }
+    }
+
     pub fn inspect(
         &mut self,
         request: IncludeFilesystemRequest,
@@ -423,6 +460,26 @@ impl IncludeFilesystemTransaction {
         let outcome = self
             .draft_mut()
             .inspect_target_outcome(source_id.clone(), &base, &target);
+        map_inspection(source_id, outcome)
+    }
+
+    /// Inspects a local target below one explicitly selected authority root.
+    pub fn inspect_within(
+        &mut self,
+        authority: &Path,
+        request: IncludeFilesystemRequest,
+    ) -> IncludeFilesystemInspectionOutcome {
+        let IncludeFilesystemRequest {
+            source_id,
+            base,
+            target,
+        } = request;
+        let outcome = self.draft_mut().inspect_target_within_outcome(
+            source_id.clone(),
+            authority,
+            &base,
+            &target,
+        );
         map_inspection(source_id, outcome)
     }
 
