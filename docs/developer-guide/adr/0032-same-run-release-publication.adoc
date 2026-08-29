@@ -26,7 +26,8 @@
 artifactの再アップロードは行いません。
 
 書き込み権限とOIDCは、``github-release`` Environmentを使う公開jobだけに付与します。Environmentにはrequired reviewerを
-設定し、deployment branchを``main``へ限定します。承認待ちのrunを新しいpushで取り消しません。
+設定し、deployment branch policyはstable tagのpattern ``v*``だけを許可します。現在のRelease workflowはtag pushで
+起動するため、``main``だけを許可しません。承認待ちのrunを新しいpushで取り消しません。
 
 Open VSX、Visual Studio Marketplace、npmおよびCachixへの後続公開はGitHub Releaseを入力とする
 独立workflowにします。通常は同じrunから呼び出しますが、

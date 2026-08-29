@@ -74,10 +74,22 @@ GitHub Releaseを一次公開先とするADR 0023の方針を維持します。n
 検証したものと同じバイト列を配布サービスへ送ります。配布サービス向けには構築し直しません。Cachixには、同じタグの
 コミットから構築して検証したNixパッケージと、その依存物一式（closure）を送ります。
 
-GitHub Releaseの公開と、各外部サービスへの公開が同時に完了することは保証しません。送信だけが失敗した場合は、
-公開済みタグを指定して、公開先ごとのGitHub Actions workflowを再実行します。再実行時は、タグとコミットの対応、
-checksumによる成果物の同一性、attestationによる構築元および公開先の状態を検査します。公開済みの同一バージョンは
-置き換えません。
+GitHub Releaseを作成したRelease workflowから、公開先ごとの再利用workflowを直接かつ並列に呼び出します。
+Release workflow全体の成功には、各外部サービスへの公開と公開後検査の成功も必要です。ただし、GitHub Releaseの公開と、
+各外部サービスで成果物を利用できる時点が同時になることは保証しません。
+
+外部サービスへの送信だけが失敗した場合は、Release workflowの標準操作``Re-run failed jobs``を使用します。成功済みの
+GitHub Release作成jobと公開jobは再実行せず、失敗した再利用workflowと後続jobだけを同じタグとコミットで実行します。
+再実行時は、タグとコミットの対応、checksumによる成果物の同一性、attestationによる構築元および公開先の状態を
+検査します。公開済みの同一バージョンは置き換えません。
+
+npmとVisual Studio MarketplaceのTrusted Publisherが照合するworkflow identityは、OIDCを要求する再利用workflow
+ではなく、その呼出し元である``release.yml``です。公開先ごとのGitHub environmentは再利用workflow内の公開jobへ
+設定し、資格情報と承認の境界を維持します。
+
+GitHub Releaseを作成する``host``には``github-release`` environmentを設定します。4つの外部公開environmentと合わせ、
+deployment branch policyはRelease workflowを起動するstable tagのpattern ``v*``だけを許可します。これにより、書込み権限、
+OIDCおよび公開先の資格情報はstable tagから実行した各公開jobだけで使用できます。
 
 === 検査
 

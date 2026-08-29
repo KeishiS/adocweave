@@ -27,7 +27,12 @@ xref:../../../CONTRIBUTING.adoc[コントリビューションガイド]を基�
 
 計画、構築、検査およびcandidate集約はread-onlyで実行します。GitHub Releaseへの書込みと、attestationへ
 署名するためのOIDCは、保護した``github-release`` Environmentを使う公開jobだけへ与えます。外部actionは
-完全なcommit SHAへ固定します。
+完全なcommit SHAへ固定します。``github-release``と外部公開用Environmentのdeployment branch policyは、
+Release workflowを起動するstable tagのpattern ``v*``だけを許可します。
+
+Release workflowは書込み権限を持つ``host``より前に共通のrelease contractを一度実行し、stable tagのcommitが
+``main``に含まれることを検査します。この検査に必要な``origin/main``の履歴はcontract内で取得します。公開先ごとの
+workflowは検査済みのtagとcommitを受け取り、``main``との関係を個別に検査しません。
 
 registryへ公開するjobは、GitHub Releaseの公開後に別のworkflowとして動きます。repositoryへの書込みは持たず、
 公開先ごとに必要な資格情報だけを受け取ります。tokenによる認証しかない公開先ではそのtokenだけを、公開元を

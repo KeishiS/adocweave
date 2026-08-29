@@ -18,10 +18,8 @@ const RELEASE_HOST = {
   contents: "write",
   "id-token": "write",
 };
-const RELEASE_DISPATCH = { contents: "write" };
-const RELEASE_PUBLICATION_EVENT = "adocweave_release_published";
-const PUBLICATION_TAG_EXPRESSION =
-  "${{ github.event_name == 'repository_dispatch' && github.event.client_payload.tag || inputs.tag }}";
+const PUBLICATION_TAG_EXPRESSION = "${{ inputs.tag }}";
+const PUBLICATION_COMMIT_EXPRESSION = "${{ inputs.commit }}";
 const OIDC_PUBLICATION = { contents: "read", "id-token": "write" };
 const MARKETPLACE_OIDC_PUBLICATION = { contents: "read", "id-token": "write" };
 const EXTERNAL_PUBLICATION_WORKFLOWS = new Set([
@@ -33,6 +31,12 @@ const EXTERNAL_PUBLICATION_WORKFLOWS = new Set([
 const OIDC_PUBLICATION_WORKFLOWS = new Set([
   "marketplace-publish.yml",
   "npm-publish.yml",
+]);
+const RELEASE_PUBLICATION_JOBS = new Map([
+  ["publish-binary-cache", "binary-cache-publish.yml"],
+  ["publish-marketplace", "marketplace-publish.yml"],
+  ["publish-npm", "npm-publish.yml"],
+  ["publish-open-vsx", "open-vsx-publish.yml"],
 ]);
 const BINARY_CACHE_TARGETS = [
   { runner: "ubuntu-24.04", nixSystem: "x86_64-linux" },
@@ -120,8 +124,13 @@ export function validatePermissions(workflows) {
         expectPermissions(job.permissions, RELEASE_HOST, `${name} host permissions`);
         continue;
       }
-      if (name === "release.yml" && jobName === "dispatch-publication") {
-        expectPermissions(job.permissions, RELEASE_DISPATCH, `${name} dispatch permissions`);
+      if (name === "release.yml" && RELEASE_PUBLICATION_JOBS.has(jobName)) {
+        const calledWorkflow = RELEASE_PUBLICATION_JOBS.get(jobName);
+        expectPermissions(
+          job.permissions,
+          OIDC_PUBLICATION_WORKFLOWS.has(calledWorkflow) ? OIDC_PUBLICATION : READ_ONLY,
+          `${name} ${jobName} permissions`,
+        );
         continue;
       }
       if (OIDC_PUBLICATION_WORKFLOWS.has(name) && jobName === "publish") {
@@ -166,15 +175,71 @@ export function validateReleaseFlow(workflows, distConfiguration) {
     fail("release plan must distinguish tag publication from pull-request planning");
   }
 
+  const contractCalls = Object.entries(jobs).filter(([, job]) =>
+    job.uses === "./.github/workflows/release-contract.yml"
+  );
+  if (contractCalls.length !== 1) {
+    fail("release must call the common release contract exactly once");
+  }
+  const [contractJobName, contractCall] = contractCalls[0];
+  if (needs(contractCall).length !== 0 || contractCall.if !== undefined ||
+      contractCall.strategy !== undefined) {
+    fail("common release contract must be one unconditional root job");
+  }
+  const contract = workflows["release-contract.yml"];
+  const contractJobs = Object.entries(contract?.jobs ?? {});
+  if (contract?.on?.workflow_call === undefined || contractJobs.length !== 1) {
+    fail("release-contract.yml must expose one common workflow_call job");
+  }
+  const [, contractVerification] = contractJobs[0];
+  const contractSteps = contractVerification.steps ?? [];
+  const contractCheckout = contractSteps.find((step) =>
+    typeof step.uses === "string" && step.uses.startsWith("actions/checkout@")
+  );
+  if (contractCheckout?.with?.["fetch-depth"] !== 0 ||
+      contractCheckout?.with?.["persist-credentials"] !== false) {
+    fail("common release contract must fetch complete history without checkout credentials");
+  }
+  const releaseContractIndex = contractSteps.findIndex((step) =>
+    String(step.run ?? "").includes("cargo make release-contract")
+  );
+  const ancestrySteps = contractSteps
+    .map((step, index) => ({ index, step }))
+    .filter(({ step }) => String(step.run ?? "").includes("git merge-base --is-ancestor"));
+  if (releaseContractIndex < 0 || ancestrySteps.length !== 1 ||
+      ancestrySteps[0].index <= releaseContractIndex) {
+    fail("common release contract must verify main ancestry once after tag and version checks");
+  }
+  const ancestry = ancestrySteps[0].step;
+  const ancestrySource = String(ancestry.run ?? "");
+  for (const required of [
+    'git rev-parse "refs/tags/$RELEASE_TAG^{commit}"',
+    'test "$tag_commit" = "$RELEASE_COMMIT"',
+    'git merge-base --is-ancestor "$tag_commit" refs/remotes/origin/main',
+  ]) {
+    if (!ancestrySource.includes(required)) {
+      fail(`common release contract must bind the stable tag to origin/main: ${required}`);
+    }
+  }
+  if (!condition(ancestry).includes("github.event_name == 'push'") ||
+      ancestry.env?.RELEASE_COMMIT !== "${{ github.sha }}" ||
+      ancestry.env?.RELEASE_TAG !== "${{ github.ref_name }}") {
+    fail("common release contract main ancestry check must use the triggering tag commit");
+  }
+
   const host = jobs.host;
   const required = [
     "plan",
+    contractJobName,
     "build-local-artifacts",
     "build-global-artifacts",
     "custom-native-artifact-smoke",
   ];
   if (!host || !required.every((jobName) => needs(host).includes(jobName))) {
-    fail("release host must wait for plan, local, global, and native smoke jobs");
+    fail("release host must wait for plan, common contract, local, global, and native smoke jobs");
+  }
+  if (host.environment !== "github-release") {
+    fail("release host write access and OIDC must stay in the github-release environment");
   }
   const hostCondition = condition(host);
   for (const jobName of required) {
@@ -197,31 +262,44 @@ export function validateReleaseFlow(workflows, distConfiguration) {
     fail("release host must attest every published artifact");
   }
 
-  const dispatch = jobs["dispatch-publication"];
-  if (!dispatch || canonical(needs(dispatch).sort()) !== canonical(["host", "plan"])) {
-    fail("release publication dispatch must be a dedicated job after plan and host");
+  for (const [jobName, workflowName] of RELEASE_PUBLICATION_JOBS) {
+    const publication = jobs[jobName];
+    if (!publication ||
+        canonical(needs(publication).sort()) !== canonical(["host", "plan"])) {
+      fail(`release ${jobName} must run directly after plan and host`);
+    }
+    if (publication.uses !== `./.github/workflows/${workflowName}`) {
+      fail(`release ${jobName} must call ${workflowName} directly`);
+    }
+    if (!condition(publication).includes("needs.host.result == 'success'")) {
+      fail(`release ${jobName} must require successful GitHub Release creation`);
+    }
+    if (canonical(publication.with) !== canonical({
+      tag: "${{ needs.plan.outputs.tag }}",
+      commit: "${{ github.sha }}",
+    })) {
+      fail(`release ${jobName} must pass only the planned tag and complete commit SHA`);
+    }
+    if (publication.secrets !== undefined) {
+      fail(`release ${jobName} must leave publication secrets in the called environment`);
+    }
   }
-  if (!condition(dispatch).includes("needs.host.result == 'success'")) {
-    fail("release publication dispatch must require successful GitHub Release creation");
-  }
-  if (dispatch.env?.GH_TOKEN !== "${{ github.token }}" ||
-      dispatch.env?.RELEASE_TAG !== "${{ needs.plan.outputs.tag }}") {
-    fail("release publication dispatch must use only GITHUB_TOKEN and the planned tag");
-  }
-  const dispatchSource = jobRuns(dispatch);
-  if ((dispatchSource.match(/repos\/\$GITHUB_REPOSITORY\/dispatches/gu) ?? []).length !== 1 ||
-      !dispatchSource.includes(`event_type=${RELEASE_PUBLICATION_EVENT}`) ||
-      !dispatchSource.includes('client_payload[tag]=$RELEASE_TAG')) {
-    fail("release publication dispatch must send one repository_dispatch with only the tag");
-  }
-  if (!dispatchSource.includes('releases/tags/$RELEASE_TAG') ||
-      !dispatchSource.includes(".draft") || !dispatchSource.includes(".prerelease")) {
-    fail("release publication dispatch must verify the stable GitHub Release before notifying");
-  }
-  if (/publish\.yml|workflow run|workflow_call|GH_PAT|PERSONAL_ACCESS_TOKEN|APP_PRIVATE_KEY/iu.test(
-    dispatchSource,
+
+  const announce = jobs.announce;
+  const publicationJobs = [...RELEASE_PUBLICATION_JOBS.keys()];
+  if (!announce || !["host", "plan", ...publicationJobs].every((jobName) =>
+    needs(announce).includes(jobName)
   )) {
-    fail("release publication dispatch must not enumerate workflows or use another orchestrator");
+    fail("release announce must wait for every external publication job");
+  }
+  const announceCondition = condition(announce);
+  for (const jobName of ["host", ...publicationJobs]) {
+    if (!announceCondition.includes(`needs.${jobName}.result == 'success'`)) {
+      fail(`release announce must require ${jobName} success`);
+    }
+  }
+  if (/result\s*==\s*'skipped'/.test(announceCondition)) {
+    fail("release announce must not report success after a skipped publication");
   }
 }
 
@@ -259,81 +337,81 @@ export function validateExternalPublicationIsolation(workflows) {
     const workflow = workflows[name];
     if (!workflow) fail(`${name} is required`);
     const triggerNames = Object.keys(workflow.on ?? {}).sort();
-    if (canonical(triggerNames) !== canonical(["repository_dispatch", "workflow_dispatch"])) {
-      fail(`${name} must use only the shared repository dispatch and manual recovery trigger`);
+    if (canonical(triggerNames) !== canonical(["workflow_call"])) {
+      fail(`${name} must be callable only from the Release workflow`);
     }
-    if (canonical(workflow.on?.repository_dispatch?.types) !==
-        canonical([RELEASE_PUBLICATION_EVENT])) {
-      fail(`${name} must receive only the shared stable Release event`);
+    const inputs = workflow.on?.workflow_call?.inputs ?? {};
+    if (canonical(Object.keys(inputs).sort()) !== canonical(["commit", "tag"]) ||
+        inputs.tag?.required !== true || inputs.tag?.type !== "string" ||
+        inputs.commit?.required !== true || inputs.commit?.type !== "string") {
+      fail(`${name} must require only the stable tag and complete commit SHA`);
     }
-    const manualInputs = workflow.on?.workflow_dispatch?.inputs ?? {};
-    if (canonical(Object.keys(manualInputs)) !== canonical(["tag"]) ||
-        manualInputs.tag?.required !== true || manualInputs.tag?.type !== "string") {
-      fail(`${name} manual recovery must accept only the release tag`);
-    }
-    if (!JSON.stringify(workflow).includes(PUBLICATION_TAG_EXPRESSION)) {
-      fail(`${name} must select the dispatched tag automatically and the manual tag on recovery`);
+    const configuration = JSON.stringify(workflow);
+    if (!configuration.includes(PUBLICATION_TAG_EXPRESSION) ||
+        !configuration.includes(PUBLICATION_COMMIT_EXPRESSION)) {
+      fail(`${name} must consume the Release workflow tag and commit`);
     }
     if (workflow.concurrency?.["cancel-in-progress"] !== false ||
         !String(workflow.concurrency?.group ?? "").includes(PUBLICATION_TAG_EXPRESSION)) {
       fail(`${name} must serialize idempotent publication attempts by release tag`);
     }
     const expectedJobs = name === "binary-cache-publish.yml"
-      ? ["publish", "validate", "verify"]
-      : ["publish", "validate"];
+      ? ["publish", "verify"]
+      : ["publish"];
     if (canonical(Object.keys(workflow.jobs ?? {}).sort()) !== canonical(expectedJobs.sort())) {
       fail(`${name} must contain only its isolated publication jobs`);
     }
-    const validation = workflow.jobs.validate;
-    const validationSource = jobRuns(validation);
-    const validationConfiguration = JSON.stringify(validation);
-    if (needs(validation).length !== 0 || validation.environment !== undefined ||
-        /secrets\.|id-token/iu.test(validationConfiguration)) {
-      fail(`${name} validation must run without an environment, publication secret, or OIDC`);
-    }
-    for (const required of [
-      "^v(0|[1-9][0-9]*)",
-      'releases/tags/$REQUESTED_TAG',
-      'git/ref/tags/$REQUESTED_TAG',
-      ".draft",
-      ".prerelease",
-      'git rev-parse "refs/tags/$RELEASE_TAG^{commit}"',
-      'git merge-base --is-ancestor "$commit" refs/remotes/origin/main',
-      "workspace_version",
-      'test "$RELEASE_TAG" = "v$workspace_version"',
-    ]) {
-      if (!validationSource.includes(required)) {
-        fail(`${name} validation must pin the stable Release tag and commit: ${required}`);
-      }
-    }
-    const validationCheckout = (validation.steps ?? []).find((step) =>
-      typeof step.uses === "string" && step.uses.startsWith("actions/checkout@")
-    );
-    if (validationCheckout?.with?.ref !== "refs/tags/${{ steps.input.outputs.tag }}" ||
-        validationCheckout?.with?.["persist-credentials"] !== false) {
-      fail(`${name} validation must checkout only its validated tag without credentials`);
-    }
     const publication = workflow.jobs.publish;
-    if (!needs(publication).includes("validate") ||
-        !JSON.stringify(publication).includes("needs.validate.outputs.commit") ||
-        !JSON.stringify(publication).includes('ref":"${{ needs.validate.outputs.commit }}"')) {
-      fail(`${name} publication must consume only the validated tag and commit`);
+    if (needs(publication).length !== 0 ||
+        !JSON.stringify(publication).includes('ref":"${{ inputs.commit }}"')) {
+      fail(`${name} publication must start from the Release workflow commit`);
     }
     const expectedEnvironment = name.replace(/\.yml$/u, "");
     if (publication.environment !== expectedEnvironment) {
       fail(`${name} publication credentials must stay in the ${expectedEnvironment} environment`);
     }
-  }
-
-  const dispatchCalls = [];
-  for (const [workflowName, workflow] of Object.entries(workflows)) {
-    for (const [jobName, job] of Object.entries(workflow.jobs ?? {})) {
-      const count = (jobRuns(job).match(/repos\/\$GITHUB_REPOSITORY\/dispatches/gu) ?? []).length;
-      dispatchCalls.push(...Array.from({ length: count }, () => `${workflowName}:${jobName}`));
+    const publicationSource = jobRuns(publication);
+    if (/merge-base\s+--is-ancestor|refs\/remotes\/origin\/main/u.test(publicationSource)) {
+      fail(`${name} must leave main ancestry verification in the common release contract`);
+    }
+    for (const required of [
+      'releases/tags/$RELEASE_TAG',
+      ".draft",
+      ".prerelease",
+      'git rev-parse "refs/tags/$RELEASE_TAG^{commit}"',
+      "git rev-parse HEAD",
+      "workspace_version",
+      'test "$RELEASE_TAG" = "v$workspace_version"',
+    ]) {
+      if (!publicationSource.includes(required)) {
+        fail(`${name} publication must verify the stable Release candidate: ${required}`);
+      }
     }
   }
-  if (canonical(dispatchCalls) !== canonical(["release.yml:dispatch-publication"])) {
-    fail("repository dispatch must be sent once and only by the Release dispatch job");
+
+  if (/repository_dispatch|workflow_dispatch|repos\/\$GITHUB_REPOSITORY\/dispatches/u.test(
+    JSON.stringify(workflows),
+  )) {
+    fail("external publication must not use dispatch events or custom event delivery");
+  }
+
+  const openVsxTokenUsers = [];
+  for (const [workflowName, workflow] of Object.entries(workflows)) {
+    const workflowScope = { ...workflow };
+    delete workflowScope.jobs;
+    if (JSON.stringify(workflowScope).includes("OPEN_VSX_TOKEN")) {
+      openVsxTokenUsers.push(`${workflowName}:workflow`);
+    }
+    for (const [jobName, job] of Object.entries(workflow.jobs ?? {})) {
+      if (JSON.stringify(job).includes("OPEN_VSX_TOKEN")) {
+        openVsxTokenUsers.push(`${workflowName}:${jobName}`);
+      }
+    }
+  }
+  if (canonical(openVsxTokenUsers) !== canonical(["open-vsx-publish.yml:publish"]) ||
+      !JSON.stringify(workflows["open-vsx-publish.yml"]?.jobs?.publish)
+        .includes("${{ secrets.OPEN_VSX_TOKEN }}")) {
+    fail("OPEN_VSX_TOKEN must be used only by open-vsx-publish.yml publish");
   }
 
   const marketplace = workflows["marketplace-publish.yml"]?.jobs?.publish;
@@ -439,9 +517,9 @@ export function validateBinaryCachePublication(workflows) {
 export function validateNpmPublication(workflows) {
   const workflow = workflows["npm-publish.yml"];
   if (!workflow) fail("npm-publish.yml is required");
-  const inputs = workflow.on?.workflow_dispatch?.inputs ?? {};
-  if (inputs.package !== undefined || canonical(Object.keys(inputs)) !== canonical(["tag"])) {
-    fail("npm-publish.yml workflow_dispatch must accept only the release tag");
+  const inputs = workflow.on?.workflow_call?.inputs ?? {};
+  if (canonical(Object.keys(inputs).sort()) !== canonical(["commit", "tag"])) {
+    fail("npm-publish.yml workflow_call must accept only the release tag and commit");
   }
   const job = workflow.jobs?.publish;
   if (job?.strategy?.["fail-fast"] !== false ||
