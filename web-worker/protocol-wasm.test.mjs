@@ -313,6 +313,28 @@ test("generated wasm-bindgen snapshots descriptor values without a second Proxy 
   assert.equal(reads, 0);
 });
 
+test("public snapshot fixes a nested value before a later Proxy descriptor mutates it", () => {
+  const source = { text: "Text" };
+  let getterCalls = 0;
+  const request = new Proxy({ source, products: { symbols: true } }, {
+    getOwnPropertyDescriptor(target, key) {
+      if (key === "products") {
+        Object.defineProperty(source, "text", {
+          configurable: true,
+          enumerable: true,
+          get() {
+            getterCalls += 1;
+            return "changed";
+          },
+        });
+      }
+      return Reflect.getOwnPropertyDescriptor(target, key);
+    },
+  });
+  assert.deepEqual(wasm.analyze(analysisPayload(request)).symbols, []);
+  assert.equal(getterCalls, 0);
+});
+
 test("generated wasm-bindgen creates snapshots without inherited setters", () => {
   const request = { source: { text: "Text" }, products: { symbols: true } };
   const names = ["source", "value", "writable", "enumerable", "configurable", "get", "set"];
@@ -327,7 +349,7 @@ test("generated wasm-bindgen creates snapshots without inherited setters", () =>
           throw new Error("inherited setter must not run");
         },
       });
-      assert.deepEqual(wasm.analyze(request).symbols, []);
+      assert.deepEqual(wasm.analyze(analysisPayload(request)).symbols, []);
     } finally {
       if (previous === undefined) delete Object.prototype[name];
       else Object.defineProperty(Object.prototype, name, previous);

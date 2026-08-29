@@ -13,9 +13,81 @@ test("同梱WebAssemblyの位置を入口からの相対で求める", () => {
   assert.equal(wasmUrl.href, "file:///pkg/wasm/adocweave_wasm_bg.wasm");
 });
 
-test("要求をWorkerの入口と同じ形のまま渡す", () => {
+test("要求を一回の走査で固定したsnapshotとして渡す", () => {
   const request = { source: { text: "= T\n" }, products: { html: true } };
-  assert.equal(analysisPayload(request), request);
+  const payload = analysisPayload(request);
+  assert.notEqual(payload, request);
+  assert.notEqual(payload.source, request.source);
+  assert.deepEqual(payload, request);
+});
+
+test("後方のProxy trapが検査済みdata propertyを変えても元要求を再読しない", () => {
+  const source = { text: "Text" };
+  let getterCalls = 0;
+  const request = new Proxy({ source, products: { symbols: true } }, {
+    getOwnPropertyDescriptor(target, key) {
+      if (key === "products") {
+        Object.defineProperty(source, "text", {
+          configurable: true,
+          enumerable: true,
+          get() {
+            getterCalls += 1;
+            return "changed";
+          },
+        });
+      }
+      return Reflect.getOwnPropertyDescriptor(target, key);
+    },
+  });
+  const payload = analysisPayload(request);
+  assert.equal(payload.source.text, "Text");
+  assert.equal(getterCalls, 0);
+});
+
+test("JS snapshotはWASMと同じ固定上限でdescriptor走査を停止する", () => {
+  const tooManyKeys = {};
+  for (let index = 0; index < 20_001; index += 1) tooManyKeys[`key${index}`] = true;
+  let descriptorCalls = 0;
+  const observed = new Proxy(tooManyKeys, {
+    getOwnPropertyDescriptor(target, key) {
+      descriptorCalls += 1;
+      return Reflect.getOwnPropertyDescriptor(target, key);
+    },
+  });
+  assert.throws(
+    () => analysisPayload(observed),
+    (error) => error.code === "input-limit-exceeded" && /object key count/u.test(error.message),
+  );
+  assert.equal(descriptorCalls, 0);
+
+  const tooManyNodes = {};
+  for (let branch = 0; branch < 5; branch += 1) {
+    const values = {};
+    for (let index = 0; index < 19_999; index += 1) values[`key${index}`] = true;
+    tooManyNodes[`branch${branch}`] = values;
+  }
+  assert.throws(
+    () => analysisPayload(tooManyNodes),
+    (error) => error.code === "input-limit-exceeded" && /node count/u.test(error.message),
+  );
+
+  let deep = "Text";
+  for (let depth = 0; depth < 128; depth += 1) deep = { next: deep };
+  for (const request of [deep, new Array(20_001), { ["x".repeat(1_025)]: true }]) {
+    assert.throws(
+      () => analysisPayload(request),
+      (error) => error.code === "input-limit-exceeded",
+    );
+  }
+
+  assert.throws(
+    () => analysisPayload({ value: "x".repeat(16 * 1024 * 1024 + 1) }),
+    (error) => error.code === "input-limit-exceeded" && /string length/u.test(error.message),
+  );
+  assert.throws(
+    () => analysisPayload({ value: "😀".repeat(8 * 1024 * 1024) }),
+    (error) => error.code === "input-limit-exceeded" && /string bytes/u.test(error.message),
+  );
 });
 
 test("cloneできない要求をinvalid-requestとして拒否する", () => {
@@ -84,6 +156,28 @@ test("direct入口はaccessorをWASMへ渡さず共通errorを返す", async () 
     return true;
   });
   assert.equal(getterCalls, 0);
+  assert.equal(analyzeCalls, 0);
+});
+
+test("direct入口は固定上限をWASM呼出し前に共通codeで返す", async () => {
+  let analyzeCalls = 0;
+  const analyzer = await createDirectAnalyzer({
+    ...ASSETS,
+    import: async () => ({
+      initSync() {},
+      protocolSchemaVersion: () => PROTOCOL_SCHEMA_VERSION,
+      analyze: () => {
+        analyzeCalls += 1;
+        return {};
+      },
+    }),
+    readWasm: () => new Uint8Array(),
+  });
+  const request = { source: { text: "x".repeat(16 * 1024 * 1024 + 1) }, products: { html: true } };
+  assert.throws(() => analyzer.analyze(request), (error) => {
+    assert.equal(error.code, "input-limit-exceeded");
+    return true;
+  });
   assert.equal(analyzeCalls, 0);
 });
 

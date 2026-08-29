@@ -106,7 +106,7 @@ test("client exposes only analyze and dispose operations", async () => {
   }
 });
 
-test("analyze sends the public request unchanged with one requestId", async () => {
+test("analyze sends one fixed snapshot with one requestId", async () => {
   const instance = client();
   const request = {
     source: { text: "include::part.adoc[]" },
@@ -123,9 +123,59 @@ test("analyze sends the public request unchanged with one requestId", async () =
     "payload", "requestId", "type",
   ]);
   assert.equal(message.requestId, 1);
-  assert.equal(message.payload, request);
+  assert.notEqual(message.payload, request);
+  assert.notEqual(message.payload.source, request.source);
+  assert.deepEqual(message.payload, request);
   worker.publish(result(1, { html: "done" }));
   assert.deepEqual(await analysis, { html: "done" });
+  instance.dispose();
+});
+
+test("public Worker client sends the fixed value before a later Proxy trap mutates the source", async () => {
+  const instance = client();
+  const source = { text: "Text" };
+  let getterCalls = 0;
+  const request = new Proxy({ source, products: { symbols: true } }, {
+    getOwnPropertyDescriptor(target, key) {
+      if (key === "products") {
+        Object.defineProperty(source, "text", {
+          configurable: true,
+          enumerable: true,
+          get() {
+            getterCalls += 1;
+            return "changed";
+          },
+        });
+      }
+      return Reflect.getOwnPropertyDescriptor(target, key);
+    },
+  });
+  const analysis = instance.analyze(request);
+  const worker = FakeWorker.created[0];
+  const message = await dispatched(worker);
+  assert.equal(message.payload.source.text, "Text");
+  assert.equal(getterCalls, 0);
+  worker.publish(result(message.requestId, { symbols: [] }));
+  assert.deepEqual(await analysis, { symbols: [] });
+  assert.equal(getterCalls, 0);
+  instance.dispose();
+});
+
+test("public Worker client rejects fixed input limits on the main thread", async () => {
+  const instance = client();
+  let deep = "Text";
+  for (let depth = 0; depth < 128; depth += 1) deep = { next: deep };
+  for (const request of [
+    new Array(20_001),
+    deep,
+    { source: { text: "x".repeat(16 * 1024 * 1024 + 1) }, products: { symbols: true } },
+  ]) {
+    await assert.rejects(
+      instance.analyze(request),
+      (error) => error.code === "input-limit-exceeded",
+    );
+  }
+  assert.equal(FakeWorker.created.length, 0);
   instance.dispose();
 });
 
