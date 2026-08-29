@@ -514,8 +514,9 @@ impl Processor {
         path: PathBuf,
     ) -> FixedResource {
         if let Some(fixed) = self.fixed.get(&source_id) {
-            return cached_for_session(fixed, &self.filesystem, true);
+            return cached_for_session(fixed, &path, &self.filesystem, true);
         }
+        let requested_path = path.clone();
         let transaction = self
             .job
             .transaction(&self.filesystem)
@@ -558,17 +559,17 @@ impl Processor {
                 }
             }
         });
-        let (path, base, outcome) = outcome.unwrap_or_else(|error| {
+        let (resolved_path, base, outcome) = outcome.unwrap_or_else(|error| {
             (
-                path,
+                path.clone(),
                 None,
                 ProjectResourceOutcome::Failed(classify_resource_failure(error, self.limits)),
             )
         });
         let fixed = FixedResource {
             source_id: source_id.clone(),
-            requested_path: path.clone(),
-            path,
+            requested_path,
+            path: resolved_path,
             base,
             no_symlinks: true,
             outcome,
@@ -898,7 +899,7 @@ impl Processor {
         filesystem: &mut LocalFilesystemSession,
     ) -> FixedInspection {
         if let Some(fixed) = self.fixed.get(&source_id) {
-            let fixed = cached_for_session(fixed, filesystem, false);
+            let fixed = cached_for_session(fixed, &path, filesystem, false);
             return FixedInspection {
                 source_id,
                 requested_path: path,
@@ -961,7 +962,7 @@ impl Processor {
                 source_id.clone(),
                 FixedResource {
                     source_id: source_id.clone(),
-                    requested_path: path.clone(),
+                    requested_path: fixed.requested_path.clone(),
                     path,
                     base: None,
                     no_symlinks: false,
@@ -1090,8 +1091,9 @@ fn read_fixed_from(
     filesystem: &mut LocalFilesystemSession,
 ) -> FixedResource {
     if let Some(fixed) = fixed_resources.get(&source_id) {
-        return cached_for_session(fixed, filesystem, false);
+        return cached_for_session(fixed, &path, filesystem, false);
     }
+    let requested_path = path.clone();
     let outcome = job
         .transaction(filesystem)
         .map_err(ResourceError::from)
@@ -1131,17 +1133,17 @@ fn read_fixed_from(
                 }
             }
         });
-    let (path, base, outcome) = outcome.unwrap_or_else(|error| {
+    let (resolved_path, base, outcome) = outcome.unwrap_or_else(|error| {
         (
-            path,
+            path.clone(),
             None,
             ProjectResourceOutcome::Failed(classify_resource_failure(error, limits)),
         )
     });
     let fixed = FixedResource {
         source_id: source_id.clone(),
-        requested_path: path.clone(),
-        path,
+        requested_path,
+        path: resolved_path,
         base,
         no_symlinks: false,
         outcome,
@@ -1171,24 +1173,30 @@ fn resolve_lookup_path(
 
 fn cached_for_session(
     fixed: &FixedResource,
+    requested_path: &Path,
     filesystem: &LocalFilesystemSession,
     require_no_symlinks: bool,
 ) -> FixedResource {
-    let within_authority = filesystem
-        .roots()
-        .iter()
-        .any(|root| fixed.requested_path.starts_with(root))
-        && (!matches!(fixed.outcome, ProjectResourceOutcome::Loaded { .. })
-            || filesystem
-                .roots()
-                .iter()
-                .any(|root| fixed.path.starts_with(root)));
-    if within_authority && (!require_no_symlinks || fixed.no_symlinks) {
+    let access = validate_cached_authority(
+        requested_path,
+        &fixed.requested_path,
+        &fixed.path,
+        matches!(
+            fixed.outcome,
+            ProjectResourceOutcome::Loaded { .. }
+                | ProjectResourceOutcome::LoadedOmitted { .. }
+                | ProjectResourceOutcome::Present
+        ),
+        filesystem,
+    );
+    if access.is_ok() && (!require_no_symlinks || fixed.no_symlinks) {
         return fixed.clone();
     }
     let mut rejected = fixed.clone();
-    let error = if !within_authority {
-        ResourceError::OutsideRoots(fixed.requested_path.clone())
+    rejected.requested_path = requested_path.to_owned();
+    rejected.path = requested_path.to_owned();
+    let error = if let Err(error) = access {
+        error
     } else {
         ResourceError::Unverifiable(
             "resource was not acquired with symbolic links forbidden".to_owned(),
@@ -1203,23 +1211,41 @@ fn cached_inspection_for_session(
     requested_path: &Path,
     filesystem: &LocalFilesystemSession,
 ) -> FixedInspection {
-    let roots = filesystem.roots();
-    let within_authority = roots.iter().any(|root| requested_path.starts_with(root))
-        && roots
-            .iter()
-            .any(|root| fixed.requested_path.starts_with(root))
-        && (!matches!(fixed.outcome, ProjectResourceOutcome::Present)
-            || roots.iter().any(|root| fixed.path.starts_with(root)));
-    if within_authority {
+    let access = validate_cached_authority(
+        requested_path,
+        &fixed.requested_path,
+        &fixed.path,
+        matches!(fixed.outcome, ProjectResourceOutcome::Present),
+        filesystem,
+    );
+    if access.is_ok() {
         return fixed.clone();
     }
     let mut rejected = fixed.clone();
     rejected.requested_path = requested_path.to_owned();
     rejected.path = requested_path.to_owned();
     rejected.outcome = ProjectResourceOutcome::Failed(ProjectResourceFailure::Rejected(
-        ResourceError::OutsideRoots(requested_path.to_owned()),
+        access.expect_err("failed cache authority is retained"),
     ));
     rejected
+}
+
+fn validate_cached_authority(
+    requested_path: &Path,
+    acquired_requested_path: &Path,
+    acquired_path: &Path,
+    acquired_path_is_verified: bool,
+    filesystem: &LocalFilesystemSession,
+) -> Result<(), ResourceError> {
+    let roots = filesystem.roots();
+    let allowed = |path: &Path| roots.iter().any(|root| path.starts_with(root));
+    if !allowed(requested_path)
+        || !allowed(acquired_requested_path)
+        || (acquired_path_is_verified && !allowed(acquired_path))
+    {
+        return Err(ResourceError::OutsideRoots(requested_path.to_owned()));
+    }
+    Ok(())
 }
 
 fn current_read_limit(job: &IncludeFilesystemJob, limits: crate::ProjectLimits) -> ProjectLimit {

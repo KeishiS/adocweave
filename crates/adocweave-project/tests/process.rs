@@ -807,6 +807,120 @@ fn broad_cached_local_target_cannot_bypass_a_later_confined_root() {
 
 #[cfg(unix)]
 #[test]
+fn canonical_cached_body_cannot_hide_an_outside_local_target_request() {
+    use std::os::unix::fs::symlink;
+
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    fs::create_dir(root.join("outside")).expect("outside directory");
+    fs::create_dir(root.join("narrow")).expect("narrow directory");
+    write(
+        root.join(".adocweave.toml"),
+        "schema-version = 2\n[html]\nstylesheet-files = [\"outside/alias.dat\"]\n",
+    );
+    write(
+        root.join("narrow/.adocweave.toml"),
+        "schema-version = 2\n[local-targets]\nenabled = true\nproject-root = \".\"\n",
+    );
+    write(root.join("narrow/actual.dat"), "actual\n");
+    symlink(
+        PathBuf::from("../narrow/actual.dat"),
+        root.join("outside/alias.dat"),
+    )
+    .expect("reverse symlink");
+    write(root.join("a.adoc"), "a\n");
+    write(
+        root.join("narrow/z.adoc"),
+        "image::../outside/alias.dat[]\n",
+    );
+
+    let result = process(request(
+        root,
+        vec![
+            ProjectTarget::Path(PathBuf::from("a.adoc")),
+            ProjectTarget::Path(PathBuf::from("narrow/z.adoc")),
+        ],
+    ))
+    .expect("request remains coherent");
+    let broad = result
+        .targets
+        .iter()
+        .find(|target| target.path.ends_with("a.adoc"))
+        .expect("broad target");
+    let narrow = result
+        .targets
+        .iter()
+        .find(|target| target.path.ends_with("z.adoc"))
+        .expect("narrow target");
+    assert!(broad.resources.iter().any(|resource| {
+        resource.kind == ProjectResourceKind::Stylesheet
+            && matches!(resource.outcome, ProjectResourceOutcome::Loaded { .. })
+    }));
+    assert!(narrow.resources.iter().any(|resource| {
+        resource.kind == ProjectResourceKind::LocalTarget
+            && matches!(
+                resource.outcome,
+                ProjectResourceOutcome::Failed(ProjectResourceFailure::Rejected(_))
+            )
+    }));
+}
+
+#[cfg(unix)]
+#[test]
+fn same_authority_reuses_loaded_present_missing_and_failed_observations() {
+    use std::os::unix::fs::symlink;
+
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let outside = tempfile::tempdir().expect("outside directory");
+    let root = directory.path();
+    write(
+        root.join(".adocweave.toml"),
+        "schema-version = 2\n[local-targets]\nenabled = true\nproject-root = \".\"\n[html]\nstylesheet-files = [\"loaded.dat\"]\n",
+    );
+    write(root.join("loaded.dat"), "loaded\n");
+    write(root.join("present.dat"), "present\n");
+    write(outside.path().join("failed.dat"), "failed\n");
+    symlink(outside.path().join("failed.dat"), root.join("failed.dat"))
+        .expect("failed local target symlink");
+    let references =
+        "image::loaded.dat[]\nimage::present.dat[]\nimage::missing.dat[]\nimage::failed.dat[]\n";
+    write(root.join("a.adoc"), references);
+    write(root.join("b.adoc"), references);
+
+    let result = process(request(
+        root,
+        vec![
+            ProjectTarget::Path(PathBuf::from("a.adoc")),
+            ProjectTarget::Path(PathBuf::from("b.adoc")),
+        ],
+    ))
+    .expect("same-authority observations are reusable");
+    let second = result
+        .targets
+        .iter()
+        .find(|target| target.path.ends_with("b.adoc"))
+        .expect("second target");
+    let local = |name: &str| {
+        &second
+            .resources
+            .iter()
+            .find(|resource| {
+                resource.kind == ProjectResourceKind::LocalTarget && resource.path.ends_with(name)
+            })
+            .unwrap_or_else(|| panic!("local target result for {name}"))
+            .outcome
+    };
+    assert_eq!(local("loaded.dat"), &ProjectResourceOutcome::Present);
+    assert_eq!(local("present.dat"), &ProjectResourceOutcome::Present);
+    assert_eq!(local("missing.dat"), &ProjectResourceOutcome::Missing);
+    assert!(matches!(
+        local("failed.dat"),
+        ProjectResourceOutcome::Failed(ProjectResourceFailure::Rejected(_))
+    ));
+}
+
+#[cfg(unix)]
+#[test]
 fn normal_cached_read_cannot_be_reused_as_no_symlink_config_read() {
     use std::os::unix::fs::symlink;
 
