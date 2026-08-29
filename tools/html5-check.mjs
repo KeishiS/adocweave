@@ -185,24 +185,38 @@ function conformanceRequest(name, expectedMode) {
   const source = entry.sourceFile
     ? readFileSync(resolve(conformanceDirectory, entry.sourceFile), "utf8")
     : entry.source;
+  const renderPolicy = { ...(entry.renderPolicy ?? {}) };
+  if (renderPolicy.resources !== undefined) {
+    renderPolicy.resourceCapabilities = renderPolicy.resources;
+    delete renderPolicy.resources;
+  }
+  const renderInputs = entry.renderInputs ?? {};
+  const resources = {};
+  if (renderInputs.references !== undefined) {
+    resources.references = renderInputs.references;
+  }
+  if (renderInputs.resources !== undefined) {
+    resources.assets = renderInputs.resources;
+  }
+  if (renderInputs.citations !== undefined) {
+    resources.citations = renderInputs.citations;
+  }
+  if (renderInputs.bibliography !== undefined) {
+    resources.bibliography = renderInputs.bibliography;
+  }
+  const sourceInput = { id: `html5:${name}`, text: source };
+  if (entry.analysisOptions?.attributes !== undefined) {
+    sourceInput.attributes = entry.analysisOptions.attributes;
+  }
+  if (entry.analysisOptions?.syntax?.syntaxMode !== undefined) {
+    sourceInput.syntaxMode = entry.analysisOptions.syntax.syntaxMode;
+  }
   return {
-    sourceId: `html5:${name}`,
-    source,
+    source: sourceInput,
     products: {
-      syntax: false,
-      canonicalAst: false,
-      html: true,
-      attributeOccurrences: false,
-      attributeQueries: false,
-      resourceQueries: false,
-      diagnostics: true,
-      symbols: false,
-      projection: false,
+      html: Object.keys(renderPolicy).length === 0 ? true : renderPolicy,
     },
-    renderInputs: entry.renderInputs ?? {},
-    analysisOptions: entry.analysisOptions ?? {},
-    renderPolicy: entry.renderPolicy ?? {},
-    outputLimits: entry.outputLimits ?? {},
+    ...(Object.keys(resources).length === 0 ? {} : { resources }),
   };
 }
 

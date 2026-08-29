@@ -278,10 +278,19 @@ async function verifyWasmContract() {
     const sourceStart = source.indexOf(text);
     return { sourceStart, sourceEnd: sourceStart + Buffer.byteLength(text) };
   });
-  const response = wasm.process({
-    sourceId: "acceptance:resolved-display-text",
-    source,
-    renderInputs: {
+  const response = wasm.analyze({
+    source: {
+      id: "acceptance:resolved-display-text",
+      text: source,
+    },
+    products: {
+      html: {
+        activeUrls: { allowResolvedRootRelative: true },
+        unresolvedReferences: "label-only",
+      },
+      document: true,
+    },
+    resources: {
       references: [
         {
           ...ranges[0],
@@ -305,10 +314,6 @@ async function verifyWasmContract() {
         },
       ],
     },
-    renderPolicy: {
-      activeUrls: { allowResolvedRootRelative: true },
-      unresolvedReferences: "label-only",
-    },
   });
 
   const expected =
@@ -316,9 +321,9 @@ async function verifyWasmContract() {
     '<p><a href="/records/explicit">Authored <strong>label</strong></a></p>\n' +
     "<p></p>\n";
   if (response.html !== expected) throw new Error(`resolved text mismatch: ${response.html}`);
-  const edges = response.projection.referenceEdges;
+  const edges = response.document.referenceEdges;
   if (edges[0].resolution.displayText !== "<Public & *plain*>") {
-    throw new Error("projection omitted resolved display text");
+    throw new Error("document view omitted resolved display text");
   }
   const failure = edges[2].resolution;
   if (
@@ -326,7 +331,7 @@ async function verifyWasmContract() {
     failure.kind !== "missing-reference-target" ||
     Object.keys(failure).sort().join(",") !== "kind,status"
   ) {
-    throw new Error(`failure projection is not kind-only: ${JSON.stringify(failure)}`);
+    throw new Error(`failure result is not kind-only: ${JSON.stringify(failure)}`);
   }
 }
 
