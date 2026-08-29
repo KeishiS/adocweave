@@ -757,6 +757,54 @@ fn broad_cached_read_cannot_bypass_a_later_confined_include_root() {
     }));
 }
 
+#[test]
+fn broad_cached_local_target_cannot_bypass_a_later_confined_root() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    fs::create_dir(root.join("narrow")).expect("narrow directory");
+    write(
+        root.join(".adocweave.toml"),
+        "schema-version = 2\n[local-targets]\nenabled = true\nproject-root = \".\"\n",
+    );
+    write(
+        root.join("narrow/.adocweave.toml"),
+        "schema-version = 2\n[local-targets]\nenabled = true\nproject-root = \".\"\n",
+    );
+    write(root.join("shared.dat"), "shared\n");
+    write(root.join("a.adoc"), "image::shared.dat[]\n");
+    write(root.join("narrow/z.adoc"), "image::../shared.dat[]\n");
+
+    let result = process(request(
+        root,
+        vec![
+            ProjectTarget::Path(PathBuf::from("a.adoc")),
+            ProjectTarget::Path(PathBuf::from("narrow/z.adoc")),
+        ],
+    ))
+    .expect("request remains coherent");
+    let broad = result
+        .targets
+        .iter()
+        .find(|target| target.path.ends_with("a.adoc"))
+        .expect("broad target");
+    let narrow = result
+        .targets
+        .iter()
+        .find(|target| target.path.ends_with("z.adoc"))
+        .expect("narrow target");
+    assert!(broad.resources.iter().any(|resource| {
+        resource.kind == ProjectResourceKind::LocalTarget
+            && resource.outcome == ProjectResourceOutcome::Present
+    }));
+    assert!(narrow.resources.iter().any(|resource| {
+        resource.kind == ProjectResourceKind::LocalTarget
+            && matches!(
+                resource.outcome,
+                ProjectResourceOutcome::Failed(ProjectResourceFailure::Rejected(_))
+            )
+    }));
+}
+
 #[cfg(unix)]
 #[test]
 fn normal_cached_read_cannot_be_reused_as_no_symlink_config_read() {

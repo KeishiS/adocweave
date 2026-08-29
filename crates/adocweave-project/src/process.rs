@@ -58,6 +58,7 @@ struct FixedResource {
 #[derive(Clone, Debug)]
 struct FixedInspection {
     source_id: LogicalSourceId,
+    requested_path: PathBuf,
     path: PathBuf,
     outcome: ProjectResourceOutcome,
 }
@@ -900,6 +901,7 @@ impl Processor {
             let fixed = cached_for_session(fixed, filesystem, false);
             return FixedInspection {
                 source_id,
+                requested_path: path,
                 path: fixed.path.clone(),
                 outcome: match &fixed.outcome {
                     ProjectResourceOutcome::Loaded { .. }
@@ -910,8 +912,9 @@ impl Processor {
             };
         }
         if let Some(fixed) = self.inspections.get(&source_id) {
-            return fixed.clone();
+            return cached_inspection_for_session(fixed, &path, filesystem);
         }
+        let requested_path = path.clone();
         let outcome = self
             .job
             .transaction(filesystem)
@@ -949,6 +952,7 @@ impl Processor {
         };
         let fixed = FixedInspection {
             source_id: source_id.clone(),
+            requested_path,
             path: path.clone(),
             outcome: outcome.clone(),
         };
@@ -1191,6 +1195,30 @@ fn cached_for_session(
         )
     };
     rejected.outcome = ProjectResourceOutcome::Failed(ProjectResourceFailure::Rejected(error));
+    rejected
+}
+
+fn cached_inspection_for_session(
+    fixed: &FixedInspection,
+    requested_path: &Path,
+    filesystem: &LocalFilesystemSession,
+) -> FixedInspection {
+    let roots = filesystem.roots();
+    let within_authority = roots.iter().any(|root| requested_path.starts_with(root))
+        && roots
+            .iter()
+            .any(|root| fixed.requested_path.starts_with(root))
+        && (!matches!(fixed.outcome, ProjectResourceOutcome::Present)
+            || roots.iter().any(|root| fixed.path.starts_with(root)));
+    if within_authority {
+        return fixed.clone();
+    }
+    let mut rejected = fixed.clone();
+    rejected.requested_path = requested_path.to_owned();
+    rejected.path = requested_path.to_owned();
+    rejected.outcome = ProjectResourceOutcome::Failed(ProjectResourceFailure::Rejected(
+        ResourceError::OutsideRoots(requested_path.to_owned()),
+    ));
     rejected
 }
 
