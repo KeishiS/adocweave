@@ -632,9 +632,9 @@ Language Serverを探します。導入済みの実行ファイルがあれば�
 起動を中止します。attestationの検証は行いません。sigstoreの検証を拡張へ組み込む必要があるためです。
 
 自動取得した実行ファイルは、拡張のglobal storageにある``servers``内の
-``adocweave-lsp-<version>-<target>``形式のディレクトリへ置きます。同じ版を取得済みの場合は再取得しません。
-配布していないplatformでは自動取得へ進まず、対応するOSとarchitectureを示して失敗します。対応は
-linuxのx86-64とARM64、macOSのARM64、Windowsのx86-64です。
+``adocweave-lsp-<version>-<target>``形式のディレクトリへ置きます。同じ版を取得済みの場合は再取得せず、
+新しい版を取得したときは以前の版を削除します。配布していないplatformでは自動取得へ進まず、対応するOSと
+architectureを示して失敗します。対応はlinuxのx86-64とARM64、macOSのARM64、Windowsのx86-64です。
 
 未信頼ワークスペースでは拡張を起動しません。したがって自動取得も行いません。Language Serverの再起動には
 ``AdocWeave: Restart Language Server``を使用します（拡張のコマンド名は英語です）。
