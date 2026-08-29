@@ -123,7 +123,6 @@ export function main() {
       "--no-include",
       "--fail-on",
       "warning",
-      "--local-targets",
       "--project-root",
       ".",
       entry.path,

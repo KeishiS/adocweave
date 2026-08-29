@@ -120,11 +120,11 @@ adocweave check --enable-rule macro-boundary document.adoc
 === ローカル参照の確認
 
 通常の``check``は、参照先が実在するかを確認しません。相対リンク、文書間参照、画像およびinclude先を
-確認する場合は、``--local-targets``と``--project-root``を必ず同時に指定します。片方だけでは実行できません。
+確認する場合は、``--project-root``で確認を許可するディレクトリを指定します。
 
 [source,console]
 ----
-adocweave check --local-targets --project-root . docs/manual.adoc
+adocweave check --project-root . docs/manual.adoc
 ----
 
 参照先は記述元ファイルの親ディレクトリを基準に解決し、

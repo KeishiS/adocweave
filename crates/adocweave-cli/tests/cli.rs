@@ -1781,7 +1781,6 @@ endif::[]\n";
         &[
             "check",
             "--json",
-            "--local-targets",
             "--project-root",
             root.to_str().expect("UTF-8 root"),
             "-",
@@ -1814,7 +1813,7 @@ fn run_permission_fixture(root: &std::path::Path, json: bool) -> Output {
         let mut command = adocweave();
         command
             .current_dir(root)
-            .args(["check", "--local-targets", "--project-root", "."]);
+            .args(["check", "--project-root", "."]);
         if json {
             command.arg("--json");
         }
@@ -1916,7 +1915,6 @@ fn local_target_inspection_limit_has_stable_cli_contract() {
             "check",
             "--config",
             ".adocweave.toml",
-            "--local-targets",
             "--project-root",
             ".",
         ]);
@@ -1953,7 +1951,6 @@ fn local_target_inspection_limit_has_stable_cli_contract() {
             "--config",
             ".adocweave.toml",
             "--no-include",
-            "--local-targets",
             "--project-root",
             ".",
             "-",
@@ -2018,14 +2015,7 @@ fn local_target_check_accepts_every_supported_fixture_kind() {
         "/../../fixtures/local-target/all-kinds/root.adoc"
     );
     let output = adocweave()
-        .args([
-            "check",
-            "--local-targets",
-            "--project-root",
-            root,
-            "--json",
-            document,
-        ])
+        .args(["check", "--project-root", root, "--json", document])
         .output()
         .expect("all local target kinds");
 
@@ -2055,7 +2045,6 @@ fn local_target_check_classifies_paths_and_ignores_external_targets() {
     let output = adocweave()
         .args([
             "check",
-            "--local-targets",
             "--project-root",
             root.to_str().expect("UTF-8 root"),
             "--json",
@@ -2092,7 +2081,6 @@ fn local_target_human_output_escapes_control_characters() {
     let output = run_with_stdin(
         &[
             "check",
-            "--local-targets",
             "--project-root",
             root.to_str().expect("UTF-8 root"),
             "-",
@@ -2112,7 +2100,6 @@ fn local_target_columns_use_utf8_bytes() {
         &[
             "check",
             "--json",
-            "--local-targets",
             "--project-root",
             root.to_str().expect("UTF-8 root"),
             "-",
@@ -2151,7 +2138,6 @@ fn local_target_file_base_uses_the_invocation_directory_for_bare_paths() {
             "--include",
             "--base-dir",
             "../include-base",
-            "--local-targets",
             "--project-root",
             "..",
             "root.adoc",
@@ -2192,7 +2178,6 @@ fn local_target_check_rejects_symlink_escape_and_keeps_duplicate_positions() {
     let output = adocweave()
         .args([
             "check",
-            "--local-targets",
             "--project-root",
             root.to_str().expect("UTF-8 root"),
             "--json",
@@ -2232,14 +2217,7 @@ fn local_target_check_uses_the_explicit_project_root_for_parent_targets() {
 
     let output = adocweave()
         .current_dir(&project)
-        .args([
-            "check",
-            "--local-targets",
-            "--project-root",
-            ".",
-            "--json",
-            "docs/root.adoc",
-        ])
+        .args(["check", "--project-root", ".", "--json", "docs/root.adoc"])
         .output()
         .expect("local target check");
     let diagnostics: serde_json::Value =
@@ -2445,7 +2423,6 @@ fn local_include_with_literal_url_suffix_uses_the_shared_fixture() {
         .args([
             "check",
             "--include",
-            "--local-targets",
             "--project-root",
             project_root,
             "--json",
@@ -2480,7 +2457,6 @@ fn local_target_check_uses_the_explicit_include_base_fixture() {
             "--include",
             "--base-dir",
             base,
-            "--local-targets",
             "--project-root",
             project_root,
             "--json",
@@ -2667,7 +2643,6 @@ fn local_target_check_shares_include_resolution_and_honors_optional() {
         .args([
             "check",
             "--include",
-            "--local-targets",
             "--project-root",
             root.to_str().expect("UTF-8 root"),
             "--json",
@@ -2714,7 +2689,6 @@ fn local_target_diagnostic_ids_include_the_fixture_source() {
         .args([
             "check",
             "--include",
-            "--local-targets",
             "--project-root",
             project_root,
             "--json",
@@ -2763,7 +2737,6 @@ fn local_target_check_reports_include_read_failures() {
         .args([
             "check",
             "--include",
-            "--local-targets",
             "--project-root",
             root.to_str().expect("UTF-8 root"),
             "--json",

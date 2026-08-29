@@ -121,7 +121,7 @@ link:../../config/japanese-terminology.json[`config/japanese-terminology.json`]�
 | 版を指す「バージョン」
 
 | target
-| ``--local-targets``、``target``ディレクトリ、``local-target-unverifiable``
+| ``--project-root``、``target``ディレクトリ、``local-target-unverifiable``
 | 指し示す先としての「参照先」
 
 | file

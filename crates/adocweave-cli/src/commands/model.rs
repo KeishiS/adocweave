@@ -53,7 +53,6 @@ pub(crate) enum OptionId {
     NoInclude,
     BaseDir,
     AllowRoot,
-    LocalTargets,
     ProjectRoot,
     Complete,
     Css,
@@ -349,16 +348,6 @@ pub(crate) const OPTIONS: &[OptionSpec] = &[
         command_help_line: Some("  --allow-root DIR  includeを許可する範囲（複数指定可）\n"),
     },
     OptionSpec {
-        id: OptionId::LocalTargets,
-        names: &["--local-targets"],
-        value: OptionValue::Flag,
-        commands: &[CommandId::Check],
-        root: false,
-        version: false,
-        root_help_line: "  --local-targets     Check local file targets; check only\n",
-        command_help_line: None,
-    },
-    OptionSpec {
         id: OptionId::ProjectRoot,
         names: &["--project-root"],
         value: OptionValue::Required {
@@ -369,7 +358,7 @@ pub(crate) const OPTIONS: &[OptionSpec] = &[
         commands: &[CommandId::Check],
         root: false,
         version: false,
-        root_help_line: "  --project-root DIR  Restrict local targets below DIR; requires --local-targets\n",
+        root_help_line: "  --project-root DIR  Check local file targets below DIR; check only\n",
         command_help_line: None,
     },
     OptionSpec {
@@ -994,7 +983,7 @@ mod tests {
     #[test]
     fn option_model_is_complete_and_has_exact_command_applicability() {
         assert_eq!(validate_options(OPTIONS, COMMANDS), Ok(()));
-        assert_eq!(OPTIONS.len(), 30);
+        assert_eq!(OPTIONS.len(), 29);
         assert_eq!(
             OPTIONS
                 .iter()
@@ -1020,7 +1009,6 @@ mod tests {
                 OptionId::NoInclude,
                 OptionId::BaseDir,
                 OptionId::AllowRoot,
-                OptionId::LocalTargets,
                 OptionId::ProjectRoot,
                 OptionId::Complete,
                 OptionId::Css,
@@ -1093,7 +1081,6 @@ mod tests {
                 OptionId::NoInclude,
                 OptionId::BaseDir,
                 OptionId::AllowRoot,
-                OptionId::LocalTargets,
                 OptionId::ProjectRoot,
                 OptionId::Help,
             ]

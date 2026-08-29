@@ -36,8 +36,7 @@ Options:
   --no-include  Leave include directives unresolved
   --base-dir DIR    Resolve root document includes from DIR
   --allow-root DIR  Permit include resources below DIR; repeatable
-  --local-targets     Check local file targets; check only
-  --project-root DIR  Restrict local targets below DIR; requires --local-targets
+  --project-root DIR  Check local file targets below DIR; check only
   --complete  Convert to a complete HTML document instead of a fragment
   --css FILE      Embed CSS from FILE into the complete document; repeatable
   --css-url URL   Link an allowed stylesheet URL; repeatable
