@@ -764,6 +764,142 @@ async fn protocol_reports_an_incomplete_scan_once_without_document_diagnostics()
     fs::remove_dir_all(root).expect("cleanup");
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn protocol_workspace_rejection_keeps_document_sync_and_connection_current() {
+    use std::time::Duration;
+
+    use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+
+    let (server_stream, client_stream) = tokio::io::duplex(64 * 1024);
+    let (server_read, server_write) = tokio::io::split(server_stream);
+    let server = run(server_read.compat(), server_write.compat_write());
+    let (client_read, mut client_write) = tokio::io::split(client_stream);
+    let mut client_read = BufReader::new(client_read);
+
+    let client = async move {
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": null,
+                    "capabilities": {
+                        "textDocument": {
+                            "publishDiagnostics": {"versionSupport": true}
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+        assert_eq!(read_message(&mut client_read).await["id"], 1);
+        write_message(
+            &mut client_write,
+            &json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await;
+
+        let document_uri = "untitled:current-input";
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {"textDocument": {
+                    "uri": document_uri,
+                    "languageId": "asciidoc",
+                    "version": 1,
+                    "text": "= Before\n"
+                }}
+            }),
+        )
+        .await;
+        let opened = read_message(&mut client_read).await;
+        assert_eq!(opened["method"], "textDocument/publishDiagnostics");
+        assert_eq!(opened["params"]["version"], 1);
+        assert!(
+            opened["params"]["diagnostics"]
+                .as_array()
+                .is_some_and(|diagnostics| diagnostics.iter().any(|diagnostic| {
+                    matches!(
+                        diagnostic["code"].as_str(),
+                        Some("workspace-input-error" | "workspace-resource-error")
+                    )
+                }))
+        );
+
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": document_uri, "version": 2},
+                    "contentChanges": [{"text": "= After\n"}]
+                }
+            }),
+        )
+        .await;
+        let changed = read_message(&mut client_read).await;
+        assert_eq!(changed["method"], "textDocument/publishDiagnostics");
+        assert_eq!(changed["params"]["version"], 2);
+        assert!(
+            changed["params"]["diagnostics"]
+                .as_array()
+                .is_some_and(|diagnostics| diagnostics
+                    .iter()
+                    .any(|diagnostic| { diagnostic["code"] == "workspace-input-error" }))
+        );
+
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/documentSymbol",
+                "params": {"textDocument": {"uri": document_uri}}
+            }),
+        )
+        .await;
+        assert_eq!(read_message(&mut client_read).await["result"], json!([]));
+
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didClose",
+                "params": {"textDocument": {"uri": document_uri}}
+            }),
+        )
+        .await;
+        let closed = read_message(&mut client_read).await;
+        assert_eq!(closed["method"], "textDocument/publishDiagnostics");
+        assert_eq!(closed["params"]["uri"], document_uri);
+
+        write_message(
+            &mut client_write,
+            &json!({"jsonrpc": "2.0", "id": 3, "method": "shutdown", "params": null}),
+        )
+        .await;
+        assert_eq!(read_message(&mut client_read).await["id"], 3);
+        write_message(
+            &mut client_write,
+            &json!({"jsonrpc": "2.0", "method": "exit", "params": null}),
+        )
+        .await;
+    };
+
+    let (server_result, ()) = tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::join!(server, client)
+    })
+    .await
+    .expect("protocol timeout");
+    server_result.expect("clean exit");
+}
+
 #[cfg(unix)]
 #[tokio::test(flavor = "current_thread")]
 async fn protocol_stops_when_the_declared_client_process_does_not_exist() {

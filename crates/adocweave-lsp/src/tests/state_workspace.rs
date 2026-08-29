@@ -1108,7 +1108,7 @@ fn stale_analysis_never_replaces_published_diagnostics() {
 }
 
 #[test]
-fn oversized_did_open_preserves_every_committed_state_and_emits_no_job() {
+fn rejected_change_keeps_protocol_input_for_the_next_incremental_change() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock")
@@ -1141,48 +1141,67 @@ fn oversized_did_open_preserves_every_committed_state_and_emits_no_job() {
         }
     })));
     assert_eq!(accepted.len(), 1);
-    let previous = service
-        .documents
-        .get(document_uri.as_str())
-        .expect("committed document")
+    let stale_job = accepted.into_iter().next().expect("initial job");
+    let stale_result = stale_job
         .request
-        .revision
-        .clone();
+        .analyze(&adocweave::NeverCancel)
+        .expect("initial analysis");
 
-    let rejected = service.begin_open(typed(json!({
-        "textDocument": {
-            "uri": document_uri,
-            "languageId": "asciidoc",
-            "version": 2,
-            "text": "oversized"
-        }
-    })));
+    let rejected = service
+        .begin_change(typed(json!({
+            "textDocument": {"uri": document_uri, "version": 2},
+            "contentChanges": [{"text": "oversized"}]
+        })))
+        .expect("workspace rejection is a current document input");
 
-    assert!(rejected.is_empty());
+    assert_eq!(rejected.len(), 1);
+    assert_eq!(
+        rejected[0]
+            .workspace_problem
+            .as_ref()
+            .expect("workspace input problem")
+            .code,
+        "workspace-input-error"
+    );
+    assert!(stale_job.cancellation.is_cancelled());
+    assert_eq!(service.adopt(&stale_job, stale_result), Adoption::Stale);
     let current = service
         .documents
         .get(document_uri.as_str())
-        .expect("previous document");
-    assert_eq!(current.request.revision, previous);
-    assert_eq!(current.request.source.as_ref(), "old");
+        .expect("rejected document input");
+    assert_eq!(current.request.revision.version, 2);
+    assert_eq!(current.request.source.as_ref(), "oversized");
+    adopt(
+        &mut service,
+        rejected.into_iter().next().expect("rejected analysis"),
+    );
     let diagnostics = service.diagnostics(&document_uri).expect("diagnostics");
     assert!(diagnostics.diagnostics.iter().any(|diagnostic| {
         diagnostic.code
             == Some(lsp::NumberOrString::String(
-                "workspace-resource-error".to_owned(),
+                "workspace-input-error".to_owned(),
             ))
             && diagnostic.message.contains("retained resource byte")
     }));
 
-    let recovered = service.begin_open(typed(json!({
-        "textDocument": {
-            "uri": document_uri,
-            "languageId": "asciidoc",
-            "version": 3,
-            "text": "new"
-        }
-    })));
+    let recovered = service
+        .begin_change(typed(json!({
+            "textDocument": {"uri": document_uri, "version": 3},
+            "contentChanges": [{
+                "range": {
+                    "start": {"line": 0, "character": 0},
+                    "end": {"line": 0, "character": 9}
+                },
+                "text": "new"
+            }]
+        })))
+        .expect("incremental recovery uses the rejected version");
     assert_eq!(recovered.len(), 1);
+    assert!(recovered[0].workspace_problem.is_none());
+    adopt(
+        &mut service,
+        recovered.into_iter().next().expect("recovered analysis"),
+    );
     let current = service
         .documents
         .get(document_uri.as_str())
@@ -1193,14 +1212,14 @@ fn oversized_did_open_preserves_every_committed_state_and_emits_no_job() {
     assert!(diagnostics.diagnostics.iter().all(|diagnostic| {
         diagnostic.code
             != Some(lsp::NumberOrString::String(
-                "workspace-resource-error".to_owned(),
+                "workspace-input-error".to_owned(),
             ))
     }));
     fs::remove_dir_all(root).expect("cleanup");
 }
 
 #[test]
-fn did_open_outside_configured_roots_preserves_state_and_emits_no_job() {
+fn did_open_outside_configured_roots_keeps_input_until_close() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock")
@@ -1240,7 +1259,9 @@ fn did_open_outside_configured_roots_preserves_state_and_emits_no_job() {
         }
     })));
     assert_eq!(jobs.len(), 1);
-    let open_sources = service.documents.open_sources();
+    for job in jobs {
+        adopt(&mut service, job);
+    }
 
     let rejected = service.begin_open(typed(json!({
         "textDocument": {
@@ -1251,19 +1272,32 @@ fn did_open_outside_configured_roots_preserves_state_and_emits_no_job() {
         }
     })));
 
-    assert!(rejected.is_empty());
-    assert_eq!(service.documents.open_sources(), open_sources);
-    assert!(service.documents.get(rejected_uri.as_str()).is_none());
+    assert_eq!(rejected.len(), 1);
+    let cancellation = rejected[0].cancellation.clone();
+    for job in rejected {
+        adopt(&mut service, job);
+    }
+    let rejected_document = service
+        .documents
+        .get(rejected_uri.as_str())
+        .expect("open document outside configured roots");
+    assert_eq!(rejected_document.request.revision.version, 1);
+    assert_eq!(rejected_document.request.source.as_ref(), "open");
     let diagnostics = service.diagnostics(&rejected_uri).expect("diagnostics");
     assert!(diagnostics.diagnostics.iter().any(|diagnostic| {
         diagnostic.code
             == Some(lsp::NumberOrString::String(
-                "workspace-resource-error".to_owned(),
+                "workspace-input-error".to_owned(),
             ))
             && diagnostic
                 .message
                 .contains("outside configured resource roots")
     }));
+    let (closed, jobs) = service.close(&rejected_uri);
+    assert!(closed);
+    assert!(jobs.is_empty());
+    assert!(cancellation.is_cancelled());
+    assert!(service.documents.get(rejected_uri.as_str()).is_none());
     fs::remove_dir_all(root).expect("cleanup");
 }
 
@@ -1499,6 +1533,40 @@ fn removing_a_workspace_folder_does_not_fail_the_retained_folder() {
             .expect("retained workspace source")
             .as_ref(),
         "retained overlay\n"
+    );
+
+    let stale_job = removed_job.clone();
+    let stale_result = stale_job
+        .request
+        .analyze(&adocweave::NeverCancel)
+        .expect("analysis before editing the removed root");
+    let changed = service
+        .begin_change(typed(json!({
+            "textDocument": {"uri": removed_document, "version": 2},
+            "contentChanges": [{"text": "edited after removal\n"}]
+        })))
+        .expect("workspace rejection does not reject the LSP notification");
+
+    assert_eq!(changed.len(), 1);
+    assert!(stale_job.cancellation.is_cancelled());
+    assert_eq!(service.adopt(&stale_job, stale_result), Adoption::Stale);
+    let current = service
+        .documents
+        .get(removed_document.as_str())
+        .expect("removed-root document remains open");
+    assert_eq!(current.request.revision.version, 2);
+    assert_eq!(current.request.source.as_ref(), "edited after removal\n");
+    assert_eq!(
+        changed[0]
+            .workspace_problem
+            .as_ref()
+            .expect("removed-root input problem")
+            .code,
+        "workspace-input-error"
+    );
+    adopt(
+        &mut service,
+        changed.into_iter().next().expect("current rejected job"),
     );
 
     fs::remove_dir_all(base).expect("cleanup");

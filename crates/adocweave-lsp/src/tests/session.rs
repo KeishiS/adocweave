@@ -529,23 +529,23 @@ fn workspace_input_and_watch_errors_follow_the_workspace_epoch() {
     {
         adopt(&mut session, job);
     }
-    assert!(
-        session
-            .begin_open(typed(json!({
-                "textDocument": {
-                    "uri": rejected_uri,
-                    "languageId": "asciidoc",
-                    "version": 1,
-                    "text": "rejected\n"
-                }
-            })))
-            .is_empty()
-    );
+    let rejected_jobs = session.begin_open(typed(json!({
+        "textDocument": {
+            "uri": rejected_uri,
+            "languageId": "asciidoc",
+            "version": 1,
+            "text": "rejected\n"
+        }
+    })));
+    assert_eq!(rejected_jobs.len(), 1);
+    for job in rejected_jobs {
+        adopt(&mut session, job);
+    }
     let current = session
         .diagnostics(&document_uri)
         .expect("current workspace errors");
-    assert!(current.diagnostics.iter().any(|diagnostic| {
-        diagnostic
+    assert!(current.diagnostics.iter().all(|diagnostic| {
+        !diagnostic
             .message
             .contains("outside configured resource roots")
     }));
@@ -555,6 +555,14 @@ fn workspace_input_and_watch_errors_follow_the_workspace_epoch() {
             .iter()
             .any(|diagnostic| diagnostic.message.contains("UTF-8"))
     );
+    let rejected = session
+        .diagnostics(&rejected_uri)
+        .expect("rejected document diagnostics");
+    assert!(rejected.diagnostics.iter().any(|diagnostic| {
+        diagnostic
+            .message
+            .contains("outside configured resource roots")
+    }));
 
     fs::write(
         &config_path,
@@ -573,6 +581,16 @@ fn workspace_input_and_watch_errors_follow_the_workspace_epoch() {
             .contains("outside configured resource roots")
             && !diagnostic.message.contains("UTF-8")
     }));
+    assert!(
+        session
+            .diagnostics(&rejected_uri)
+            .expect("rejected document while rebuilding")
+            .diagnostics
+            .iter()
+            .all(|diagnostic| !diagnostic
+                .message
+                .contains("outside configured resource roots"))
+    );
 
     fs::write(&include_path, "restored\n").expect("restored include");
     let scan = session.plan_workspace_scan(&adocweave::NeverCancel);
@@ -586,7 +604,7 @@ fn workspace_input_and_watch_errors_follow_the_workspace_epoch() {
             Ok(scan),
         ))
         .expect("successful replacement");
-    assert_eq!(completed.jobs.len(), 1);
+    assert_eq!(completed.jobs.len(), 2);
     let recovered = session
         .diagnostics(&document_uri)
         .expect("recovered diagnostics");

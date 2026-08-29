@@ -220,6 +220,19 @@ impl DocumentStore {
         Some(job)
     }
 
+    pub fn update_job_options(&mut self, job: &mut AnalysisJob, options: AnalysisOptions) {
+        assert!(
+            self.job_is_current(job),
+            "analysis options may only be updated before scheduling the current job"
+        );
+        job.request.options = options.clone();
+        Arc::make_mut(&mut self.documents)
+            .get_mut(&job.uri)
+            .expect("current document exists")
+            .request
+            .options = options;
+    }
+
     pub fn begin_reanalysis(&mut self, uri: &str, input_revision: u64) -> Option<AnalysisJob> {
         let current = self.documents.get(uri)?;
         current.cancellation.cancel();

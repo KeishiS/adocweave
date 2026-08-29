@@ -237,7 +237,6 @@ pub(crate) struct Session {
     workspace_watch_errors_overflowed: bool,
     workspace_watch_recovery_required: bool,
     workspace_watch_error_epoch: u64,
-    workspace_input_error: Option<WorkspaceEpochError>,
     workspace_scans: Arc<Mutex<WorkspaceScanCoordinator>>,
     workspace_input_status: WorkspaceInputStatus,
 }
@@ -312,7 +311,6 @@ impl Default for Session {
             workspace_watch_errors_overflowed: false,
             workspace_watch_recovery_required: false,
             workspace_watch_error_epoch: 0,
-            workspace_input_error: None,
             workspace_scans: Arc::new(Mutex::new(WorkspaceScanCoordinator::default())),
             workspace_input_status: WorkspaceInputStatus::Ready,
         }
@@ -393,20 +391,6 @@ impl Session {
 
     fn set_workspace_error(&mut self, message: String) {
         self.workspace_error = Some(WorkspaceEpochError {
-            epoch: self.workspace_input_epoch,
-            message,
-        });
-    }
-
-    fn current_workspace_input_error(&self) -> Option<&str> {
-        self.workspace_input_error
-            .as_ref()
-            .filter(|error| error.epoch == self.workspace_input_epoch)
-            .map(|error| error.message.as_str())
-    }
-
-    fn set_workspace_input_error(&mut self, message: String) {
-        self.workspace_input_error = Some(WorkspaceEpochError {
             epoch: self.workspace_input_epoch,
             message,
         });
@@ -495,7 +479,6 @@ impl Session {
             .collect();
         self.advance_workspace_input_epoch();
         self.workspace_error = None;
-        self.workspace_input_error = None;
         self.clear_workspace_watch_errors();
         self.advance_input_revision();
         lsp::InitializeResult {
@@ -602,29 +585,29 @@ impl Session {
             attach_workspace(&mut job, Err(error));
             return vec![job];
         }
-        let affected = match self.workspace.upsert_open(
-            document.uri.clone(),
-            i64::from(document.version),
-            document.text.clone(),
-        ) {
-            Ok(affected) => affected,
-            Err(error) => {
-                self.set_workspace_input_error(error);
-                return Vec::new();
-            }
-        };
-        self.workspace_input_error = None;
         self.advance_input_revision();
-        let workspace = self.workspace.input(&document.uri);
-        let options = self.analysis_options_for(workspace.as_ref().ok());
         let mut job = self.documents.begin_open_with_options(
             document.uri.to_string(),
             document.version,
-            document.text,
-            options,
+            document.text.clone(),
+            self.analysis_options_for(None),
             self.input_revision,
         );
-        attach_workspace(&mut job, self.workspace.input(&document.uri));
+        let affected = match self.workspace.upsert_open(
+            document.uri.clone(),
+            i64::from(document.version),
+            document.text,
+        ) {
+            Ok(affected) => affected,
+            Err(error) => {
+                attach_workspace(&mut job, Err(error));
+                return vec![job];
+            }
+        };
+        let workspace = self.workspace.input(&document.uri);
+        let options = self.analysis_options_for(workspace.as_ref().ok());
+        self.documents.update_job_options(&mut job, options);
+        attach_workspace(&mut job, workspace);
         let mut jobs = vec![job];
         self.append_dependent_jobs(&affected, document.uri.as_str(), &mut jobs);
         jobs
@@ -677,21 +660,30 @@ impl Session {
             );
             return Ok(Vec::new());
         }
-        let affected = self.workspace.upsert_open(
-            params.text_document.uri.clone(),
-            i64::from(params.text_document.version),
-            source.clone(),
-        )?;
         self.advance_input_revision();
         let Some(mut job) = self.documents.begin_change(
             params.text_document.uri.as_str(),
             params.text_document.version,
-            source,
+            source.clone(),
             self.input_revision,
         ) else {
             return Ok(Vec::new());
         };
-        attach_workspace(&mut job, self.workspace.input(&params.text_document.uri));
+        let affected = match self.workspace.upsert_open(
+            params.text_document.uri.clone(),
+            i64::from(params.text_document.version),
+            source,
+        ) {
+            Ok(affected) => affected,
+            Err(error) => {
+                attach_workspace(&mut job, Err(error));
+                return Ok(vec![job]);
+            }
+        };
+        let workspace = self.workspace.input(&params.text_document.uri);
+        let options = self.analysis_options_for(workspace.as_ref().ok());
+        self.documents.update_job_options(&mut job, options);
+        attach_workspace(&mut job, workspace);
         let mut jobs = vec![job];
         self.append_dependent_jobs(&affected, params.text_document.uri.as_str(), &mut jobs);
         Ok(jobs)
@@ -1182,7 +1174,6 @@ impl Session {
                 .collect();
         }
         self.workspace_error = None;
-        self.workspace_input_error = None;
         self.clear_workspace_watch_errors();
         open_sources
             .into_iter()
@@ -1496,7 +1487,6 @@ impl Session {
                 uri.clone(),
                 self.current_workspace_error()
                     .or(workspace_watch_error.as_deref())
-                    .or(self.current_workspace_input_error())
                     .map(crate::diagnostics::workspace_error)
                     .into_iter()
                     .collect(),
@@ -1536,9 +1526,6 @@ impl Session {
             diagnostics.push(crate::diagnostics::workspace_error(error));
         }
         if let Some(error) = &workspace_watch_error {
-            diagnostics.push(crate::diagnostics::workspace_error(error));
-        }
-        if let Some(error) = self.current_workspace_input_error() {
             diagnostics.push(crate::diagnostics::workspace_error(error));
         }
         for workspace in self.documents.workspace_analyses() {
