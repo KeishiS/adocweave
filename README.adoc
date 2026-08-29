@@ -1,5 +1,7 @@
 = AdocWeave
 
+image::docs/assets/adocweave-logo.png[AdocWeave,width=420,align=center]
+
 AdocWeaveは、AsciiDoc文書の確認、整形、HTML変換を行うRust製ツールです。
 コマンドライン、WebAssembly、Language Serverを提供します。
 
