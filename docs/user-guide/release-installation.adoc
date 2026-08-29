@@ -378,8 +378,104 @@ Processorは、それぞれ独立した製品バージョンを持ちます。We
 JavaScriptとWebAssemblyを同梱するため、別々に組み合わせません。エディター拡張とLanguage Serverの
 製品バージョンを一致させる必要はありません。利用できる機能は、接続時に交換する標準LSP capabilityから決まります。
 
+[#wasm-npm-installation]
+== WebAssemblyパッケージのnpmからの導入
+
+``@adocweave/wasm``はnpm registryから導入します。``X.Y.Z``には利用するWebAssemblyパッケージの
+バージョンを指定します。
+
+[source,console]
+----
+npm install @adocweave/wasm@X.Y.Z
+----
+
+npmへ公開するのは、GitHub Releaseへ添付したarchiveと同じbyte列です。checksumとattestationを自分で
+検証してから導入する場合は、GitHub ReleaseのURLを指定することもできます。
+
+[source,console]
+----
+VERSION=X.Y.Z
+RELEASE_URL="https://github.com/KeishiS/adocweave/releases/download/adocweave-wasm%2Fv$VERSION"
+npm install "$RELEASE_URL/adocweave-wasm-$VERSION.tgz"
+----
+
+このパッケージはWebAssemblyを同梱するため、導入にRust、Cargo、``wasm-bindgen``およびAdocWeave CLIは
+不要です。ブラウザー向けの入口は、同梱したWebAssemblyを配備先の同一originから取得します。
+
+パッケージは用途の異なる2つの入口を公開します。要求と応答の形式はどちらも同じです。
+
+[cols="2,2,3",options="header"]
+|===
+|入口 |実行環境 |特徴
+
+|``@adocweave/wasm``
+|ブラウザー
+|Web Workerで実行し、``AbortSignal``で解析を取り消せます。WebAssemblyが実行を中断（trap）しても、
+Workerごと終了して影響を分離します
+
+|``@adocweave/wasm/direct``
+|Node.js
+|呼び出し側と同じプロセスで実行します。取消しはできず、一つずつ順に実行する用途に限ります
+|===
+
+文書を編集しながら結果を更新する画面では、既定の入口である``@adocweave/wasm``を使います。解析をWeb
+Workerへ渡すため、入力が続いている間も画面の操作が止まらず、不要になった解析を取り消せます。
+
+[source,javascript]
+----
+import { AdocWeaveClient, defaultAssetUrls } from "@adocweave/wasm";
+
+const entryUrl = new URL("./worker/index.mjs", import.meta.url);
+const client = new AdocWeaveClient(defaultAssetUrls(entryUrl));
+const controller = new AbortController();
+const result = await client.analyze({
+  source: "= Title\n\nText\n",
+}, { signal: controller.signal });
+----
+
+bundlerを使う場合も、``defaultAssetUrls``にはbundleが生成したchunkではなく、公開ディレクトリへ
+コピーした``worker/index.mjs``のURLを渡します。配備時に必要なファイルの配置、Content-Typeおよび
+CSPの設定は、後述のxref:#wasm-library-deployment[ブラウザーライブラリーの配備]と同じです。
+
+静的サイト生成のようにビルド時へ組み込む場合は``@adocweave/wasm/direct``を使います。Web Workerを
+必要とせず、Node.jsのプロセス内で解析します。同梱WebAssemblyの位置はパッケージ内部から求めるため、
+パスを渡す必要はありません。
+
+[source,javascript]
+----
+import { analyze } from "@adocweave/wasm/direct";
+
+const result = await analyze({
+  sourceId: "docs/example.adoc",
+  source: "= Title\n\nText\n",
+  products: { html: true },
+});
+----
+
+初期化は最初の呼び出しで一度だけ行います。初期化のタイミングを自分で決める場合は
+``createDirectAnalyzer()``を使います。この入口は呼び出し側と同じプロセスでWebAssemblyを実行するため、
+WASMがtrapしたあとの結果を保証しません。trapが起きた場合は``createDirectAnalyzer()``で
+analyzerを作り直してください。
+
+WebAssembly APIの詳細はxref:../developer-guide/core-profile.adoc#wasm-api[WebAssembly API]を
+参照してください。
+
+更新時は指定するバージョンを新しい版へ変更して``npm install``を実行し、``package-lock.json``の差分と
+動作を確認してから統合します。rollbackでは以前の版を指定し直すか、``package-lock.json``を元へ戻して
+``npm ci``で再導入します。GitHub ReleaseのURLで導入している場合は、URLを対象の版へ変更します。
+JavaScriptと同梱WebAssemblyを別々のバージョンへ変更することはできません。削除する場合は次を実行します。
+
+[source,console]
+----
+npm uninstall @adocweave/wasm
+----
+
 [#wasm-library-deployment]
 == ブラウザーライブラリーの配備
+
+この節は、GitHub Releaseから取得したarchiveの展開物をそのまま静的hostingへ置く手順です。
+bundlerやNode.jsからパッケージとして使う場合は、
+前述のxref:#wasm-npm-installation[WebAssemblyパッケージのnpmからの導入]を参照してください。
 
 ``$HOME/.local/share/adocweave/<version>/wasm``をそのまま静的hostingへ配置します。公開入口は
 ``worker/index.mjs``だけです。``worker/worker.mjs``とWASM補助ファイルは内部用であり、直接importしません。
