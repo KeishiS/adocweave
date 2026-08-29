@@ -43,13 +43,13 @@ export async function selectServer(
     return { command: options.configuredPath, source: "configured" };
   }
 
-  const pathCandidate = await dependencies.findOnPath("adocweave-lsp");
+  const pathCandidate = await dependencies.findOnPath("adocweave");
   if (pathCandidate && isAbsolute(pathCandidate)) return { command: pathCandidate, source: "path" };
 
   // どの段で決まったかを残す。起動しなかったときに、設定、PATH、自動取得のどこで
   // 止まったのかをログだけで切り分けられるようにするため。
   dependencies.log(
-    `adocweave-lsp is not configured and not on PATH; downloading into ${options.storageDirectory}.`,
+    `adocweave is not configured and not on PATH; downloading into ${options.storageDirectory}.`,
   );
   return {
     command: await dependencies.downloadServer(options.storageDirectory),

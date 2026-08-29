@@ -1,6 +1,6 @@
 = Language Serverの実行仕様
 
-この文書は、``adocweave-lsp``で外部から観測できるプロトコル、並行実行および失敗時の保証の正本です。
+この文書は、``adocweave lsp``で外部から観測できるプロトコル、並行実行および失敗時の保証の正本です。
 コンポーネント間の責務はxref:architecture.adoc#component-boundaries[アーキテクチャ]、
 一般的な解析の実行順序はxref:server-execution.adoc[利用側アプリの実行仕様]を参照してください。
 エディタへの導入方法はxref:../user-guide/release-installation.adoc[インストールと更新]を参照してください。
@@ -149,6 +149,6 @@ Semantic Tokensはリンク、xref、アンカーID、literalおよび数式内�
 commentおよび書式delimiterなど構文だけで決まる基本色付けは各エディタのgrammarが所有します。
 補完はsource block言語と現在の文書で解析済みの候補に限定し、任意schemeや開いていない文書の内容を推測しません。
 
-プロトコルと状態遷移の検証は``adocweave-lsp``の試験を正本とします。開発版をエディタで確認する方法は
+プロトコルと状態遷移の検証はcrate ``adocweave-lsp``の試験を正本とします。開発版をエディタで確認する方法は
 xref:zed-development.adoc[Zedで開発版を試す]と
 xref:vscode-development.adoc[VS Codeで開発版を試す]を参照してください。

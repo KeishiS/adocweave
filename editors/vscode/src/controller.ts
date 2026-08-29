@@ -15,7 +15,7 @@ const INSTALLATION_GUIDE = vscode.Uri.parse(
 );
 const OPEN_INSTALLATION_GUIDE = "Open installation guide";
 const MANUAL_INSTALLATION =
-  " Install adocweave-lsp and add it to PATH, or set adocweave.server.path to its absolute path.";
+  " Install adocweave and add it to PATH, or set adocweave.server.path to its absolute path.";
 
 /**
  * 自動取得の失敗に、利用者が次に取れる操作を添えます。
@@ -86,7 +86,7 @@ export class ServerController implements vscode.Disposable {
   async #start(generation: number, selected: SelectedServer): Promise<void> {
     const serverOptions: ServerOptions = {
       command: selected.command,
-      args: [],
+      args: ["lsp"],
     };
     const clientOptions: LanguageClientOptions = {
       documentSelector: [

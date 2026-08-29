@@ -12,13 +12,9 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 
-const repository = new URL("..", import.meta.url);
 const script = new URL("normalize-darwin-archives.sh", import.meta.url);
 const target = "aarch64-apple-darwin";
-const products = {
-  cli: { archive: `adocweave-cli-${target}.zip`, executable: "adocweave" },
-  lsp: { archive: `adocweave-lsp-${target}.zip`, executable: "adocweave-lsp" },
-};
+const archiveName = `adocweave-${target}.zip`;
 
 function command(commandName, args, options = {}) {
   const result = spawnSync(commandName, args, { encoding: "utf8", ...options });
@@ -26,127 +22,120 @@ function command(commandName, args, options = {}) {
   return result;
 }
 
-function fixture() {
+function plan(targetTriple = target, overrides = {}) {
+  const artifact = {
+    name: `adocweave-${targetTriple}.zip`,
+    kind: "executable-zip",
+    target_triples: [targetTriple],
+    assets: [
+      { name: "adocweave", path: "adocweave", kind: "executable" },
+      { name: "README.adoc", path: "README.adoc", kind: "readme" },
+    ],
+    ...overrides,
+  };
+  return {
+    releases: [{ app_name: "adocweave", app_version: "0.51.0" }],
+    artifacts: { [artifact.name]: artifact },
+  };
+}
+
+function fixture(planValue = plan()) {
   const root = mkdtempSync(join(tmpdir(), "adocweave-darwin-normalize-test."));
   const artifacts = join(root, "artifacts");
   const mockBin = join(root, "bin");
   const otoolLog = join(root, "otool.log");
+  const planFile = join(root, "dist-plan.json");
   mkdirSync(artifacts);
   mkdirSync(mockBin);
+  writeFileSync(planFile, JSON.stringify(planValue));
   const otool = join(mockBin, "otool");
   writeFileSync(
     otool,
     '#!/usr/bin/env bash\nprintf "%s\\n" "${@: -1}" >> "$MOCK_OTOOL_LOG"\nprintf "%s:\\n" "${@: -1}"\n',
   );
   chmodSync(otool, 0o755);
-  return { root, artifacts, mockBin, otoolLog };
+  return { root, artifacts, mockBin, otoolLog, planFile };
 }
 
-function addArchive(root, artifacts, product) {
-  const { archive, executable } = products[product];
-  const stage = join(root, `stage-${product}`);
+function addArchive(root, artifacts) {
+  const stage = join(root, "stage");
   mkdirSync(stage);
-  writeFileSync(join(stage, executable), `${product}\n`);
-  writeFileSync(join(stage, "LICENSE-APACHE"), "license\n");
+  writeFileSync(join(stage, "adocweave"), "binary\n");
   writeFileSync(join(stage, "README.adoc"), "readme\n");
-  writeFileSync(join(stage, "THIRD_PARTY_NOTICES.adoc"), "notices\n");
-  const result = command("zip", ["-q", "-X", join(artifacts, archive),
-    executable, "LICENSE-APACHE", "README.adoc", "THIRD_PARTY_NOTICES.adoc"], { cwd: stage });
+  const result = command("zip", ["-q", "-X", join(artifacts, archiveName), "adocweave", "README.adoc"], {
+    cwd: stage,
+  });
   assert.equal(result.status, 0, result.stderr);
 }
 
-function normalize(artifacts, mockBin, otoolLog, product) {
-  return command("bash", [script.pathname, artifacts, product, target], {
-    cwd: repository,
+function normalize(fixtureValue, requestedTarget = target) {
+  const { artifacts, mockBin, otoolLog, planFile } = fixtureValue;
+  return command("bash", [script.pathname, artifacts, planFile, requestedTarget], {
     env: { ...process.env, MOCK_OTOOL_LOG: otoolLog, PATH: `${mockBin}:${process.env.PATH}` },
   });
 }
 
-for (const product of Object.keys(products)) {
-  test(`${product}だけのDarwin archiveを正規化する`, () => {
-    const { root, artifacts, mockBin, otoolLog } = fixture();
-    try {
-      addArchive(root, artifacts, product);
-      const result = normalize(artifacts, mockBin, otoolLog, product);
-      assert.equal(result.status, 0, result.stderr);
-      assert.equal(readFileSync(join(artifacts, products[product].archive)).length > 0, true);
-      const entries = command("unzip", ["-Z1", join(artifacts, products[product].archive)]);
-      assert.deepEqual(entries.stdout.trim().split("\n").sort(), [
-        "LICENSE-APACHE",
-        "README.adoc",
-        "THIRD_PARTY_NOTICES.adoc",
-        products[product].executable,
-      ].sort());
-      const inspected = readFileSync(otoolLog, "utf8").trim().split("\n");
-      assert.equal(inspected.length, 2);
-      assert.equal(
-        inspected.every((path) => path.endsWith(
-          `/${products[product].executable}/${products[product].executable}`,
-        )),
-        true,
-      );
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-}
-
-test("選択した製品のarchive欠落を拒否する", () => {
-  const { root, artifacts, mockBin, otoolLog } = fixture();
+test("cargo-distの計画にある単一Darwin archiveを正規化する", () => {
+  const value = fixture();
   try {
-    const result = normalize(artifacts, mockBin, otoolLog, "lsp");
+    addArchive(value.root, value.artifacts);
+    const result = normalize(value);
+    assert.equal(result.status, 0, result.stderr);
+    const entries = command("unzip", ["-Z1", join(value.artifacts, archiveName)]);
+    assert.deepEqual(entries.stdout.trim().split("\n").sort(), ["README.adoc", "adocweave"]);
+    const inspected = readFileSync(value.otoolLog, "utf8").trim().split("\n");
+    assert.equal(inspected.length, 2);
+    assert.equal(inspected.every((path) => path.endsWith("/archive/adocweave")), true);
+  } finally {
+    rmSync(value.root, { recursive: true, force: true });
+  }
+});
+
+test("計画にあるDarwin archiveの欠落を拒否する", () => {
+  const value = fixture();
+  try {
+    const result = normalize(value);
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /adocweave-lsp-aarch64-apple-darwin\.zip/);
+    assert.match(result.stderr, /adocweave-aarch64-apple-darwin\.zip/);
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    rmSync(value.root, { recursive: true, force: true });
   }
 });
 
-test("Darwin実行fileを持たない製品を拒否する", () => {
-  const { root, artifacts, mockBin, otoolLog } = fixture();
+test("Darwin以外のtargetを拒否する", () => {
+  const value = fixture();
   try {
-    const result = normalize(artifacts, mockBin, otoolLog, "wasm");
+    const result = normalize(value, "x86_64-unknown-linux-musl");
     assert.equal(result.status, 2);
-    assert.match(result.stderr, /Darwin実行fileを持つ製品ではありません/);
+    assert.match(result.stderr, /Darwin以外のtarget/);
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    rmSync(value.root, { recursive: true, force: true });
   }
 });
 
-test("未知の製品を拒否する", () => {
-  const { root, artifacts, mockBin, otoolLog } = fixture();
+test("計画にないDarwin targetを拒否する", () => {
+  const value = fixture();
   try {
-    const result = normalize(artifacts, mockBin, otoolLog, "unknown");
+    const result = normalize(value, "x86_64-apple-darwin");
     assert.equal(result.status, 2);
-    assert.match(result.stderr, /Darwin実行fileを持つ製品ではありません/);
+    assert.match(result.stderr, /一つに特定できません/);
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    rmSync(value.root, { recursive: true, force: true });
   }
 });
 
-test("別製品のDarwin archiveが混在する場合は拒否する", () => {
-  const { root, artifacts, mockBin, otoolLog } = fixture();
+test("単一adocweave実行ファイルではない計画を拒否する", () => {
+  const value = fixture(plan(target, {
+    assets: [
+      { name: "adocweave", path: "adocweave", kind: "executable" },
+      { name: "other", path: "other", kind: "executable" },
+    ],
+  }));
   try {
-    addArchive(root, artifacts, "cli");
-    addArchive(root, artifacts, "lsp");
-    const result = normalize(artifacts, mockBin, otoolLog, "lsp");
-    assert.equal(result.status, 1);
-    assert.match(result.stderr, /別製品のDarwin archiveが混在しています/);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("配布計画にないDarwin風targetを拒否する", () => {
-  const { root, artifacts, mockBin, otoolLog } = fixture();
-  try {
-    const result = command("bash", [script.pathname, artifacts, "lsp", "x86_64-apple-darwin"], {
-      cwd: repository,
-      env: { ...process.env, MOCK_OTOOL_LOG: otoolLog, PATH: `${mockBin}:${process.env.PATH}` },
-    });
+    const result = normalize(value);
     assert.equal(result.status, 2);
-    assert.match(result.stderr, /配布計画にDarwin targetがありません/);
+    assert.match(result.stderr, /一つに特定できません/);
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    rmSync(value.root, { recursive: true, force: true });
   }
 });

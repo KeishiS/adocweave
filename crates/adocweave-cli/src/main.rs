@@ -1248,8 +1248,14 @@ fn render_rules_human() -> String {
     output
 }
 
-fn run() -> Result<ExitCode, CliError> {
+async fn run() -> Result<ExitCode, CliError> {
     match parse_arguments(env::args_os().skip(1))? {
+        Action::Lsp => {
+            adocweave_lsp::run_stdio()
+                .await
+                .map_err(CliError::LanguageServer)?;
+            Ok(ExitCode::SUCCESS)
+        }
         Action::Help(help) => {
             let exit_code = u8::try_from(help.exit_code()).unwrap_or(2);
             help.print().map_err(CliError::Write)?;
@@ -1686,8 +1692,9 @@ fn check_preprocessed(
         .map_err(check_error)
 }
 
-fn main() -> ExitCode {
-    match run() {
+#[tokio::main]
+async fn main() -> ExitCode {
+    match run().await {
         Ok(exit_code) => exit_code,
         Err(CliError::Arguments(source)) => {
             let exit_code = u8::try_from(source.exit_code()).unwrap_or(2);
@@ -1808,6 +1815,7 @@ mod tests {
             "symbols",
             "rules",
             "completion",
+            "lsp",
         ] {
             assert!(matches!(
                 parse_arguments(arguments(&[command, "--help"])),

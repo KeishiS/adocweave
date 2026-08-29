@@ -6,7 +6,8 @@
 Zedの開発拡張は次のファイルを入口とします。
 link:../../editors/zed/extension.toml[`editors/zed/extension.toml`]
 拡張はAsciiDoc用Tree-sitter grammar、inline grammarおよびhighlight/injection queryを提供します。
-開発手順ではworktreeの``PATH``から``adocweave-lsp``を探して起動します。公開版における実行ファイルの選択は
+開発手順ではworktreeの``PATH``から``adocweave``を探し、``adocweave lsp``として起動します。
+公開版における実行ファイルの選択は
 xref:../user-guide/release-installation.adoc#zed-installation[Zedへの導入]を参照します。
 
 == 前提条件
@@ -47,12 +48,12 @@ grammarおよびキャッシュの更新を走査し、一時的なsymlinkやino
 
 [source,console]
 ----
-cargo build -p adocweave-lsp
+cargo build -p adocweave-cli
 cargo test --manifest-path editors/zed/Cargo.toml
 cargo check --manifest-path editors/zed/Cargo.toml --target wasm32-wasip2
 ----
 
-``cargo test``は絶対pathの判定と、起動commandの引数が空でZedのshell環境だけを使うことを検査します。
+``cargo test``は絶対pathの判定と、起動commandへ``lsp``を渡してZedのshell環境を使うことを検査します。
 
 . 同じshellでLanguage Serverを``PATH``へ追加し、隔離したZedをforegroundで起動します。
 
@@ -110,7 +111,7 @@ AdocWeave Language ServerのRust parserではなく、Zedのsyntax highlighting�
 |===
 
 通常profileではextension関連状態もこのuser data配下に置かれます。一方、選択した
-``editors/zed``は開発中のソースのままであり、``adocweave-lsp``はリポジトリの``target/debug``にあります。
+``editors/zed``は開発中のソースのままであり、``adocweave``はリポジトリの``target/debug``にあります。
 したがって、リポジトリを移動した場合や別shellからZedを再起動した場合は再導入または``PATH``の
 再設定が必要になります。
 
@@ -189,8 +190,8 @@ grammarリポジトリの取得結果または``extension.toml``のリポジト�
 AdocWeaveのRust parserをCへ変換する必要はありません。取得キャッシュを消して再導入する前に、Zed logに表示された
 grammar checkoutが固定コミットと一致することを確認します。
 
-``adocweave-lsp``の確認または起動に失敗する::
-``command -v adocweave-lsp``と``adocweave-lsp --version``を、Zedを起動するshellで確認します。明示設定を
+``adocweave lsp``の確認または起動に失敗する::
+``command -v adocweave``と``adocweave lsp --help``を、Zedを起動するshellで確認します。明示設定を
 使う場合は``lsp.adocweave.binary.path``が相対pathではなく実行ファイルの絶対pathか確認します。LSP初期化に
 失敗した場合はZed logを確認し、Language Serverが返した標準LSPのcapabilityとエラーを基準に切り分けます。
 

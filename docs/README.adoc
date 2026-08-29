@@ -2,9 +2,10 @@
 
 このディレクトリには、利用方法、対応書式、アプリケーションへの組み込み、開発方法を記載します。
 
-== Version方針
+== バージョン方針
 
-各製品のバージョンは``release/distribution-plan.json``の``versionSource``が指すmanifestを基準とします。
+すべての製品は同じバージョンを使用し、リポジトリ直下の``Cargo.toml``にある
+``workspace.package.version``を基準とします。一つの``vX.Y.Z``タグから一つのGitHub Releaseを公開します。
 RustおよびNode.jsのバージョンはlink:../toolchains.json[toolchain manifest]を基準とします。
 
 version固有の変更内容と移行手順は

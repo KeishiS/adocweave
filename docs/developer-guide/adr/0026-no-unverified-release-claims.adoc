@@ -18,7 +18,7 @@ Release Notesへ、外部から利用する仕様が前の版から変わって�
 ``release/unchanged-contracts.json``と``release-claims``を廃止します。
 
 機械生成する内容は、現在の正本から直接決まる値に限定します。CLI引数、Language Server protocol、設定Schema、
-WASM protocolなどの変更内容、利用者への影響および移行方法は、人が``release/notes.md``へ記載します。
+WASM protocolなどの変更内容、利用者への影響および移行方法は、人が``CHANGELOG.md``へ記載します。
 公開Rust APIの差分台帳を維持しない判断はxref:0027-product-release-trains.adoc[ADR 0027]で置き換えました。
 
 この決定は、ADR 0022のうち生成TypeScript宣言を``release-claims``でtag間比較する部分を改訂します。

@@ -67,16 +67,24 @@ jobs:
           test "$(jq -r .draft <<<"$release")" = false
           test "$(jq -r .prerelease <<<"$release")" = false
           test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)"
+
+          workspace_version="$(sed -n '/^\[workspace\.package\]/,/^\[/ s/^version = "\([^"]*\)"/\1/p' Cargo.toml)"
+          [[ "$workspace_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          test "$RELEASE_TAG" = "v$workspace_version"
+          test "$(jq -er .version editors/vscode/package.json)" = "$workspace_version"
+
           mkdir -p marketplace
-          node tools/release-contract.mjs --product=vscode "--tag=$RELEASE_TAG"
-          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir marketplace
-          node tools/product-release.mjs --verify-candidate vscode marketplace
-          node tools/release-metadata.mjs verify vscode marketplace "$(git rev-parse HEAD)"
-          vsix="$(ls marketplace/adocweave-vscode-*.vsix)"
+          asset="adocweave-vscode-$workspace_version.vsix"
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir marketplace \
+            --pattern sha256.sum --pattern "$asset"
+          vsix="marketplace/$asset"
+          test -f "$vsix"
           (cd marketplace && grep -F "$(basename "$vsix")" sha256.sum | sha256sum --check --strict -)
-          for file in marketplace/*; do
-            gh attestation verify "$file" --repo "$GITHUB_REPOSITORY"
-          done
+          vsix_manifest="$(unzip -p "$vsix" extension/package.json)"
+          test "$(jq -er .name <<<"$vsix_manifest")" = "$(jq -er .name editors/vscode/package.json)"
+          test "$(jq -er .version <<<"$vsix_manifest")" = "$workspace_version"
+          gh attestation verify "$vsix" --repo "$GITHUB_REPOSITORY"
+          gh attestation verify marketplace/sha256.sum --repo "$GITHUB_REPOSITORY"
           # publish stepはeditors/vscodeで実行するため、相対pathでは届かない。
           echo "vsix=$(realpath "$vsix")" >> "$GITHUB_ENV"
       - uses: Azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2.3.1

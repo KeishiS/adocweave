@@ -67,6 +67,7 @@ pub(crate) struct Arguments {
 
 pub(crate) enum Action {
     Run(Box<Arguments>),
+    Lsp,
     Help(clap::Error),
     Version { json: bool },
     Completion { shell: CompletionShell },
@@ -153,6 +154,9 @@ enum CliCommand {
     /// Print a shell completion script.
     #[command(after_help = "Example:\n  adocweave completion bash")]
     Completion(CompletionArgs),
+
+    /// Run the Language Server over standard input and output.
+    Lsp,
 }
 
 #[derive(Debug, Args)]
@@ -685,5 +689,6 @@ where
         CliCommand::Completion(command) => Ok(Action::Completion {
             shell: command.shell,
         }),
+        CliCommand::Lsp => Ok(Action::Lsp),
     }
 }

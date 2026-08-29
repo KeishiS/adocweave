@@ -22,11 +22,11 @@ const sourceServer =
     repositoryRoot,
     "target",
     "debug",
-    process.platform === "win32" ? "adocweave-lsp.exe" : "adocweave-lsp",
+    process.platform === "win32" ? "adocweave.exe" : "adocweave",
   );
 const server = join(
   scratch,
-  process.platform === "win32" ? "adocweave-lsp-test.exe" : "adocweave-lsp-test",
+  process.platform === "win32" ? "adocweave-test.exe" : "adocweave-test",
 );
 
 /** Command lines of every running process, one per line. */

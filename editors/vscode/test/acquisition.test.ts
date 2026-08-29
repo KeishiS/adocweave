@@ -26,13 +26,13 @@ function release(tag: string, assets: readonly string[], extra: Record<string, u
   };
 }
 
-const linuxArchive = "adocweave-lsp-x86_64-unknown-linux-musl.zip";
+const linuxArchive = "adocweave-x86_64-unknown-linux-musl.zip";
 
 test("Language Serverのtagを持つ最新のstable releaseを選びます", () => {
   const body = JSON.stringify([
-    release("adocweave-lsp/v0.46.2", [linuxArchive]),
+    release("v0.46.2", [linuxArchive]),
     release("adocweave-wasm/v0.48.0", ["adocweave-wasm-0.48.0.tgz"]),
-    release("adocweave-lsp/v0.47.0", [linuxArchive]),
+    release("v0.47.0", [linuxArchive]),
   ]);
 
   assert.equal(latestServerRelease(body).version, "0.47.0");
@@ -40,24 +40,20 @@ test("Language Serverのtagを持つ最新のstable releaseを選びます", () 
 
 test("ほかの製品、draftおよびprereleaseを選びません", () => {
   const body = JSON.stringify([
-    release("adocweave-lsp/v0.47.0", [linuxArchive]),
-    release("adocweave-lsp/v9.9.9", [], { draft: true }),
-    release("adocweave-lsp/v8.8.8", [], { prerelease: true }),
+    release("v0.47.0", [linuxArchive]),
+    release("v9.9.9", [], { draft: true }),
+    release("v8.8.8", [], { prerelease: true }),
   ]);
 
   assert.equal(latestServerRelease(body).version, "0.47.0");
   assert.throws(
-    () => latestServerRelease(JSON.stringify([release("adocweave-cli/v0.47.0", [])])),
+    () => latestServerRelease(JSON.stringify([release("release-0.47.0", [])])),
     /no-published-language-server-release/,
   );
 });
 
 test("stable SemVer以外のtagを版として扱いません", () => {
-  for (const tag of [
-    "adocweave-lsp/v0.47",
-    "adocweave-lsp/v0.47.0.1",
-    "adocweave-lsp/v0.47.0-rc.1",
-  ]) {
+  for (const tag of ["v0.47", "v0.47.0.1", "v0.47.0-rc.1"]) {
     assert.throws(
       () => latestServerRelease(JSON.stringify([release(tag, [linuxArchive])])),
       /no-published-language-server-release/,
@@ -93,17 +89,17 @@ test("asset名とディレクトリ名を版およびtargetから組み立てま
   assert.equal(checksumAssetName(), "sha256.sum");
   assert.equal(
     versionDirectory("0.47.0", "x86_64-unknown-linux-musl"),
-    "adocweave-lsp-0.47.0-x86_64-unknown-linux-musl",
+    "adocweave-0.47.0-x86_64-unknown-linux-musl",
   );
-  assert.equal(executableName("linux"), "adocweave-lsp");
-  assert.equal(executableName("win32"), "adocweave-lsp.exe");
+  assert.equal(executableName("linux"), "adocweave");
+  assert.equal(executableName("win32"), "adocweave.exe");
 });
 
 test("sha256.sumから対象archiveの期待値だけを取り出します", () => {
   const sums = [
-    "1111111111111111111111111111111111111111111111111111111111111111  adocweave-dist-manifest.json",
+    "1111111111111111111111111111111111111111111111111111111111111111  adocweave-wasm-0.51.0.tgz",
     `2222222222222222222222222222222222222222222222222222222222222222  ${linuxArchive}`,
-    "3333333333333333333333333333333333333333333333333333333333333333  adocweave-lsp-aarch64-apple-darwin.zip",
+    "3333333333333333333333333333333333333333333333333333333333333333  adocweave-aarch64-apple-darwin.zip",
   ].join("\n");
 
   assert.equal(

@@ -5,7 +5,7 @@ mod acquire;
 use acquire::{asset_name, latest_lsp_release, target_triple, AcquiredServer};
 
 const SERVER_NAME: &str = "adocweave";
-const SERVER_EXECUTABLE: &str = "adocweave-lsp";
+const SERVER_EXECUTABLE: &str = "adocweave";
 const RELEASES_URL: &str = "https://api.github.com/repos/KeishiS/adocweave/releases?per_page=100";
 const DOCUMENTATION: &str =
     "https://github.com/KeishiS/adocweave/blob/main/docs/user-guide/release-installation.adoc";
@@ -60,7 +60,7 @@ impl AdocWeaveExtension {
                         release.version
                     )
                 })?;
-                let directory = version_directory(&release.version);
+                let directory = version_directory(&release.version, &target);
                 let executable = executable_path(&directory, os);
                 if !is_file(&executable) {
                     zed::set_language_server_installation_status(
@@ -87,7 +87,7 @@ impl AdocWeaveExtension {
                 executable
             }
             // 取得済みの版があれば、GitHubへ到達できなくても起動できる。
-            Err(error) => downloaded_executable(os).ok_or(error)?,
+            Err(error) => downloaded_executable(os, &target).ok_or(error)?,
         };
         Ok(executable)
     }
@@ -108,8 +108,8 @@ fn fetch_releases() -> Result<String, String> {
     String::from_utf8(response.body).map_err(|_| "GitHubの応答をUTF-8として読めません".to_owned())
 }
 
-fn version_directory(version: &str) -> String {
-    format!("{SERVER_EXECUTABLE}-{version}")
+fn version_directory(version: &str, target: &str) -> String {
+    format!("{SERVER_EXECUTABLE}-{version}-{target}")
 }
 
 fn executable_path(directory: &str, os: zed::Os) -> String {
@@ -125,12 +125,14 @@ fn is_file(path: &str) -> bool {
 }
 
 /// 取得済みの版のうち、実行ファイルが残っているものを一つ返します。
-fn downloaded_executable(os: zed::Os) -> Option<String> {
+fn downloaded_executable(os: zed::Os, target: &str) -> Option<String> {
     let mut found: Option<String> = None;
     for entry in std::fs::read_dir(".").ok()?.flatten() {
         let name = entry.file_name();
         let Some(name) = name.to_str() else { continue };
-        if !name.starts_with(&format!("{SERVER_EXECUTABLE}-")) {
+        if !name.starts_with(&format!("{SERVER_EXECUTABLE}-"))
+            || !name.ends_with(&format!("-{target}"))
+        {
             continue;
         }
         let executable = executable_path(name, os);
@@ -173,7 +175,7 @@ fn configured_server_path(
 fn server_command(command: String, env: Vec<(String, String)>) -> zed::Command {
     zed::Command {
         command,
-        args: Vec::new(),
+        args: vec!["lsp".to_owned()],
         env,
     }
 }
@@ -211,29 +213,44 @@ mod tests {
     use super::*;
 
     #[test]
-    fn server_command_has_no_arguments_and_preserves_shell_environment() {
+    fn server_command_uses_lsp_subcommand_and_preserves_shell_environment() {
         let env = vec![("PATH".to_owned(), "/usr/bin".to_owned())];
-        let command = server_command("/usr/bin/adocweave-lsp".to_owned(), env.clone());
+        let command = server_command("/usr/bin/adocweave".to_owned(), env.clone());
 
-        assert_eq!(command.command, "/usr/bin/adocweave-lsp");
-        assert!(command.args.is_empty());
+        assert_eq!(command.command, "/usr/bin/adocweave");
+        assert_eq!(command.args, ["lsp"]);
         assert_eq!(command.env, env);
     }
 
     #[test]
+    fn acquired_executable_path_contains_version_and_target() {
+        let directory = version_directory("0.47.0", "x86_64-unknown-linux-musl");
+
+        assert_eq!(directory, "adocweave-0.47.0-x86_64-unknown-linux-musl");
+        assert_eq!(
+            executable_path(&directory, zed::Os::Linux),
+            format!("{directory}/adocweave")
+        );
+        assert_eq!(
+            executable_path(&directory, zed::Os::Windows),
+            format!("{directory}/adocweave.exe")
+        );
+    }
+
+    #[test]
     fn accepts_only_host_absolute_paths() {
-        assert!(is_absolute_path("/opt/adocweave-lsp", zed::Os::Linux));
-        assert!(is_absolute_path("/opt/adocweave-lsp", zed::Os::Mac));
+        assert!(is_absolute_path("/opt/adocweave", zed::Os::Linux));
+        assert!(is_absolute_path("/opt/adocweave", zed::Os::Mac));
         assert!(is_absolute_path(
-            r"C:\Tools\adocweave-lsp.exe",
+            r"C:\Tools\adocweave.exe",
             zed::Os::Windows
         ));
         assert!(is_absolute_path(
-            r"\\server\tools\adocweave-lsp.exe",
+            r"\\server\tools\adocweave.exe",
             zed::Os::Windows
         ));
-        assert!(!is_absolute_path("bin/adocweave-lsp", zed::Os::Linux));
-        assert!(!is_absolute_path(r".\adocweave-lsp.exe", zed::Os::Windows));
+        assert!(!is_absolute_path("bin/adocweave", zed::Os::Linux));
+        assert!(!is_absolute_path(r".\adocweave.exe", zed::Os::Windows));
         assert!(!is_absolute_path(r"\\server", zed::Os::Windows));
     }
 
@@ -241,7 +258,7 @@ mod tests {
     fn configured_path_ignores_arguments_and_environment() {
         let settings = zed::settings::LspSettings {
             binary: Some(zed::settings::CommandSettings {
-                path: Some("/opt/adocweave-lsp".to_owned()),
+                path: Some("/opt/adocweave".to_owned()),
                 arguments: Some(vec!["--unexpected".to_owned()]),
                 env: Some(HashMap::from([("UNEXPECTED".to_owned(), "1".to_owned())])),
             }),
@@ -250,12 +267,12 @@ mod tests {
 
         assert_eq!(
             configured_server_path(settings, zed::Os::Linux),
-            Ok(Some("/opt/adocweave-lsp".to_owned()))
+            Ok(Some("/opt/adocweave".to_owned()))
         );
         assert!(configured_server_path(
             zed::settings::LspSettings {
                 binary: Some(zed::settings::CommandSettings {
-                    path: Some("relative/adocweave-lsp".to_owned()),
+                    path: Some("relative/adocweave".to_owned()),
                     arguments: None,
                     env: None,
                 }),

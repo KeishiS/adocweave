@@ -11,13 +11,14 @@ This extension provides the following features:
 
 ## Installation
 
-Install `adocweave.adocweave-vscode` from the extension view of an editor that uses Open VSX, such as VSCodium. The official publisher is the `adocweave` namespace.
+Install `adocweave.adocweave-vscode` from Visual Studio Marketplace or Open VSX. The official publisher is the `adocweave` namespace.
 
 ```sh
+code --install-extension adocweave.adocweave-vscode
 codium --install-extension adocweave.adocweave-vscode
 ```
 
-Visual Studio Code itself reads the Visual Studio Marketplace, where this extension is not published. Install the verified VSIX from [GitHub Releases](https://github.com/KeishiS/adocweave/releases) manually instead. The file published to Open VSX is the same VSIX.
+You can also install the verified VSIX from [GitHub Releases](https://github.com/KeishiS/adocweave/releases). The same extension version is published to both registries and attached to the corresponding `vX.Y.Z` release.
 
 ```sh
 code --install-extension adocweave-vscode-<version>.vsix --force
@@ -25,9 +26,9 @@ code --install-extension adocweave-vscode-<version>.vsix --force
 
 ## Requirements
 
-Install `adocweave-lsp` separately before using the language features. The extension first uses the absolute executable path in the machine-level `adocweave.server.path` setting. When that setting is empty, it searches the extension host's `PATH`.
+The extension starts the Language Server as `adocweave lsp`. It first uses the absolute executable path in the machine-level `adocweave.server.path` setting. When that setting is empty, it searches the extension host's `PATH` for `adocweave`. If neither is available, it downloads the latest stable native executable from the project's GitHub Releases.
 
-The extension does not download or update the Language Server. If it cannot find the executable, follow the Language Server installation instructions in `docs/user-guide/release-installation.adoc` in the repository. The extension and Language Server negotiate supported features through the standard Language Server Protocol initialization.
+To select a version yourself, install `adocweave` by following `docs/user-guide/release-installation.adoc` and set `adocweave.server.path` to its absolute path. The extension and Language Server negotiate supported features through the standard Language Server Protocol initialization.
 
 ## License
 

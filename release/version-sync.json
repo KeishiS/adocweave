@@ -1,115 +1,74 @@
 {
-  "schemaVersion": 2,
-  "products": [
+  "schemaVersion": 1,
+  "literals": [
     {
-      "id": "lib",
-      "authority": {
-        "type": "literal",
-        "path": "Cargo.toml",
-        "template": "\nversion = \"{version}\"\n",
-        "count": 1
-      },
-      "targets": [
-        {
-          "type": "cargo-lock",
-          "path": "Cargo.lock",
-          "packages": [
-            "adocweave",
-            "adocweave-config",
-            "adocweave-host",
-            "adocweave-textlint",
-            "adocweave-workspace"
-          ]
-        }
-      ],
-      "generators": []
+      "path": "web-worker/package.json",
+      "template": "\"version\": \"{version}\"",
+      "count": 1
     },
     {
-      "id": "cli",
-      "authority": {
-        "type": "literal",
-        "path": "crates/adocweave-cli/Cargo.toml",
-        "template": "name = \"adocweave-cli\"\nversion = \"{version}\"",
-        "count": 1
-      },
-      "targets": [
-        { "type": "cargo-lock", "path": "Cargo.lock", "packages": ["adocweave-cli"] }
-      ],
-      "generators": []
+      "path": "web-worker/contracts.mjs",
+      "template": "export const WASM_PACKAGE_VERSION = \"{version}\";",
+      "count": 1
     },
     {
-      "id": "lsp",
-      "authority": {
-        "type": "literal",
-        "path": "crates/adocweave-lsp/Cargo.toml",
-        "template": "name = \"adocweave-lsp\"\nversion = \"{version}\"",
-        "count": 1
-      },
-      "targets": [
-        { "type": "cargo-lock", "path": "Cargo.lock", "packages": ["adocweave-lsp"] }
-      ],
-      "generators": []
+      "path": "packages/textlint-plugin-asciidoc/package.json",
+      "template": "\"version\": \"{version}\"",
+      "count": 1
     },
     {
-      "id": "wasm",
-      "authority": {
-        "type": "literal",
-        "path": "web-worker/package.json",
-        "template": "\"name\": \"@adocweave/wasm\",\n  \"version\": \"{version}\"",
-        "count": 1
-      },
-      "targets": [
-        { "type": "literal", "path": "crates/adocweave-wasm/Cargo.toml", "template": "name = \"adocweave-wasm\"\nversion = \"{version}\"", "count": 1 },
-        { "type": "cargo-lock", "path": "Cargo.lock", "packages": ["adocweave-wasm"] },
-        { "type": "literal", "path": "web-worker/contracts.mjs", "template": "export const WASM_PACKAGE_VERSION = \"{version}\";", "count": 1 }
-      ],
-      "generators": [
-        {
-          "id": "protocol",
-          "outputs": [{ "path": "web-worker/protocol.d.mts" }]
-        }
+      "path": "editors/vscode/package.json",
+      "template": "\"version\": \"{version}\"",
+      "count": 1
+    },
+    {
+      "path": "editors/vscode/package-lock.json",
+      "template": "\"version\": \"{version}\"",
+      "count": 2
+    },
+    {
+      "path": "editors/zed/Cargo.toml",
+      "template": "version = \"{version}\"",
+      "count": 1
+    },
+    {
+      "path": "editors/zed/extension.toml",
+      "template": "version = \"{version}\"",
+      "count": 1
+    },
+    {
+      "path": "CHANGELOG.md",
+      "template": "[{version}]",
+      "count": 2
+    },
+    {
+      "path": "dist-workspace.toml",
+      "template": "-{version}",
+      "count": 4
+    }
+  ],
+  "cargoLocks": [
+    {
+      "path": "Cargo.lock",
+      "packages": [
+        "adocweave",
+        "adocweave-cli",
+        "adocweave-config",
+        "adocweave-host",
+        "adocweave-lsp",
+        "adocweave-textlint",
+        "adocweave-textlint-wasm",
+        "adocweave-wasm",
+        "adocweave-workspace"
       ]
     },
     {
-      "id": "textlint",
-      "authority": {
-        "type": "literal",
-        "path": "packages/textlint-plugin-asciidoc/package.json",
-        "template": "\"name\": \"@adocweave/textlint-plugin-asciidoc\",\n  \"version\": \"{version}\"",
-        "count": 1
-      },
-      "targets": [
-        { "type": "literal", "path": "crates/adocweave-textlint-wasm/Cargo.toml", "template": "name = \"adocweave-textlint-wasm\"\nversion = \"{version}\"", "count": 1 },
-        { "type": "cargo-lock", "path": "Cargo.lock", "packages": ["adocweave-textlint-wasm"] }
-      ],
-      "generators": []
+      "path": "fuzz/Cargo.lock",
+      "packages": ["adocweave"]
     },
     {
-      "id": "vscode",
-      "authority": {
-        "type": "literal",
-        "path": "editors/vscode/package.json",
-        "template": "\"name\": \"adocweave-vscode\",\n  \"displayName\": \"AdocWeave\",\n  \"description\": \"AdocWeave Language Server client and AsciiDoc syntax highlighting\",\n  \"version\": \"{version}\"",
-        "count": 1
-      },
-      "targets": [
-        { "type": "literal", "path": "editors/vscode/package-lock.json", "template": "\"version\": \"{version}\"", "count": 2 }
-      ],
-      "generators": []
-    },
-    {
-      "id": "zed",
-      "authority": {
-        "type": "literal",
-        "path": "editors/zed/extension.toml",
-        "template": "version = \"{version}\"",
-        "count": 1
-      },
-      "targets": [
-        { "type": "literal", "path": "editors/zed/Cargo.toml", "template": "name = \"adocweave-zed\"\nversion = \"{version}\"", "count": 1 },
-        { "type": "cargo-lock", "path": "editors/zed/Cargo.lock", "packages": ["adocweave-zed"] }
-      ],
-      "generators": []
+      "path": "editors/zed/Cargo.lock",
+      "packages": ["adocweave-zed"]
     }
   ]
 }

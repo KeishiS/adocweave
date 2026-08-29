@@ -1,18 +1,18 @@
 name: Binary cache publication
 
-# 公開済みCLI Releaseと同じcommitからNix package closureを構築し、Cachixへ送信する。
+# 公開済みReleaseと同じcommitからNix package closureを構築し、Cachixへ送信する。
 # GitHub Release公開後の呼び出しと、同じtagを指定した単独再実行の両方に対応する。
 on:
   workflow_call:
     inputs:
       tag:
-        description: Published stable CLI tag
+        description: Published stable tag
         required: true
         type: string
   workflow_dispatch:
     inputs:
       tag:
-        description: Published stable CLI tag
+        description: Published stable tag
         required: true
         type: string
 
@@ -42,7 +42,7 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
           persist-credentials: false
-      - name: Published CLI candidate verification
+      - name: Published release verification
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
@@ -52,14 +52,28 @@ jobs:
           test "$(jq -r .draft <<<"$release")" = false
           test "$(jq -r .prerelease <<<"$release")" = false
           test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)"
-          node tools/release-contract.mjs --product=cli "--tag=$RELEASE_TAG"
+
+          workspace_version="$(sed -n '/^\[workspace\.package\]/,/^\[/ s/^version = "\([^"]*\)"/\1/p' Cargo.toml)"
+          [[ "$workspace_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          test "$RELEASE_TAG" = "v$workspace_version"
+
           mkdir -p artifacts
-          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir artifacts
-          node tools/product-release.mjs --verify-candidate cli artifacts
-          node tools/release-metadata.mjs verify cli artifacts "$(git rev-parse HEAD)"
-          for file in artifacts/*; do
-            gh attestation verify "$file" --repo "$GITHUB_REPOSITORY"
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir artifacts \
+            --pattern sha256.sum --pattern 'adocweave-*.zip'
+          set -- artifacts/adocweave-*.zip
+          test "$#" -eq 4
+          for target in \
+            aarch64-apple-darwin \
+            aarch64-unknown-linux-musl \
+            x86_64-pc-windows-msvc \
+            x86_64-unknown-linux-musl
+          do
+            archive="artifacts/adocweave-$target.zip"
+            test -f "$archive"
+            (cd artifacts && grep -F "  $(basename "$archive")" sha256.sum | sha256sum --check --strict -)
+            gh attestation verify "$archive" --repo "$GITHUB_REPOSITORY"
           done
+          gh attestation verify artifacts/sha256.sum --repo "$GITHUB_REPOSITORY"
       - uses: DeterminateSystems/determinate-nix-action@527f17dd63d2d60d3e5552934bc84b9a33a14d11 # v3.22.2
       - uses: cachix/cachix-action@5f2d7c5294214f71b873db4b969586b980625e71 # v17
         with:

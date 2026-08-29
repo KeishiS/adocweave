@@ -3,7 +3,7 @@
 //! 版の選択、platformとtargetの対応、asset名の組み立ては、この場所だけで決めます。
 use serde::Deserialize;
 
-const TAG_PREFIX: &str = "adocweave-lsp/v";
+const TAG_PREFIX: &str = "v";
 
 /// 取得済みのLanguage Serverです。
 pub struct AcquiredServer {
@@ -41,7 +41,7 @@ impl SelectedRelease {
 
 /// 公開済みのLanguage Server releaseから最新版を選びます。
 ///
-/// `latest_github_release`は製品別tagを絞り込めず、最後に公開した別製品のreleaseを返すため使いません。
+/// `latest_github_release`ではstable SemVerの検証ができないため使いません。
 pub fn latest_lsp_release(body: &str) -> Result<SelectedRelease, String> {
     let releases: Vec<GithubRelease> = serde_json::from_str(body)
         .map_err(|error| format!("GitHubのrelease一覧を解釈できません：{error}"))?;
@@ -95,7 +95,7 @@ pub fn target_triple(
 }
 
 pub fn asset_name(target: &str) -> String {
-    format!("adocweave-lsp-{target}.zip")
+    format!("adocweave-{target}.zip")
 }
 
 /// 版の比較に使う、stable SemVerの三要素です。
@@ -137,15 +137,9 @@ mod tests {
     fn selects_the_newest_language_server_release() {
         let body = format!(
             "[{},{},{}]",
-            release(
-                "adocweave-lsp/v0.46.2",
-                &["adocweave-lsp-x86_64-unknown-linux-musl.zip"]
-            ),
+            release("v0.46.2", &["adocweave-x86_64-unknown-linux-musl.zip"]),
             release("adocweave-wasm/v0.48.0", &["adocweave-wasm-0.48.0.tgz"]),
-            release(
-                "adocweave-lsp/v0.47.0",
-                &["adocweave-lsp-x86_64-unknown-linux-musl.zip"]
-            ),
+            release("v0.47.0", &["adocweave-x86_64-unknown-linux-musl.zip"]),
         );
 
         let selected = latest_lsp_release(&body).expect("release");
@@ -155,18 +149,15 @@ mod tests {
     #[test]
     fn ignores_other_products_drafts_and_prereleases() {
         let body = format!(
-            r#"[{},{{"tag_name":"adocweave-lsp/v9.9.9","draft":true,"prerelease":false,"assets":[]}},{{"tag_name":"adocweave-lsp/v8.8.8","draft":false,"prerelease":true,"assets":[]}}]"#,
-            release(
-                "adocweave-lsp/v0.47.0",
-                &["adocweave-lsp-x86_64-unknown-linux-musl.zip"]
-            ),
+            r#"[{},{{"tag_name":"v9.9.9","draft":true,"prerelease":false,"assets":[]}},{{"tag_name":"v8.8.8","draft":false,"prerelease":true,"assets":[]}}]"#,
+            release("v0.47.0", &["adocweave-x86_64-unknown-linux-musl.zip"]),
         );
 
         assert_eq!(
             latest_lsp_release(&body).expect("release").version,
             "0.47.0"
         );
-        assert!(latest_lsp_release(r#"[{"tag_name":"adocweave-cli/v0.47.0"}]"#).is_err());
+        assert!(latest_lsp_release(r#"[{"tag_name":"release-0.47.0"}]"#).is_err());
     }
 
     #[test]
@@ -174,8 +165,8 @@ mod tests {
         let body = format!(
             "[{}]",
             release(
-                "adocweave-lsp/v0.47.0",
-                &["adocweave-lsp-x86_64-unknown-linux-musl.zip", "sha256.sum"],
+                "v0.47.0",
+                &["adocweave-x86_64-unknown-linux-musl.zip", "sha256.sum"],
             )
         );
         let selected = latest_lsp_release(&body).expect("release");
@@ -185,7 +176,7 @@ mod tests {
             .expect("asset");
         assert_eq!(
             asset.browser_download_url,
-            "https://example.test/adocweave-lsp-x86_64-unknown-linux-musl.zip"
+            "https://example.test/adocweave-x86_64-unknown-linux-musl.zip"
         );
         assert!(selected
             .asset(&asset_name("aarch64-apple-darwin"))

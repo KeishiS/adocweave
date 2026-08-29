@@ -9,16 +9,15 @@ xref:core-profile.adoc[コアの対応範囲]、文法はxref:grammar.adoc[文�
 
 [source,text]
 ----
-VS Code・Zed ──LSP──> adocweave-lsp
+VS Code・Zed ──LSP──> adocweave lsp
 ブラウザークライアント ──> Web Worker ──> adocweave-wasm ──> adocweave
 textlint ──> adocweave-textlint-wasm ─┬─> adocweave-textlint ──> adocweave
                                       └─> adocweave
 
-adocweave-cli ─┬─> adocweave-config ─┬─> adocweave
-adocweave-lsp ─┘                      ├─> adocweave-host
-                ├─> adocweave-host   └─> adocweave-workspace ──> adocweave
-                ├─> adocweave-workspace
-                └─> adocweave
+adocweave-cli ──> adocweave-lsp, adocweave-config, adocweave-host, adocweave-workspace, adocweave
+adocweave-lsp ──> adocweave-config, adocweave-host, adocweave-workspace, adocweave
+adocweave-config ──> adocweave-host, adocweave-workspace, adocweave
+adocweave-workspace ──> adocweave
 ----
 
 矢印は利用する側から利用される側へ向きます。下位コンポーネントは上位のプロトコル、実行環境または
@@ -41,10 +40,10 @@ adocweave-lsp ─┘                      ├─> adocweave-host
 |Rustの設定型から生成するスキーマ、設定の探索と読込、および処理上限の解決
 
 |``adocweave-cli``
-|コマンド、標準入出力、ファイル操作、同期的な処理の調停および終了状態への変換
+|``adocweave``のコマンド、標準入出力、ファイル操作、処理の調停および終了状態への変換
 
-|``adocweave-lsp``
-|LSPの通信、URIと位置の変換、通知順序、並行実行およびクライアントへの結果公開
+|``adocweave-lsp`` crate
+|``adocweave lsp``から呼び出すLSPの通信、URIと位置の変換、通知順序、並行実行およびクライアントへの結果公開
 
 |``adocweave-wasm``
 |WebAssemblyの要求・応答の検証と、公開する通信型とコア型の相互変換
@@ -63,8 +62,7 @@ adocweave-lsp ─┘                      ├─> adocweave-host
 |===
 
 crateとpackageの正確な構成、依存先および版は各manifestを基準とします。この図は実装の直接依存を示します。
-配布製品の一覧は
-link:../../release/distribution-plan.json[配布計画]を基準とし、この文書へ複製しません。
+配布成果物と公開方法はxref:release-distribution.adoc[配布仕様]を基準とし、この文書へ複製しません。
 
 [#single-analysis]
 == 単一解析

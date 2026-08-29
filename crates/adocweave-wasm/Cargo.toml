@@ -1,6 +1,6 @@
 [package]
 name = "adocweave-wasm"
-version = "0.48.0"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
 homepage.workspace = true

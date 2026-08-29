@@ -3,7 +3,7 @@ name: Native artifact smoke
 on:
   workflow_call:
     inputs:
-      matrix:
+      plan:
         required: true
         type: string
 
@@ -21,7 +21,7 @@ jobs:
   smoke:
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(inputs.matrix) }}
+      matrix: ${{ fromJSON(inputs.plan).ci.github.artifacts_matrix }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
     steps:
@@ -30,7 +30,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: release-candidate-${{ matrix.product }}-asset-${{ matrix.target }}
+          name: artifacts-build-local-${{ join(matrix.targets, '_') }}
           path: target/distrib
       # This job also runs on macOS and Windows runners, so it cannot use the Nix
       # devShell. Writing the Node.js version here would split it from the release
@@ -55,8 +55,9 @@ jobs:
           "ADOCWEAVE_DUMPBIN=$($dumpbin.FullName)" >> $env:GITHUB_ENV
       - name: Extracted release binary smoke tests
         shell: bash
-        run: >-
-          node tools/native-release-smoke.mjs
-          "${{ matrix.product }}"
-          target/distrib
-          "${{ matrix.target }}"
+        env:
+          DIST_PLAN: ${{ inputs.plan }}
+        run: |
+          for target in ${{ join(matrix.targets, ' ') }}; do
+            node tools/native-release-smoke.mjs target/distrib "$target"
+          done
