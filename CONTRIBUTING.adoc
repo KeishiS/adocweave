@@ -291,6 +291,8 @@ git tag -a vX.Y.Z -m "AdocWeave vX.Y.Z"
 git push upstream vX.Y.Z
 ----
 . cargo-distのworkflowが、4つのnative成果物と追加成果物を構築して検査し、一つのGitHub Releaseへ添付します。
+. Release workflowが共通の公開通知を送り、npm、Open VSX、Visual Studio MarketplaceおよびCachixの
+  公開workflowを自動的に開始します。
 . 公開workflowの検証が成功し、予定されたassetを含むstableなGitHub Releaseが作成されたことを確認します。
   必要に応じて、xref:#release-checklist[Release checklist]の任意の受入確認を行います。
 
@@ -310,6 +312,22 @@ xref:docs/developer-guide/release-distribution.adoc[GitHub Releases配布仕様]
 公開後に問題が見つかった場合は、既存のtagやassetを置換せず、修正をpull requestで``main``へ統合して
 新しいバージョンで最初から実行します。
 
+最初の自動公開より前に4つの公開environmentを作成し、Open VSXとCachixのtokenを対応するenvironmentへ移します。
+npmとVisual Studio MarketplaceのTrusted Publisherにも、対応するworkflow fileとenvironmentを登録します。
+
+[#open-vsx-publication]
+=== Open VSX Registryへの公開
+
+Open VSXへの公開はGitHub Releaseの公開後に自動的に始まります。自動実行または送信だけが失敗した場合は、
+同じtagで次の手動復旧を実行します。
+
+[source,console]
+----
+gh workflow run open-vsx-publish.yml --ref main -f tag=vX.Y.Z
+----
+
+公開済みversionがある場合は送信せず、Registryから取得したVSIXとReleaseのVSIXのbyte列を照合します。
+
 [#marketplace-publication]
 === Visual Studio Marketplaceへの公開
 
@@ -318,12 +336,12 @@ workflow file``marketplace-publish.yml``およびenvironment``marketplace-publis
 GitHub ReleaseのVSIXをchecksumとattestationで確認した後、対象versionが未公開の場合だけ
 ``vsce publish --oidc``で送信します。PAT、Azure loginおよびEntra ID用のrepository変数は使用しません。
 
-Marketplaceへの公開はGitHub Releaseを公開した後に次を実行します。送信だけが失敗した場合も、同じtagで
-同じworkflowを実行します。
+Marketplaceへの公開はGitHub Releaseの公開後に自動的に始まります。自動実行または送信だけが失敗した場合は、
+同じtagで次の手動復旧を実行します。
 
 [source,console]
 ----
-gh workflow run marketplace-publish.yml -f tag=vX.Y.Z
+gh workflow run marketplace-publish.yml --ref main -f tag=vX.Y.Z
 ----
 
 対象versionが公開済みの場合は送信せず、MarketplaceからVSIXを取得してReleaseのVSIXと照合します。
@@ -349,23 +367,23 @@ sha256sum --check --strict sha256.sum
 npm publish PACKAGE-X.Y.Z.tgz
 ----
 
-初回公開の後、npmjs.comのpackage設定でTrusted Publisherへリポジトリ、workflow file名および許可する操作を
-登録します。登録後は``npm-publish.yml``がOIDCで公開できるため、初回公開に使った資格情報を失効させます。
+初回公開の後、npmjs.comのpackage設定でTrusted Publisherへリポジトリ、workflow file``npm-publish.yml``、
+GitHub environment``npm-publish``および許可する操作を登録します。登録後は``npm-publish.yml``がOIDCで
+公開できるため、初回公開に使った資格情報を失効させます。
 Trusted Publishing経由の公開にはprovenanceが自動で付きます。
 
-npmへの公開は、GitHub Releaseを公開したあとに次を実行します。一回の実行で二つのpackageを処理し、
-公開済みのpackageはReleaseのarchiveと同じ内容であることを確認して送信を省略します。
-``release.yml``からは呼びません。
+npmへの公開はGitHub Releaseの公開後に自動的に始まります。一回の実行で二つのpackageを処理し、公開済みの
+packageはReleaseのarchiveと同じ内容であることを確認して送信を省略します。自動実行または送信だけが失敗した
+場合は、同じtagで次の手動復旧を実行します。
 
 [source,console]
 ----
-gh workflow run npm-publish.yml -f tag=vX.Y.Z
+gh workflow run npm-publish.yml --ref main -f tag=vX.Y.Z
 ----
 
-再利用workflowとして呼び出すと、npmは実際に``npm publish``を実行するworkflowではなく、呼び出し元の
-workflow file名で公開元を照合します。Trusted Publisherはpackageごとに一つしか登録できないため、
-``release.yml``を登録すると、送信だけが失敗したときにRelease全体を再実行しなければ回復できません。
-``npm-publish.yml``を登録して単独で実行すれば、通常の公開と復旧が同じ操作になります。
+``npm-publish.yml``は共通の``repository_dispatch``を直接受け取り、再利用workflowからは呼び出しません。
+npmのTrusted Publisherが実際に``npm publish``を実行するworkflow file名を照合するため、自動公開と手動復旧の
+どちらも同じ``npm-publish.yml``を使います。
 
 npmへの送信だけが失敗した場合は、同じtagを指定して``npm-publish.yml``を再実行します。公開済みversionは
 integrityを確認し、未公開のpackageだけを送信します。公開後に問題が見つかった場合は
@@ -375,11 +393,12 @@ integrityを確認し、未公開のpackageだけを送信します。公開後�
 [#cachix-publication]
 === Cachixへの公開
 
-Cachixへの公開は、stableなGitHub Releaseのtagを指定して実行します。
+Cachixへの公開はstableなGitHub Releaseの公開後に自動的に始まります。自動実行、送信または確認に失敗した場合は、
+同じtagで次の手動復旧を実行します。
 
 [source,console]
 ----
-gh workflow run binary-cache-publish.yml -f tag=vX.Y.Z
+gh workflow run binary-cache-publish.yml --ref main -f tag=vX.Y.Z
 ----
 
 公開jobはRelease、tag、commitおよびworkspace版を照合し、``x86_64-linux``と``aarch64-linux``のNix packageと
