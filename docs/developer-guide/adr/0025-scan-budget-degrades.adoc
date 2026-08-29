@@ -1,5 +1,5 @@
 = ADR 0025: 走査の上限超過で部分結果を残す
-:status: accepted
+:status: accepted; scan degradation semantics retained; state ownership amended by ADR 0041
 
 == 背景
 

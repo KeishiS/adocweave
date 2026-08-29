@@ -1,6 +1,6 @@
 = ADR 0019: 初期ワークスペース走査とリソース読込の分離
 
-:status: accepted; exclusion composition amended by ADR 0038
+:status: accepted; exclusion composition amended by ADR 0038; state ownership amended by ADR 0041
 
 == 状態
 

@@ -1,6 +1,6 @@
 = ADR 0014: local filesystemの競合耐性
 
-:status: accepted
+:status: accepted; safety semantics retained; state ownership amended by ADR 0041
 
 == 文脈
 
