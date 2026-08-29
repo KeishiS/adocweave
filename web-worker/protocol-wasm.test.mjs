@@ -161,14 +161,38 @@ test("generated wasm-bindgen rejects JavaScript-only invalid values", () => {
 
 test("generated wasm-bindgen preserves undefined as omission and rejects null", () => {
   const response = wasm.analyze({
-    source: { text: "Text", id: undefined, attributes: { unset: null } },
-    products: { html: true },
+    source: { text: "Text", id: undefined, attributes: undefined },
+    products: { html: true, diagnostics: { protectedAttributes: undefined } },
     resources: { bibliography: null },
   });
   assert.equal(typeof response.html, "string");
+  assert.equal(typeof wasm.analyze({
+    source: { text: "Text", attributes: { set: "value", unset: null } },
+    products: { diagnostics: { protectedAttributes: { locked: null } } },
+  }).diagnostics, "object");
   assert.equal(wasmError(() => wasm.analyze({
     source: { text: "Text" }, products: { html: true }, resources: null,
   })).code, "invalid-request");
+  for (const request of [
+    {
+      source: { text: "Text", attributes: { invalid: undefined } },
+      products: { html: true },
+    },
+    {
+      source: { text: "Text" },
+      products: { diagnostics: { protectedAttributes: { invalid: undefined } } },
+    },
+  ]) {
+    assert.equal(wasmError(() => wasm.analyze(request)).code, "invalid-request");
+  }
+});
+
+test("generated wasm-bindgen applies null protected attributes", () => {
+  const diagnostics = wasm.analyze({
+    source: { text: ":locked: changed\n" },
+    products: { diagnostics: { protectedAttributes: { locked: null } } },
+  }).diagnostics;
+  assert.equal(diagnostics.some(({ code }) => code === "protected-attribute"), true);
 });
 
 test("generated wasm-bindgen aligns omitted render defaults with optional TypeScript fields", () => {
@@ -178,6 +202,7 @@ test("generated wasm-bindgen aligns omitted render defaults with optional TypeSc
   });
   for (const outcome of [
     { status: "resolved", href: "https://example.test", notices: [] },
+    { status: "resolved", href: "https://example.test", notices: undefined },
     { status: "resolved", href: "https://example.test" },
   ]) {
     assert.equal(typeof wasm.analyze({
@@ -202,6 +227,16 @@ test("generated wasm-bindgen aligns omitted render defaults with optional TypeSc
       bibliography: { title: "References" },
     },
   }).html, "string");
+  for (const resources of [
+    {
+      citations: [resolvedAsset({ status: "resolved", segments: undefined })],
+    },
+    {
+      bibliography: { title: "References", entries: undefined },
+    },
+  ]) {
+    assert.equal(typeof wasm.analyze({ ...base, resources }).html, "string");
+  }
 
   const invalidResources = [
     { references: [resolvedAsset({ status: "resolved", href: "https://example.test", displayText: null })] },

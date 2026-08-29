@@ -235,3 +235,96 @@ fn omission_only_public_fields_serialize_without_null_and_round_trip() {
         &["label", "number"],
     );
 }
+
+#[test]
+fn optional_collection_defaults_serialize_as_empty_arrays_and_round_trip() {
+    let reference = ReferenceOutcome::Resolved {
+        href: "chapter.adoc".to_owned(),
+        display_text: None,
+        notices: Vec::new(),
+    };
+    let citation = CitationOutcome::Resolved {
+        segments: Vec::new(),
+    };
+    let bibliography = GeneratedBibliography {
+        title: "References".to_owned(),
+        entries: Vec::new(),
+    };
+
+    for (value, field) in [
+        (
+            serde_json::to_value(&reference).expect("serialize reference"),
+            "notices",
+        ),
+        (
+            serde_json::to_value(&citation).expect("serialize citation"),
+            "segments",
+        ),
+        (
+            serde_json::to_value(&bibliography).expect("serialize bibliography"),
+            "entries",
+        ),
+    ] {
+        assert_eq!(value[field], serde_json::json!([]));
+    }
+    assert_eq!(
+        serde_json::from_value::<ReferenceOutcome>(
+            serde_json::to_value(&reference).expect("serialize reference")
+        )
+        .expect("deserialize reference"),
+        reference
+    );
+    assert_eq!(
+        serde_json::from_value::<CitationOutcome>(
+            serde_json::to_value(&citation).expect("serialize citation")
+        )
+        .expect("deserialize citation"),
+        citation
+    );
+    assert_eq!(
+        serde_json::from_value::<GeneratedBibliography>(
+            serde_json::to_value(&bibliography).expect("serialize bibliography")
+        )
+        .expect("deserialize bibliography"),
+        bibliography
+    );
+}
+
+#[test]
+fn attribute_maps_serialize_string_and_null_values_and_round_trip() {
+    let attributes = BTreeMap::from([
+        ("set".to_owned(), Some("value".to_owned())),
+        ("unset".to_owned(), None),
+    ]);
+    let source = SourceInput {
+        text: "Text".to_owned(),
+        id: None,
+        attributes: Some(attributes.clone()),
+        syntax_mode: None,
+    };
+    let source_json = serde_json::to_value(&source).expect("serialize source attributes");
+    assert_eq!(
+        source_json["attributes"],
+        serde_json::json!({ "set": "value", "unset": null })
+    );
+    assert_eq!(
+        serde_json::from_value::<SourceInput>(source_json).expect("deserialize source attributes"),
+        source
+    );
+
+    let diagnostics = DiagnosticOptions {
+        protected_attributes: Some(attributes),
+        ..DiagnosticOptions::default()
+    };
+    let diagnostics_json =
+        serde_json::to_value(&diagnostics).expect("serialize protected attributes");
+    assert_eq!(
+        diagnostics_json["protectedAttributes"],
+        serde_json::json!({ "set": "value", "unset": null })
+    );
+    assert_eq!(
+        serde_json::from_value::<DiagnosticOptions>(diagnostics_json)
+            .expect("deserialize protected attributes"),
+        diagnostics
+    );
+}

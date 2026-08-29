@@ -103,7 +103,7 @@ Web Workerを使いません。この実行方法の違いは維持しますが�
 |``Record<string, string | null>``
 |省略可
 |文書へ事前に渡す属性です。文字列は設定、``null``は未設定を表します。省略時は空です。空の属性名と
-制御文字を含む属性名は拒否します。
+制御文字を含む属性名は拒否します。object内の値には``undefined``を指定できません。
 
 |``syntaxMode``
 |``"permissive" | "strict"``
@@ -272,7 +272,7 @@ type DiagnosticOptions = {
 
 |``protectedAttributes``
 |空のobject
-|文書から変更できない属性と値です。
+|文書から変更できない属性と値です。文字列または``null``を指定し、object内の値には``undefined``を指定できません。
 
 |``authoredUrls``
 |schemeは``http``と``https``、相対URLは許可

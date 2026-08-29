@@ -131,6 +131,41 @@ fn render_input_defaults_are_omission_only_except_bibliography_reset() {
 }
 
 #[test]
+fn attribute_maps_accept_only_string_and_null_values() {
+    let request: AnalyzeRequest = serde_json::from_value(json!({
+        "source": {
+            "text": ":locked: changed\n",
+            "attributes": { "set": "value", "unset": null }
+        },
+        "products": {
+            "diagnostics": {
+                "protectedAttributes": { "locked": null, "set": "value" }
+            }
+        }
+    }))
+    .expect("string and null attribute values");
+    let serialized = serde_json::to_value(&request).expect("serialize attribute maps");
+    assert_eq!(serialized["source"]["attributes"]["set"], "value");
+    assert!(serialized["source"]["attributes"]["unset"].is_null());
+    assert!(serialized["products"]["diagnostics"]["protectedAttributes"]["locked"].is_null());
+    assert_eq!(
+        serde_json::from_value::<AnalyzeRequest>(serialized.clone()).expect("round-trip request"),
+        request
+    );
+
+    let response = analyze(serialized).expect("diagnostics response");
+    assert!(
+        response["diagnostics"]
+            .as_array()
+            .is_some_and(|diagnostics| {
+                diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic["code"] == "protected-attribute")
+            })
+    );
+}
+
+#[test]
 fn response_contains_only_requested_products() {
     let response = analyze(json!({
         "source": { "text": "= Title\n\nText" },

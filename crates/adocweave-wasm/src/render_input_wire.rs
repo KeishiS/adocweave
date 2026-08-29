@@ -9,6 +9,36 @@ where
     T::deserialize(deserializer).map(Some)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn deserialize_default_on_undefined<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    T::deserialize(deserializer)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn deserialize_default_on_undefined<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de> + Default,
+{
+    #[derive(serde::Deserialize)]
+    #[serde(untagged)]
+    enum ValueOrUndefined<T> {
+        Value(T),
+        Undefined(()),
+    }
+
+    Ok(
+        match <ValueOrUndefined<T> as serde::Deserialize>::deserialize(deserializer)? {
+            ValueOrUndefined::Value(value) => value,
+            ValueOrUndefined::Undefined(()) => T::default(),
+        },
+    )
+}
+
 #[cfg(target_arch = "wasm32")]
 fn deserialize_present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
 where
@@ -107,7 +137,7 @@ pub enum ReferenceOutcome {
         )]
         #[cfg_attr(feature = "ts-rs", ts(optional, type = "string"))]
         display_text: Option<String>,
-        #[serde(default)]
+        #[serde(default, deserialize_with = "deserialize_default_on_undefined")]
         #[cfg_attr(feature = "ts-rs", ts(optional, type = "Array<ReferenceNotice>"))]
         notices: Vec<ReferenceNotice>,
     },
@@ -159,7 +189,7 @@ pub enum ResourceOutcome {
 )]
 pub enum CitationOutcome {
     Resolved {
-        #[serde(default)]
+        #[serde(default, deserialize_with = "deserialize_default_on_undefined")]
         #[cfg_attr(feature = "ts-rs", ts(optional, type = "Array<CitationSegment>"))]
         segments: Vec<CitationSegment>,
     },
@@ -203,7 +233,7 @@ serde_object_serializable! {
     pub struct GeneratedBibliography as GeneratedBibliographyObject {
         pub title: String,
         #[cfg_attr(feature = "ts-rs", ts(optional, type = "Array<GeneratedBibliographyEntry>"))]
-        #[wire_field(serde(default))]
+        #[wire_field(serde(default, deserialize_with = "deserialize_default_on_undefined"))]
         pub entries: Vec<GeneratedBibliographyEntry>,
     }
 }

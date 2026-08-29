@@ -60,5 +60,50 @@ const renderDefaultsRequest: AnalyzeRequest = {
   },
 };
 void client.analyze(renderDefaultsRequest);
+const explicitUndefinedRequest: AnalyzeRequest = {
+  source: { text: "Text", attributes: undefined },
+  products: { diagnostics: { protectedAttributes: undefined }, html: true },
+  resources: {
+    references: [{
+      sourceStart: 0,
+      sourceEnd: 1,
+      outcome: {
+        status: "resolved",
+        href: "https://example.test",
+        notices: undefined,
+      },
+    }],
+    citations: [{
+      sourceStart: 1,
+      sourceEnd: 2,
+      outcome: { status: "resolved", segments: undefined },
+    }],
+    bibliography: { title: "References", entries: undefined },
+  },
+};
+void client.analyze(explicitUndefinedRequest);
+const invalidSourceAttribute: AnalyzeRequest = {
+  source: {
+    text: "Text",
+    attributes: {
+      // @ts-expect-error Attribute map entries accept string or null, not undefined.
+      invalid: undefined,
+    },
+  },
+  products: { html: true },
+};
+const invalidProtectedAttribute: AnalyzeRequest = {
+  source: { text: "Text" },
+  products: {
+    diagnostics: {
+      protectedAttributes: {
+        // @ts-expect-error Protected attribute entries accept string or null, not undefined.
+        invalid: undefined,
+      },
+    },
+  },
+};
+void invalidSourceAttribute;
+void invalidProtectedAttribute;
 console.log(PROTOCOL_SCHEMA_VERSION);
 client.dispose();

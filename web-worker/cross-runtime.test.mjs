@@ -107,6 +107,18 @@ const cases = [
       resources: { bibliography: null },
     },
   },
+  {
+    name: "属性の文字列とnullを指定した要求",
+    request: {
+      source: {
+        text: ":locked: changed\n",
+        attributes: { set: "value", unset: null },
+      },
+      products: {
+        diagnostics: { protectedAttributes: { locked: null, set: "value" } },
+      },
+    },
+  },
 ];
 
 function nativeResult(request) {

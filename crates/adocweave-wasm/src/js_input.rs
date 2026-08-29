@@ -218,6 +218,11 @@ fn snapshot_object(
     let result = Object::new();
     for (key, key_text) in keys {
         let field = data_property_value(value, &key, true)?;
+        if map_null_values && field.is_undefined() {
+            return Err(invalid_request(
+                "attribute map values must be strings or null",
+            ));
+        }
         let field = snapshot(
             &field,
             ancestors,
