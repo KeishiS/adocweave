@@ -4,7 +4,8 @@
 //! `raw`, `value`, and `loc` without deciding which AsciiDoc constructs are
 //! prose.
 
-pub mod wasm;
+#[cfg(any(test, target_arch = "wasm32"))]
+mod wasm;
 
 use std::collections::{BTreeMap, BTreeSet};
 
