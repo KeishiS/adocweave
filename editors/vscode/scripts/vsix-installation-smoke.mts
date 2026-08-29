@@ -84,7 +84,7 @@ function installedVersion(baseArguments: CliArguments): string | undefined {
 try {
   mkdirSync(extensionsDirectory);
   mkdirSync(userDataDirectory);
-  const executable = await downloadAndUnzipVSCode("1.125.0");
+  const executable = await downloadAndUnzipVSCode("1.91.0");
   const cli = resolveCliArgsFromVSCodeExecutablePath(executable);
   const [major, minor, patch] = packageJson.version.split(".").map(Number);
   if (major === undefined || minor === undefined || patch === undefined) {

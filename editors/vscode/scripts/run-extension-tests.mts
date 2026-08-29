@@ -64,7 +64,7 @@ try {
       userData,
       join(extensionRoot, "test", "fixtures", "adocweave.code-workspace"),
     ],
-    version: "1.125.0",
+    version: "1.91.0",
   });
   const serverNeedle = server.toLocaleLowerCase("en-US");
   if (
