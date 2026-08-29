@@ -7,7 +7,7 @@ fn diagnostics_use_current_version_codes_and_unicode_positions() {
         (PositionEncoding::Utf8, 10, 11),
         (PositionEncoding::Utf16, 5, 6),
     ] {
-        let mut service = LanguageService::default();
+        let mut service = Session::default();
         service.position_encoding = encoding;
         open(&mut service, "file:///unicode.adoc", 3, text);
         let diagnostics = service
@@ -30,7 +30,7 @@ fn diagnostics_use_current_version_codes_and_unicode_positions() {
 
 #[test]
 fn link_and_xref_diagnostics_share_ranges_and_quick_fixes() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     initialize(&mut service, &["utf-16"]);
     open(
         &mut service,
@@ -88,7 +88,7 @@ fn link_and_xref_diagnostics_share_ranges_and_quick_fixes() {
 
 #[test]
 fn opt_in_macro_boundary_diagnostic_uses_lsp_positions() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     service.position_encoding = PositionEncoding::Utf16;
     service
         .update_configuration(json!({"enabledRules": ["macro-boundary"]}))
@@ -123,7 +123,7 @@ fn opt_in_macro_boundary_diagnostic_uses_lsp_positions() {
 
 #[test]
 fn diagnostics_preserve_invalid_explicit_ordered_number_ranges() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     open(
         &mut service,
         "file:///ordered-list.adoc",
@@ -146,7 +146,7 @@ fn diagnostics_preserve_invalid_explicit_ordered_number_ranges() {
 
 #[test]
 fn diagnostics_preserve_invalid_table_presentation_ranges() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     open(
         &mut service,
         "file:///table.adoc",
@@ -166,7 +166,7 @@ fn diagnostics_preserve_invalid_table_presentation_ranges() {
 
 #[test]
 fn close_clears_diagnostics() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     let document_uri = uri("file:///a.adoc");
     open(&mut service, document_uri.as_str(), 1, "bad ");
     assert!(service.close(&document_uri).0);

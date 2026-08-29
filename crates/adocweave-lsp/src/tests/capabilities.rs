@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn initialize_negotiates_encoding_and_advertises_existing_features() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     let result = initialize(&mut service, &["utf-8", "utf-16"]);
     let value = serde_json::to_value(result).expect("serialize");
 
@@ -25,7 +25,7 @@ fn initialize_negotiates_encoding_and_advertises_existing_features() {
 
 #[test]
 fn minimal_client_never_receives_capability_gated_response_shapes() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     let params = typed(json!({
         "processId": null,
         "rootUri": null,
@@ -98,7 +98,7 @@ fn minimal_client_never_receives_capability_gated_response_shapes() {
 
 #[test]
 fn client_preferences_select_plaintext_hover_and_unversioned_code_action_edits() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     let params = typed(json!({
         "processId": null,
         "rootUri": null,

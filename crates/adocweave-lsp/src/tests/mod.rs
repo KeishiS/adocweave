@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
 use super::{HostReferenceIndex, HostReferenceRequest, PositionEncoding, run};
-use crate::service::LanguageService;
+use crate::service::Session;
 use crate::state::{Adoption, AnalysisJob, WorkspaceProblem};
 
 mod support;
@@ -25,4 +25,5 @@ mod feature_integration;
 mod navigation;
 mod protocol;
 mod semantic_tokens;
+mod session;
 mod state_workspace;

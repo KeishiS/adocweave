@@ -47,7 +47,8 @@ adocweave-workspace ──> adocweave
 |``adocweave``のコマンド、標準入出力、ファイル操作、処理の調停および終了状態への変換
 
 |``adocweave-lsp`` crate
-|``adocweave lsp``から呼び出すLSPの通信、URIと位置の変換、通知順序、並行実行およびクライアントへの結果公開
+|``adocweave lsp``から呼び出すLSPの通信、URIと位置の変換、通知順序、並行実行、接続単位の``Session``および
+クライアントへの結果公開
 
 |``adocweave-wasm``
 |WebAssemblyの要求・応答・errorの検証と、公開する通信型とコア型の相互変換

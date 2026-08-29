@@ -7,7 +7,7 @@ use adocweave::{CancellationCheck, CancellationToken};
 use adocweave_host::{FilesystemJobCoordinator, FilesystemJobError};
 use async_lsp::lsp_types::{DidChangeWatchedFilesParams, FileChangeType, FileEvent, Url};
 
-use crate::service::{LanguageService, WorkspaceFileChanges};
+use crate::service::{Session, WorkspaceFileChanges};
 use crate::state::AnalysisJob;
 
 const MAX_WATCH_JOURNAL_ENTRIES: usize = 10_000;
@@ -505,7 +505,7 @@ impl WorkspaceScanCoordinator {
 
     pub(super) fn complete(
         &mut self,
-        service: &mut LanguageService,
+        service: &mut Session,
         scanned: WorkspaceScanned,
     ) -> Option<WorkspaceScanTransition> {
         let completion = self.complete_active(scanned.sequence)?;
@@ -617,7 +617,7 @@ mod tests {
         }
     }
 
-    fn scan_race_service(prefix: &str) -> (std::path::PathBuf, Url, LanguageService) {
+    fn scan_race_service(prefix: &str) -> (std::path::PathBuf, Url, Session) {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock")
@@ -634,7 +634,7 @@ mod tests {
             "capabilities": {}
         }))
         .expect("initialize params");
-        let mut service = LanguageService::default();
+        let mut service = Session::default();
         service.initialize(&params);
         let scan = service.plan_workspace_scan(&adocweave::NeverCancel);
         let _ = service.apply_workspace_scan(scan);

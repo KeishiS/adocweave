@@ -203,10 +203,20 @@ impl HostReferenceIndex for NoHostReferenceIndex {
     }
 }
 
+/// Long-lived semantic state for one Language Server connection.
+///
+/// Runtime resources such as task handles stay in the protocol backend. The
+/// current documents, configuration, project roots, cancellation tokens and
+/// adopted results have exactly this owner.
 #[derive(Clone)]
-pub(crate) struct LanguageService {
-    pub documents: DocumentStore,
+pub(crate) struct Session {
+    #[cfg(not(test))]
+    documents: DocumentStore,
+    #[cfg(test)]
+    pub(crate) documents: DocumentStore,
     pub position_encoding: PositionEncoding,
+    phase: SessionPhase,
+    input_revision: u64,
     client: ClientProfile,
     settings: ServerSettings,
     host_index: Arc<dyn HostReferenceIndex>,
@@ -225,6 +235,14 @@ pub(crate) struct LanguageService {
     workspace_input_error: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum SessionPhase {
+    #[default]
+    Created,
+    Initialized,
+    ShuttingDown,
+}
+
 pub(crate) struct WorkspaceFileChanges {
     pub(crate) jobs: Vec<AnalysisJob>,
     pub(crate) journal: Vec<lsp::FileEvent>,
@@ -240,12 +258,14 @@ pub(crate) struct WorkspaceScanApplication {
     pub(crate) notices: Vec<WorkspaceScanNotice>,
 }
 
-impl fmt::Debug for LanguageService {
+impl fmt::Debug for Session {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("LanguageService")
+            .debug_struct("Session")
             .field("documents", &self.documents)
             .field("position_encoding", &self.position_encoding)
+            .field("phase", &self.phase)
+            .field("input_revision", &self.input_revision)
             .field("client", &self.client)
             .field("settings", &self.settings)
             .field("has_complete_host_index", &self.host_index.is_complete())
@@ -253,11 +273,13 @@ impl fmt::Debug for LanguageService {
     }
 }
 
-impl Default for LanguageService {
+impl Default for Session {
     fn default() -> Self {
         Self {
             documents: DocumentStore::default(),
             position_encoding: PositionEncoding::Utf16,
+            phase: SessionPhase::Created,
+            input_revision: 0,
             client: ClientProfile::default(),
             settings: ServerSettings::default(),
             host_index: Arc::new(NoHostReferenceIndex),
@@ -324,7 +346,31 @@ fn parse_open_sources(sources: &[(String, i32, String)]) -> Vec<(lsp::Url, i64, 
         .collect()
 }
 
-impl LanguageService {
+impl Session {
+    fn advance_input_revision(&mut self) {
+        self.input_revision = self.input_revision.saturating_add(1);
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn input_revision(&self) -> u64 {
+        self.input_revision
+    }
+
+    #[cfg(test)]
+    pub(crate) fn workspace_roots(&self) -> Vec<lsp::Url> {
+        self.workspace_roots.values().cloned().collect()
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn is_initialized(&self) -> bool {
+        matches!(self.phase, SessionPhase::Initialized)
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn is_shutting_down(&self) -> bool {
+        matches!(self.phase, SessionPhase::ShuttingDown)
+    }
+
     pub fn with_host_index(host_index: Arc<dyn HostReferenceIndex>) -> Self {
         Self {
             host_index,
@@ -367,6 +413,8 @@ impl LanguageService {
             .collect();
         self.workspace_error = None;
         self.clear_workspace_watch_errors();
+        self.phase = SessionPhase::Initialized;
+        self.advance_input_revision();
         lsp::InitializeResult {
             capabilities: lsp::ServerCapabilities {
                 position_encoding: Some(self.position_encoding.lsp()),
@@ -456,6 +504,7 @@ impl LanguageService {
                 options,
             );
             attach_workspace(&mut job, Err(error));
+            self.advance_input_revision();
             return vec![job];
         }
         let affected = match self.workspace.upsert_open(
@@ -481,6 +530,7 @@ impl LanguageService {
         attach_workspace(&mut job, self.workspace.input(&document.uri));
         let mut jobs = vec![job];
         self.append_dependent_jobs(&affected, document.uri.as_str(), &mut jobs);
+        self.advance_input_revision();
         jobs
     }
 
@@ -536,6 +586,7 @@ impl LanguageService {
         attach_workspace(&mut job, self.workspace.input(&params.text_document.uri));
         let mut jobs = vec![job];
         self.append_dependent_jobs(&affected, params.text_document.uri.as_str(), &mut jobs);
+        self.advance_input_revision();
         Ok(jobs)
     }
 
@@ -888,6 +939,7 @@ impl LanguageService {
         }
         self.workspace_roots = roots;
         self.active_scan_notices.clear();
+        self.advance_input_revision();
         true
     }
 
@@ -1061,10 +1113,14 @@ impl LanguageService {
         }
         let mut jobs = Vec::new();
         self.append_dependent_jobs(&affected, uri.as_str(), &mut jobs);
+        if closed {
+            self.advance_input_revision();
+        }
         (closed, jobs)
     }
 
-    pub fn cancel_all(&mut self) {
+    pub fn shutdown(&mut self) {
+        self.phase = SessionPhase::ShuttingDown;
         self.documents.cancel_all();
     }
 
@@ -1092,8 +1148,12 @@ impl LanguageService {
                 ));
             }
         }
+        let settings_changed = self.settings != settings;
         let diagnostics_changed = self.settings.enabled_rules != settings.enabled_rules;
         self.settings = settings;
+        if settings_changed {
+            self.advance_input_revision();
+        }
         if !diagnostics_changed {
             return Ok(Vec::new());
         }
