@@ -4,7 +4,6 @@
     "CONTRIBUTING.adoc",
     "README.adoc",
     "editors/zed/README.adoc",
-    "editors/zed/vendor/README.adoc",
     "fuzz/corpus/README.adoc"
   ],
   "authoredDirectories": [
