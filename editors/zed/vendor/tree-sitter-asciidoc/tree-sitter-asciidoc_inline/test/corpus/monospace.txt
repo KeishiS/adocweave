@@ -1,0 +1,19 @@
+====================
+unconstrained monospace boundaries
+====================
+
+``\`` and ``a\`b`` and ``code``
+
+-----
+
+(inline
+  (inline_element
+    (monospace))
+  (inline_element
+    (word))
+  (inline_element
+    (monospace))
+  (inline_element
+    (word))
+  (inline_element
+    (monospace)))
