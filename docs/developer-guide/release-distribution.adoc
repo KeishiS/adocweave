@@ -5,7 +5,7 @@ attestationの確認はxref:../user-guide/release-installation.adoc[インスト
 準備して公開する手順はxref:../../CONTRIBUTING.adoc[コントリビューションガイド]を参照してください。
 
 [#distribution-authorities]
-== 機械可読な正本
+== 配布情報の正本
 
 [cols="2,3",options="header"]
 |===
