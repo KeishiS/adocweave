@@ -9,7 +9,7 @@ import {
 } from "@vscode/test-electron";
 import { unzipSync, zipSync } from "fflate";
 
-import { type ExtensionManifest, readJson } from "./manifests.mts";
+import { type ExtensionManifest, readJson, supportedVSCodeFloor } from "./manifests.mts";
 
 if (process.platform === "linux" && process.env.GITHUB_ACTIONS === "true") {
   delete process.env.LD_LIBRARY_PATH;
@@ -84,7 +84,7 @@ function installedVersion(baseArguments: CliArguments): string | undefined {
 try {
   mkdirSync(extensionsDirectory);
   mkdirSync(userDataDirectory);
-  const executable = await downloadAndUnzipVSCode("1.91.0");
+  const executable = await downloadAndUnzipVSCode(supportedVSCodeFloor(packageJson));
   const cli = resolveCliArgsFromVSCodeExecutablePath(executable);
   const [major, minor, patch] = packageJson.version.split(".").map(Number);
   if (major === undefined || minor === undefined || patch === undefined) {
