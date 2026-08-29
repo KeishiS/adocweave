@@ -1,0 +1,11 @@
+= Zed用inline文法
+
+``tree-sitter-asciidoc``は、ZedでAsciiDocの基本色付けに使用する文法ソースです。
+AdocWeave本体の解析には使用しません。
+
+``source.json``は取得元のリポジトリ、コミット、ライセンスおよび生成に使用した
+Tree-sitter CLIの版を記録します。取得元のApache License 2.0は``LICENSE``に保持しています。
+
+inline文法は、バックスラッシュ1文字を二重バッククォートで囲んだ等幅表記を認識します。
+この表記の後ろにある等幅表記も別の要素として認識します。回帰例は
+``tree-sitter-asciidoc_inline/test/corpus/monospace.txt``で定義します。
