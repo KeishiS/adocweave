@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn semantic_tokens_are_sorted_and_delta_encoded_from_the_analysis() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     open_reference_workspace(&mut service);
     let tokens = service
         .semantic_tokens(&uri("file:///a.adoc"))
@@ -19,7 +19,7 @@ fn semantic_tokens_are_sorted_and_delta_encoded_from_the_analysis() {
 #[test]
 fn semantic_tokens_split_multiline_inline_ranges_at_crlf_boundaries() {
     for (encoding, first_length) in [("utf-8", 5), ("utf-16", 3)] {
-        let mut service = LanguageService::default();
+        let mut service = Session::default();
         initialize(&mut service, &[encoding]);
         let document_uri = uri("file:///multiline.adoc");
         open(&mut service, document_uri.as_str(), 1, "``a😀\r\nb``");
@@ -39,7 +39,7 @@ fn semantic_tokens_split_multiline_inline_ranges_at_crlf_boundaries() {
 
 #[test]
 fn semantic_tokens_leave_syntactic_headings_to_editor_grammars() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     initialize(&mut service, &["utf-8"]);
     let document_uri = uri("file:///heading.adoc");
     open(
@@ -64,7 +64,7 @@ fn external_link_tokens_keep_exact_ranges_even_when_document_links_reject_the_ur
 javascript:alert(1)[Unsafe]\n\
 https://example.com:99999[Invalid port]\n";
     for (encoding, expected_start) in [("utf-8", 5), ("utf-16", 3)] {
-        let mut service = LanguageService::default();
+        let mut service = Session::default();
         initialize(&mut service, &[encoding]);
         let document = uri("file:///external-link-tokens.adoc");
         open(&mut service, document.as_str(), 1, source);

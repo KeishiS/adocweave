@@ -17,7 +17,7 @@ pub(super) fn uri(value: &str) -> lsp::Url {
 /// reaches once the scan has landed. A test that only calls `initialize`
 /// observes a service that has not read its roots yet.
 pub(super) fn initialize_with_params(
-    service: &mut LanguageService,
+    service: &mut Session,
     params: lsp::InitializeParams,
 ) -> lsp::InitializeResult {
     let result = service.initialize(&params);
@@ -55,10 +55,7 @@ pub(super) async fn read_message(
     serde_json::from_slice(&body).expect("json")
 }
 
-pub(super) fn initialize(
-    service: &mut LanguageService,
-    encodings: &[&str],
-) -> lsp::InitializeResult {
+pub(super) fn initialize(service: &mut Session, encodings: &[&str]) -> lsp::InitializeResult {
     let params = typed(json!({
         "processId": null,
         "rootUri": null,
@@ -97,7 +94,7 @@ pub(super) fn full_capabilities(encodings: &[&str]) -> Value {
     })
 }
 
-pub(super) fn open(service: &mut LanguageService, uri: &str, version: i32, text: &str) {
+pub(super) fn open(service: &mut Session, uri: &str, version: i32, text: &str) {
     let jobs = service.begin_open(typed(json!({
         "textDocument": {
             "uri": uri,
@@ -112,7 +109,7 @@ pub(super) fn open(service: &mut LanguageService, uri: &str, version: i32, text:
 }
 
 pub(super) fn all_code_actions(
-    service: &LanguageService,
+    service: &Session,
     document_uri: &lsp::Url,
 ) -> Result<Option<Vec<lsp::CodeActionOrCommand>>, String> {
     service.code_actions(
@@ -130,7 +127,7 @@ pub(super) fn all_code_actions(
 }
 
 pub(super) fn change(
-    service: &mut LanguageService,
+    service: &mut Session,
     uri: &str,
     version: i32,
     changes: Value,
@@ -149,7 +146,7 @@ pub(super) fn change(
 }
 
 /// Runs one job the way the event loop and its worker do, then adopts it.
-pub(super) fn adopt(service: &mut LanguageService, job: AnalysisJob) {
+pub(super) fn adopt(service: &mut Session, job: AnalysisJob) {
     let analysis = job
         .request
         .analyze(job.cancellation.as_ref())
@@ -230,7 +227,7 @@ pub(super) fn apply_edits(source: &str, edits: &[lsp::TextEdit]) -> String {
     output
 }
 
-pub(super) fn open_reference_workspace(service: &mut LanguageService) {
+pub(super) fn open_reference_workspace(service: &mut Session) {
     open(
         service,
         "file:///a.adoc",

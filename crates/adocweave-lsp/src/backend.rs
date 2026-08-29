@@ -22,12 +22,12 @@ use tower::ServiceBuilder;
 
 use crate::cancellation::{QueryCancellation, QueryError, QueryResult};
 use crate::lifecycle::ProtocolLifecycleLayer;
-use crate::service::LanguageService;
+use crate::service::Session;
 use crate::state::{Adoption, AnalysisJob, WorkspaceProblem};
 use crate::workspace::{AnalyzedRoot, WorkspaceScanNotice, document_analysis_job_limits};
 use crate::workspace_scan::{
-    WorkspaceRecoveryTimerUpdate, WorkspaceScanCoordinator, WorkspaceScanRecovery,
-    WorkspaceScanRecoveryTimer, WorkspaceScanStart, WorkspaceScanTransition, WorkspaceScanned,
+    WorkspaceRecoveryTimerUpdate, WorkspaceScanRecovery, WorkspaceScanRecoveryTimer,
+    WorkspaceScanStart, WorkspaceScanTransition, WorkspaceScanned,
 };
 use crate::{HostReferenceIndex, NoHostReferenceIndex};
 
@@ -37,16 +37,15 @@ const WATCH_SCAN_RECOVERY_DEBOUNCE_MS: u64 = 100;
 
 pub(crate) struct Backend {
     client: ClientSocket,
-    service: LanguageService,
+    session: Session,
     cpu_limit: Arc<Semaphore>,
     analysis_tasks: BTreeMap<String, AnalysisTask>,
     workspace_analysis_gate: Arc<Semaphore>,
-    workspace_scans: WorkspaceScanCoordinator,
     workspace_scan_recovery_timer: WorkspaceScanRecoveryTimer,
 }
 
 struct AnalysisTask {
-    generation: u64,
+    cancellation: Arc<CancellationToken>,
     handle: tokio::task::JoinHandle<()>,
 }
 
@@ -116,17 +115,16 @@ impl Backend {
         let process_monitor = client.clone();
         let mut router = Router::new(Self {
             client,
-            service: LanguageService::with_host_index(host_index),
+            session: Session::with_host_index(host_index),
             cpu_limit: Arc::new(Semaphore::new(MAX_CONCURRENT_ANALYSES)),
             analysis_tasks: BTreeMap::new(),
             workspace_analysis_gate: Arc::new(Semaphore::new(1)),
-            workspace_scans: WorkspaceScanCoordinator::default(),
             workspace_scan_recovery_timer: WorkspaceScanRecoveryTimer::default(),
         });
 
         router
             .request::<request::Initialize, _>(|state, params| {
-                let response = state.service.initialize(&params);
+                let response = state.session.initialize(&params);
                 async move { Ok(response) }
             })
             .notification::<notification::Initialized>(|state, _| {
@@ -148,13 +146,13 @@ impl Backend {
                 ControlFlow::Continue(())
             })
             .notification::<notification::DidOpenTextDocument>(|state, params| {
-                for job in state.service.begin_open(params) {
+                for job in state.session.begin_open(params) {
                     state.schedule_analysis(job);
                 }
                 ControlFlow::Continue(())
             })
             .notification::<notification::DidChangeTextDocument>(|state, params| {
-                match state.service.begin_change(params) {
+                match state.session.begin_change(params) {
                     Ok(jobs) => {
                         for job in jobs {
                             state.schedule_analysis(job);
@@ -168,7 +166,7 @@ impl Backend {
                 state.publish_current_diagnostics(params.text_document.uri)
             })
             .notification::<notification::DidChangeConfiguration>(|state, params| {
-                if let Ok(jobs) = state.service.update_configuration(params.settings) {
+                if let Ok(jobs) = state.session.update_configuration(params.settings) {
                     for job in jobs {
                         state.schedule_analysis(job);
                     }
@@ -176,27 +174,23 @@ impl Backend {
                 ControlFlow::Continue(())
             })
             .notification::<notification::DidChangeWatchedFiles>(|state, params| {
-                let project_configuration_changed = params.changes.iter().any(|change| {
-                    change.uri.path_segments().and_then(Iterator::last)
-                        == Some(adocweave_config::FILE_NAME)
-                });
-                if project_configuration_changed {
-                    state.schedule_workspace_scan();
-                } else {
-                    let changes = state.service.workspace_files_changed_with_journal(params);
-                    let recovery_generation =
-                        state.workspace_scans.record_workspace_changes(&changes);
-                    if let Some(generation) = recovery_generation {
-                        state.schedule_workspace_scan_recovery(generation);
-                    }
-                    for job in changes.jobs {
-                        state.schedule_analysis(job);
-                    }
+                let outcome = state.session.handle_workspace_files_changed(params);
+                if outcome.cancel_recovery_timer {
+                    state.cancel_workspace_scan_recovery();
+                }
+                if let Some(generation) = outcome.recovery_generation {
+                    state.schedule_workspace_scan_recovery(generation);
+                }
+                for job in outcome.jobs {
+                    state.schedule_analysis(job);
+                }
+                if let Some(start) = outcome.rebuild {
+                    state.spawn_workspace_scan(start);
                 }
                 ControlFlow::Continue(())
             })
             .notification::<notification::DidChangeWorkspaceFolders>(|state, params| {
-                if state.service.workspace_folders_changed(params) {
+                if state.session.workspace_folders_changed(params) {
                     state.schedule_workspace_scan();
                 }
                 ControlFlow::Continue(())
@@ -204,7 +198,7 @@ impl Backend {
             .notification::<notification::DidCloseTextDocument>(|state, params| {
                 let uri = params.text_document.uri;
                 state.cancel_analysis(uri.as_str());
-                let (_, jobs) = state.service.close(&uri);
+                let (_, jobs) = state.session.close(&uri);
                 for job in jobs {
                     state.schedule_analysis(job);
                 }
@@ -320,8 +314,7 @@ impl Backend {
             })
             .event::<AnalysisCompleted>(|state, completed| state.analysis_completed(completed))
             .event::<WorkspaceScanned>(|state, scanned| {
-                let Some(transition) = state.workspace_scans.complete(&mut state.service, scanned)
-                else {
+                let Some(transition) = state.session.complete_workspace_scan(scanned) else {
                     return ControlFlow::Continue(());
                 };
                 let WorkspaceScanTransition {
@@ -360,13 +353,13 @@ impl Backend {
             })
             .event::<WorkspaceScanRecovery>(|state, recovery| {
                 let generation = recovery.generation();
-                if state.workspace_scans.debouncing_generation() != Some(generation) {
+                if !state.session.workspace_scan_recovery_is_current(generation) {
                     return ControlFlow::Continue(());
                 }
-                if !state.workspace_scan_recovery_timer.complete(generation) {
+                if !state.workspace_scan_recovery_timer.complete() {
                     return ControlFlow::Continue(());
                 }
-                if let Some(start) = state.workspace_scans.request_recovery(generation) {
+                if let Some(start) = state.session.request_workspace_scan_recovery(recovery) {
                     state.spawn_workspace_scan(start);
                 }
                 ControlFlow::Continue(())
@@ -384,7 +377,7 @@ impl Backend {
     }
 
     fn register_dynamic_capabilities(&mut self) {
-        let Some(params) = self.service.watched_files_registration() else {
+        let Some(params) = self.session.watched_files_registration() else {
             return;
         };
         let client = self.client.clone();
@@ -403,10 +396,10 @@ impl Backend {
     ) -> impl std::future::Future<Output = Result<T, ResponseError>> + Send + use<T, F>
     where
         T: Send + 'static,
-        F: FnOnce(&LanguageService, &Url, &QueryCancellation) -> QueryResult<T> + Send + 'static,
+        F: FnOnce(&Session, &Url, &QueryCancellation) -> QueryResult<T> + Send + 'static,
     {
-        let cancellation = self.service.document_cancellation(&uri);
-        let service = self.service.clone();
+        let cancellation = self.session.document_cancellation(&uri);
+        let service = self.session.clone();
         let limit = self.cpu_limit.clone();
         async move {
             run_cpu_request(limit, cancellation, move |cancellation| {
@@ -424,7 +417,7 @@ impl Backend {
     /// completion event before starting the next worker.
     fn schedule_workspace_scan(&mut self) {
         self.cancel_workspace_scan_recovery();
-        let Some(start) = self.workspace_scans.request_replacement() else {
+        let Some(start) = self.session.request_workspace_scan() else {
             return;
         };
         self.spawn_workspace_scan(start);
@@ -432,7 +425,7 @@ impl Backend {
 
     fn spawn_workspace_scan(&self, start: WorkspaceScanStart) {
         let (sequence, cancellation) = start.into_parts();
-        let service = self.service.clone();
+        let service = self.session.clone();
         let client = self.client.clone();
         tokio::spawn(async move {
             let worker_cancellation = Arc::clone(&cancellation);
@@ -451,16 +444,14 @@ impl Backend {
     fn schedule_workspace_scan_recovery(&mut self, generation: u64) {
         self.cancel_workspace_scan_recovery();
         let client = self.client.clone();
-        self.workspace_scan_recovery_timer.replace(
-            generation,
-            tokio::spawn(async move {
+        self.workspace_scan_recovery_timer
+            .replace(tokio::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_millis(
                     WATCH_SCAN_RECOVERY_DEBOUNCE_MS,
                 ))
                 .await;
                 let _ = client.emit(WorkspaceScanRecovery::new(generation));
-            }),
-        );
+            }));
     }
 
     fn cancel_workspace_scan_recovery(&mut self) {
@@ -469,11 +460,11 @@ impl Backend {
 
     fn invalidate_workspace_scan(&mut self) {
         self.cancel_workspace_scan_recovery();
-        self.workspace_scans.cancel();
+        self.session.cancel_workspace_scan();
     }
 
     fn schedule_analysis(&mut self, job: AnalysisJob) {
-        self.schedule_analysis_with_delay(job, self.service.debounce_ms());
+        self.schedule_analysis_with_delay(job, self.session.debounce_ms());
     }
 
     fn schedule_analysis_immediately(&mut self, job: AnalysisJob) {
@@ -485,12 +476,12 @@ impl Backend {
         let limit = self.cpu_limit.clone();
         let client = self.client.clone();
         let uri = job.uri.clone();
-        let generation = job.request.revision.generation;
+        let cancellation = Arc::clone(&job.cancellation);
         let workspace_gate = workspace_analysis_gate(&job, &self.workspace_analysis_gate);
         // The worker reads missing includes into this copy while the editor
         // keeps using the current workspace. Nothing it reads becomes visible
         // until the finished analysis is adopted.
-        let workspace_copy = self.service.workspace_copy();
+        let workspace_copy = self.session.workspace_copy();
         let handle = tokio::spawn(async move {
             if debounce_ms > 0 {
                 tokio::time::sleep(std::time::Duration::from_millis(debounce_ms)).await;
@@ -536,8 +527,13 @@ impl Backend {
                 workspace_permit: result.2,
             });
         });
-        self.analysis_tasks
-            .insert(uri, AnalysisTask { generation, handle });
+        self.analysis_tasks.insert(
+            uri,
+            AnalysisTask {
+                cancellation,
+                handle,
+            },
+        );
     }
 
     fn analysis_completed(
@@ -560,18 +556,18 @@ impl Backend {
         if self
             .analysis_tasks
             .get(&completed.job.uri)
-            .is_some_and(|task| task.generation == completed.job.request.revision.generation)
+            .is_some_and(|task| Arc::ptr_eq(&task.cancellation, &completed.job.cancellation))
         {
             self.analysis_tasks.remove(&completed.job.uri);
         }
-        if let Some(retry) = self.service.refresh_stale_workspace(&completed.job) {
+        if let Some(retry) = self.session.refresh_stale_workspace(&completed.job) {
             self.schedule_analysis_immediately(retry);
             return ControlFlow::Continue(());
         }
         let Ok(analysis) = completed.result else {
             return ControlFlow::Continue(());
         };
-        if self.service.adopt(&completed.job, analysis) != Adoption::Adopted {
+        if self.session.adopt(&completed.job, analysis) != Adoption::Adopted {
             return ControlFlow::Continue(());
         }
         let mut publish_uris = std::collections::BTreeSet::from([completed.job.uri.clone()]);
@@ -580,11 +576,11 @@ impl Backend {
                 Ok(analyzed) => {
                     let failure = analyzed.failure();
                     publish_uris.extend(
-                        self.service
+                        self.session
                             .adopt_analyzed_workspace(&completed.job, analyzed),
                     );
                     if let Some(failure) = failure {
-                        let _ = self.service.adopt_workspace_problem(
+                        let _ = self.session.adopt_workspace_problem(
                             &completed.job,
                             WorkspaceProblem {
                                 source_id: failure.source_id,
@@ -597,7 +593,7 @@ impl Backend {
                 }
                 Err(problem) => {
                     let _ = self
-                        .service
+                        .session
                         .adopt_workspace_problem(&completed.job, problem);
                 }
             }
@@ -622,7 +618,7 @@ impl Backend {
     }
 
     fn cancel_all_analysis(&mut self) {
-        self.service.cancel_all();
+        self.session.shutdown();
         for (_, task) in std::mem::take(&mut self.analysis_tasks) {
             task.handle.abort();
         }
@@ -630,7 +626,7 @@ impl Backend {
 
     fn publish_current_diagnostics(&mut self, uri: Url) -> ControlFlow<async_lsp::Result<()>> {
         let result = self
-            .service
+            .session
             .diagnostics(&uri)
             .map_err(async_lsp::Error::Routing)
             .and_then(|params: PublishDiagnosticsParams| {

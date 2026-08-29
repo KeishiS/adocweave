@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn document_symbols_choose_the_empty_shape_from_client_capabilities() {
     let document_uri = uri("file:///not-analyzed.adoc");
-    let mut hierarchical = LanguageService::default();
+    let mut hierarchical = Session::default();
     initialize(&mut hierarchical, &["utf-16"]);
     assert!(matches!(
         hierarchical
@@ -13,7 +13,7 @@ fn document_symbols_choose_the_empty_shape_from_client_capabilities() {
         lsp::DocumentSymbolResponse::Nested(symbols) if symbols.is_empty()
     ));
 
-    let mut flat = LanguageService::default();
+    let mut flat = Session::default();
     flat.initialize(&typed(json!({
         "processId": null,
         "rootUri": null,
@@ -29,7 +29,7 @@ fn document_symbols_choose_the_empty_shape_from_client_capabilities() {
 
 #[test]
 fn hover_and_completion_use_the_same_analysis_snapshot() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     open(
         &mut service,
         "file:///features.adoc",
@@ -59,7 +59,7 @@ fn hover_and_completion_use_the_same_analysis_snapshot() {
 
 #[test]
 fn hover_and_completion_cover_attributes_references_links_and_math() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     open(
         &mut service,
         "file:///rich-features.adoc",
@@ -103,7 +103,7 @@ fn hover_and_completion_cover_attributes_references_links_and_math() {
 
 #[test]
 fn hover_selects_the_token_starting_at_an_adjacent_range_boundary() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     open(
         &mut service,
         "file:///adjacent-attributes.adoc",
@@ -143,7 +143,7 @@ fn attribute_features_follow_the_binding_visible_at_the_cursor() {
 
 {name}
 ";
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     open(&mut service, "file:///attributes.adoc", 1, source);
     let document = uri("file:///attributes.adoc");
 
@@ -219,7 +219,7 @@ fn attribute_features_follow_the_binding_visible_at_the_cursor() {
 
 #[test]
 fn attribute_definition_and_references_project_through_includes() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     open(
         &mut service,
         "file:///book/part.adoc",
@@ -286,7 +286,7 @@ fn attribute_definition_and_references_project_through_includes() {
             .contains("Value: `changed`")
     );
 
-    let mut restarted = LanguageService::default();
+    let mut restarted = Session::default();
     open(
         &mut restarted,
         "file:///book/part.adoc",
@@ -313,7 +313,7 @@ fn attribute_definition_and_references_project_through_includes() {
 
 #[test]
 fn attribute_features_use_the_negotiated_utf8_position_encoding() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     initialize(&mut service, &["utf-8"]);
     open(
         &mut service,
@@ -344,7 +344,7 @@ fn attribute_features_use_the_negotiated_utf8_position_encoding() {
 
 #[test]
 fn hover_and_completion_cover_common_block_metadata() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     open(
         &mut service,
         "file:///metadata.adoc",
@@ -396,7 +396,7 @@ fn hover_and_completion_cover_common_block_metadata() {
 
 #[test]
 fn hover_and_completion_cover_semantic_block_presentations() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     open(
         &mut service,
         "file:///semantic-blocks.adoc",
@@ -440,7 +440,7 @@ fn hover_and_completion_cover_semantic_block_presentations() {
 
 #[test]
 fn hover_uses_document_catalogs_for_footnotes_bibliography_and_index() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     let source = "footnote:n[note] footnote:n[] bibanchor:ref[] indexterm:[Rust,Ownership]";
     open(&mut service, "file:///catalogs.adoc", 1, source);
     let document_uri = uri("file:///catalogs.adoc");
@@ -467,7 +467,7 @@ fn hover_uses_document_catalogs_for_footnotes_bibliography_and_index() {
 
 #[test]
 fn bibliography_targets_support_hover_definition_and_references() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     let source = "= References\n\n[bibliography]\n== Sources\n\n* bibanchor:ref[] Entry\n\nSee <<ref,Entry>> and <<ref>>.\n";
     let document_uri = uri("file:///bibliography.adoc");
     open(&mut service, document_uri.as_str(), 1, source);

@@ -1,5 +1,6 @@
 use super::*;
 use crate::workspace::WorkspaceScanNotice;
+use adocweave::CancellationCheck;
 
 #[test]
 fn scan_notice_episode_ends_after_a_complete_scan() {
@@ -19,7 +20,7 @@ fn scan_notice_episode_ends_after_a_complete_scan() {
     let expected = WorkspaceScanNotice::ProjectResourceLimit {
         project: config.clone(),
     };
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     service.initialize(&typed(json!({
         "processId": null,
         "rootUri": root_uri,
@@ -83,7 +84,7 @@ fn workspace_folder_change_starts_a_new_scan_notice_episode() {
     let limited_uri = lsp::Url::from_directory_path(&limited).expect("limited URI");
     let added_uri = lsp::Url::from_directory_path(&added).expect("added URI");
     let expected = WorkspaceScanNotice::ProjectResourceLimit { project: config };
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     service.initialize(&typed(json!({
         "processId": null,
         "workspaceFolders": [{"uri": limited_uri, "name": "limited"}],
@@ -135,7 +136,7 @@ fn initial_workspace_scan_prunes_builtin_and_additional_directories() {
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
     let document_uri = lsp::Url::from_file_path(root.join("root.adoc")).expect("document URI");
 
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     service.initialize(&typed(json!({
         "processId": null,
         "rootUri": root_uri,
@@ -183,7 +184,7 @@ fn excluded_include_targets_are_loaded_without_becoming_analysis_roots() {
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
     let document_uri = lsp::Url::from_file_path(root.join("root.adoc")).expect("document URI");
 
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     initialize_with_params(
         &mut service,
         typed(json!({
@@ -225,7 +226,7 @@ fn non_adoc_include_is_loaded_and_watched_without_becoming_an_analysis_root() {
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
     let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
     let include_uri = lsp::Url::from_file_path(&include_path).expect("include URI");
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     initialize_with_params(
         &mut service,
         typed(json!({
@@ -243,6 +244,10 @@ fn non_adoc_include_is_loaded_and_watched_without_becoming_an_analysis_root() {
         .expect("workspace analysis");
     assert!(analysis.analysis.source().contains("first marker"));
     assert_eq!(service.workspace_analysis_count(), 2);
+    let previous_revision = service.input_revision();
+    let previous_cancellation = service
+        .document_cancellation(&document_uri)
+        .expect("document cancellation");
 
     fs::write(&include_path, "second marker\n").expect("changed include");
     let jobs = service
@@ -251,6 +256,9 @@ fn non_adoc_include_is_loaded_and_watched_without_becoming_an_analysis_root() {
         })))
         .jobs;
     assert_eq!(jobs.len(), 1);
+    assert!(previous_cancellation.is_cancelled());
+    assert_eq!(service.input_revision(), previous_revision + 1);
+    assert_eq!(jobs[0].input_revision, service.input_revision());
     for job in jobs {
         adopt(&mut service, job);
     }
@@ -350,7 +358,7 @@ fn initially_missing_non_adoc_include_recovers_when_created() {
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
     let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
     let include_uri = lsp::Url::from_file_path(&include_path).expect("include URI");
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     initialize_with_params(
         &mut service,
         typed(json!({
@@ -402,7 +410,7 @@ fn watched_disk_change_is_retained_below_an_open_overlay() {
     fs::write(&document_path, "disk before\n").expect("document");
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
     let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     initialize_with_params(
         &mut service,
         typed(json!({
@@ -469,7 +477,7 @@ fn pending_non_adoc_include_recovers_from_a_workspace_problem() {
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
     let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
     let include_uri = lsp::Url::from_file_path(&include_path).expect("include URI");
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     initialize_with_params(
         &mut service,
         typed(json!({
@@ -510,7 +518,7 @@ fn pending_non_adoc_include_recovers_from_a_workspace_problem() {
 
 #[test]
 fn oversized_watched_file_batch_requests_a_quiet_full_scan() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     let changes = (0..=10_000)
         .map(|index| {
             json!({
@@ -530,7 +538,7 @@ fn oversized_watched_file_batch_requests_a_quiet_full_scan() {
 
 #[test]
 fn oversized_watched_file_error_requests_a_quiet_full_scan() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     initialize_with_params(
         &mut service,
         typed(json!({
@@ -560,7 +568,7 @@ fn failed_quiet_recovery_is_rearmed_by_the_next_watch_notification() {
     fs::write(&invalid_path, [0xff]).expect("invalid document");
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
     let invalid_uri = lsp::Url::from_file_path(&invalid_path).expect("document URI");
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     initialize_with_params(
         &mut service,
         typed(json!({
@@ -604,7 +612,7 @@ fn failed_initial_scan_is_rearmed_by_the_next_watch_notification() {
     fs::write(&invalid_path, [0xff]).expect("invalid document");
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
     let invalid_uri = lsp::Url::from_file_path(&invalid_path).expect("document URI");
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     initialize_with_params(
         &mut service,
         typed(json!({
@@ -660,7 +668,7 @@ fn include_added_after_initial_scan_loads_an_excluded_target() {
     fs::write(excluded.join("part.adoc"), "dynamic included marker\n").expect("included document");
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
     let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     initialize_with_params(
         &mut service,
         typed(json!({
@@ -723,7 +731,7 @@ fn stale_analysis_cannot_load_a_new_include_resource() {
     fs::write(&target_path, "stale included marker\n").expect("included document");
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
     let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     initialize_with_params(
         &mut service,
         typed(json!({
@@ -802,7 +810,7 @@ async fn different_project_scopes_sharing_an_include_converge_on_the_current_gen
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
     let first_uri = lsp::Url::from_file_path(&first_path).expect("first URI");
     let second_uri = lsp::Url::from_file_path(&second_path).expect("second URI");
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     initialize_with_params(
         &mut service,
         typed(json!({
@@ -948,7 +956,7 @@ fn explicitly_opened_document_remains_available_below_an_excluded_directory() {
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
     let document_uri = lsp::Url::from_file_path(document_path).expect("document URI");
 
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     initialize_with_params(
         &mut service,
         typed(json!({
@@ -982,7 +990,7 @@ fn file_workspace_folder_analyzes_only_the_selected_document_as_a_root() {
     fs::write(&document_path, "single file\n").expect("document");
     let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
 
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     initialize_with_params(
         &mut service,
         typed(json!({
@@ -1027,7 +1035,7 @@ fn analysis_adoption_rejects_a_stale_workspace_generation() {
     let document_uri = lsp::Url::from_file_path(&root_path).expect("document URI");
     let part_uri = lsp::Url::from_file_path(&part_path).expect("part URI");
 
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     let params = typed(json!({
         "processId": null,
         "rootUri": root_uri,
@@ -1062,7 +1070,7 @@ fn analysis_adoption_rejects_a_stale_workspace_generation() {
 
 #[test]
 fn stale_analysis_never_replaces_published_diagnostics() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     let document_uri = uri("file:///stale-diagnostics.adoc");
     let stale_job = service
         .begin_open(typed(json!({
@@ -1100,7 +1108,7 @@ fn stale_analysis_never_replaces_published_diagnostics() {
 }
 
 #[test]
-fn oversized_did_open_preserves_every_committed_state_and_emits_no_job() {
+fn rejected_change_keeps_protocol_input_for_the_next_incremental_change() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock")
@@ -1115,7 +1123,7 @@ fn oversized_did_open_preserves_every_committed_state_and_emits_no_job() {
     let document_path = root.join("document.adoc");
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
     let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     initialize_with_params(
         &mut service,
         typed(json!({
@@ -1133,48 +1141,67 @@ fn oversized_did_open_preserves_every_committed_state_and_emits_no_job() {
         }
     })));
     assert_eq!(accepted.len(), 1);
-    let previous = service
-        .documents
-        .get(document_uri.as_str())
-        .expect("committed document")
+    let stale_job = accepted.into_iter().next().expect("initial job");
+    let stale_result = stale_job
         .request
-        .revision
-        .clone();
+        .analyze(&adocweave::NeverCancel)
+        .expect("initial analysis");
 
-    let rejected = service.begin_open(typed(json!({
-        "textDocument": {
-            "uri": document_uri,
-            "languageId": "asciidoc",
-            "version": 2,
-            "text": "oversized"
-        }
-    })));
+    let rejected = service
+        .begin_change(typed(json!({
+            "textDocument": {"uri": document_uri, "version": 2},
+            "contentChanges": [{"text": "oversized"}]
+        })))
+        .expect("workspace rejection is a current document input");
 
-    assert!(rejected.is_empty());
+    assert_eq!(rejected.len(), 1);
+    assert_eq!(
+        rejected[0]
+            .workspace_problem
+            .as_ref()
+            .expect("workspace input problem")
+            .code,
+        "workspace-input-error"
+    );
+    assert!(stale_job.cancellation.is_cancelled());
+    assert_eq!(service.adopt(&stale_job, stale_result), Adoption::Stale);
     let current = service
         .documents
         .get(document_uri.as_str())
-        .expect("previous document");
-    assert_eq!(current.request.revision, previous);
-    assert_eq!(current.request.source.as_ref(), "old");
+        .expect("rejected document input");
+    assert_eq!(current.request.revision.version, 2);
+    assert_eq!(current.request.source.as_ref(), "oversized");
+    adopt(
+        &mut service,
+        rejected.into_iter().next().expect("rejected analysis"),
+    );
     let diagnostics = service.diagnostics(&document_uri).expect("diagnostics");
     assert!(diagnostics.diagnostics.iter().any(|diagnostic| {
         diagnostic.code
             == Some(lsp::NumberOrString::String(
-                "workspace-resource-error".to_owned(),
+                "workspace-input-error".to_owned(),
             ))
             && diagnostic.message.contains("retained resource byte")
     }));
 
-    let recovered = service.begin_open(typed(json!({
-        "textDocument": {
-            "uri": document_uri,
-            "languageId": "asciidoc",
-            "version": 3,
-            "text": "new"
-        }
-    })));
+    let recovered = service
+        .begin_change(typed(json!({
+            "textDocument": {"uri": document_uri, "version": 3},
+            "contentChanges": [{
+                "range": {
+                    "start": {"line": 0, "character": 0},
+                    "end": {"line": 0, "character": 9}
+                },
+                "text": "new"
+            }]
+        })))
+        .expect("incremental recovery uses the rejected version");
     assert_eq!(recovered.len(), 1);
+    assert!(recovered[0].workspace_problem.is_none());
+    adopt(
+        &mut service,
+        recovered.into_iter().next().expect("recovered analysis"),
+    );
     let current = service
         .documents
         .get(document_uri.as_str())
@@ -1185,14 +1212,201 @@ fn oversized_did_open_preserves_every_committed_state_and_emits_no_job() {
     assert!(diagnostics.diagnostics.iter().all(|diagnostic| {
         diagnostic.code
             != Some(lsp::NumberOrString::String(
-                "workspace-resource-error".to_owned(),
+                "workspace-input-error".to_owned(),
             ))
     }));
     fs::remove_dir_all(root).expect("cleanup");
 }
 
 #[test]
-fn did_open_outside_configured_roots_preserves_state_and_emits_no_job() {
+fn rejected_overlay_survives_dependent_and_configuration_reanalysis_until_retry() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-rejected-overlay-{unique}"));
+    fs::create_dir_all(&root).expect("workspace");
+    fs::write(
+        root.join(adocweave_config::FILE_NAME),
+        "schema-version = 2\n[resources]\ninclude = true\nmax-files = 8\nmax-total-bytes = 1024\nmax-resource-bytes = 32\n",
+    )
+    .expect("configuration");
+    let document_path = root.join("root.adoc");
+    let include_path = root.join("part.adoc");
+    let initial = "include::part.adoc[]\n";
+    fs::write(&document_path, initial).expect("document");
+    fs::write(&include_path, "old\n").expect("include");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
+    let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
+    let include_uri = lsp::Url::from_file_path(&include_path).expect("include URI");
+    let mut service = Session::default();
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "capabilities": {}
+        })),
+    );
+    open(&mut service, document_uri.as_str(), 1, initial);
+
+    let rejected = service
+        .begin_change(typed(json!({
+            "textDocument": {"uri": document_uri, "version": 2},
+            "contentChanges": [{"text": "x".repeat(64)}]
+        })))
+        .expect("rejected document change")
+        .pop()
+        .expect("rejected analysis job");
+    assert!(rejected.workspace_problem.is_some());
+    assert!(!rejected.cancellation.is_cancelled());
+
+    fs::write(&include_path, "changed\n").expect("changed include");
+    let dependent = service.workspace_files_changed_with_journal(typed(json!({
+        "changes": [{"uri": include_uri, "type": 2}]
+    })));
+    assert!(dependent.jobs.is_empty());
+    assert!(
+        service
+            .update_configuration(json!({"enabledRules": ["macro-boundary"]}))
+            .expect("configuration update")
+            .is_empty()
+    );
+    assert!(
+        !rejected.cancellation.is_cancelled(),
+        "unrelated inputs must not supersede the rejected document job"
+    );
+    let current = service
+        .documents
+        .get(document_uri.as_str())
+        .expect("rejected document");
+    assert_eq!(current.request.revision.version, 2);
+    assert_eq!(current.request.source.len(), 64);
+    assert!(service.begin_reanalysis_for_test(&document_uri).is_none());
+    assert!(
+        service
+            .diagnostics(&document_uri)
+            .expect("diagnostics")
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code
+                == Some(lsp::NumberOrString::String(
+                    "workspace-input-error".to_owned()
+                )))
+    );
+    adopt(&mut service, rejected);
+    assert!(
+        service
+            .diagnostics(&document_uri)
+            .expect("diagnostics")
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code
+                == Some(lsp::NumberOrString::String(
+                    "workspace-input-error".to_owned()
+                )))
+    );
+
+    let recovered = service
+        .begin_change(typed(json!({
+            "textDocument": {"uri": document_uri, "version": 3},
+            "contentChanges": [{"text": initial}]
+        })))
+        .expect("recovered document change");
+    assert_eq!(recovered.len(), 1);
+    assert!(recovered[0].workspace.is_some());
+    assert!(recovered[0].workspace_problem.is_none());
+    for job in recovered {
+        adopt(&mut service, job);
+    }
+    assert!(
+        service
+            .diagnostics(&document_uri)
+            .expect("diagnostics")
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code
+                != Some(lsp::NumberOrString::String(
+                    "workspace-input-error".to_owned()
+                )))
+    );
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn valid_open_and_change_use_the_coherent_workspace_during_a_scan_error() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-open-after-scan-error-{unique}"));
+    fs::create_dir_all(&root).expect("workspace");
+    let document_path = root.join("root.adoc");
+    fs::write(&document_path, "disk\n").expect("document");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
+    let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
+    let mut service = Session::default();
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "capabilities": {}
+        })),
+    );
+    assert!(
+        service
+            .workspace_scan_failed("workspace scan worker failed".to_owned())
+            .is_empty()
+    );
+
+    let opened = service.begin_open(typed(json!({
+        "textDocument": {
+            "uri": document_uri,
+            "languageId": "asciidoc",
+            "version": 1,
+            "text": "opened\n"
+        }
+    })));
+    assert_eq!(opened.len(), 1);
+    assert!(opened[0].workspace.is_some());
+    assert!(opened[0].workspace_problem.is_none());
+    for job in opened {
+        adopt(&mut service, job);
+    }
+
+    let changed = service
+        .begin_change(typed(json!({
+            "textDocument": {"uri": document_uri, "version": 2},
+            "contentChanges": [{"text": "changed\n"}]
+        })))
+        .expect("document change");
+    assert_eq!(changed.len(), 1);
+    assert!(changed[0].workspace.is_some());
+    assert!(changed[0].workspace_problem.is_none());
+    for job in changed {
+        adopt(&mut service, job);
+    }
+    assert_eq!(
+        service
+            .workspace_resource(&document_uri)
+            .expect("current overlay")
+            .as_ref(),
+        "changed\n"
+    );
+    let failures = service
+        .diagnostics(&document_uri)
+        .expect("diagnostics")
+        .diagnostics
+        .into_iter()
+        .filter(|diagnostic| diagnostic.message.contains("workspace scan worker failed"))
+        .count();
+    assert_eq!(failures, 1);
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn did_open_outside_configured_roots_keeps_input_until_close() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock")
@@ -1214,7 +1428,7 @@ fn did_open_outside_configured_roots_preserves_state_and_emits_no_job() {
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
     let accepted_uri = lsp::Url::from_file_path(&accepted_path).expect("accepted URI");
     let rejected_uri = lsp::Url::from_file_path(&rejected_path).expect("rejected URI");
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     initialize_with_params(
         &mut service,
         typed(json!({
@@ -1232,7 +1446,9 @@ fn did_open_outside_configured_roots_preserves_state_and_emits_no_job() {
         }
     })));
     assert_eq!(jobs.len(), 1);
-    let open_sources = service.documents.open_sources();
+    for job in jobs {
+        adopt(&mut service, job);
+    }
 
     let rejected = service.begin_open(typed(json!({
         "textDocument": {
@@ -1243,19 +1459,32 @@ fn did_open_outside_configured_roots_preserves_state_and_emits_no_job() {
         }
     })));
 
-    assert!(rejected.is_empty());
-    assert_eq!(service.documents.open_sources(), open_sources);
-    assert!(service.documents.get(rejected_uri.as_str()).is_none());
+    assert_eq!(rejected.len(), 1);
+    let cancellation = rejected[0].cancellation.clone();
+    for job in rejected {
+        adopt(&mut service, job);
+    }
+    let rejected_document = service
+        .documents
+        .get(rejected_uri.as_str())
+        .expect("open document outside configured roots");
+    assert_eq!(rejected_document.request.revision.version, 1);
+    assert_eq!(rejected_document.request.source.as_ref(), "open");
     let diagnostics = service.diagnostics(&rejected_uri).expect("diagnostics");
     assert!(diagnostics.diagnostics.iter().any(|diagnostic| {
         diagnostic.code
             == Some(lsp::NumberOrString::String(
-                "workspace-resource-error".to_owned(),
+                "workspace-input-error".to_owned(),
             ))
             && diagnostic
                 .message
                 .contains("outside configured resource roots")
     }));
+    let (closed, jobs) = service.close(&rejected_uri);
+    assert!(closed);
+    assert!(jobs.is_empty());
+    assert!(cancellation.is_cancelled());
+    assert!(service.documents.get(rejected_uri.as_str()).is_none());
     fs::remove_dir_all(root).expect("cleanup");
 }
 
@@ -1270,7 +1499,7 @@ fn workspace_folders_null_does_not_fall_back_to_legacy_root_uri() {
     fs::write(root.join("part.adoc"), "included\n").expect("part");
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
     let document_uri = lsp::Url::from_file_path(root.join("root.adoc")).expect("document URI");
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     let params = typed(json!({
         "processId": null,
         "rootUri": root_uri,
@@ -1306,7 +1535,7 @@ fn legacy_root_path_is_used_only_when_root_uri_is_null() {
     fs::create_dir_all(&root).expect("workspace");
     fs::write(root.join("part.adoc"), "included\n").expect("part");
     let document_uri = lsp::Url::from_file_path(root.join("root.adoc")).expect("document URI");
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     let params = typed(json!({
         "processId": null,
         "rootPath": root,
@@ -1350,7 +1579,7 @@ fn workspace_folder_changes_rebuild_roots_and_preserve_open_overlays() {
     let removed_uri = lsp::Url::from_directory_path(&removed).expect("removed URI");
     let added_uri = lsp::Url::from_directory_path(&added).expect("added URI");
     let document_uri = lsp::Url::from_file_path(retained.join("root.adoc")).expect("document URI");
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     let params = typed(json!({
         "processId": null,
         "workspaceFolders": [
@@ -1375,6 +1604,13 @@ fn workspace_folder_changes_rebuild_roots_and_preserve_open_overlays() {
         3,
         "include::part.adoc[]\n\noverlay\n",
     );
+    let stale_job = service
+        .begin_reanalysis_for_test(&document_uri)
+        .expect("pending analysis");
+    let stale_result = stale_job
+        .request
+        .analyze(&adocweave::NeverCancel)
+        .expect("analysis before root change");
 
     assert!(service.workspace_folders_changed(typed(json!({
         "event": {
@@ -1382,6 +1618,8 @@ fn workspace_folder_changes_rebuild_roots_and_preserve_open_overlays() {
             "added": [{"uri": added_uri, "name": "added"}]
         }
     }))));
+    assert!(stale_job.cancellation.is_cancelled());
+    assert_eq!(service.adopt(&stale_job, stale_result), Adoption::Stale);
     let scan = service.plan_workspace_scan(&adocweave::NeverCancel);
     let jobs = service.apply_workspace_scan(scan).jobs;
     assert_eq!(jobs.len(), 1);
@@ -1419,7 +1657,7 @@ fn removing_a_workspace_folder_does_not_fail_the_retained_folder() {
         lsp::Url::from_file_path(retained.join("root.adoc")).expect("retained document URI");
     let removed_document =
         lsp::Url::from_file_path(removed.join("root.adoc")).expect("removed document URI");
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     initialize_with_params(
         &mut service,
         typed(json!({
@@ -1484,12 +1722,46 @@ fn removing_a_workspace_folder_does_not_fail_the_retained_folder() {
         "retained overlay\n"
     );
 
+    let stale_job = removed_job.clone();
+    let stale_result = stale_job
+        .request
+        .analyze(&adocweave::NeverCancel)
+        .expect("analysis before editing the removed root");
+    let changed = service
+        .begin_change(typed(json!({
+            "textDocument": {"uri": removed_document, "version": 2},
+            "contentChanges": [{"text": "edited after removal\n"}]
+        })))
+        .expect("workspace rejection does not reject the LSP notification");
+
+    assert_eq!(changed.len(), 1);
+    assert!(stale_job.cancellation.is_cancelled());
+    assert_eq!(service.adopt(&stale_job, stale_result), Adoption::Stale);
+    let current = service
+        .documents
+        .get(removed_document.as_str())
+        .expect("removed-root document remains open");
+    assert_eq!(current.request.revision.version, 2);
+    assert_eq!(current.request.source.as_ref(), "edited after removal\n");
+    assert_eq!(
+        changed[0]
+            .workspace_problem
+            .as_ref()
+            .expect("removed-root input problem")
+            .code,
+        "workspace-input-error"
+    );
+    adopt(
+        &mut service,
+        changed.into_iter().next().expect("current rejected job"),
+    );
+
     fs::remove_dir_all(base).expect("cleanup");
 }
 
 #[test]
 fn workspace_configuration_updates_and_caps_debounce() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     service
         .update_configuration(json!({"adocweave": {"debounceMs": 25}}))
         .expect("configuration");
@@ -1531,7 +1803,7 @@ fn project_configuration_is_shared_with_lsp_and_reloaded_by_generation() {
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
     let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
     let config_uri = lsp::Url::from_file_path(&config_path).expect("config URI");
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     initialize_with_params(
         &mut service,
         typed(json!({
@@ -1602,7 +1874,7 @@ fn configuration_watch_does_not_restore_open_overlay_outside_resource_roots() {
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
     let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
     let config_uri = lsp::Url::from_file_path(&config_path).expect("config URI");
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     initialize_with_params(
         &mut service,
         typed(json!({
@@ -1640,6 +1912,7 @@ fn configuration_watch_does_not_restore_open_overlay_outside_resource_roots() {
         "workspace-input-error"
     );
     adopt(&mut service, jobs.into_iter().next().expect("reanalysis"));
+    assert!(service.begin_reanalysis_for_test(&document_uri).is_none());
     let diagnostics = service.diagnostics(&document_uri).expect("diagnostics");
     assert!(diagnostics.diagnostics.iter().any(|diagnostic| {
         diagnostic.code
@@ -1668,7 +1941,7 @@ fn project_configuration_bounds_lsp_diagnostics_before_protocol_projection() {
     .expect("configuration");
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
     let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     initialize_with_params(
         &mut service,
         typed(json!({
@@ -1723,7 +1996,7 @@ fn each_workspace_folder_uses_its_own_project_configuration() {
     let enabled_uri = lsp::Url::from_file_path(&enabled_path).expect("enabled document URI");
     let disabled_uri = lsp::Url::from_file_path(&disabled_path).expect("disabled document URI");
 
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     initialize_with_params(
         &mut service,
         typed(json!({
@@ -1772,7 +2045,7 @@ fn invalid_project_configuration_does_not_fall_back_to_default_analysis() {
     fs::write(&document_path, "trailing \n").expect("document");
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
     let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     initialize_with_params(
         &mut service,
         typed(json!({
@@ -1837,7 +2110,7 @@ fn invalidated_project_configuration_clears_old_feature_views() {
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
     let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
     let config_uri = lsp::Url::from_file_path(&config_path).expect("config URI");
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     initialize(&mut service, &["utf-16"]);
     assert!(service.workspace_folders_changed(typed(json!({
         "event": {"added": [{"uri": root_uri, "name": "root"}], "removed": []}
@@ -1905,7 +2178,7 @@ fn watched_resource_failure_is_published_and_cleared_after_recovery() {
     let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
     let include_uri = lsp::Url::from_file_path(&include_path).expect("include URI");
     let unrelated_uri = lsp::Url::from_file_path(&unrelated_path).expect("unrelated URI");
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     initialize_with_params(
         &mut service,
         typed(json!({
@@ -2005,7 +2278,7 @@ fn watched_file_batch_applies_only_the_final_event_for_each_uri() {
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
     let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
     let include_uri = lsp::Url::from_file_path(&include_path).expect("include URI");
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     initialize_with_params(
         &mut service,
         typed(json!({
@@ -2068,7 +2341,7 @@ fn stricter_resource_plan_invalidates_the_rejected_open_overlay() {
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
     let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
     let config_uri = lsp::Url::from_file_path(&config_path).expect("config URI");
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     initialize_with_params(
         &mut service,
         typed(json!({
@@ -2120,7 +2393,7 @@ fn stricter_resource_plan_invalidates_the_rejected_open_overlay() {
 
 #[test]
 fn workspace_configuration_reanalyzes_open_documents_with_enabled_rules() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     open(
         &mut service,
         "file:///configured-rule.adoc",
@@ -2178,7 +2451,7 @@ fn workspace_configuration_reanalyzes_open_documents_with_enabled_rules() {
 
 #[test]
 fn workspace_include_analysis_uses_versioned_resources_and_projects_diagnostics() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     open(&mut service, "file:///book/part.adoc", 3, "==Part\n");
     open(
         &mut service,
@@ -2257,7 +2530,7 @@ fn workspace_include_analysis_uses_versioned_resources_and_projects_diagnostics(
 
 #[test]
 fn missing_include_is_reported_as_a_project_diagnostic_at_the_directive() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     open(
         &mut service,
         "file:///book/root.adoc",
@@ -2282,7 +2555,7 @@ fn missing_include_is_reported_as_a_project_diagnostic_at_the_directive() {
 
 #[test]
 fn document_updates_are_ordered_and_stale_versions_are_ignored() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     open(&mut service, "file:///a.adoc", 2, "= A");
     open(&mut service, "file:///b.adoc", 2, "= B");
 
@@ -2319,7 +2592,7 @@ fn document_updates_are_ordered_and_stale_versions_are_ignored() {
 
 #[test]
 fn incremental_changes_apply_sequentially_with_negotiated_positions() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     open(&mut service, "file:///a.adoc", 1, "a😀c");
     assert!(
         change(
@@ -2359,7 +2632,7 @@ fn incremental_changes_apply_sequentially_with_negotiated_positions() {
 
 #[test]
 fn incremental_changes_preserve_crlf_line_boundaries() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     open(&mut service, "file:///crlf.adoc", 1, "one\r\ntwo\r\n");
     assert!(
         change(
@@ -2406,7 +2679,7 @@ fn planning_a_workspace_scan_leaves_service_state_untouched() {
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
     let found = lsp::Url::from_file_path(root.join("found.adoc")).expect("document URI");
 
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     let params = typed(json!({
         "processId": null,
         "rootUri": root_uri,
@@ -2447,7 +2720,7 @@ fn a_document_opened_during_the_scan_survives_applying_it() {
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
     let opened = lsp::Url::from_file_path(root.join("on-disk.adoc")).expect("document URI");
 
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     let params = typed(json!({
         "processId": null,
         "rootUri": root_uri,
@@ -2486,7 +2759,7 @@ fn a_scan_worker_failure_keeps_the_last_coherent_workspace_and_reports_it() {
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
     let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
 
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     initialize_with_params(
         &mut service,
         typed(json!({
@@ -2540,7 +2813,7 @@ fn transient_scan_failure_is_published_and_cleared_after_recovery() {
     fs::write(&document_path, "= Root\n").expect("document");
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
     let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     initialize_with_params(
         &mut service,
         typed(json!({

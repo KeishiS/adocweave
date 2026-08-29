@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn definition_resolves_local_and_open_document_targets() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     open_reference_workspace(&mut service);
     let document_uri = uri("file:///a.adoc");
 
@@ -25,7 +25,7 @@ fn definition_resolves_local_and_open_document_targets() {
 
 #[test]
 fn references_use_one_workspace_identity_for_local_and_document_xrefs() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     open_reference_workspace(&mut service);
     let locations = service
         .references(&uri("file:///a.adoc"), lsp::Position::new(0, 3), true)
@@ -47,7 +47,7 @@ fn references_use_one_workspace_identity_for_local_and_document_xrefs() {
 fn references_report_unicode_ranges_in_utf8_and_utf16() {
     let source = "[[節😀]]\n== 見出し\n\n<<節😀>>\n";
     for (encoding, expected_end) in [(PositionEncoding::Utf8, 9), (PositionEncoding::Utf16, 5)] {
-        let mut service = LanguageService::default();
+        let mut service = Session::default();
         service.position_encoding = encoding;
         open(&mut service, "file:///unicode-ref.adoc", 1, source);
         let references = service
@@ -67,7 +67,7 @@ fn references_report_unicode_ranges_in_utf8_and_utf16() {
 
 #[test]
 fn document_links_keep_safe_urls_and_xrefs_separate_but_navigable() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     open_reference_workspace(&mut service);
     let links = service
         .document_links(&uri("file:///a.adoc"))
@@ -93,7 +93,7 @@ fn document_links_keep_exact_target_ranges_and_reject_unsafe_or_invalid_urls() {
 javascript:alert(1)[Unsafe]\n\
 https://example.com:99999[Invalid port]\n";
     for (encoding, expected_start) in [("utf-8", 5), ("utf-16", 3)] {
-        let mut service = LanguageService::default();
+        let mut service = Session::default();
         initialize(&mut service, &[encoding]);
         let document = uri("file:///external-links.adoc");
         open(&mut service, document.as_str(), 1, source);
@@ -205,7 +205,7 @@ impl HostReferenceIndex for TestHostIndex {
 
 #[test]
 fn definition_uses_injected_host_index_for_scheme_references() {
-    let mut service = LanguageService::with_host_index(Arc::new(TestHostIndex {
+    let mut service = Session::with_host_index(Arc::new(TestHostIndex {
         complete: true,
         fail: false,
     }));
@@ -234,7 +234,7 @@ fn definition_uses_injected_host_index_for_scheme_references() {
 #[test]
 fn host_index_result_is_rejected_when_the_document_changes_during_the_call() {
     let document = Arc::new(adocweave::CancellationToken::new());
-    let mut service = LanguageService::with_host_index(Arc::new(CancelDuringHostIndex {
+    let mut service = Session::with_host_index(Arc::new(CancelDuringHostIndex {
         document: document.clone(),
     }));
     open(&mut service, "file:///a.adoc", 1, "xref:note:42[Note]\n");
@@ -256,7 +256,7 @@ fn host_index_result_is_rejected_when_the_document_changes_during_the_call() {
 
 #[test]
 fn rename_uses_workspace_index_and_prefers_a_complete_host_index() {
-    let mut incomplete = LanguageService::default();
+    let mut incomplete = Session::default();
     open(
         &mut incomplete,
         "file:///a.adoc",
@@ -285,7 +285,7 @@ fn rename_uses_workspace_index_and_prefers_a_complete_host_index() {
         "rename must not replace the block an anchor targets",
     );
 
-    let mut complete = LanguageService::with_host_index(Arc::new(TestHostIndex {
+    let mut complete = Session::with_host_index(Arc::new(TestHostIndex {
         complete: true,
         fail: false,
     }));
@@ -299,7 +299,7 @@ fn rename_uses_workspace_index_and_prefers_a_complete_host_index() {
 
 #[test]
 fn rename_preserves_cross_document_reference_locators() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     open_reference_workspace(&mut service);
 
     let edit = service
@@ -325,7 +325,7 @@ fn rename_preserves_cross_document_reference_locators() {
 
 #[test]
 fn rename_refuses_expanded_reference_destinations() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     initialize(&mut service, &["utf-16"]);
     open(&mut service, "file:///a.adoc", 1, "[[target]]\n== A\n");
     open(
@@ -354,7 +354,7 @@ fn rename_refuses_expanded_reference_destinations() {
 
 #[test]
 fn rename_rejects_an_existing_target_id() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     open(
         &mut service,
         "file:///a.adoc",
@@ -373,7 +373,7 @@ fn rename_rejects_an_existing_target_id() {
 
 #[test]
 fn rename_accepts_only_authored_anchor_ids() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     initialize(&mut service, &["utf-16"]);
     open(
         &mut service,
@@ -431,7 +431,7 @@ fn rename_accepts_only_authored_anchor_ids() {
 
 #[test]
 fn prepare_rename_answers_only_where_rename_produces_an_edit() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     initialize(&mut service, &["utf-16"]);
     open(
         &mut service,
@@ -481,7 +481,7 @@ fn prepare_rename_answers_only_where_rename_produces_an_edit() {
 
 #[test]
 fn prepare_rename_is_silent_for_clients_that_do_not_declare_support() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     let params = typed(json!({
         "processId": null,
         "rootUri": null,
@@ -515,7 +515,7 @@ fn prepare_rename_is_silent_for_clients_that_do_not_declare_support() {
 
 #[test]
 fn host_index_failure_does_not_disable_core_language_features() {
-    let mut service = LanguageService::with_host_index(Arc::new(TestHostIndex {
+    let mut service = Session::with_host_index(Arc::new(TestHostIndex {
         complete: false,
         fail: true,
     }));

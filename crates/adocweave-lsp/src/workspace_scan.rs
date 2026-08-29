@@ -7,7 +7,7 @@ use adocweave::{CancellationCheck, CancellationToken};
 use adocweave_host::{FilesystemJobCoordinator, FilesystemJobError};
 use async_lsp::lsp_types::{DidChangeWatchedFilesParams, FileChangeType, FileEvent, Url};
 
-use crate::service::{LanguageService, WorkspaceFileChanges};
+use crate::service::{Session, WorkspaceFileChanges};
 use crate::state::AnalysisJob;
 
 const MAX_WATCH_JOURNAL_ENTRIES: usize = 10_000;
@@ -22,10 +22,7 @@ pub(super) struct WorkspaceScanRecoveryTimer {
 enum WorkspaceScanRecoveryTimerState {
     #[default]
     Idle,
-    Debouncing {
-        generation: u64,
-        task: AbortOnDrop,
-    },
+    Debouncing(AbortOnDrop),
 }
 
 struct AbortOnDrop {
@@ -55,23 +52,15 @@ impl Drop for AbortOnDrop {
 }
 
 impl WorkspaceScanRecoveryTimer {
-    pub(super) fn replace(&mut self, generation: u64, handle: tokio::task::JoinHandle<()>) {
+    pub(super) fn replace(&mut self, handle: tokio::task::JoinHandle<()>) {
         self.cancel();
-        self.state = WorkspaceScanRecoveryTimerState::Debouncing {
-            generation,
-            task: AbortOnDrop::new(handle),
-        };
+        self.state = WorkspaceScanRecoveryTimerState::Debouncing(AbortOnDrop::new(handle));
     }
 
-    pub(super) fn complete(&mut self, generation: u64) -> bool {
-        if !matches!(&self.state, WorkspaceScanRecoveryTimerState::Debouncing { generation: current, .. } if *current == generation)
-        {
-            return false;
-        }
-        let WorkspaceScanRecoveryTimerState::Debouncing { task, .. } =
-            std::mem::take(&mut self.state)
+    pub(super) fn complete(&mut self) -> bool {
+        let WorkspaceScanRecoveryTimerState::Debouncing(task) = std::mem::take(&mut self.state)
         else {
-            unreachable!("matching debounce state was checked above");
+            return false;
         };
         task.completed();
         true
@@ -79,14 +68,6 @@ impl WorkspaceScanRecoveryTimer {
 
     pub(super) fn cancel(&mut self) {
         self.state = WorkspaceScanRecoveryTimerState::Idle;
-    }
-
-    #[cfg(test)]
-    fn generation(&self) -> Option<u64> {
-        match &self.state {
-            WorkspaceScanRecoveryTimerState::Idle => None,
-            WorkspaceScanRecoveryTimerState::Debouncing { generation, .. } => Some(*generation),
-        }
     }
 }
 
@@ -253,7 +234,10 @@ impl WorkspaceScanCoordinator {
 
     fn start(&mut self) -> WorkspaceScanStart {
         debug_assert!(matches!(self.phase, WorkspaceScanPhase::Idle));
-        self.sequence = self.sequence.saturating_add(1);
+        self.sequence = self
+            .sequence
+            .checked_add(1)
+            .expect("workspace scan sequence exhausted");
         let cancellation = Arc::new(WorkspaceScanCancellation::new());
         self.phase = WorkspaceScanPhase::Running(ActiveWorkspaceScan {
             sequence: self.sequence,
@@ -279,7 +263,10 @@ impl WorkspaceScanCoordinator {
                 ..
             } => existing.max(minimum_scan_sequence),
         };
-        self.recovery_generation = self.recovery_generation.saturating_add(1);
+        self.recovery_generation = self
+            .recovery_generation
+            .checked_add(1)
+            .expect("workspace scan recovery generation exhausted");
         let generation = self.recovery_generation;
         self.recovery = WorkspaceRecoveryState::Debouncing {
             generation,
@@ -289,7 +276,10 @@ impl WorkspaceScanCoordinator {
     }
 
     fn disarm_recovery(&mut self) {
-        self.recovery_generation = self.recovery_generation.saturating_add(1);
+        self.recovery_generation = self
+            .recovery_generation
+            .checked_add(1)
+            .expect("workspace scan recovery generation exhausted");
         self.recovery = WorkspaceRecoveryState::Idle;
     }
 
@@ -327,15 +317,24 @@ impl WorkspaceScanCoordinator {
 
     fn active_or_next_sequence(&self) -> u64 {
         match &self.phase {
-            WorkspaceScanPhase::Idle => self.sequence.saturating_add(1),
+            WorkspaceScanPhase::Idle => self
+                .sequence
+                .checked_add(1)
+                .expect("workspace scan sequence exhausted"),
             WorkspaceScanPhase::Running(active) => active.sequence,
         }
     }
 
     fn sequence_after_active(&self) -> u64 {
         match &self.phase {
-            WorkspaceScanPhase::Idle => self.sequence.saturating_add(1),
-            WorkspaceScanPhase::Running(active) => active.sequence.saturating_add(1),
+            WorkspaceScanPhase::Idle => self
+                .sequence
+                .checked_add(1)
+                .expect("workspace scan sequence exhausted"),
+            WorkspaceScanPhase::Running(active) => active
+                .sequence
+                .checked_add(1)
+                .expect("workspace scan sequence exhausted"),
         }
     }
 
@@ -505,7 +504,7 @@ impl WorkspaceScanCoordinator {
 
     pub(super) fn complete(
         &mut self,
-        service: &mut LanguageService,
+        service: &mut Session,
         scanned: WorkspaceScanned,
     ) -> Option<WorkspaceScanTransition> {
         let completion = self.complete_active(scanned.sequence)?;
@@ -519,12 +518,26 @@ impl WorkspaceScanCoordinator {
                     jobs.extend(application.jobs);
                     notices.extend(application.notices);
                     let mut replay_requires_recovery = false;
-                    if let Some(changes) = self.watched_changes.take() {
+                    if application.structural_rebuild_pending {
+                        recovery_timer = WorkspaceRecoveryTimerUpdate::Arm(
+                            self.arm_recovery(
+                                scanned
+                                    .sequence
+                                    .checked_add(1)
+                                    .expect("workspace scan sequence exhausted"),
+                            ),
+                        );
+                    } else if let Some(changes) = self.watched_changes.take() {
                         let replay = service.workspace_files_changed_with_journal(changes);
                         jobs.extend(replay.jobs);
                         if replay.recovery_required {
                             recovery_timer = WorkspaceRecoveryTimerUpdate::Arm(
-                                self.arm_recovery(scanned.sequence.saturating_add(1)),
+                                self.arm_recovery(
+                                    scanned
+                                        .sequence
+                                        .checked_add(1)
+                                        .expect("workspace scan sequence exhausted"),
+                                ),
                             );
                             replay_requires_recovery = true;
                         }
@@ -617,7 +630,7 @@ mod tests {
         }
     }
 
-    fn scan_race_service(prefix: &str) -> (std::path::PathBuf, Url, LanguageService) {
+    fn scan_race_service(prefix: &str) -> (std::path::PathBuf, Url, Session) {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock")
@@ -634,7 +647,7 @@ mod tests {
             "capabilities": {}
         }))
         .expect("initialize params");
-        let mut service = LanguageService::default();
+        let mut service = Session::default();
         service.initialize(&params);
         let scan = service.plan_workspace_scan(&adocweave::NeverCancel);
         let _ = service.apply_workspace_scan(scan);
@@ -704,6 +717,26 @@ mod tests {
                 .expect("active completion")
                 .accept_result
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "workspace scan sequence exhausted")]
+    fn scan_sequence_is_never_reused_after_exhaustion() {
+        let mut coordinator = WorkspaceScanCoordinator {
+            sequence: u64::MAX,
+            ..WorkspaceScanCoordinator::default()
+        };
+        let _ = coordinator.request_replacement();
+    }
+
+    #[test]
+    #[should_panic(expected = "workspace scan recovery generation exhausted")]
+    fn recovery_generation_is_never_reused_after_exhaustion() {
+        let mut coordinator = WorkspaceScanCoordinator {
+            recovery_generation: u64::MAX,
+            ..WorkspaceScanCoordinator::default()
+        };
+        let _ = coordinator.request_quiet_recovery();
     }
 
     #[test]
@@ -786,28 +819,18 @@ mod tests {
         let (first_started_tx, first_started_rx) = tokio::sync::oneshot::channel();
         let (second_started_tx, second_started_rx) = tokio::sync::oneshot::channel();
         let mut timer = WorkspaceScanRecoveryTimer::default();
-        timer.replace(
-            1,
-            tokio::spawn(async move {
-                let _on_drop = NotifyOnDrop(first_tx);
-                let _ = first_started_tx.send(());
-                std::future::pending::<()>().await;
-            }),
-        );
-        assert_eq!(timer.generation(), Some(1));
+        timer.replace(tokio::spawn(async move {
+            let _on_drop = NotifyOnDrop(first_tx);
+            let _ = first_started_tx.send(());
+            std::future::pending::<()>().await;
+        }));
         first_started_rx.await.expect("first timer started");
-        timer.replace(
-            2,
-            tokio::spawn(async move {
-                let _on_drop = NotifyOnDrop(second_tx);
-                let _ = second_started_tx.send(());
-                std::future::pending::<()>().await;
-            }),
-        );
-        assert_eq!(timer.generation(), Some(2));
+        timer.replace(tokio::spawn(async move {
+            let _on_drop = NotifyOnDrop(second_tx);
+            let _ = second_started_tx.send(());
+            std::future::pending::<()>().await;
+        }));
         second_started_rx.await.expect("second timer started");
-        assert!(!timer.complete(1));
-        assert_eq!(timer.generation(), Some(2));
 
         first_rx
             .recv_timeout(Duration::from_secs(1))
@@ -818,9 +841,9 @@ mod tests {
             .expect("dropping the timer aborts the retained task");
 
         let mut completed = WorkspaceScanRecoveryTimer::default();
-        completed.replace(3, tokio::spawn(async {}));
-        assert!(completed.complete(3));
-        assert_eq!(completed.generation(), None);
+        completed.replace(tokio::spawn(async {}));
+        assert!(completed.complete());
+        assert!(!completed.complete());
     }
 
     #[test]
@@ -956,6 +979,69 @@ mod tests {
     }
 
     #[test]
+    fn failed_structural_install_keeps_journal_and_reserves_a_successor() {
+        let (root, document_uri, mut service) =
+            scan_race_service("adocweave-structural-install-failure");
+        let config = root.join(adocweave_config::FILE_NAME);
+        fs::write(&config, "schema-version = 2\n").expect("configuration");
+        let config_uri = Url::from_file_path(&config).expect("configuration URI");
+        let replacement = service.handle_workspace_files_changed(DidChangeWatchedFilesParams {
+            changes: vec![FileEvent::new(config_uri, FileChangeType::CHANGED)],
+        });
+        assert!(replacement.rebuild.is_some());
+        fs::remove_file(&config).expect("remove configuration");
+        fs::create_dir(&config).expect("unreadable configuration entry");
+        let failed_scan = service.plan_workspace_scan(&adocweave::NeverCancel);
+        let mut coordinator = WorkspaceScanCoordinator::default();
+        let active = coordinator.request_replacement().expect("active scan");
+        let watched_uri = Url::from_file_path(root.join("watched.txt")).expect("watched URI");
+        assert!(
+            coordinator
+                .record_watched_changes(&[FileEvent::new(
+                    watched_uri.clone(),
+                    FileChangeType::CHANGED
+                )])
+                .is_none()
+        );
+
+        let transition = coordinator
+            .complete(
+                &mut service,
+                WorkspaceScanned {
+                    sequence: active.sequence,
+                    scan: Ok(failed_scan),
+                },
+            )
+            .expect("failed scan completion");
+
+        assert!(transition.jobs.is_empty());
+        assert!(service.workspace_rebuild_is_pending());
+        assert_eq!(
+            service
+                .workspace_resource(&document_uri)
+                .expect("preserved workspace")
+                .as_ref(),
+            "= Before\n"
+        );
+        assert_eq!(coordinator.watched_changes.changes.len(), 1);
+        assert!(
+            coordinator
+                .watched_changes
+                .changes
+                .contains_key(&watched_uri)
+        );
+        let WorkspaceRecoveryTimerUpdate::Arm(generation) = transition.recovery_timer else {
+            panic!("failed structural install must arm recovery");
+        };
+        assert_eq!(coordinator.recovery_generation(), Some(generation));
+        assert_eq!(
+            coordinator.recovery_minimum_scan_sequence(),
+            Some(active.sequence.checked_add(1).expect("next sequence"))
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
     fn recovery_timer_before_completion_preserves_the_replay_journal() {
         let (root, document_uri, mut service) =
             scan_race_service("adocweave-recovery-before-completion");
@@ -1081,7 +1167,10 @@ mod tests {
             )
             .expect("old scan completion");
         let successor = first.next.expect("one recovery successor");
-        assert_eq!(successor.sequence, active.sequence.saturating_add(1));
+        assert_eq!(
+            successor.sequence,
+            active.sequence.checked_add(1).expect("test sequence")
+        );
         assert_eq!(
             service
                 .workspace_resource(&document_uri)
@@ -1289,7 +1378,7 @@ mod tests {
         assert!(!coordinator.accepts_active_result());
         assert_eq!(
             coordinator.recovery_minimum_scan_sequence(),
-            Some(active.sequence.saturating_add(1))
+            Some(active.sequence.checked_add(1).expect("test sequence"))
         );
 
         let transition = coordinator

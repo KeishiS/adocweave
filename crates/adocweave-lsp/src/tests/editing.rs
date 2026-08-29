@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn code_actions_use_typed_versioned_workspace_edits() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     open(&mut service, "file:///fix.adoc", 4, "==Title\ntext  \n");
     let actions = all_code_actions(&service, &uri("file:///fix.adoc"))
         .expect("actions")
@@ -21,7 +21,7 @@ fn code_actions_use_typed_versioned_workspace_edits() {
 
 #[test]
 fn code_actions_respect_the_requested_range_and_kind() {
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     let document_uri = uri("file:///scoped-fix.adoc");
     open(&mut service, document_uri.as_str(), 1, "==Title\ntext  \n");
 
@@ -57,7 +57,7 @@ fn code_actions_respect_the_requested_range_and_kind() {
 #[test]
 fn formatting_is_idempotent_and_preserves_literal_bodies() {
     let source = "before  \n\n....\ncode  \n....\n\nafter  ";
-    let mut service = LanguageService::default();
+    let mut service = Session::default();
     open(&mut service, "file:///format.adoc", 1, source);
     let edits = service
         .formatting(&uri("file:///format.adoc"))

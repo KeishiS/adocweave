@@ -1,7 +1,7 @@
 //! Runtime-independent language features over owned document analyses.
 
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use adocweave::CancellationCheck;
 use adocweave::output::diagnostics::{RuleSettings, lint_rule};
@@ -25,6 +25,10 @@ use crate::state::{
     WorkspaceProblem,
 };
 use crate::workspace::{WatchedFileKind, WorkspaceResources, WorkspaceScanNotice};
+use crate::workspace_scan::{
+    WorkspaceScanCoordinator, WorkspaceScanRecovery, WorkspaceScanStart, WorkspaceScanTransition,
+    WorkspaceScanned,
+};
 use crate::{SERVER_NAME, VERSION};
 
 const MAX_WORKSPACE_WATCH_ERRORS: usize = 128;
@@ -203,16 +207,26 @@ impl HostReferenceIndex for NoHostReferenceIndex {
     }
 }
 
+/// Long-lived semantic state for one Language Server connection.
+///
+/// Runtime resources such as task handles stay in the protocol backend. The
+/// current documents, configuration, project roots, cancellation tokens and
+/// adopted results have exactly this owner.
 #[derive(Clone)]
-pub(crate) struct LanguageService {
-    pub documents: DocumentStore,
+pub(crate) struct Session {
+    #[cfg(not(test))]
+    documents: DocumentStore,
+    #[cfg(test)]
+    pub(crate) documents: DocumentStore,
     pub position_encoding: PositionEncoding,
+    input_revision: u64,
+    workspace_input_epoch: u64,
     client: ClientProfile,
     settings: ServerSettings,
     host_index: Arc<dyn HostReferenceIndex>,
     workspace: WorkspaceResources,
     workspace_roots: std::collections::BTreeMap<String, lsp::Url>,
-    workspace_error: Option<String>,
+    workspace_error: Option<WorkspaceEpochError>,
     /// Incomplete-scan reasons whose notification period is still active.
     ///
     /// A failed scan does not end a period because it establishes neither a
@@ -222,7 +236,22 @@ pub(crate) struct LanguageService {
     workspace_watch_error_bytes: usize,
     workspace_watch_errors_overflowed: bool,
     workspace_watch_recovery_required: bool,
-    workspace_input_error: Option<String>,
+    workspace_watch_error_epoch: u64,
+    workspace_scans: Arc<Mutex<WorkspaceScanCoordinator>>,
+    workspace_input_status: WorkspaceInputStatus,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum WorkspaceInputStatus {
+    #[default]
+    Ready,
+    Rebuilding,
+}
+
+#[derive(Clone, Debug)]
+struct WorkspaceEpochError {
+    epoch: u64,
+    message: String,
 }
 
 pub(crate) struct WorkspaceFileChanges {
@@ -234,30 +263,43 @@ pub(crate) struct WorkspaceFileChanges {
     pub(crate) recovery_required: bool,
 }
 
+pub(crate) struct WorkspaceFileEventOutcome {
+    pub(crate) jobs: Vec<AnalysisJob>,
+    pub(crate) recovery_generation: Option<u64>,
+    pub(crate) rebuild: Option<WorkspaceScanStart>,
+    pub(crate) cancel_recovery_timer: bool,
+}
+
 pub(crate) struct WorkspaceScanApplication {
     pub(crate) jobs: Vec<AnalysisJob>,
     pub(crate) installed: bool,
+    pub(crate) structural_rebuild_pending: bool,
     pub(crate) notices: Vec<WorkspaceScanNotice>,
 }
 
-impl fmt::Debug for LanguageService {
+impl fmt::Debug for Session {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("LanguageService")
+            .debug_struct("Session")
             .field("documents", &self.documents)
             .field("position_encoding", &self.position_encoding)
+            .field("input_revision", &self.input_revision)
+            .field("workspace_input_epoch", &self.workspace_input_epoch)
             .field("client", &self.client)
             .field("settings", &self.settings)
+            .field("workspace_input_status", &self.workspace_input_status)
             .field("has_complete_host_index", &self.host_index.is_complete())
             .finish()
     }
 }
 
-impl Default for LanguageService {
+impl Default for Session {
     fn default() -> Self {
         Self {
             documents: DocumentStore::default(),
             position_encoding: PositionEncoding::Utf16,
+            input_revision: 0,
+            workspace_input_epoch: 0,
             client: ClientProfile::default(),
             settings: ServerSettings::default(),
             host_index: Arc::new(NoHostReferenceIndex),
@@ -269,7 +311,9 @@ impl Default for LanguageService {
             workspace_watch_error_bytes: 0,
             workspace_watch_errors_overflowed: false,
             workspace_watch_recovery_required: false,
-            workspace_input_error: None,
+            workspace_watch_error_epoch: 0,
+            workspace_scans: Arc::new(Mutex::new(WorkspaceScanCoordinator::default())),
+            workspace_input_status: WorkspaceInputStatus::Ready,
         }
     }
 }
@@ -324,7 +368,87 @@ fn parse_open_sources(sources: &[(String, i32, String)]) -> Vec<(lsp::Url, i64, 
         .collect()
 }
 
-impl LanguageService {
+impl Session {
+    fn attach_workspace_input(
+        &mut self,
+        job: &mut AnalysisJob,
+        input: Result<crate::workspace::WorkspaceInput, String>,
+    ) {
+        attach_workspace(job, input);
+        if job.workspace_problem.is_some() {
+            self.documents.reject_workspace_input(job);
+        }
+    }
+
+    fn advance_input_revision(&mut self) {
+        self.input_revision = self
+            .input_revision
+            .checked_add(1)
+            .expect("Language Server session input revision exhausted");
+    }
+
+    fn advance_workspace_input_epoch(&mut self) {
+        self.workspace_input_epoch = self
+            .workspace_input_epoch
+            .checked_add(1)
+            .expect("Language Server workspace input epoch exhausted");
+    }
+
+    fn current_workspace_error(&self) -> Option<&str> {
+        self.workspace_error
+            .as_ref()
+            .filter(|error| error.epoch == self.workspace_input_epoch)
+            .map(|error| error.message.as_str())
+    }
+
+    fn set_workspace_error(&mut self, message: String) {
+        self.workspace_error = Some(WorkspaceEpochError {
+            epoch: self.workspace_input_epoch,
+            message,
+        });
+    }
+
+    fn analysis_job_is_current(&self, job: &AnalysisJob) -> bool {
+        self.workspace_input_status == WorkspaceInputStatus::Ready
+            && self.documents.job_is_current(job)
+    }
+
+    fn invalidate_all_document_inputs(&mut self) {
+        self.advance_input_revision();
+        self.documents.invalidate_all_inputs(self.input_revision);
+        self.workspace_input_status = WorkspaceInputStatus::Rebuilding;
+    }
+
+    fn begin_workspace_rebuild(&mut self) {
+        self.advance_workspace_input_epoch();
+        self.invalidate_all_document_inputs();
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn input_revision(&self) -> u64 {
+        self.input_revision
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_input_revision_for_test(&mut self, revision: u64) {
+        self.input_revision = revision;
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn workspace_input_epoch(&self) -> u64 {
+        self.workspace_input_epoch
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_workspace_input_epoch_for_test(&mut self, epoch: u64) {
+        self.workspace_input_epoch = epoch;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn workspace_roots(&self) -> Vec<lsp::Url> {
+        self.workspace_roots.values().cloned().collect()
+    }
+
     pub fn with_host_index(host_index: Arc<dyn HostReferenceIndex>) -> Self {
         Self {
             host_index,
@@ -365,8 +489,10 @@ impl LanguageService {
             .into_iter()
             .map(|uri| (uri.to_string(), uri))
             .collect();
+        self.advance_workspace_input_epoch();
         self.workspace_error = None;
         self.clear_workspace_watch_errors();
+        self.advance_input_revision();
         lsp::InitializeResult {
             capabilities: lsp::ServerCapabilities {
                 position_encoding: Some(self.position_encoding.lsp()),
@@ -447,38 +573,41 @@ impl LanguageService {
 
     pub fn begin_open(&mut self, params: lsp::DidOpenTextDocumentParams) -> Vec<AnalysisJob> {
         let document = params.text_document;
-        if let Some(error) = self.workspace_error.clone() {
-            let options = self.analysis_options_for(None);
-            let mut job = self.documents.begin_open_with_options(
+        if self.workspace_input_status == WorkspaceInputStatus::Rebuilding {
+            self.advance_input_revision();
+            let job = self.documents.begin_open_with_options(
                 document.uri.to_string(),
                 document.version,
                 document.text,
-                options,
+                self.analysis_options_for(None),
+                self.input_revision,
             );
-            attach_workspace(&mut job, Err(error));
-            return vec![job];
+            self.documents.mark_workspace_input_pending(&job);
+            return Vec::new();
         }
-        let affected = match self.workspace.upsert_open(
-            document.uri.clone(),
-            i64::from(document.version),
-            document.text.clone(),
-        ) {
-            Ok(affected) => affected,
-            Err(error) => {
-                self.workspace_input_error = Some(error);
-                return Vec::new();
-            }
-        };
-        self.workspace_input_error = None;
-        let workspace = self.workspace.input(&document.uri);
-        let options = self.analysis_options_for(workspace.as_ref().ok());
+        self.advance_input_revision();
         let mut job = self.documents.begin_open_with_options(
             document.uri.to_string(),
             document.version,
-            document.text,
-            options,
+            document.text.clone(),
+            self.analysis_options_for(None),
+            self.input_revision,
         );
-        attach_workspace(&mut job, self.workspace.input(&document.uri));
+        let affected = match self.workspace.upsert_open(
+            document.uri.clone(),
+            i64::from(document.version),
+            document.text,
+        ) {
+            Ok(affected) => affected,
+            Err(error) => {
+                self.attach_workspace_input(&mut job, Err(error));
+                return vec![job];
+            }
+        };
+        let workspace = self.workspace.input(&document.uri);
+        let options = self.analysis_options_for(workspace.as_ref().ok());
+        self.documents.update_job_options(&mut job, options);
+        self.attach_workspace_input(&mut job, workspace);
         let mut jobs = vec![job];
         self.append_dependent_jobs(&affected, document.uri.as_str(), &mut jobs);
         jobs
@@ -521,19 +650,43 @@ impl LanguageService {
                 }
             }
         }
-        let affected = self.workspace.upsert_open(
-            params.text_document.uri.clone(),
-            i64::from(params.text_document.version),
-            source.clone(),
-        )?;
+        if self.workspace_input_status == WorkspaceInputStatus::Rebuilding {
+            self.advance_input_revision();
+            let job = self.documents.begin_change(
+                params.text_document.uri.as_str(),
+                params.text_document.version,
+                source,
+                self.input_revision,
+            );
+            if let Some(job) = &job {
+                self.documents.mark_workspace_input_pending(job);
+            }
+            return Ok(Vec::new());
+        }
+        self.advance_input_revision();
         let Some(mut job) = self.documents.begin_change(
             params.text_document.uri.as_str(),
             params.text_document.version,
-            source,
+            source.clone(),
+            self.input_revision,
         ) else {
             return Ok(Vec::new());
         };
-        attach_workspace(&mut job, self.workspace.input(&params.text_document.uri));
+        let affected = match self.workspace.upsert_open(
+            params.text_document.uri.clone(),
+            i64::from(params.text_document.version),
+            source,
+        ) {
+            Ok(affected) => affected,
+            Err(error) => {
+                self.attach_workspace_input(&mut job, Err(error));
+                return Ok(vec![job]);
+            }
+        };
+        let workspace = self.workspace.input(&params.text_document.uri);
+        let options = self.analysis_options_for(workspace.as_ref().ok());
+        self.documents.update_job_options(&mut job, options);
+        self.attach_workspace_input(&mut job, workspace);
         let mut jobs = vec![job];
         self.append_dependent_jobs(&affected, params.text_document.uri.as_str(), &mut jobs);
         Ok(jobs)
@@ -549,10 +702,11 @@ impl LanguageService {
             let Ok(parsed) = uri.parse() else {
                 continue;
             };
-            let Some(mut job) = self.documents.begin_reanalysis(uri) else {
+            let Some(mut job) = self.documents.begin_reanalysis(uri, self.input_revision) else {
                 continue;
             };
-            attach_workspace(&mut job, self.workspace.input(&parsed));
+            let workspace = self.workspace.input(&parsed);
+            self.attach_workspace_input(&mut job, workspace);
             jobs.push(job);
         }
     }
@@ -580,17 +734,31 @@ impl LanguageService {
     }
 
     fn clear_workspace_watch_errors(&mut self) -> bool {
-        let changed = !self.workspace_watch_errors.is_empty()
-            || self.workspace_watch_errors_overflowed
-            || self.workspace_watch_recovery_required;
+        let changed = self.workspace_watch_error_epoch == self.workspace_input_epoch
+            && (!self.workspace_watch_errors.is_empty()
+                || self.workspace_watch_errors_overflowed
+                || self.workspace_watch_recovery_required);
         self.workspace_watch_errors.clear();
         self.workspace_watch_error_bytes = 0;
         self.workspace_watch_errors_overflowed = false;
         self.workspace_watch_recovery_required = false;
+        self.workspace_watch_error_epoch = self.workspace_input_epoch;
         changed
     }
 
+    fn ensure_current_workspace_watch_errors(&mut self) {
+        if self.workspace_watch_error_epoch != self.workspace_input_epoch {
+            self.clear_workspace_watch_errors();
+        }
+    }
+
+    fn current_workspace_watch_recovery_required(&self) -> bool {
+        self.workspace_watch_error_epoch == self.workspace_input_epoch
+            && self.workspace_watch_recovery_required
+    }
+
     fn clear_workspace_watch_error(&mut self, uri: &lsp::Url) -> bool {
+        self.ensure_current_workspace_watch_errors();
         let Some(error) = self.workspace_watch_errors.remove(uri.as_str()) else {
             return false;
         };
@@ -601,6 +769,7 @@ impl LanguageService {
     }
 
     fn record_workspace_watch_error(&mut self, uri: &lsp::Url, error: String) -> bool {
+        self.ensure_current_workspace_watch_errors();
         if let Some(previous) = self.workspace_watch_errors.get_mut(uri.as_str()) {
             if *previous == error {
                 return false;
@@ -636,7 +805,9 @@ impl LanguageService {
     }
 
     fn workspace_watch_error_message(&self) -> Option<String> {
-        if self.workspace_watch_errors.is_empty() && !self.workspace_watch_errors_overflowed {
+        if self.workspace_watch_error_epoch != self.workspace_input_epoch
+            || (self.workspace_watch_errors.is_empty() && !self.workspace_watch_errors_overflowed)
+        {
             return None;
         }
         let mut messages = self
@@ -677,6 +848,7 @@ impl LanguageService {
                     || uri_bytes.saturating_add(change.uri.as_str().len())
                         > MAX_WORKSPACE_WATCH_URI_BYTES
                 {
+                    self.ensure_current_workspace_watch_errors();
                     self.workspace_watch_recovery_required = true;
                     return WorkspaceFileChanges {
                         jobs: Vec::new(),
@@ -719,6 +891,9 @@ impl LanguageService {
             }
         }
         let mut jobs = Vec::new();
+        if !affected.is_empty() || watch_errors_changed {
+            self.advance_input_revision();
+        }
         self.append_dependent_jobs(&affected, "", &mut jobs);
         if watch_errors_changed {
             let queued = jobs
@@ -734,8 +909,11 @@ impl LanguageService {
                 };
                 let workspace = self.workspace.input(&parsed);
                 let options = self.analysis_options_for(workspace.as_ref().ok());
-                if let Some(mut job) = self.documents.reconfigure(&uri, options) {
-                    attach_workspace(&mut job, workspace);
+                if let Some(mut job) =
+                    self.documents
+                        .reconfigure(&uri, options, self.input_revision)
+                {
+                    self.attach_workspace_input(&mut job, workspace);
                     jobs.push(job);
                 }
             }
@@ -744,8 +922,78 @@ impl LanguageService {
             jobs,
             journal,
             replay_complete: true,
-            recovery_required: self.workspace_watch_errors_overflowed
-                || self.workspace_watch_recovery_required,
+            recovery_required: self.workspace_watch_error_epoch == self.workspace_input_epoch
+                && (self.workspace_watch_errors_overflowed
+                    || self.workspace_watch_recovery_required),
+        }
+    }
+
+    pub(crate) fn handle_workspace_files_changed(
+        &mut self,
+        params: lsp::DidChangeWatchedFilesParams,
+    ) -> WorkspaceFileEventOutcome {
+        if params.changes.iter().any(|change| {
+            change.uri.path_segments().and_then(Iterator::last) == Some(adocweave_config::FILE_NAME)
+        }) {
+            self.begin_workspace_rebuild();
+            return WorkspaceFileEventOutcome {
+                jobs: Vec::new(),
+                recovery_generation: None,
+                rebuild: self.request_workspace_scan(),
+                cancel_recovery_timer: true,
+            };
+        }
+
+        if self.workspace_input_status == WorkspaceInputStatus::Rebuilding {
+            let mut uris = std::collections::BTreeSet::new();
+            let mut uri_bytes = 0_usize;
+            let mut replay_complete = true;
+            for change in &params.changes {
+                if uris.insert(change.uri.as_str()) {
+                    uri_bytes = uri_bytes
+                        .checked_add(change.uri.as_str().len())
+                        .expect("workspace watch URI byte count exhausted");
+                    if uris.len() > MAX_WORKSPACE_WATCH_CHANGES
+                        || uri_bytes > MAX_WORKSPACE_WATCH_URI_BYTES
+                    {
+                        replay_complete = false;
+                        break;
+                    }
+                }
+            }
+            let changes = WorkspaceFileChanges {
+                jobs: Vec::new(),
+                journal: if replay_complete {
+                    params.changes
+                } else {
+                    Vec::new()
+                },
+                replay_complete,
+                recovery_required: !replay_complete
+                    || self.current_workspace_watch_recovery_required(),
+            };
+            if !replay_complete {
+                self.begin_workspace_rebuild();
+            }
+            let recovery_generation = self.record_workspace_changes(&changes);
+            return WorkspaceFileEventOutcome {
+                jobs: Vec::new(),
+                recovery_generation,
+                rebuild: None,
+                cancel_recovery_timer: false,
+            };
+        }
+
+        let changes = self.workspace_files_changed_with_journal(params);
+        if changes.recovery_required && !changes.replay_complete {
+            self.begin_workspace_rebuild();
+        }
+        let recovery_generation = self.record_workspace_changes(&changes);
+        WorkspaceFileEventOutcome {
+            jobs: changes.jobs,
+            recovery_generation,
+            rebuild: None,
+            cancel_recovery_timer: false,
         }
     }
 
@@ -779,18 +1027,89 @@ impl LanguageService {
         }
     }
 
+    pub(crate) fn request_workspace_scan(&mut self) -> Option<WorkspaceScanStart> {
+        self.workspace_scans
+            .lock()
+            .expect("workspace scan state lock is poisoned")
+            .request_replacement()
+    }
+
+    pub(crate) fn record_workspace_changes(
+        &mut self,
+        changes: &WorkspaceFileChanges,
+    ) -> Option<u64> {
+        self.workspace_scans
+            .lock()
+            .expect("workspace scan state lock is poisoned")
+            .record_workspace_changes(changes)
+    }
+
+    pub(crate) fn workspace_scan_recovery_is_current(&self, generation: u64) -> bool {
+        self.workspace_scans
+            .lock()
+            .expect("workspace scan state lock is poisoned")
+            .debouncing_generation()
+            == Some(generation)
+    }
+
+    pub(crate) fn request_workspace_scan_recovery(
+        &mut self,
+        recovery: WorkspaceScanRecovery,
+    ) -> Option<WorkspaceScanStart> {
+        self.workspace_scans
+            .lock()
+            .expect("workspace scan state lock is poisoned")
+            .request_recovery(recovery.generation())
+    }
+
+    pub(crate) fn complete_workspace_scan(
+        &mut self,
+        scanned: WorkspaceScanned,
+    ) -> Option<WorkspaceScanTransition> {
+        let scan_state = Arc::clone(&self.workspace_scans);
+        let mut coordinator = {
+            let mut state = scan_state
+                .lock()
+                .expect("workspace scan state lock is poisoned");
+            std::mem::take(&mut *state)
+        };
+        let transition = coordinator.complete(self, scanned);
+        *scan_state
+            .lock()
+            .expect("workspace scan state lock is poisoned") = coordinator;
+        transition
+    }
+
+    pub(crate) fn cancel_workspace_scan(&mut self) {
+        self.workspace_scans
+            .lock()
+            .expect("workspace scan state lock is poisoned")
+            .cancel();
+    }
+
     /// Installs a completed scan and returns the analyses it makes stale.
     ///
     /// The documents open at this moment are overlaid onto the read, not the
     /// ones open when it started, so a document opened during the walk is kept.
     pub(crate) fn apply_workspace_scan(&mut self, scan: WorkspaceScan) -> WorkspaceScanApplication {
+        let structural_rebuild = self.workspace_input_status == WorkspaceInputStatus::Rebuilding;
         let open_sources = self.documents.open_sources();
         let parsed_open_sources = parse_open_sources(&open_sources);
         let outcome = self
             .workspace
             .apply_loaded_roots(scan.loaded, &parsed_open_sources);
         let installed = outcome.is_ok();
-        let jobs = self.finish_reload(outcome, open_sources);
+        let structural_rebuild_pending = structural_rebuild && !installed;
+        let jobs = if structural_rebuild_pending {
+            self.workspace_scan_failed(outcome.expect_err("failed structural workspace install"))
+        } else {
+            if installed {
+                self.documents.synchronize_all_workspace_inputs();
+            }
+            self.workspace_input_status = WorkspaceInputStatus::Ready;
+            self.advance_input_revision();
+            self.finish_reload(outcome, open_sources)
+        };
         let notices = if installed {
             let current = self.workspace.scan_notices().clone();
             let newly_active = current
@@ -805,6 +1124,7 @@ impl LanguageService {
         WorkspaceScanApplication {
             jobs,
             installed,
+            structural_rebuild_pending,
             notices,
         }
     }
@@ -812,7 +1132,15 @@ impl LanguageService {
     /// Records an internal scan worker failure without replacing the last
     /// coherent workspace snapshot.
     pub fn workspace_scan_failed(&mut self, error: String) -> Vec<AnalysisJob> {
-        self.workspace_error = Some(error);
+        if self.workspace_input_status == WorkspaceInputStatus::Rebuilding {
+            self.set_workspace_error(error);
+            self.ensure_current_workspace_watch_errors();
+            self.workspace_watch_recovery_required = true;
+            return Vec::new();
+        }
+        self.advance_input_revision();
+        self.set_workspace_error(error);
+        self.ensure_current_workspace_watch_errors();
         self.workspace_watch_recovery_required = true;
         self.documents
             .open_sources()
@@ -821,8 +1149,10 @@ impl LanguageService {
                 let parsed = uri.parse().ok()?;
                 let workspace = self.workspace.input(&parsed);
                 let options = self.analysis_options_for(workspace.as_ref().ok());
-                let mut job = self.documents.reconfigure(&uri, options)?;
-                attach_workspace(&mut job, workspace);
+                let mut job = self
+                    .documents
+                    .reconfigure(&uri, options, self.input_revision)?;
+                self.attach_workspace_input(&mut job, workspace);
                 Some(job)
             })
             .collect()
@@ -836,7 +1166,8 @@ impl LanguageService {
     ) -> Vec<AnalysisJob> {
         if let Err(error) = outcome {
             let failed_closed = self.workspace.last_load_failed_closed();
-            self.workspace_error = Some(error.clone());
+            self.set_workspace_error(error.clone());
+            self.ensure_current_workspace_watch_errors();
             self.workspace_watch_recovery_required = true;
             return open_sources
                 .into_iter()
@@ -848,8 +1179,10 @@ impl LanguageService {
                         self.workspace.input(&parsed)
                     };
                     let options = self.analysis_options_for(workspace.as_ref().ok());
-                    let mut job = self.documents.reconfigure(&uri, options)?;
-                    attach_workspace(&mut job, workspace);
+                    let mut job = self
+                        .documents
+                        .reconfigure(&uri, options, self.input_revision)?;
+                    self.attach_workspace_input(&mut job, workspace);
                     Some(job)
                 })
                 .collect();
@@ -862,8 +1195,10 @@ impl LanguageService {
                 let parsed = uri.parse().ok()?;
                 let workspace = self.workspace.input(&parsed);
                 let options = self.analysis_options_for(workspace.as_ref().ok());
-                let mut job = self.documents.reconfigure(&uri, options)?;
-                attach_workspace(&mut job, workspace);
+                let mut job = self
+                    .documents
+                    .reconfigure(&uri, options, self.input_revision)?;
+                self.attach_workspace_input(&mut job, workspace);
                 Some(job)
             })
             .collect()
@@ -888,6 +1223,7 @@ impl LanguageService {
         }
         self.workspace_roots = roots;
         self.active_scan_notices.clear();
+        self.begin_workspace_rebuild();
         true
     }
 
@@ -903,6 +1239,11 @@ impl LanguageService {
         self.workspace.resource_count()
     }
 
+    #[cfg(test)]
+    pub(crate) fn workspace_rebuild_is_pending(&self) -> bool {
+        self.workspace_input_status == WorkspaceInputStatus::Rebuilding
+    }
+
     pub fn watched_files_registration(&self) -> Option<lsp::RegistrationParams> {
         self.client
             .watched_files_dynamic_registration
@@ -913,9 +1254,8 @@ impl LanguageService {
                     register_options: Some(
                         serde_json::to_value(lsp::DidChangeWatchedFilesRegistrationOptions {
                             watchers: vec![lsp::FileSystemWatcher {
-                                // Includes may use any extension. The handler
-                                // reads only known dependencies or new `.adoc`
-                                // roots, so unrelated notifications stay I/O-free.
+                                // Include targets may use any extension; the
+                                // handler filters unrelated paths before I/O.
                                 glob_pattern: lsp::GlobPattern::String("**/*".to_owned()),
                                 kind: Some(
                                     lsp::WatchKind::Create
@@ -931,6 +1271,9 @@ impl LanguageService {
     }
 
     pub fn adopt(&mut self, job: &AnalysisJob, result: adocweave::AnalysisResult) -> Adoption {
+        if !self.analysis_job_is_current(job) {
+            return Adoption::Stale;
+        }
         if job
             .workspace
             .as_ref()
@@ -965,6 +1308,9 @@ impl LanguageService {
         job: &AnalysisJob,
         analyzed: crate::workspace::AnalyzedRoot,
     ) -> Vec<String> {
+        if !self.analysis_job_is_current(job) {
+            return Vec::new();
+        }
         if job
             .workspace
             .as_ref()
@@ -1018,7 +1364,7 @@ impl LanguageService {
     /// Rebuilds a current document job when only its workspace input became
     /// stale while another document loaded or changed a resource.
     pub fn refresh_stale_workspace(&mut self, job: &AnalysisJob) -> Option<AnalysisJob> {
-        if !self.documents.job_is_current(job) {
+        if !self.analysis_job_is_current(job) {
             return None;
         }
         let input = job.workspace.as_ref()?;
@@ -1028,8 +1374,10 @@ impl LanguageService {
         let uri = job.uri.parse().ok()?;
         let workspace = self.workspace.input(&uri);
         let options = self.analysis_options_for(workspace.as_ref().ok());
-        let mut retry = self.documents.reconfigure(&job.uri, options)?;
-        attach_workspace(&mut retry, workspace);
+        let mut retry = self
+            .documents
+            .reconfigure(&job.uri, options, self.input_revision)?;
+        self.attach_workspace_input(&mut retry, workspace);
         Some(retry)
     }
 
@@ -1038,6 +1386,9 @@ impl LanguageService {
         job: &AnalysisJob,
         problem: WorkspaceProblem,
     ) -> Adoption {
+        if !self.analysis_job_is_current(job) {
+            return Adoption::Stale;
+        }
         if job.workspace_problem.is_none()
             && job
                 .workspace
@@ -1051,21 +1402,31 @@ impl LanguageService {
 
     pub fn close(&mut self, uri: &lsp::Url) -> (bool, Vec<AnalysisJob>) {
         let closed = self.documents.close(uri.as_str());
+        if self.workspace_input_status == WorkspaceInputStatus::Rebuilding {
+            if closed {
+                self.advance_input_revision();
+            }
+            return (closed, Vec::new());
+        }
         let mut affected = self.workspace.close_open(uri).unwrap_or_else(|error| {
-            self.workspace_error = Some(error);
+            self.set_workspace_error(error);
             std::collections::BTreeSet::new()
         });
         match self.workspace.forget_include_dependencies(uri) {
             Ok(pruned) => affected.extend(pruned),
-            Err(error) => self.workspace_error = Some(error),
+            Err(error) => self.set_workspace_error(error),
+        }
+        if closed {
+            self.advance_input_revision();
         }
         let mut jobs = Vec::new();
         self.append_dependent_jobs(&affected, uri.as_str(), &mut jobs);
         (closed, jobs)
     }
 
-    pub fn cancel_all(&mut self) {
+    pub fn shutdown(&mut self) {
         self.documents.cancel_all();
+        self.cancel_workspace_scan();
     }
 
     pub fn document_cancellation(
@@ -1073,6 +1434,16 @@ impl LanguageService {
         uri: &lsp::Url,
     ) -> Option<Arc<adocweave::CancellationToken>> {
         self.documents.cancellation(uri.as_str())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn begin_reanalysis_for_test(&mut self, uri: &lsp::Url) -> Option<AnalysisJob> {
+        let mut job = self
+            .documents
+            .begin_reanalysis(uri.as_str(), self.input_revision)?;
+        let workspace = self.workspace.input(uri);
+        self.attach_workspace_input(&mut job, workspace);
+        Some(job)
     }
 
     pub fn update_configuration(
@@ -1097,6 +1468,11 @@ impl LanguageService {
         if !diagnostics_changed {
             return Ok(Vec::new());
         }
+        if self.workspace_input_status == WorkspaceInputStatus::Rebuilding {
+            self.invalidate_all_document_inputs();
+            return Ok(Vec::new());
+        }
+        self.advance_input_revision();
         Ok(self
             .documents
             .open_sources()
@@ -1105,8 +1481,10 @@ impl LanguageService {
                 let parsed = uri.parse().ok()?;
                 let workspace = self.workspace.input(&parsed);
                 let options = self.analysis_options_for(workspace.as_ref().ok());
-                let mut job = self.documents.reconfigure(&uri, options)?;
-                attach_workspace(&mut job, workspace);
+                let mut job = self
+                    .documents
+                    .reconfigure(&uri, options, self.input_revision)?;
+                self.attach_workspace_input(&mut job, workspace);
                 Some(job)
             })
             .collect())
@@ -1126,10 +1504,8 @@ impl LanguageService {
         let Some(source) = source else {
             return Ok(lsp::PublishDiagnosticsParams::new(
                 uri.clone(),
-                self.workspace_error
-                    .as_deref()
+                self.current_workspace_error()
                     .or(workspace_watch_error.as_deref())
-                    .or(self.workspace_input_error.as_deref())
                     .map(crate::diagnostics::workspace_error)
                     .into_iter()
                     .collect(),
@@ -1144,11 +1520,7 @@ impl LanguageService {
             .flatten();
         let mut diagnostics = document
             .and_then(|document| {
-                if document
-                    .workspace_problem
-                    .as_ref()
-                    .is_some_and(|problem| problem.code == "workspace-input-error")
-                {
+                if document.workspace_input_problem().is_some() {
                     None
                 } else {
                     document.view.as_ref().map(|view| view.root.as_ref())
@@ -1165,14 +1537,20 @@ impl LanguageService {
                 )
             })
             .collect::<Result<Vec<_>, String>>()?;
-        if let Some(error) = &self.workspace_error {
+        if let Some(error) = self.current_workspace_error() {
             diagnostics.push(crate::diagnostics::workspace_error(error));
         }
         if let Some(error) = &workspace_watch_error {
             diagnostics.push(crate::diagnostics::workspace_error(error));
         }
-        if let Some(error) = &self.workspace_input_error {
-            diagnostics.push(crate::diagnostics::workspace_error(error));
+        if let Some(problem) = document.and_then(|document| document.workspace_input_problem()) {
+            diagnostics.push(crate::diagnostics::project_problem(
+                problem.range,
+                &problem.code,
+                &problem.message,
+                &source_document,
+                self.position_encoding,
+            )?);
         }
         for workspace in self.documents.workspace_analyses() {
             let current_version = workspace.resource_versions.get(uri.as_str()).copied();
