@@ -32,7 +32,7 @@ use adocweave_host::{
 /// may narrow this scope but must never widen it. `project_root` is kept
 /// separately because it is the boundary for configuration discovery and
 /// target interpretation, not an additional grant of filesystem access.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct ProjectRequest {
     pub project_root: PathBuf,
     pub targets: Vec<ProjectTarget>,
