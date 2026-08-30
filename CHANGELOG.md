@@ -113,6 +113,6 @@ const result = await analyze({
 - `ProjectRequest` is consumed by each stateless processing call. `ProjectAuthority::observation_access`, resource observations, and `ProjectError::repair_candidate` let live callers detect changes through the same retained filesystem authority. `ProjectTarget::PathNoSymlinks` supports callers that must reject symbolic links in an authored target path.
 - Rust crate versions now follow the repository-wide version.
 
-[0.56.0]: https://github.com/KeishiS/adocweave/releases/tag/v0.55.0
+[0.56.0]: https://github.com/KeishiS/adocweave/releases/tag/v0.56.0
 [0.52.0]: https://github.com/KeishiS/adocweave/releases/tag/v0.52.0
 [0.51.0]: https://github.com/KeishiS/adocweave/releases/tag/v0.51.0
