@@ -1,9 +1,9 @@
 = ADR 0012: runtime非依存のWorkspace解析
-:status: accepted; state ownership superseded by ADR 0041
+:status: superseded by ADR 0041
 
 == 状態
 
-採用
+ADR 0041により置換済み
 
 == 背景
 

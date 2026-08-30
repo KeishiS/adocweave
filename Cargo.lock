@@ -96,13 +96,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "adocweave-workspace"
-version = "0.56.0"
-dependencies = [
- "adocweave",
-]
-
-[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"

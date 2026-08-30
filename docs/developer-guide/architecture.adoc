@@ -16,7 +16,6 @@ textlint ──> adocweave-textlint ──> adocweave
 adocweave-cli ──> adocweave-lsp, adocweave-project, adocweave-host, adocweave
 adocweave-lsp ──> adocweave-project, adocweave-host, adocweave
 adocweave-project ──> adocweave-host, adocweave
-adocweave-workspace ──> adocweave
 ----
 
 矢印は利用する側から利用される側へ向きます。下位コンポーネントは上位のプロトコル、実行環境または
@@ -31,9 +30,6 @@ adocweave-workspace ──> adocweave
 
 |``adocweave-host``
 |ローカルファイルの読込権限、競合に耐えるパス検査および資源使用量の計測
-
-|``adocweave-workspace``
-|ディスク上のリソース、開いている文書、世代、依存関係およびI/Oに依存しない再開可能な前処理
 
 |``adocweave-project``
 |一回のプロジェクト処理で所有する全解析対象、設定の型とスキーマ、設定の指定と上書き、
@@ -83,10 +79,10 @@ BrowserのWorker入口とNode.jsのdirect入口は、同じWebAssembly要求、�
 コアはファイルシステム、ネットワーク、データベース、環境変数および非同期の実行環境へ直接アクセスしません。
 利用側アプリは外部リソースを取得して権限と上限を確認し、一回の処理中に変化しないスナップショットとして渡します。
 
-ローカルファイルの安全性は``adocweave-host``、保持中のリソースと解析世代は``adocweave-workspace``が
-所有します。``adocweave-project``は設定と処理上限を解決し、同じ要求が持つファイル読込権限で設定を取得します。
-CLIとLanguage Serverは``adocweave-project``を利用し、パス検査、使用量の計測またはinclude規則を
-独自に実装しません。
+ローカルファイルの安全性は``adocweave-host``が所有します。``adocweave-project``は一回の要求に必要な設定、
+ファイル読込権限、外部リソースおよび処理上限をまとめて処理します。Language Serverの``Session``は開いている文書、
+文書の版、採用した結果、実際に参照したファイルおよび変更監視を接続中だけ保持します。CLIとLanguage Serverは
+``adocweave-project``を利用し、パス検査、使用量の計測またはinclude規則を独自に実装しません。
 
 ``adocweave-project``の``process``は、一つの所有された要求を同期的に処理します。対象の探索、設定の読込、
 主文書、include、スタイルシートおよびローカル参照先の取得では、要求が持つ同じ権限と使用量上限を共有します。

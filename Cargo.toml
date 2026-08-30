@@ -6,7 +6,6 @@ members = [
   "crates/adocweave-lsp",
   "crates/adocweave-project",
   "crates/adocweave-textlint",
-  "crates/adocweave-workspace",
   "crates/adocweave-wasm",
 ]
 exclude = ["editors/zed"]

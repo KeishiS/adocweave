@@ -12,7 +12,6 @@ const NATIVE_PACKAGES = [
   "adocweave-project",
   "adocweave-textlint",
   "adocweave-wasm",
-  "adocweave-workspace",
 ];
 
 function fail(message) {
