@@ -32,13 +32,7 @@ function pathWithoutServer(): string {
 const scratch = mkdtempSync(join(tmpdir(), "adocweave-vscode-acquire-"));
 const userData = join(scratch, "user-data");
 // globalStorageUriは user-data/User/globalStorage/<publisher>.<name> に対応する。
-const expectedStorage = join(
-  userData,
-  "User",
-  "globalStorage",
-  "adocweave.adocweave-vscode",
-  "servers",
-);
+const expectedStorage = join(userData, "User", "globalStorage", "adocweave.adocweave", "servers");
 
 try {
   mkdirSync(join(userData, "User"), { recursive: true });

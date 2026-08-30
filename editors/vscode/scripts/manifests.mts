@@ -23,8 +23,7 @@ export interface ExtensionManifest {
 /**
  * Parses a JSON file as the given shape.
  *
- * The shape is asserted, not validated: callers check the fields they depend
- * on, and the VSIX gates compare the values against the release manifest.
+ * The shape is asserted, not validated: callers check the fields they depend on.
  */
 export function readJson<T>(path: string | URL): T {
   return JSON.parse(readFileSync(path, "utf8")) as T;

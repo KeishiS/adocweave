@@ -90,7 +90,7 @@ export async function run(): Promise<void> {
 
   const folders = vscode.workspace.workspaceFolders;
   assert.ok(folders?.[0], "workspace folderが初期化されていません");
-  const extension = vscode.extensions.getExtension("adocweave.adocweave-vscode");
+  const extension = vscode.extensions.getExtension("adocweave.adocweave");
   assert.ok(extension, "検査対象の拡張が見つかりません");
   const originalFetch = globalThis.fetch;
   const release = mockReleaseFetch(extension.extensionPath, String(extension.packageJSON.version));

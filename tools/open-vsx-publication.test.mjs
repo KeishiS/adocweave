@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,7 +10,7 @@ import { checkOpenVsxPublication } from "./open-vsx-publication.mjs";
 
 const identity = {
   namespace: "adocweave",
-  name: "adocweave-vscode",
+  name: "adocweave",
   version: "1.2.3"
 };
 
@@ -28,6 +28,7 @@ async function fixture(candidate, response) {
   const registryUrl = `http://127.0.0.1:${address.port}`;
   return {
     candidatePath,
+    outputPath: join(directory, "published.vsix"),
     registryUrl,
     close: async () => {
       await new Promise((resolve) => server.close(resolve));
@@ -39,8 +40,8 @@ async function fixture(candidate, response) {
 function publishedResponse(candidate, overrides = {}) {
   return (request, response) => {
     const origin = `http://${request.headers.host}`;
-    const prefix = "/api/adocweave/adocweave-vscode/1.2.3/file/";
-    if (request.url === "/api/adocweave/adocweave-vscode/1.2.3") {
+    const prefix = "/api/adocweave/adocweave/1.2.3/file/";
+    if (request.url === "/api/adocweave/adocweave/1.2.3") {
       response.setHeader("content-type", "application/json");
       response.end(JSON.stringify({
         ...identity,
@@ -82,8 +83,10 @@ test("同じVSIXが公開済みならpublishedとして報告する", async () =
     assert.equal(await checkOpenVsxPublication({
       ...identity,
       candidatePath: server.candidatePath,
+      outputPath: server.outputPath,
       registryUrl: server.registryUrl
     }), "published");
+    assert.deepEqual(await readFile(server.outputPath), value);
   } finally {
     await server.close();
   }
