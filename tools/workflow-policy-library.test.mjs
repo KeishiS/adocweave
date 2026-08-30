@@ -240,6 +240,8 @@ cargo make test-textlint-plugin-release-candidate
             run: `
 node tools/npm-publication.mjs
 npm publish "$tarball"
+attestations='{"provenance":{"predicateType":"https://slsa.dev/provenance/v1"}}'
+predicate="$(jq -r '.provenance.predicateType // empty' <<<"$attestations")"
 test "$predicate" = "https://slsa.dev/provenance/v1"
 nix develop .#ci-browser -c node tools/textlint-plugin-npm-smoke.mjs
 `,
@@ -296,6 +298,8 @@ cargo make test-wasm-release-candidate
             run: `
 node tools/npm-publication.mjs
 npm publish "$tarball"
+attestations='{"provenance":{"predicateType":"https://slsa.dev/provenance/v1"}}'
+predicate="$(jq -r '.provenance.predicateType // empty' <<<"$attestations")"
 test "$predicate" = "https://slsa.dev/provenance/v1"
 nix develop .#ci-browser -c node tools/wasm-npm-smoke.mjs
 `,
@@ -941,6 +945,14 @@ test("textlint packageは専用tagから構築してnpmへ直接公開する", (
     () => validateTextlintPluginPublication(overriddenNode, textlintNpmSmoke),
     /set up pinned Node\.js after Nix/u,
   );
+
+  const malformedAttestations = workflows();
+  malformedAttestations["textlint-plugin-publish.yml"].jobs.publish.steps.at(-1).run +=
+    '\nattestations="${attestations:-{}}"';
+  assert.throws(
+    () => validateTextlintPluginPublication(malformedAttestations, textlintNpmSmoke),
+    /without shell fallback text/u,
+  );
 });
 
 test("WebAssembly packageは専用tagから構築してnpmへ直接公開する", () => {
@@ -973,6 +985,14 @@ test("WebAssembly packageは専用tagから構築してnpmへ直接公開する"
   assert.throws(
     () => validateWasmPublication(overriddenNode, wasmNpmSmoke),
     /set up pinned Node\.js after Nix/u,
+  );
+
+  const malformedAttestations = workflows();
+  malformedAttestations["wasm-publish.yml"].jobs.publish.steps.at(-1).run +=
+    '\nattestations="${attestations:-{}}"';
+  assert.throws(
+    () => validateWasmPublication(malformedAttestations, wasmNpmSmoke),
+    /without shell fallback text/u,
   );
 });
 

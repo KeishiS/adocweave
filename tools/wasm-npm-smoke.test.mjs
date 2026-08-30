@@ -26,7 +26,14 @@ const PACKAGE_FILES = [
 ];
 
 // 実際の解析は公開後smokeが本物のpackageで確かめる。ここでは手順の組み立てだけを見る。
-const DIRECT_STUB = 'export const analyze = async () => ({ html: "<h1>題名</h1>" });\n';
+const DIRECT_STUB = `
+export const analyze = async (request) => {
+  if (request?.source?.text !== "= 題名\\n" || request?.products?.html !== true) {
+    throw new Error("unexpected analysis request");
+  }
+  return { html: "<h1>題名</h1>" };
+};
+`;
 
 async function fakeInstall({ cwd }, overrides = {}) {
   const packageRoot = join(cwd, "node_modules", "@adocweave", "wasm");

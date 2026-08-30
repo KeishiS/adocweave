@@ -609,12 +609,16 @@ export function validateTextlintPluginPublication(workflows, npmSmokeSource) {
   for (const required of [
     "tools/npm-publication.mjs",
     'npm publish "$tarball"',
+    '<<<"$attestations"',
     "https://slsa.dev/provenance/v1",
     "nix develop .#ci-browser -c node tools/textlint-plugin-npm-smoke.mjs",
   ]) {
     if (!publishSource.includes(required)) {
       fail(`${name} must publish and verify the candidate directly on npm: ${required}`);
     }
+  }
+  if (publishSource.includes("attestations:-")) {
+    fail(`${name} must pass npm attestation JSON to jq without shell fallback text`);
   }
   const configuration = JSON.stringify(workflow);
   if (/gh release|releases\/tags|workspace_version|adocweave-textlint\/v/iu.test(configuration)) {
@@ -680,12 +684,16 @@ export function validateWasmPublication(workflows, npmSmokeSource) {
   for (const required of [
     "tools/npm-publication.mjs",
     'npm publish "$tarball"',
+    '<<<"$attestations"',
     "https://slsa.dev/provenance/v1",
     "nix develop .#ci-browser -c node tools/wasm-npm-smoke.mjs",
   ]) {
     if (!publishSource.includes(required)) {
       fail(`wasm-publish.yml must publish and verify the candidate directly on npm: ${required}`);
     }
+  }
+  if (publishSource.includes("attestations:-")) {
+    fail("wasm-publish.yml must pass npm attestation JSON to jq without shell fallback text");
   }
   const configuration = JSON.stringify(workflow);
   if (/gh release|releases\/tags|workspace_version|WASM_PACKAGE_VERSION/iu.test(configuration)) {

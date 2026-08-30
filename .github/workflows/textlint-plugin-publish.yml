@@ -127,7 +127,6 @@ jobs:
             state="$(node tools/npm-publication.mjs \
               --candidate "$tarball" --name "$PACKAGE_NAME" --version "$PACKAGE_VERSION")"
             attestations="$(npm view "$PACKAGE_NAME@$PACKAGE_VERSION" dist.attestations --json 2>/dev/null || true)"
-            attestations="${attestations:-{}}"
             predicate="$(jq -r '.provenance.predicateType // empty' <<<"$attestations")"
             if [ "$state" = published ] && [ "$predicate" = "https://slsa.dev/provenance/v1" ]; then
               echo "Published and verified $PACKAGE_NAME $PACKAGE_VERSION on npm"
