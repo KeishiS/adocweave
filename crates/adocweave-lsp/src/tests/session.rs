@@ -20,10 +20,7 @@ fn initialize_params(roots: &[&str]) -> lsp::InitializeParams {
 #[test]
 fn one_session_owns_connection_lifecycle_and_cancellation() {
     let mut session = Session::default();
-    assert_eq!(session.input_revision(), 0);
-
     session.initialize(&initialize_params(&[]));
-    assert_eq!(session.input_revision(), 1);
 
     let jobs = session.begin_open(typed(json!({
         "textDocument": {
@@ -77,7 +74,76 @@ fn one_project_request_captures_primary_and_open_include_overlays() {
 }
 
 #[test]
-fn session_tracks_multiple_project_roots_with_one_revision() {
+fn project_error_uses_the_same_validation_and_adoption_path_as_success() {
+    let mut session = Session::default();
+    initialize(&mut session, &["utf-16"]);
+    let job = session
+        .begin_open(typed(json!({
+            "textDocument": {
+                "uri": "file:///guide.adoc",
+                "languageId": "asciidoc",
+                "version": 1,
+                "text": "= Guide\n"
+            }
+        })))
+        .pop()
+        .expect("analysis snapshot");
+    let mut completion = process_project_snapshot(job);
+    completion.outcome = crate::service::ProjectAnalysisOutcome::Processed(Err(
+        adocweave_project::ProjectError::TargetSelection(
+            adocweave_project::TargetSelectionError::InvalidGlob {
+                pattern: "[".to_owned(),
+            },
+        ),
+    ));
+
+    let crate::service::ProjectAnalysisAction::Validate(completion) =
+        session.project_processing_completed(completion)
+    else {
+        panic!("project error must be validated");
+    };
+    let next = session.complete_analysis(validate(*completion));
+    assert!(matches!(
+        next,
+        crate::service::ProjectAnalysisAction::Publish { .. }
+    ));
+    assert_eq!(
+        session
+            .documents
+            .get("file:///guide.adoc")
+            .and_then(|document| document.project_problem.as_ref())
+            .map(|problem| problem.code.as_str()),
+        Some("project-target-error")
+    );
+}
+
+#[test]
+fn closing_document_discards_project_worker_completion() {
+    let mut session = Session::default();
+    initialize(&mut session, &["utf-16"]);
+    let document_uri = uri("file:///guide.adoc");
+    let job = session
+        .begin_open(typed(json!({
+            "textDocument": {
+                "uri": document_uri.clone(),
+                "languageId": "asciidoc",
+                "version": 1,
+                "text": "= Guide\n"
+            }
+        })))
+        .pop()
+        .expect("analysis snapshot");
+    let completion = process_project_snapshot(job);
+
+    assert!(session.close(&document_uri).closed);
+    assert!(matches!(
+        session.project_processing_completed(completion),
+        crate::service::ProjectAnalysisAction::Ignore
+    ));
+}
+
+#[test]
+fn session_tracks_multiple_project_roots_with_one_workspace_epoch() {
     let mut session = Session::default();
     session.initialize(&initialize_params(&[
         "file:///workspace/first/",
@@ -91,7 +157,6 @@ fn session_tracks_multiple_project_roots_with_one_revision() {
             uri("file:///workspace/second/")
         ]
     );
-    let initialized_revision = session.input_revision();
     let initialized_epoch = session.workspace_input_epoch();
 
     let _jobs = session.workspace_folders_changed(typed(json!({
@@ -106,7 +171,6 @@ fn session_tracks_multiple_project_roots_with_one_revision() {
             }]
         }
     })));
-    assert_eq!(session.input_revision(), initialized_revision + 1);
     assert_eq!(session.workspace_input_epoch(), initialized_epoch + 1);
     assert_eq!(
         session.workspace_roots(),
@@ -121,10 +185,8 @@ fn session_tracks_multiple_project_roots_with_one_revision() {
 fn open_change_and_close_update_one_session_document() {
     let mut session = Session::default();
     initialize(&mut session, &["utf-16"]);
-    let initialized_revision = session.input_revision();
 
     open(&mut session, "file:///guide.adoc", 3, "= Old\n");
-    assert_eq!(session.input_revision(), initialized_revision + 1);
     let document = session
         .documents
         .get("file:///guide.adoc")
@@ -146,7 +208,7 @@ fn open_change_and_close_update_one_session_document() {
     );
     assert!(session.documents.snapshot("file:///guide.adoc").is_some());
 
-    let open_revision = session.input_revision();
+    let open_generation = document.document_input.revision.generation;
     assert!(
         !change(
             &mut session,
@@ -156,7 +218,16 @@ fn open_change_and_close_update_one_session_document() {
         )
         .expect("stale change is ignored")
     );
-    assert_eq!(session.input_revision(), open_revision);
+    assert_eq!(
+        session
+            .documents
+            .get("file:///guide.adoc")
+            .expect("open document")
+            .document_input
+            .revision
+            .generation,
+        open_generation
+    );
 
     assert!(
         change(
@@ -167,12 +238,12 @@ fn open_change_and_close_update_one_session_document() {
         )
         .expect("new change")
     );
-    assert_eq!(session.input_revision(), open_revision + 1);
     let document = session
         .documents
         .get("file:///guide.adoc")
         .expect("changed document");
     assert_eq!(document.document_input.revision.version, 4);
+    assert!(document.document_input.revision.generation > open_generation);
     assert_eq!(document.document_input.source.as_ref(), "= New\n");
     assert_eq!(document.source_id, source_id);
     let analysis_source_id = document
@@ -195,15 +266,13 @@ fn open_change_and_close_update_one_session_document() {
     assert!(outcome.closed);
     assert!(outcome.reanalysis_jobs.is_empty());
     assert!(cancellation.is_cancelled());
-    assert_eq!(session.input_revision(), open_revision + 2);
     assert!(session.documents.get("file:///guide.adoc").is_none());
 }
 
 #[test]
-fn effective_server_setting_changes_advance_session_revision() {
+fn effective_server_setting_changes_reanalyze_open_documents() {
     let mut session = Session::default();
     initialize(&mut session, &["utf-16"]);
-    let initialized_revision = session.input_revision();
 
     let jobs = session
         .update_configuration(json!({
@@ -211,7 +280,6 @@ fn effective_server_setting_changes_advance_session_revision() {
         }))
         .expect("unchanged settings");
     assert!(jobs.is_empty());
-    assert_eq!(session.input_revision(), initialized_revision);
 
     let jobs = session
         .update_configuration(json!({
@@ -219,7 +287,6 @@ fn effective_server_setting_changes_advance_session_revision() {
         }))
         .expect("execution-only setting");
     assert!(jobs.is_empty());
-    assert_eq!(session.input_revision(), initialized_revision);
     assert_eq!(session.debounce_ms(), 75);
 
     let jobs = session
@@ -228,23 +295,8 @@ fn effective_server_setting_changes_advance_session_revision() {
         }))
         .expect("analysis setting");
     assert!(jobs.is_empty());
-    assert_eq!(session.input_revision(), initialized_revision + 1);
 }
 
-#[test]
-#[should_panic(expected = "Language Server session input revision exhausted")]
-fn session_input_revision_is_never_reused_after_exhaustion() {
-    let mut session = Session::default();
-    session.set_input_revision_for_test(u64::MAX);
-    let _ = session.begin_open(typed(json!({
-        "textDocument": {
-            "uri": "file:///guide.adoc",
-            "languageId": "asciidoc",
-            "version": 1,
-            "text": "= Guide\n"
-        }
-    })));
-}
 #[test]
 #[should_panic(expected = "Language Server workspace input epoch exhausted")]
 fn workspace_input_epoch_is_never_reused_after_exhaustion() {

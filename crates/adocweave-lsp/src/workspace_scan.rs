@@ -8,7 +8,7 @@ use adocweave_host::{FilesystemJobCoordinator, FilesystemJobError};
 use async_lsp::lsp_types::{DidChangeWatchedFilesParams, FileChangeType, FileEvent, Url};
 
 use crate::service::{Session, WorkspaceFileChanges};
-use crate::state::AnalysisJob;
+use crate::state::ProjectAnalysisSnapshot;
 
 const MAX_WATCH_JOURNAL_ENTRIES: usize = 10_000;
 const MAX_WATCH_JOURNAL_URI_BYTES: usize = 1024 * 1024;
@@ -601,7 +601,7 @@ impl WorkspaceScanRecovery {
 }
 
 pub(super) struct WorkspaceScanTransition {
-    pub(super) jobs: Vec<AnalysisJob>,
+    pub(super) jobs: Vec<ProjectAnalysisSnapshot>,
     pub(super) notices: Vec<crate::workspace::WorkspaceScanNotice>,
     pub(super) next: Option<WorkspaceScanStart>,
     pub(super) recovery_timer: WorkspaceRecoveryTimerUpdate,
