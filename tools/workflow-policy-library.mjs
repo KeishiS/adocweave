@@ -186,6 +186,23 @@ export function validateReleaseFlow(workflows, distConfiguration) {
   const buildIndex = localArtifactSteps.findIndex((step) =>
     String(step.run ?? "").includes("dist build")
   );
+  const macosTargetSteps = localArtifactSteps
+    .map((step, index) => ({ index, step }))
+    .filter(({ step }) => String(step.run ?? "").includes("MACOSX_DEPLOYMENT_TARGET"));
+  if (macosTargetSteps.length !== 1) {
+    fail("local artifact builds must set the macOS 14.0 deployment target exactly once");
+  }
+  const [{ index: macosTargetIndex, step: macosTargetStep }] = macosTargetSteps;
+  const expectedMacosTargetRun = 'echo "MACOSX_DEPLOYMENT_TARGET=14.0" >> "$GITHUB_ENV"';
+  if (String(macosTargetStep.run ?? "").trim() !== expectedMacosTargetRun ||
+      condition(macosTargetStep) !== "runner.os == 'macOS'" ||
+      macosTargetStep.shell !== "bash" ||
+      macosTargetStep["continue-on-error"] !== undefined) {
+    fail("local artifact builds must append the macOS 14.0 deployment target only on macOS");
+  }
+  if (buildIndex < 0 || macosTargetIndex >= buildIndex) {
+    fail("local artifact builds must set the macOS deployment target before cargo-dist");
+  }
   if (noticeIndex < 0) {
     fail("local artifact builds must generate third-party notices");
   }

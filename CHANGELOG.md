@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.56.2] - 2026-08-30
+## [0.56.3] - 2026-08-30
 
 ### Main changes
 
@@ -47,8 +47,8 @@
 ### Migration
 
 - Replace direct `adocweave-lsp` invocations with `adocweave lsp`. Replace Nix uses of `apps.${system}.adocweave-lsp` or `nix run ...#adocweave-lsp` with the default app followed by `-- lsp`.
-- Download the native executable from the `v0.56.2` Release instead of the former `adocweave-cli/vX.Y.Z` and `adocweave-lsp/vX.Y.Z` Releases. Each platform archive now contains only `adocweave`.
-- Pin Rust workspace APIs with `v0.56.2` instead of the former `adocweave-lib/vX.Y.Z` tag.
+- Download the native executable from the `v0.56.3` Release instead of the former `adocweave-cli/vX.Y.Z` and `adocweave-lsp/vX.Y.Z` Releases. Each platform archive now contains only `adocweave`.
+- Pin Rust workspace APIs with `v0.56.3` instead of the former `adocweave-lib/vX.Y.Z` tag.
 - Replace `check --list-rules` with `rules`, `check --json` with `check --format json`, `format --write --dry-run` with `format --diff`, and `check --fix --dry-run` with `check --fix --diff`. Replace `--base-dir` with `--stdin-base` when reading standard input; for file input, remove `--base-dir` because includes resolve from each document's parent directory. Remove `--local-targets`; specifying `--project-root` enables local-reference validation.
 - Remove `[workspace.scan]` from `.adocweave.toml`. There is no replacement because the Language Server no longer performs a workspace scan.
 - Replace `ProjectTarget::Workspace` with an explicit file, directory, glob, or in-memory source target.
@@ -72,4 +72,4 @@ if let Ok(expanded) = analysis.expanded {
 }
 ```
 
-[0.56.2]: https://github.com/KeishiS/adocweave/releases/tag/v0.56.2
+[0.56.3]: https://github.com/KeishiS/adocweave/releases/tag/v0.56.3

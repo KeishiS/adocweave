@@ -85,6 +85,11 @@ function releaseWorkflow() {
       "build-local-artifacts": {
         needs: ["plan", "custom-native-release-checks"],
         steps: [
+          {
+            if: "runner.os == 'macOS'",
+            shell: "bash",
+            run: 'echo "MACOSX_DEPLOYMENT_TARGET=14.0" >> "$GITHUB_ENV"',
+          },
           { run: "node tools/generate-third-party-notices.mjs THIRD_PARTY_NOTICES.adoc" },
           { run: "dist build --artifacts=local" },
         ],
@@ -472,17 +477,54 @@ test("native配布物の構築前に第三者依存の通知を生成する", ()
   validateReleaseFlow(valid, 'pr-run-mode = "plan"');
 
   const conditional = releaseFlowWorkflows(releaseWorkflow());
-  conditional["release.yml"].jobs["build-local-artifacts"].steps[0].if = "runner.os == 'Linux'";
+  const conditionalNotice = conditional["release.yml"].jobs["build-local-artifacts"].steps
+    .find((step) => String(step.run).includes("generate-third-party-notices"));
+  conditionalNotice.if = "runner.os == 'Linux'";
   assert.throws(
     () => validateReleaseFlow(conditional, 'pr-run-mode = "plan"'),
     /generate third-party notices unconditionally/u,
   );
 
   const late = releaseFlowWorkflows(releaseWorkflow());
-  late["release.yml"].jobs["build-local-artifacts"].steps.reverse();
+  const lateSteps = late["release.yml"].jobs["build-local-artifacts"].steps;
+  const lateNoticeIndex = lateSteps.findIndex((step) =>
+    String(step.run).includes("generate-third-party-notices")
+  );
+  const [lateNotice] = lateSteps.splice(lateNoticeIndex, 1);
+  lateSteps.push(lateNotice);
   assert.throws(
     () => validateReleaseFlow(late, 'pr-run-mode = "plan"'),
     /generate third-party notices before cargo-dist/u,
+  );
+});
+
+test("macOS配布物は14.0を対応下限として構築する", () => {
+  const valid = releaseFlowWorkflows(releaseWorkflow());
+  validateReleaseFlow(valid, 'pr-run-mode = "plan"');
+
+  const wrongRunner = releaseFlowWorkflows(releaseWorkflow());
+  wrongRunner["release.yml"].jobs["build-local-artifacts"].steps[0].if =
+    "runner.os == 'Linux'";
+  assert.throws(
+    () => validateReleaseFlow(wrongRunner, 'pr-run-mode = "plan"'),
+    /append the macOS 14\.0 deployment target only on macOS/u,
+  );
+
+  const missingRedirect = releaseFlowWorkflows(releaseWorkflow());
+  missingRedirect["release.yml"].jobs["build-local-artifacts"].steps[0].run =
+    'echo "MACOSX_DEPLOYMENT_TARGET=14.0" "$GITHUB_ENV"';
+  assert.throws(
+    () => validateReleaseFlow(missingRedirect, 'pr-run-mode = "plan"'),
+    /append the macOS 14\.0 deployment target only on macOS/u,
+  );
+
+  const late = releaseFlowWorkflows(releaseWorkflow());
+  const lateSteps = late["release.yml"].jobs["build-local-artifacts"].steps;
+  const [macosTarget] = lateSteps.splice(0, 1);
+  lateSteps.push(macosTarget);
+  assert.throws(
+    () => validateReleaseFlow(late, 'pr-run-mode = "plan"'),
+    /set the macOS deployment target before cargo-dist/u,
   );
 });
 

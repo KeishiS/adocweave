@@ -1,5 +1,9 @@
 - name: Install Nix for global artifacts
   if: runner.os == 'Linux'
   uses: DeterminateSystems/determinate-nix-action@527f17dd63d2d60d3e5552934bc84b9a33a14d11
+- name: Set minimum macOS version
+  if: runner.os == 'macOS'
+  shell: bash
+  run: echo "MACOSX_DEPLOYMENT_TARGET=14.0" >> "$GITHUB_ENV"
 - name: Generate third-party notices
   run: node tools/generate-third-party-notices.mjs THIRD_PARTY_NOTICES.adoc
