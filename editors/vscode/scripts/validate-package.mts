@@ -28,6 +28,7 @@ const grammar = readJson<Grammar>("syntaxes/asciidoc.tmLanguage.json");
 
 if (
   packageJson.name !== "adocweave" ||
+  packageJson.displayName !== "AdocWeave Language Support" ||
   packageJson.publisher !== "adocweave" ||
   packageJson.private !== true ||
   !/^0\.\d+\.\d+$/u.test(packageJson.version) ||

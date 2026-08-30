@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.55.1] - 2026-08-30
+
+### Changed
+
+- The extension display name is now `AdocWeave Language Support` to avoid a Marketplace conflict with the former extension. The extension ID remains `adocweave.adocweave`.
+
 ## [0.55.0] - 2026-08-30
 
 ### Changed
