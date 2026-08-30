@@ -609,6 +609,7 @@ export function validateTextlintPluginPublication(workflows, npmSmokeSource) {
   for (const required of [
     "tools/npm-publication.mjs",
     'npm publish "$tarball"',
+    "for _attempt in {1..60}",
     '<<<"$attestations"',
     "https://slsa.dev/provenance/v1",
     "nix develop .#ci-browser -c node tools/textlint-plugin-npm-smoke.mjs",
@@ -684,6 +685,7 @@ export function validateWasmPublication(workflows, npmSmokeSource) {
   for (const required of [
     "tools/npm-publication.mjs",
     'npm publish "$tarball"',
+    "for _attempt in {1..60}",
     '<<<"$attestations"',
     "https://slsa.dev/provenance/v1",
     "nix develop .#ci-browser -c node tools/wasm-npm-smoke.mjs",

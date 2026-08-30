@@ -240,6 +240,7 @@ cargo make test-textlint-plugin-release-candidate
             run: `
 node tools/npm-publication.mjs
 npm publish "$tarball"
+for _attempt in {1..60}; do sleep 5; done
 attestations='{"provenance":{"predicateType":"https://slsa.dev/provenance/v1"}}'
 predicate="$(jq -r '.provenance.predicateType // empty' <<<"$attestations")"
 test "$predicate" = "https://slsa.dev/provenance/v1"
@@ -298,6 +299,7 @@ cargo make test-wasm-release-candidate
             run: `
 node tools/npm-publication.mjs
 npm publish "$tarball"
+for _attempt in {1..60}; do sleep 5; done
 attestations='{"provenance":{"predicateType":"https://slsa.dev/provenance/v1"}}'
 predicate="$(jq -r '.provenance.predicateType // empty' <<<"$attestations")"
 test "$predicate" = "https://slsa.dev/provenance/v1"
@@ -953,6 +955,15 @@ test("textlint packageは専用tagから構築してnpmへ直接公開する", (
     () => validateTextlintPluginPublication(malformedAttestations, textlintNpmSmoke),
     /without shell fallback text/u,
   );
+
+  const shortRegistryWait = workflows();
+  shortRegistryWait["textlint-plugin-publish.yml"].jobs.publish.steps.at(-1).run =
+    shortRegistryWait["textlint-plugin-publish.yml"].jobs.publish.steps.at(-1).run
+      .replace("for _attempt in {1..60}", "for _attempt in {1..12}");
+  assert.throws(
+    () => validateTextlintPluginPublication(shortRegistryWait, textlintNpmSmoke),
+    /for _attempt in \{1\.\.60\}/u,
+  );
 });
 
 test("WebAssembly packageは専用tagから構築してnpmへ直接公開する", () => {
@@ -993,6 +1004,15 @@ test("WebAssembly packageは専用tagから構築してnpmへ直接公開する"
   assert.throws(
     () => validateWasmPublication(malformedAttestations, wasmNpmSmoke),
     /without shell fallback text/u,
+  );
+
+  const shortRegistryWait = workflows();
+  shortRegistryWait["wasm-publish.yml"].jobs.publish.steps.at(-1).run =
+    shortRegistryWait["wasm-publish.yml"].jobs.publish.steps.at(-1).run
+      .replace("for _attempt in {1..60}", "for _attempt in {1..12}");
+  assert.throws(
+    () => validateWasmPublication(shortRegistryWait, wasmNpmSmoke),
+    /for _attempt in \{1\.\.60\}/u,
   );
 });
 
