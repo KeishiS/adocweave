@@ -51,10 +51,7 @@ pub(crate) fn run(arguments: &Arguments) -> Result<ExitCode, CliError> {
     match &arguments.command {
         CommandOptions::Convert { complete, css } => {
             let target = only_target(&result.targets)?;
-            let analysis = target
-                .outcome
-                .as_ref()
-                .map_err(|error| target_cli_error(target, error))?;
+            let analysis = expanded_analysis(target)?;
             let policy = commands::html_policy::build_project(
                 &target.config.config,
                 &target.resources,
@@ -70,10 +67,7 @@ pub(crate) fn run(arguments: &Arguments) -> Result<ExitCode, CliError> {
         }
         CommandOptions::Symbols => {
             let target = only_target(&result.targets)?;
-            let analysis = target
-                .outcome
-                .as_ref()
-                .map_err(|error| target_cli_error(target, error))?;
+            let analysis = expanded_analysis(target)?;
             let output = commands::symbols::render_analysis(&analysis.preprocessed.analysis);
             print_output(finish_output(output)?)?;
             Ok(ExitCode::SUCCESS)
@@ -244,18 +238,19 @@ fn run_format(
         && (targets[0].path.is_none() || (!options.check && !options.write && !options.diff))
     {
         let target = &targets[0];
+        let _ = expanded_analysis(target)?;
         let source = target
             .source
             .as_deref()
             .ok_or_else(|| target_error(target))?;
         let analysis = target
-            .outcome
+            .analysis
             .as_ref()
             .map_err(|error| target_cli_error(target, error))?;
         let config =
             commands::format::project_format_config(options, source, &target.config.config);
         let formatted =
-            commands::format::process_analysis(&analysis.source, &config).map_err(format_error)?;
+            commands::format::process_analysis(&analysis.primary, &config).map_err(format_error)?;
         if options.check && formatted != source {
             return Err(CliError::FormattingRequired);
         }
@@ -266,19 +261,20 @@ fn run_format(
     }
     let mut workflow = commands::format::BatchWorkflow::new(options, targets.len());
     for target in targets.iter_mut() {
+        let _ = expanded_analysis(target)?;
         let path = target.path.as_ref().ok_or_else(|| target_error(target))?;
         let source = target
             .source
             .as_deref()
             .ok_or_else(|| target_error(target))?;
         let analysis = target
-            .outcome
+            .analysis
             .as_ref()
             .map_err(|error| target_cli_error(target, error))?;
         let config =
             commands::format::project_format_config(options, source, &target.config.config);
         let formatted =
-            commands::format::process_analysis(&analysis.source, &config).map_err(format_error)?;
+            commands::format::process_analysis(&analysis.primary, &config).map_err(format_error)?;
         workflow
             .record(
                 path.clone(),
@@ -365,10 +361,6 @@ fn run_check(
     let mut writes = Vec::new();
     let mut changed = 0_usize;
     for target in targets.iter_mut() {
-        let analysis = target
-            .outcome
-            .as_ref()
-            .map_err(|error| target_cli_error(target, error))?;
         let original = target
             .source
             .as_deref()
@@ -395,6 +387,7 @@ fn run_check(
             }
         }
         let sources = check_sources(target, current)?;
+        let analysis = expanded_analysis(target)?;
         let checked =
             commands::check::process_project(analysis, options, &sources).map_err(check_error)?;
         counts.merge(checked.counts);
@@ -457,10 +450,7 @@ fn check_sources<'target>(
     target: &'target ProjectTargetResult,
     current: &Path,
 ) -> Result<BTreeMap<adocweave::SourceId, commands::check::ProjectSourceView<'target>>, CliError> {
-    let analysis = target
-        .outcome
-        .as_ref()
-        .map_err(|error| target_cli_error(target, error))?;
+    let analysis = expanded_analysis(target)?;
     let mut displays = BTreeMap::new();
     displays.insert(
         target.source_id.clone(),
@@ -679,13 +669,25 @@ fn partial_write_error(
 }
 
 fn target_error(target: &ProjectTargetResult) -> CliError {
-    target_cli_error(
-        target,
-        target
-            .outcome
-            .as_ref()
-            .expect_err("a successful target returns its source"),
-    )
+    match &target.analysis {
+        Err(error) => target_cli_error(target, error),
+        Ok(analysis) => analysis.expanded.as_ref().map_or_else(
+            |error| CliError::ProjectExpansion(error.clone()),
+            |_| CliError::Path("project result does not contain the primary source".to_owned()),
+        ),
+    }
+}
+
+fn expanded_analysis(
+    target: &ProjectTargetResult,
+) -> Result<&adocweave_project::ProjectExpandedAnalysis, CliError> {
+    target
+        .analysis
+        .as_ref()
+        .map_err(|error| target_cli_error(target, error))?
+        .expanded
+        .as_ref()
+        .map_err(|error| CliError::ProjectExpansion(error.clone()))
 }
 
 fn target_cli_error(

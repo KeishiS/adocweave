@@ -198,6 +198,31 @@ fn each_kind_of_failure_reports_its_own_exit_status() {
 }
 
 #[test]
+fn configured_stylesheet_limit_uses_the_limit_exit_status() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(root.path().join("document.adoc"), "x\n").expect("document");
+    std::fs::write(root.path().join("large.css"), "0123456789").expect("stylesheet");
+    std::fs::write(
+        root.path().join(".adocweave.toml"),
+        "schema-version = 2\n[resources]\nmax-files = 2\nmax-total-bytes = 64\nmax-resource-bytes = 4\n[html]\nstylesheet-files = [\"large.css\"]\n",
+    )
+    .expect("configuration");
+
+    let output = adocweave()
+        .current_dir(root.path())
+        .args(["convert", "--complete", "document.adoc"])
+        .output()
+        .expect("command");
+
+    assert_eq!(output.status.code(), Some(4));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("single-resource byte limit exceeded"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn only_a_misused_command_is_pointed_at_the_help_text() {
     let root = tempfile::tempdir().expect("root");
     let stderr = |arguments: &[&str]| {
@@ -290,7 +315,7 @@ fn explicit_primary_parent_does_not_expand_include_root_authority() {
         .args(["check", "document.adoc"])
         .output()
         .expect("unauthorized include");
-    assert!(!rejected.status.success());
+    assert_eq!(rejected.status.code(), Some(3));
     assert!(
         String::from_utf8_lossy(&rejected.stderr).contains("outside"),
         "{}",
@@ -906,6 +931,12 @@ fn preview_serves_and_recovers_from_an_initial_include_read_failure() {
         .expect("preview");
     let address = preview_address(child.stderr.as_mut().expect("preview stderr"));
 
+    let initial_document = preview_get(address, "/document");
+    assert!(
+        initial_document.contains("Preview error"),
+        "{initial_document}"
+    );
+    assert!(!initial_document.contains("RECOVERED_INCLUDE"));
     let diagnostics = preview_get(address, "/diagnostics");
     assert!(diagnostics.contains("part.adoc"), "{diagnostics}");
     assert!(child.try_wait().expect("child state").is_none());
@@ -3074,6 +3105,24 @@ fn stdin_include_requires_a_base_and_rejects_traversal() {
 }
 
 #[test]
+fn convert_and_check_reject_a_missing_include_without_partial_output() {
+    let base = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/includes");
+    for command in ["convert", "check"] {
+        let output = run_with_stdin(
+            &[command, "--include", "--stdin-base", base, "-"],
+            b"include::missing.adoc[]\n",
+        );
+        assert_eq!(output.status.code(), Some(1), "{command}");
+        assert!(output.stdout.is_empty(), "{command}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("missing.adoc"),
+            "{command}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
 fn stdin_and_include_share_the_project_retained_and_total_byte_boundary() {
     let root = tempfile::tempdir().expect("root");
     let source = b"include::part.adoc[]\n";
@@ -3113,7 +3162,7 @@ fn stdin_and_include_share_the_project_retained_and_total_byte_boundary() {
         String::from_utf8_lossy(&accepted.stderr)
     );
     let rejected = run(2, total - 1);
-    assert!(!rejected.status.success());
+    assert_eq!(rejected.status.code(), Some(4));
     assert!(
         String::from_utf8_lossy(&rejected.stderr).contains("byte limit"),
         "{}",

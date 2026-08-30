@@ -4,8 +4,12 @@ use std::error::Error;
 use std::fmt;
 use std::io;
 
+use adocweave::preprocess::PreprocessErrorKind;
 use adocweave_host::ExitStatus;
-use adocweave_project::{ProjectLimit, ProjectResourceErrorCode, ProjectTargetError};
+use adocweave_project::{
+    ProjectExpansionError, ProjectLimit, ProjectParseError, ProjectResourceErrorCode,
+    ProjectTargetError,
+};
 
 use crate::{commands, preview};
 
@@ -39,8 +43,10 @@ pub(crate) enum CliError {
     Preview(preview::Error),
     LanguageServer(adocweave_lsp::StdioError),
     Project(adocweave_project::ProjectError),
+    ProjectLimit(adocweave_project::ProjectLimit),
     ProjectPrimary(adocweave_project::ProjectTargetError),
     ProjectTarget(adocweave_project::ProjectTargetError),
+    ProjectExpansion(adocweave_project::ProjectExpansionError),
     Serialize(String),
 }
 
@@ -90,6 +96,16 @@ impl fmt::Display for CliError {
                 ..
             })) => formatter.write_str("analysis snapshot total byte limit exceeded"),
             Self::Project(source) => source.fmt(formatter),
+            Self::ProjectLimit(ProjectLimit::Files { limit }) => {
+                write!(formatter, "filesystem file limit exceeded: {limit}")
+            }
+            Self::ProjectLimit(ProjectLimit::ResourceBytes { .. }) => {
+                formatter.write_str("analysis snapshot single-resource byte limit exceeded")
+            }
+            Self::ProjectLimit(ProjectLimit::ReadBytes { .. }) => {
+                formatter.write_str("analysis snapshot total byte limit exceeded")
+            }
+            Self::ProjectLimit(source) => source.fmt(formatter),
             Self::ProjectPrimary(ProjectTargetError::Read(source)) => write!(
                 formatter,
                 "could not read input: {source}; symbolic links and non-regular files are not accepted"
@@ -133,6 +149,32 @@ impl fmt::Display for CliError {
                 _ => limit.fmt(formatter),
             },
             Self::ProjectTarget(source) => source.fmt(formatter),
+            Self::ProjectExpansion(ProjectExpansionError::Resource(source)) => match source.code {
+                ProjectResourceErrorCode::Missing => {
+                    write!(formatter, "could not read input: {source}")
+                }
+                ProjectResourceErrorCode::OutsideAuthority => {
+                    write!(formatter, "unsafe include target: {source}")
+                }
+                ProjectResourceErrorCode::ReadFailed => write!(
+                    formatter,
+                    "could not read input: {source}; symbolic links and non-regular files are not accepted"
+                ),
+                _ => write!(formatter, "could not read input: {source}"),
+            },
+            Self::ProjectExpansion(ProjectExpansionError::Incomplete(limit)) => match limit {
+                ProjectLimit::Files { limit } => {
+                    write!(formatter, "filesystem file limit exceeded: {limit}")
+                }
+                ProjectLimit::ResourceBytes { .. } => {
+                    formatter.write_str("analysis snapshot single-resource byte limit exceeded")
+                }
+                ProjectLimit::ReadBytes { .. } => {
+                    formatter.write_str("analysis snapshot total byte limit exceeded")
+                }
+                _ => limit.fmt(formatter),
+            },
+            Self::ProjectExpansion(source) => source.fmt(formatter),
             Self::Serialize(message) => {
                 write!(formatter, "cannot serialize diagnostics: {message}")
             }
@@ -149,8 +191,10 @@ impl Error for CliError {
             Self::Preview(source) => Some(source),
             Self::LanguageServer(source) => Some(source),
             Self::Project(source) => Some(source),
+            Self::ProjectLimit(source) => Some(source),
             Self::ProjectPrimary(source) => Some(source),
             Self::ProjectTarget(source) => Some(source),
+            Self::ProjectExpansion(source) => Some(source),
             Self::Usage(_)
             | Self::Serialize(_)
             | Self::InvalidUtf8 { .. }
@@ -180,7 +224,8 @@ impl CliError {
             Self::Project(adocweave_project::ProjectError::Config(_))
             | Self::Project(adocweave_project::ProjectError::Authority(_))
             | Self::ProjectPrimary(adocweave_project::ProjectTargetError::Read(_))
-            | Self::ProjectTarget(adocweave_project::ProjectTargetError::Read(_)) => {
+            | Self::ProjectTarget(adocweave_project::ProjectTargetError::Read(_))
+            | Self::ProjectExpansion(adocweave_project::ProjectExpansionError::Resource(_)) => {
                 ExitStatus::InputOutput
             }
             Self::Project(adocweave_project::ProjectError::TargetSelection(_))
@@ -188,9 +233,24 @@ impl CliError {
             // A configured bound was reached, so the work stopped rather than
             // grew without limit.
             Self::OutputLimit { .. }
+            | Self::ProjectLimit(_)
             | Self::Project(adocweave_project::ProjectError::Limit(_))
             | Self::ProjectPrimary(adocweave_project::ProjectTargetError::Incomplete(_))
-            | Self::ProjectTarget(adocweave_project::ProjectTargetError::Incomplete(_)) => {
+            | Self::ProjectTarget(adocweave_project::ProjectTargetError::Incomplete(_))
+            | Self::ProjectExpansion(adocweave_project::ProjectExpansionError::Incomplete(_))
+            | Self::ProjectExpansion(adocweave_project::ProjectExpansionError::Projection(_))
+            | Self::ProjectPrimary(ProjectTargetError::Parse(ProjectParseError::LimitExceeded {
+                ..
+            }))
+            | Self::ProjectTarget(ProjectTargetError::Parse(ProjectParseError::LimitExceeded {
+                ..
+            }))
+            | Self::ProjectExpansion(ProjectExpansionError::Parse(
+                ProjectParseError::LimitExceeded { .. },
+            )) => ExitStatus::LimitExceeded,
+            Self::ProjectExpansion(ProjectExpansionError::Preprocess(error))
+                if is_preprocess_limit(error.kind) =>
+            {
                 ExitStatus::LimitExceeded
             }
             // The document itself is the problem, which is what a diagnostic
@@ -201,14 +261,28 @@ impl CliError {
             | Self::FormattingRequired
             | Self::Serialize(_)
             | Self::Project(adocweave_project::ProjectError::Cancelled)
-            | Self::ProjectPrimary(adocweave_project::ProjectTargetError::Analysis(_))
+            | Self::ProjectPrimary(adocweave_project::ProjectTargetError::Parse(_))
             | Self::ProjectPrimary(adocweave_project::ProjectTargetError::EditConflict(_))
-            | Self::ProjectTarget(adocweave_project::ProjectTargetError::Analysis(_))
-            | Self::ProjectTarget(adocweave_project::ProjectTargetError::EditConflict(_)) => {
+            | Self::ProjectTarget(adocweave_project::ProjectTargetError::Parse(_))
+            | Self::ProjectTarget(adocweave_project::ProjectTargetError::EditConflict(_))
+            | Self::ProjectExpansion(adocweave_project::ProjectExpansionError::Options(_))
+            | Self::ProjectExpansion(adocweave_project::ProjectExpansionError::Preprocess(_))
+            | Self::ProjectExpansion(adocweave_project::ProjectExpansionError::Parse(_)) => {
                 ExitStatus::Diagnostics
             }
         }
     }
+}
+
+fn is_preprocess_limit(kind: PreprocessErrorKind) -> bool {
+    matches!(
+        kind,
+        PreprocessErrorKind::DepthLimit
+            | PreprocessErrorKind::IncludeLimit
+            | PreprocessErrorKind::ByteLimit
+            | PreprocessErrorKind::NodeLimit
+            | PreprocessErrorKind::SourceMapLimit
+    )
 }
 
 pub(crate) fn convert_error(error: commands::convert::Error) -> CliError {
@@ -249,6 +323,7 @@ pub(crate) fn html_policy_error(error: commands::html_policy::Error) -> CliError
             source_name,
             source,
         },
+        commands::html_policy::Error::ProjectLimit(limit) => CliError::ProjectLimit(limit),
         commands::html_policy::Error::Stylesheet(message) => CliError::Stylesheet(message),
         commands::html_policy::Error::Usage(message) => CliError::Usage(message),
     }
@@ -273,5 +348,20 @@ mod tests {
             error.to_string(),
             "file updates completed with failures: files=3, changed=2, updated=1, unchanged=1, failed=1"
         );
+    }
+
+    #[test]
+    fn preprocessing_limits_are_distinct_from_document_diagnostics() {
+        for kind in [
+            PreprocessErrorKind::DepthLimit,
+            PreprocessErrorKind::IncludeLimit,
+            PreprocessErrorKind::ByteLimit,
+            PreprocessErrorKind::NodeLimit,
+            PreprocessErrorKind::SourceMapLimit,
+        ] {
+            assert!(is_preprocess_limit(kind), "{kind:?}");
+        }
+        assert!(!is_preprocess_limit(PreprocessErrorKind::MissingResource));
+        assert!(!is_preprocess_limit(PreprocessErrorKind::InvalidDirective));
     }
 }

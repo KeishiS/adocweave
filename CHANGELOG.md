@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.52.0] - 2026-08-30
+
+### Rust API
+
+- `ProjectTargetResult.analysis` now separates primary-source analysis from include expansion. A successful `ProjectAnalysis` contains the unexpanded `Analysis` in `primary`; its `expanded` result contains `ProjectExpandedAnalysis` or a typed `ProjectExpansionError`. A missing or rejected include no longer discards primary analysis.
+- Non-cancellation parse failures use the new `ProjectParseError`. Primary parse failures are `ProjectTargetError::Parse`; expansion failures are the flat `ProjectExpansionError::{Options, Preprocess, Parse, Projection, Resource, Incomplete}` variants. Cancellation is always returned as request-wide `ProjectError::Cancelled`.
+
+### Migration
+
+- Replace the former `target.outcome` result with `target.analysis`. After unwrapping that result, replace `.source` with `.primary`; the former `.preprocessed`, `.source_mapping`, and `.local_target_diagnostics` fields move under the `.expanded` result. No compatibility aliases are provided.
+- Replace matches on the former `ProjectTargetError::Analysis` with `ProjectTargetError::Parse` for primary parsing and the corresponding `ProjectExpansionError` variant for expansion. Handle cancellation from `process` as `ProjectError::Cancelled` instead of a target-local analysis error.
+
+```rust
+let analysis = target.analysis?;
+use_primary(&analysis.primary);
+if let Ok(expanded) = analysis.expanded {
+    use_preprocessed(&expanded.preprocessed);
+    use_source_mapping(&expanded.source_mapping);
+    use_local_target_diagnostics(&expanded.local_target_diagnostics);
+}
+```
+
 ## [0.51.0] - 2026-08-29
 
 ### Main changes
@@ -57,4 +79,5 @@ const result = await analyze({
 - `ProjectRequest` is consumed by each stateless processing call. `ProjectAuthority::observation_access`, resource observations, and `ProjectError::repair_candidate` let live callers detect changes through the same retained filesystem authority. `ProjectTarget::PathNoSymlinks` supports callers that must reject symbolic links in an authored target path.
 - Rust crate versions now follow the repository-wide version.
 
+[0.52.0]: https://github.com/KeishiS/adocweave/releases/tag/v0.52.0
 [0.51.0]: https://github.com/KeishiS/adocweave/releases/tag/v0.51.0
