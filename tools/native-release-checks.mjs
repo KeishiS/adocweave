@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import process from "node:process";
 
 import {
@@ -43,6 +43,16 @@ export function expectedPublishedReleaseAssets() {
   return [...expectedReleaseAssets(), "dist-manifest.json"].sort();
 }
 
+export function validateCargoDistChangelog(packageConfig, changelogExists) {
+  const paths = [...packageConfig.matchAll(/^changelog\s*=\s*"([^"]+)"$/gmu)]
+    .map((match) => match[1]);
+  if (paths.length !== 1 || paths[0] !== "CHANGELOG.md") {
+    fail("cargo-dist package changelog must be the repository-root CHANGELOG.md");
+  }
+  if (!changelogExists) fail("cargo-dist package changelog does not exist");
+  return paths[0];
+}
+
 export function validateDistPlan(plan, tag = releaseTag()) {
   const { version } = validateReleaseTag(tag);
   if (plan.dist_version !== "0.31.0") fail("cargo-dist version mismatch");
@@ -82,6 +92,11 @@ export function validateDistPlan(plan, tag = releaseTag()) {
 export function verifyRepository() {
   const version = checkNativeReleaseVersion();
   const dist = read("dist-workspace.toml");
+  const packageDist = read("crates/adocweave/dist.toml");
+  validateCargoDistChangelog(
+    packageDist,
+    existsSync(new URL("CHANGELOG.md", ROOT)),
+  );
   for (const required of [
     'packages = ["adocweave"]',
     'checksum = "sha256"',
