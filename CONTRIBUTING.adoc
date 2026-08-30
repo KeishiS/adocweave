@@ -203,9 +203,10 @@ Nix入力はDependabotの対象外であり、``flake.lock``を手動で更新�
 * 新しい文書を追加する前に、既存の文書へ統合できないか確認します。
 * 利用者向けの手順は代表的な経路だけを書きます。成果物ごとの網羅した手順を並べず、詳細はCLIのhelpと
   Release Notesへ委ねます。
-* バージョン固有の変更内容と移行手順は、rootの``CHANGELOG.md``へ記載します。cargo-distは対象版の項目を
-  GitHub Release Notesへ取り込みます。VS Code拡張の``editors/vscode/README.md``も、拡張registryとeditorの
-  拡張画面がMarkdownだけを表示するため``.md``です。
+* ネイティブ版に固有の変更内容と移行手順は、rootの``CHANGELOG.md``へ記載します。cargo-distは対象版の項目を
+  GitHub Release Notesへ取り込みます。VS Code拡張では``editors/vscode/CHANGELOG.md``を正本とします。
+  拡張のChangelogと``editors/vscode/README.md``は、拡張registryとエディタの拡張画面がMarkdownだけを
+  表示するため``.md``です。
 * CLI option、診断code、パッケージバージョン、対応target、公開APIおよびschemaなど、codeやJSON形式の
   manifestから取得できる情報を文書へ重複して記載しません。
 * 現行仕様、設計理由および作業計画を同じ文書に混在させません。現行仕様は``docs/``、設計理由はADR、
@@ -239,8 +240,9 @@ cross targetの構築、実際のOSやBrowserを使う統合検査、fuzz、Nix�
 cargo make acceptance
 ----
 
-このtaskは``verify``済みのsourceを前提に、cross target、実WASM、editor、fuzzおよびNixの統合検査を行い、
-Browser、textlint、VS Code、Zedの配布candidateを構築して受入検査を実行します。``release-check``は
+このtaskは``verify``済みのsourceを前提に、cross target、実WASM、エディタ、fuzzおよびNixの統合検査を行い、
+Browser、textlintおよびZedの配布candidateを構築して受入検査を実行します。VS Code拡張は実際のExtension Hostと
+Language Serverを使って検査します。``release-check``は
 ``verify``と``acceptance``を一つの実行計画へ合成するため、同じtaskを重複して実行しません。
 
 手元とCIでは、``flake.lock``で固定した開発環境のChromiumを使用します。別のbrowserを確認する場合は
@@ -292,9 +294,8 @@ git push upstream vX.Y.Z
 ----
 . cargo-distのworkflowが、4つのnative成果物と追加成果物を構築して検査し、一つのGitHub Releaseへ添付します。
   WebAssemblyパッケージは、このReleaseに含めません。
-. Release workflowが、npm、Open VSX、Visual Studio MarketplaceおよびCachixの公開workflowを直接かつ並列に
-  呼び出します。
-. 4つの外部公開を含むRelease workflow全体が成功し、予定されたassetを含むstableなGitHub Releaseが作成されたことを
+. Release workflowが、npmとCachixの公開workflowを直接かつ並列に呼び出します。
+. 二つの外部公開を含むRelease workflow全体が成功し、予定されたassetを含むstableなGitHub Releaseが作成されたことを
   確認します。
   必要に応じて、xref:#release-checklist[Release checklist]の任意の受入確認を行います。
 
@@ -318,34 +319,48 @@ xref:docs/developer-guide/release-distribution.adoc[GitHub Releases配布仕様]
 
 最初の自動公開より前に、``github-release``、``binary-cache-publish``、``marketplace-publish``、``npm-publish``および
 ``open-vsx-publish``の5つのenvironmentを作成します。各environmentのdeployment branch policyではSelected branches
-and tagsを選びます。``npm-publish``では``v*``と``wasm/v*``、ほかのenvironmentでは``v*``だけを許可します。
-公開workflowはtag pushで動くため、``main``だけを許可する設定では公開jobを開始できません。Open VSXとCachixの
-tokenは対応するenvironmentへ移します。textlint用Processorのnpm Trusted PublisherとVisual Studio Marketplaceの
-Trusted Publisherには、呼出し元workflow file``release.yml``と対応するenvironmentを登録します。
+and tagsを選びます。``npm-publish``では``v*``と``wasm/v*``、``marketplace-publish``と``open-vsx-publish``では
+``vscode/v*``、ほかのenvironmentでは``v*``だけを許可します。公開workflowはtag pushで動くため、``main``だけを
+許可する設定では公開jobを開始できません。Open VSXとCachixのtokenは対応するenvironmentへ移します。
+textlint用Processorのnpm Trusted Publisherには``release.yml``と``npm-publish`` environment、Visual Studio Marketplaceの
+Trusted Publisherには``vscode-publish.yml``と``marketplace-publish`` environmentを登録します。
+
+[#vscode-release]
+=== VS Code拡張のRelease
+
+VS Code拡張の版は``editors/vscode/package.json``、変更内容は``editors/vscode/CHANGELOG.md``を正本とします。
+ネイティブ版のworkspace版とは同期しません。公開する変更をPull Requestから``main``へ統合し、そのcommitの
+release gateが成功した後、``package.json``と同じ版のannotated tagを作成して``upstream``へpushします。
+
+[source,console]
+----
+git tag -a vscode/vX.Y.Z -m "AdocWeave VS Code extension vX.Y.Z"
+git push upstream vscode/vX.Y.Z
+----
+
+``vscode-publish.yml``はVSIXを一度だけ構築し、同じworkflow artifactをOpen VSX RegistryとVisual Studio Marketplaceへ
+送ります。片方だけが失敗した場合は、GitHub Actionsの``Re-run failed jobs``で失敗したjobだけを再実行します。
+公開済みの版が候補と一致する場合は、再送信せず公開内容の検査から再開します。
 
 [#open-vsx-publication]
 === Open VSX Registryへの公開
 
-Open VSXへの公開はGitHub Releaseの公開後に自動的に始まります。送信だけが失敗した場合は、Release workflowの
-``Re-run failed jobs``を実行します。
-
-公開済みversionがある場合は送信せず、Registryから取得したVSIXとReleaseのVSIXのbyte列を照合します。
+Open VSXへの公開には``open-vsx-publish`` environmentの``OPEN_VSX_TOKEN``を使用します。公開job以外へtokenを
+渡しません。公開後はRegistryからVSIXを取得し、候補と内容が一致することとLanguage Serverへ接続できることを
+確認します。
 
 [#marketplace-publication]
 === Visual Studio Marketplaceへの公開
 
 Visual Studio Marketplaceのpublisher設定でTrusted PublisherへGitHubのorganizationまたはuser、repository、
-workflow file``release.yml``およびenvironment``marketplace-publish``を登録します。``marketplace-publish.yml``は
-再利用workflowですが、OIDCが示すworkflow identityは呼出し元の``release.yml``です。workflowは
-GitHub ReleaseのVSIXをchecksumとattestationで確認した後、対象versionが未公開の場合だけ
-``vsce publish --oidc``で送信します。PAT、Azure loginおよびEntra ID用のrepository変数は使用しません。
+workflow file``vscode-publish.yml``およびenvironment``marketplace-publish``を登録します。workflowは対象versionが
+未公開の場合だけ``vsce publish --oidc``で送信します。PAT、Azure loginおよびEntra ID用のrepository変数は
+使用しません。
 
-Marketplaceへの公開はGitHub Releaseの公開後に自動的に始まります。送信だけが失敗した場合は、Release workflowの
-``Re-run failed jobs``を実行します。
-
-対象versionが公開済みの場合は送信せず、MarketplaceからVSIXを取得してReleaseのVSIXと照合します。
+対象versionが公開済みの場合は送信せず、MarketplaceからVSIXを取得して候補と照合します。
 Marketplaceが追加する署名領域はarchive全体のbyte列を変えるため比較から除きますが、拡張ID、version、target、
-署名以外のfile一覧および内容が異なる場合は失敗します。公開直後にも同じ検査を行います。
+署名以外のfile一覧および内容が異なる場合は失敗します。公開直後にも同じ検査を行い、Language Serverへの接続も
+確認します。
 
 [#npm-publication]
 === textlint用Processorのnpm公開
@@ -429,13 +444,16 @@ clean環境で、公開assetだけを使って実行します。
 
 * [ ] 公開する変更をすべて統合し、対象commitの``main``向けrelease gateが成功しています。
 * [ ] workspace版、``CHANGELOG.md``の対象項目および作成する``vX.Y.Z``tagが一致しています。
+* [ ] VS Code拡張を公開する場合は、``editors/vscode/package.json``の版、
+      ``editors/vscode/CHANGELOG.md``の対象項目および作成する``vscode/vX.Y.Z``tagが一致しています。
 
 === 公開後（任意）
 
 次は人手でしか確認できない経路です。変更のあった成果物から選んで確認します。すべてを毎回行う必要は
 ありません。問題が見つかった場合はIssueへ記録し、修正は新しいバージョンで公開します。
 
-* [ ] VS Code拡張: Open VSXまたは公開VSIXから導入し、AsciiDoc認識、基本構文色付けおよび設定したLanguage Serverとの接続を確認する。
+* [ ] VS Code拡張: Open VSXまたはVisual Studio Marketplaceから導入し、AsciiDoc認識、基本構文色付けおよび
+      設定したLanguage Serverとの接続を確認する。
 * [ ] Zed拡張: 公開archiveを導入し、AsciiDoc認識と設定したLanguage ServerによるLSP機能を確認する。
 * [ ] browser package: cross-origin isolationを使わない環境で実WASMを読み込み、HTML、診断、構造情報、解析の取消しおよび
       取消し後の再解析を確認する。
@@ -445,5 +463,5 @@ clean環境で、公開assetだけを使って実行します。
 * [ ] Nix: 利用側flakeへtagのコミットを固定し、通常のCLI操作と``adocweave lsp``の``nix run``を確認する。
 
 公開assetの完全性は自動で確認します。asset集合と0バイトではないこと、checksum、attestation、``--version --json``、
-binary cacheへの登録、Open VSXへ公開したfileのbyte一致およびVisual Studio Marketplaceへ公開したVSIXの
+binary cacheへの登録、Open VSXへ公開したfileのバイト一致およびVisual Studio Marketplaceへ公開したVSIXの
 署名以外の内容一致は、公開workflowと公開後の検証で機械的に判定できるため、この一覧には含めません。

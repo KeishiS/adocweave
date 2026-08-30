@@ -12,12 +12,7 @@ import { type ExtensionManifest, readJson } from "./manifests.mts";
 const extensionRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
 const repositoryRoot = resolve(extensionRoot, "../..");
 const packageJson = readJson<ExtensionManifest>(join(extensionRoot, "package.json"));
-const output = join(
-  repositoryRoot,
-  "target",
-  "distrib",
-  `adocweave-vscode-${packageJson.version}.vsix`,
-);
+const output = join(repositoryRoot, "target", "distrib", `adocweave-${packageJson.version}.vsix`);
 /** Every entry the VSIX may contain; anything else fails the build. */
 const allowed: ReadonlySet<string> = new Set([
   "[Content_Types].xml",

@@ -24,20 +24,15 @@ const OIDC_PUBLICATION = { contents: "read", "id-token": "write" };
 const MARKETPLACE_OIDC_PUBLICATION = { contents: "read", "id-token": "write" };
 const EXTERNAL_PUBLICATION_WORKFLOWS = new Set([
   "binary-cache-publish.yml",
-  "marketplace-publish.yml",
   "npm-publish.yml",
-  "open-vsx-publish.yml",
 ]);
 const OIDC_PUBLICATION_WORKFLOWS = new Set([
-  "marketplace-publish.yml",
   "npm-publish.yml",
   "wasm-publish.yml",
 ]);
 const RELEASE_PUBLICATION_JOBS = new Map([
   ["publish-binary-cache", "binary-cache-publish.yml"],
-  ["publish-marketplace", "marketplace-publish.yml"],
   ["publish-npm", "npm-publish.yml"],
-  ["publish-open-vsx", "open-vsx-publish.yml"],
 ]);
 const BINARY_CACHE_TARGETS = [
   { runner: "ubuntu-24.04", nixSystem: "x86_64-linux" },
@@ -137,8 +132,16 @@ export function validatePermissions(workflows) {
       if (OIDC_PUBLICATION_WORKFLOWS.has(name) && jobName === "publish") {
         expectPermissions(
           job.permissions,
-          name === "marketplace-publish.yml" ? MARKETPLACE_OIDC_PUBLICATION : OIDC_PUBLICATION,
+          OIDC_PUBLICATION,
           `${name} publish permissions`,
+        );
+        continue;
+      }
+      if (name === "vscode-publish.yml" && jobName === "marketplace") {
+        expectPermissions(
+          job.permissions,
+          MARKETPLACE_OIDC_PUBLICATION,
+          `${name} marketplace permissions`,
         );
         continue;
       }
@@ -396,50 +399,6 @@ export function validateExternalPublicationIsolation(workflows) {
     fail("external publication must not use dispatch events or custom event delivery");
   }
 
-  const openVsxTokenUsers = [];
-  for (const [workflowName, workflow] of Object.entries(workflows)) {
-    const workflowScope = { ...workflow };
-    delete workflowScope.jobs;
-    if (JSON.stringify(workflowScope).includes("OPEN_VSX_TOKEN")) {
-      openVsxTokenUsers.push(`${workflowName}:workflow`);
-    }
-    for (const [jobName, job] of Object.entries(workflow.jobs ?? {})) {
-      if (JSON.stringify(job).includes("OPEN_VSX_TOKEN")) {
-        openVsxTokenUsers.push(`${workflowName}:${jobName}`);
-      }
-    }
-  }
-  if (canonical(openVsxTokenUsers) !== canonical(["open-vsx-publish.yml:publish"]) ||
-      !JSON.stringify(workflows["open-vsx-publish.yml"]?.jobs?.publish)
-        .includes("${{ secrets.OPEN_VSX_TOKEN }}")) {
-    fail("OPEN_VSX_TOKEN must be used only by open-vsx-publish.yml publish");
-  }
-
-  const marketplace = workflows["marketplace-publish.yml"]?.jobs?.publish;
-  if (marketplace?.environment !== "marketplace-publish") {
-    fail("marketplace-publish.yml must use the marketplace-publish environment");
-  }
-  for (const [workflowName, workflow] of Object.entries(workflows)) {
-    for (const [jobName, job] of Object.entries(workflow.jobs ?? {})) {
-      if (
-        job.environment === "marketplace-publish" &&
-        (workflowName !== "marketplace-publish.yml" || jobName !== "publish")
-      ) {
-        fail("marketplace-publish environment must be isolated to marketplace-publish.yml");
-      }
-    }
-  }
-  const publication = jobRuns(marketplace);
-  const marketplaceConfiguration = JSON.stringify(marketplace);
-  if (
-    !publication.includes("vsce publish") ||
-    !publication.includes("--oidc") ||
-    /--azure-credential|AZURE_CLIENT_ID|AZURE_TENANT_ID|Azure\/login/iu.test(
-      marketplaceConfiguration,
-    )
-  ) {
-    fail("Marketplace publication must use only vsce trusted publishing with OIDC");
-  }
 }
 
 function cachixAction(job) {
@@ -607,6 +566,114 @@ export function validateWasmPublication(workflows, npmSmokeSource) {
   }
 }
 
+export function validateVscodePublication(workflows) {
+  const workflow = workflows["vscode-publish.yml"];
+  if (!workflow) fail("vscode-publish.yml is required");
+  if (workflows["marketplace-publish.yml"] || workflows["open-vsx-publish.yml"]) {
+    fail("legacy VS Code publication workflows must not remain");
+  }
+  if (canonical(Object.keys(workflow.on ?? {})) !== canonical(["push"]) ||
+      canonical(workflow.on?.push?.tags) !== canonical(["vscode/v[0-9]+.[0-9]+.[0-9]+"])) {
+    fail("vscode-publish.yml must run only for stable vscode/vX.Y.Z tags");
+  }
+  if (workflow.concurrency?.["cancel-in-progress"] !== false ||
+      !String(workflow.concurrency?.group ?? "").includes("${{ github.ref_name }}")) {
+    fail("vscode-publish.yml must serialize idempotent publication attempts by extension tag");
+  }
+  if (canonical(Object.keys(workflow.jobs ?? {}).sort()) !==
+      canonical(["candidate", "marketplace", "open-vsx"])) {
+    fail("vscode-publish.yml must contain one candidate and two registry jobs");
+  }
+
+  const candidate = workflow.jobs.candidate;
+  const marketplace = workflow.jobs.marketplace;
+  const openVsx = workflow.jobs["open-vsx"];
+  if (needs(candidate).length !== 0 || canonical(needs(marketplace)) !== canonical(["candidate"]) ||
+      canonical(needs(openVsx)) !== canonical(["candidate"])) {
+    fail("both VS Code registry jobs must consume the same verified candidate");
+  }
+  const checkout = (candidate.steps ?? []).find((step) =>
+    typeof step.uses === "string" && step.uses.startsWith("actions/checkout@")
+  );
+  if (checkout?.with?.["fetch-depth"] !== 0 || checkout?.with?.["fetch-tags"] !== true ||
+      checkout?.with?.["persist-credentials"] !== false) {
+    fail("vscode-publish.yml must fetch tag and main history without checkout credentials");
+  }
+  const candidateSource = jobRuns(candidate);
+  for (const required of [
+    "editors/vscode/package.json",
+    'test "$PACKAGE_TAG" = "vscode/v$version"',
+    'git rev-parse "refs/tags/$PACKAGE_TAG^{commit}"',
+    'test "$tag_commit" = "$PACKAGE_COMMIT"',
+    'git merge-base --is-ancestor "$PACKAGE_COMMIT" refs/remotes/origin/main',
+    "cargo make test-vscode-release-candidate",
+  ]) {
+    if (!candidateSource.includes(required)) {
+      fail(`vscode-publish.yml must bind the extension tag, version, source, and candidate: ${required}`);
+    }
+  }
+  const upload = (candidate.steps ?? []).find((step) =>
+    typeof step.uses === "string" && step.uses.startsWith("actions/upload-artifact@")
+  );
+  if (upload?.with?.name !== "vscode-extension-candidate") {
+    fail("vscode-publish.yml must upload the verified VSIX exactly once");
+  }
+  for (const [name, job] of [["marketplace", marketplace], ["open-vsx", openVsx]]) {
+    const download = (job.steps ?? []).find((step) =>
+      typeof step.uses === "string" && step.uses.startsWith("actions/download-artifact@")
+    );
+    if (download?.with?.name !== upload.with.name) {
+      fail(`vscode-publish.yml ${name} must consume the verified VSIX artifact`);
+    }
+    const source = jobRuns(job);
+    for (const required of ["--name adocweave", "--version \"$VERSION\"", "--output", "test-vscode-published-extension"]) {
+      if (!source.includes(required)) {
+        fail(`vscode-publish.yml ${name} must retrieve and run the published extension: ${required}`);
+      }
+    }
+    if (!source.includes("steps.existing.outputs.state") &&
+        !(job.steps ?? []).some((step) => String(step.if ?? "").includes("steps.existing.outputs.state == 'missing'"))) {
+      fail(`vscode-publish.yml ${name} must skip an identical existing publication`);
+    }
+  }
+
+  if (marketplace.environment !== "marketplace-publish" ||
+      openVsx.environment !== "open-vsx-publish") {
+    fail("VS Code registry credentials must use separate GitHub environments");
+  }
+  const marketplaceSource = jobRuns(marketplace);
+  if (!marketplaceSource.includes("vsce publish") || !marketplaceSource.includes("--oidc") ||
+      /--azure-credential|AZURE_CLIENT_ID|AZURE_TENANT_ID|Azure\/login|VSCE_PAT/iu.test(
+        JSON.stringify(marketplace),
+      )) {
+    fail("Marketplace publication must use only vsce trusted publishing with OIDC");
+  }
+  const openVsxSource = jobRuns(openVsx);
+  if (!openVsxSource.includes("ovsx publish") ||
+      !JSON.stringify(openVsx).includes("${{ secrets.OPEN_VSX_TOKEN }}")) {
+    fail("Open VSX publication must use only its environment token and ovsx");
+  }
+  const openVsxTokenUsers = [];
+  for (const [workflowName, candidateWorkflow] of Object.entries(workflows)) {
+    const workflowScope = { ...candidateWorkflow };
+    delete workflowScope.jobs;
+    if (JSON.stringify(workflowScope).includes("OPEN_VSX_TOKEN")) {
+      openVsxTokenUsers.push(`${workflowName}:workflow`);
+    }
+    for (const [jobName, job] of Object.entries(candidateWorkflow.jobs ?? {})) {
+      if (JSON.stringify(job).includes("OPEN_VSX_TOKEN")) {
+        openVsxTokenUsers.push(`${workflowName}:${jobName}`);
+      }
+    }
+  }
+  if (canonical(openVsxTokenUsers) !== canonical(["vscode-publish.yml:open-vsx"])) {
+    fail("OPEN_VSX_TOKEN must be used only by vscode-publish.yml open-vsx");
+  }
+  if (/gh release|releases\/tags|workspace_version|adocweave-vscode/iu.test(JSON.stringify(workflow))) {
+    fail("vscode-publish.yml must not depend on a native Release, workspace version, or old ID");
+  }
+}
+
 export function validateReleaseVersionCommands(source) {
   const invocations = [...source.matchAll(/node tools\/sync-release-version\.mjs ([^\n]+)/g)]
     .map((match) => match[1].trim().split(/\s+/));
@@ -647,6 +714,7 @@ export function validateReleaseWorkflowPolicy({
   validateBinaryCachePublication(workflows);
   validateNpmPublication(workflows);
   validateWasmPublication(workflows, wasmNpmSmoke);
+  validateVscodePublication(workflows);
   validateReleaseVersionCommands(releaseGuide);
 }
 

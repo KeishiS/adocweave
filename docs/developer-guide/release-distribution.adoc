@@ -18,6 +18,10 @@ attestationの確認はxref:../user-guide/release-installation.adoc[インスト
 |link:../../packages/wasm/package.json[``packages/wasm/package.json``]。変更内容は
 link:../../packages/wasm/CHANGELOG.md[パッケージのChangelog]に記録します。
 
+|VS Code拡張の版
+|link:../../editors/vscode/package.json[``editors/vscode/package.json``]。変更内容は
+link:../../editors/vscode/CHANGELOG.md[拡張のChangelog]に記録します。
+
 |native成果物、対象環境、追加成果物および公開方法
 |link:../../dist-workspace.toml[cargo-distのworkspace設定]と各配布packageの``dist.toml``
 
@@ -42,27 +46,29 @@ link:../../packages/wasm/CHANGELOG.md[パッケージのChangelog]に記録し�
 == 配布単位
 
 ネイティブ実行ファイルは、一つのcommit、一つの``vX.Y.Z``タグおよび一つのGitHub Releaseを公開単位とします。
-WebAssemblyパッケージは独立した版を持ち、``wasm/vX.Y.Z``タグからnpm Registryへ直接公開します。
-どちらも同じバージョン番号を別の内容へ再利用しません。
+WebAssemblyパッケージとVS Code拡張は独立した版を持ち、それぞれ``wasm/vX.Y.Z``タグと
+``vscode/vX.Y.Z``タグから標準のレジストリへ直接公開します。いずれの配布物も同じバージョン番号を
+別の内容へ再利用しません。
 
 cargo-distは、OSとCPU architectureごとの``adocweave-<target>.zip``をnative成果物として構築します。
-textlint用Processor、VS Code拡張およびZed拡張は追加成果物として同じplanと
-GitHub Releaseへ含めます。GitHubが自動生成するsource archiveは検証対象の成果物に含めません。
+textlint用ProcessorとZed拡張は追加成果物として同じplanとGitHub Releaseへ含めます。
+VS Code拡張のVSIXは含めません。GitHubが自動生成するsource archiveは検証対象の成果物に含めません。
 
-registryへも公開する追加成果物は、GitHub Releaseへ添付して検証したものと同じ内容を送ります。VS Code拡張は
-Open VSX RegistryとVisual Studio Marketplaceへ、textlint用Processorはnpm Registryへ公開します。
-registry向けに構築し直しません。Zed拡張はGitHub Releaseへの添付だけを対象とします。
+registryへも公開する追加成果物のうち、textlint用ProcessorはGitHub Releaseへ添付して検証したものと同じ内容を
+npm Registryへ送ります。registry向けに構築し直しません。Zed拡張はGitHub Releaseへの添付だけを対象とします。
 WebAssemblyパッケージは専用workflowで一度だけ構築して検査し、その成果物をnpm Registryへ送ります。
+VS Code拡張は専用workflowでVSIXを一度だけ構築して検査し、同じ成果物をOpen VSX Registryと
+Visual Studio Marketplaceへ送ります。
 Rust crateはcrates.ioへ公開しません。
 
 Visual Studio Marketplaceは公開後のVSIXへ署名情報を追加するため、取得したVSIX archive全体のbyte列は送信元と
 異なる場合があります。公開後の検査では拡張ID、version、target、署名以外のfile一覧および各fileの内容を照合し、
 Marketplaceが追加したZIP内の標準署名領域（``_xmlsignatures/``と対応するmetadata）だけを比較から除きます。
 
-外部サービスへの送信はGitHub Releaseの公開後に、公開先ごとの再利用workflowで行います。Release workflowは
-4つのworkflowへ同じstable tagと完全なcommit SHAを渡し、直接かつ並列に呼び出します。独自eventと手動起動用の
-入口は使用しません。一つの送信が失敗しても別の公開先を差し戻さず、Release workflowの``Re-run failed jobs``で
-失敗した送信だけを同じtagとcommitに対して再実行します。
+ネイティブ版に付随する外部サービスへの送信は、GitHub Releaseの公開後に公開先ごとの再利用workflowで行います。
+VS Code拡張は``vscode/vX.Y.Z``タグで``vscode-publish.yml``を直接起動します。候補を構築するjobと二つの
+公開jobを一つのworkflow runへ置き、公開済みの内容が候補と一致する場合は送信を省略します。一方の公開jobが
+失敗した場合は、GitHub Actionsの``Re-run failed jobs``でそのjobだけを再実行します。
 この公開単位を選んだ理由はxref:adr/0043-independent-distribution-units.adoc[ADR 0043]、公開先と
 権限の分離はxref:adr/0023-publication-boundary.adoc[ADR 0023]を参照してください。
 
@@ -90,6 +96,8 @@ VS Code拡張とZed拡張はLanguage Serverを同梱しません。設定で指�
 ``adocweave``を選び、``lsp``引数を付けて起動します。自動取得では同じGitHub Releaseの
 ``adocweave-<target>.zip``を使用します。現在の選択規則と手動導入方法は利用者向け文書を基準とし、
 この分担の理由はxref:adr/0028-editor-language-server-boundary.adoc[ADR 0028]を参照してください。
+VS Code拡張が起動できる最低ネイティブ版は``0.51.0``です。拡張版とネイティブ版の一致は求めず、利用できる
+機能はLanguage Serverが``initialize``応答で示す標準LSP capabilityから判断します。
 
 textlint用ProcessorはProcessor、TxtAST変換、型定義、Node.js向けWebAssembly、licenseおよび第三者依存の通知を
 同じarchiveへ収録します。install時のscript、実行時npm依存、``node_modules``、source mapおよび機械固有pathを
@@ -114,6 +122,10 @@ GitHub Releaseへ添付する成果物、checksumおよび標準dist-manifestに
 credentialや署名fileはarchiveへ埋め込みません。privateリポジトリから取得する場合も、利用者が明示的に与えた
 GitHub認証だけを使用し、credentialをmanifest、log、sourceまたは設定例へ記録しません。
 
+VS Code拡張のworkflowは、``vscode/vX.Y.Z``タグ、``editors/vscode/package.json``の版、タグのcommit、
+checkoutしたcommitおよび``main``への統合を照合します。候補のVSIXはworkflow内のartifactとして公開jobへ渡し、
+GitHub Releaseへ添付しません。
+
 [#publication-permissions]
 == 公開に使用する権限
 
@@ -124,11 +136,10 @@ Release作成後は、公開先ごとの再利用workflowを最小権限で直�
 公開jobへ設定したGitHub environmentだけから取得し、呼出し元のjobへ渡しません。外部actionは完全なcommit SHAへ
 固定します。
 
-Open VSX Registryへの公開workflowの``publish`` jobだけが専用tokenを使用します。Visual Studio MarketplaceはTrusted Publisherと
-``vsce publish --oidc``を使用し、長期tokenを持ちません。MarketplaceのTrusted Publisherにはrepository、
-呼出し元workflow file``release.yml``および``marketplace-publish`` environmentを登録します。OIDCのworkflow identityは
-再利用workflowの``marketplace-publish.yml``ではなく``release.yml``です。両workflowともGitHub Releaseから取得した
-VSIXのchecksumとattestationを確認し、別の成果物を公開しません。
+VS Code拡張では、``vscode-publish.yml``の``open-vsx`` jobだけが``open-vsx-publish`` environmentの専用tokenを
+使用します。``marketplace`` jobは``marketplace-publish`` environmentと``vsce publish --oidc``を使用し、長期tokenを
+持ちません。MarketplaceのTrusted Publisherにはrepository、workflow file``vscode-publish.yml``および
+Environment名``marketplace-publish``を登録します。二つのjobは候補構築jobが保存した同じVSIXだけを使用します。
 
 textlint packageを送る再利用workflowは``npm-publish.yml``です。その公開jobはGitHub environment
 ``npm-publish``で``id-token``の書込みを受け取ります。Trusted Publisherへ登録するworkflow identityは呼出し元の
@@ -151,9 +162,10 @@ stable Releaseの公開後に、Cachix用workflowの公開jobだけが``CACHIX_A
 同じtagでworkflowを再実行しても既存の内容は変わりません。
 
 最初の自動公開より前に、``github-release``、``binary-cache-publish``、``marketplace-publish``、``npm-publish``および
-``open-vsx-publish``の各environmentを作成します。``npm-publish``は``v*``と``wasm/v*``を許可し、ほかの
-environmentはRelease workflowを起動する``v*``だけを許可します。CachixとOpen VSXのtokenはrepository全体ではなく対応するenvironmentへ置き、
-Marketplaceとtextlint packageのTrusted Publisherには``release.yml``、WebAssemblyパッケージのTrusted Publisherには
+``open-vsx-publish``の各environmentを作成します。VS Code用の二つのenvironmentは``vscode/v*``タグだけを許可します。
+``github-release``と``binary-cache-publish``は``v*``、``npm-publish``は``v*``と``wasm/v*``を許可します。
+Open VSXのtokenはrepository全体ではなく``open-vsx-publish`` environmentへ置きます。MarketplaceのTrusted Publisherには
+``vscode-publish.yml``、textlint packageのTrusted Publisherには``release.yml``、WebAssemblyパッケージのTrusted Publisherには
 ``wasm-publish.yml``を登録し、それぞれ前述のEnvironment名と対応させます。
 
 repositoryへの書込み権限がある利用者による手元からのtag作成を、workflowだけで機械的に禁止することはできません。
@@ -167,7 +179,7 @@ xref:adr/0023-publication-boundary.adoc#publication-authority[ADR 0023]を参照
 共通のrelease contractは、checkout時に``origin/main``を含む履歴を取得し、tag、commitおよびworkspace版の対応と、
 tagのcommitが``main``に含まれることを``host``より前に一度だけ検査します。workflowはplanを生成し、native成果物と
 追加成果物を構築して検査した後、一つのGitHub Releaseへ公開します。
-異なるworkflow runや手元の成果物を途中で混在させません。Release作成に成功すると、Release workflow内の4つのjobが
+異なるworkflow runや手元の成果物を途中で混在させません。Release作成に成功すると、Release workflow内の公開jobが
 公開先ごとの``workflow_call``専用workflowを直接かつ並列に呼び出します。呼出し先へはplanで確定したtagと
 Releaseを作成した完全なcommit SHAだけを渡します。各公開jobはstableなRelease、tagのcommit、checkoutしたcommit、
 workspace版、checksumおよびattestationを照合します。``main``との関係は共通のrelease contractを正本とし、公開先ごとの
@@ -179,7 +191,13 @@ workflowはタグ、パッケージの版、commitおよび``main``への統合�
 失敗した場合は同じworkflow runの失敗jobだけを再実行します。公開済みの同じ版は内容を確認して送信を省略し、
 成果物の修正が必要な場合は新しい版とタグを使用します。
 
-外部公開jobはRelease workflowの一部であり、いずれかが失敗するとRelease workflow全体も失敗します。外部サービスへの
+``main``の検査に成功したcommitへ``vscode/vX.Y.Z``タグを作成すると、``vscode-publish.yml``が起動します。
+workflowはタグ、拡張の版、commitおよび``main``への統合を確認し、VSIXを一度だけ構築して検査します。同じVSIXを
+二つの公開jobへ渡し、公開後は各レジストリから取得した拡張のID、版および内容を照合します。さらに、取得した
+VSIXを実際のExtension Hostで起動し、``adocweave lsp``との接続を確認します。一方のjobだけが失敗した場合は、
+成功済みのjobを再実行せず、失敗したjobだけを再実行します。
+
+ネイティブ版の外部公開jobはRelease workflowの一部であり、いずれかが失敗するとRelease workflow全体も失敗します。外部サービスへの
 送信だけが失敗した場合は、GitHub Actionsの標準操作``Re-run failed jobs``を使用します。成功済みのRelease作成jobと
 公開jobはそのままにし、失敗した再利用workflowと後続jobだけを再実行します。公開workflowはtag単位のconcurrencyと、
 公開済み内容を検証して送信を省略する処理を持つため、同じtagとcommitで繰り返しても公開済みの内容を変更しません。
@@ -204,13 +222,14 @@ Pull Requestではsource、試験、生成fileおよび文書を標準の``verif
 ``main``ではcross target、fuzz、Nix packageなどの統合検査を行います。ネイティブ版のRelease workflowでは固定したtagとcommitに
 対してplanを再生成し、対象OSでnative成果物を構築します。ネイティブ版の追加成果物は専用の構築処理で作成し、cargo-distの
 標準dist-manifestへ統合します。完成成果物は対象OS、ブラウザー、エディタまたは固定consumerで検査します。
+VS Code拡張は専用タグのworkflowでVSIXの再現性、導入、更新、ロールバックおよびLanguage Server接続を検査します。
 
 taskの現在の入口とReleaseの操作手順はxref:../../CONTRIBUTING.adoc[コントリビューションガイド]を基準とします。
 検査をこの段階へ分ける理由はxref:adr/0031-path-independent-pull-request-gate.adoc[ADR 0031]、task間の責務は
 xref:adr/0033-make-task-boundary.adoc[ADR 0033]を参照してください。
 
 GitHub Releaseの公開後は、成果物を実際のRelease URLから取得してchecksumとattestationを確認します。
-WebAssemblyパッケージはnpm Registryから取得して確認します。
+WebAssemblyパッケージはnpm Registry、VS Code拡張はVisual Studio MarketplaceとOpen VSX Registryから取得して確認します。
 外部registryへ公開したpackageと拡張はregistryから導入し直し、署名などregistry固有のmetadataを除く内容、
 基本操作および固定consumerでの動作を確認します。これらの確認は公開済みの成果物に対して行い、公開前の検査と
 役割を分けます。

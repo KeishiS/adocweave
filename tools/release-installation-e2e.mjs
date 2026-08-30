@@ -15,7 +15,6 @@ import {
   requiredInstallationAssets,
   targetPlatform,
   validateArchiveEntries,
-  vscodePackageContract,
 } from "./platform-contract.mjs";
 import { workspaceVersion } from "./release-version.mjs";
 
@@ -57,7 +56,7 @@ if (!kind || !candidateArgument || !target) {
   process.exit(2);
 }
 
-const installationKinds = new Set(["native", "wasm", "vscode", "zed"]);
+const installationKinds = new Set(["native", "wasm", "zed"]);
 if (!installationKinds.has(kind)) {
   throw new Error(`unsupported installation E2E kind: ${kind}`);
 }
@@ -105,7 +104,6 @@ const {
   wasmRoot,
   currentLink,
   versionRoot,
-  vscodeRoot,
   zedRoot,
 } = installationLayout(prefix, version, runtime.pathApi);
 const previousRoot = join(prefix, "lib", "adocweave", `${version}-previous-fixture`);
@@ -252,20 +250,6 @@ function installZed() {
   renameSync(extracted, zedRoot);
 }
 
-function installVSCode() {
-  const name = `adocweave-vscode-${version}.vsix`;
-  const extracted = extract(
-    archive(name),
-    join(scratch, "extract", "vscode"),
-    null,
-    "zip",
-  );
-  const extension = join(extracted, "extension");
-  assertInside(extracted, extension);
-  mkdirSync(dirname(vscodeRoot), { recursive: true });
-  renameSync(extension, vscodeRoot);
-}
-
 async function verifyWasmContract() {
   const modulePath = join(wasmRoot, "wasm", "adocweave_wasm.js");
   const wasmPath = join(wasmRoot, "wasm", "adocweave_wasm_bg.wasm");
@@ -345,7 +329,6 @@ try {
   if (native) installNative(nativeArtifact, nativeExecutable);
   else if (kind === "wasm") installWasm();
   else if (kind === "zed") installZed();
-  else if (kind === "vscode") installVSCode();
   const executables = native ? [nativeExecutable] : [];
   if (native) {
     cpSync(versionRoot, previousRoot, { recursive: true });
@@ -383,13 +366,6 @@ try {
   if (kind === "zed") {
     if (!existsSync(join(zedRoot, "extension.toml"))) throw new Error("Zed extension manifest is missing");
   }
-  if (kind === "vscode") {
-    const vscodeManifest = JSON.parse(readFileSync(join(vscodeRoot, "package.json"), "utf8"));
-    if (!vscodePackageContract(vscodeManifest, version)) {
-      throw new Error("VS Code extension manifest mismatch");
-    }
-  }
-
   if (native) {
     for (const executable of executables) rmSync(join(binDirectory, executable));
     if (runtime.platform.os !== "win32") rmSync(currentLink);
@@ -397,7 +373,7 @@ try {
     rmSync(versionRoot, { recursive: true });
     rmSync(previousRoot, { recursive: true });
   }
-  if (["wasm", "zed", "vscode"].includes(kind)) {
+  if (["wasm", "zed"].includes(kind)) {
     rmSync(join(prefix, "share", "adocweave", version), { recursive: true });
   }
   for (const directory of [

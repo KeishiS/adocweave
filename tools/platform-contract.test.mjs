@@ -17,7 +17,6 @@ import {
   unexpectedMacosDependencies,
   unexpectedWindowsDlls,
   validateArchiveEntries,
-  vscodePackageContract,
 } from "./platform-contract.mjs";
 
 test("Windowsの実行ファイル名とインストール先を計算する", () => {
@@ -31,7 +30,6 @@ test("Windowsの実行ファイル名とインストール先を計算する", (
     activeMarker: "C:\\Users\\tester\\.local\\lib\\adocweave\\active-version",
     wasmRoot: "C:\\Users\\tester\\.local\\share\\adocweave\\0.16.0\\wasm",
     zedRoot: "C:\\Users\\tester\\.local\\share\\adocweave\\0.16.0\\zed",
-    vscodeRoot: "C:\\Users\\tester\\.local\\share\\adocweave\\0.16.0\\vscode",
   });
 });
 
@@ -124,11 +122,6 @@ test("Windowsの一時directory削除だけを規定回数再試行する", () =
     maxRetries: 10,
     retryDelay: 100,
   });
-});
-
-test("VSIXのmanifest metadataを検査する", () => {
-  assert.equal(vscodePackageContract({ version: "0.16.0", main: "./dist/extension.cjs" }, "0.16.0"), true);
-  assert.equal(vscodePackageContract({ version: "0.16.0", main: "./src/extension.js" }, "0.16.0"), false);
 });
 
 test("filesystem・process・時刻・platformをruntime adapterとして注入する", () => {

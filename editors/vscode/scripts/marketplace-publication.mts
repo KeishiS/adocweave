@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 import { unzipSync, type Unzipped } from "fflate";
@@ -25,6 +25,7 @@ interface ExtensionIdentity {
 interface PublicationOptions extends ExtensionIdentity {
   candidatePath: string;
   marketplaceUrl?: string;
+  outputPath?: string;
   request?: typeof fetch;
 }
 
@@ -245,6 +246,7 @@ export async function checkMarketplacePublication({
   version,
   target,
   marketplaceUrl = DEFAULT_MARKETPLACE,
+  outputPath,
   request = fetch,
 }: PublicationOptions): Promise<"missing" | "pending" | "published"> {
   const candidate = new Uint8Array(await readFile(candidatePath));
@@ -263,7 +265,9 @@ export async function checkMarketplacePublication({
   if (response.status === 404) return "missing";
   if (response.status === 202) return "pending";
   if (!response.ok) throw new Error(`Marketplace VSIX request failed with HTTP ${response.status}`);
-  compareVsix(candidate, await responseBytes(response), expected);
+  const published = await responseBytes(response);
+  compareVsix(candidate, published, expected);
+  if (outputPath !== undefined) await writeFile(outputPath, published);
   return "published";
 }
 
@@ -289,6 +293,7 @@ function parseArguments(argv: readonly string[]): PublicationOptions {
     version: take("--version"),
     target: take("--target"),
     marketplaceUrl: options.get("--marketplace") ?? DEFAULT_MARKETPLACE,
+    outputPath: options.get("--output"),
   };
 }
 

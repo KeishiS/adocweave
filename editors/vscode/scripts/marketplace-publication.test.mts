@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -9,7 +9,7 @@ import { strToU8, zipSync, type Zippable } from "fflate";
 import { checkMarketplacePublication } from "./marketplace-publication.mts";
 
 const expected = {
-  name: "adocweave-vscode",
+  name: "adocweave",
   publisher: "adocweave",
   target: "universal",
   version: "1.2.3",
@@ -47,11 +47,15 @@ function signedEntries(contents = "extension"): Zippable {
 
 async function fixture(
   candidateEntries = packageEntries(),
-): Promise<{ candidatePath: string; close: () => Promise<void> }> {
+): Promise<{ candidatePath: string; outputPath: string; close: () => Promise<void> }> {
   const directory = await mkdtemp(join(tmpdir(), "adocweave-marketplace-"));
   const candidatePath = join(directory, "extension.vsix");
   await writeFile(candidatePath, zipSync(candidateEntries));
-  return { candidatePath, close: () => rm(directory, { force: true, recursive: true }) };
+  return {
+    candidatePath,
+    outputPath: join(directory, "published.vsix"),
+    close: () => rm(directory, { force: true, recursive: true }),
+  };
 }
 
 function response(entries: Zippable, status = 200): Response {
@@ -75,7 +79,7 @@ test("未公開のversionをmissingとして報告する", async () => {
     );
     assert.equal(
       requested,
-      "https://marketplace.visualstudio.com/_apis/public/gallery/publishers/adocweave/vsextensions/adocweave-vscode/1.2.3/vspackage",
+      "https://marketplace.visualstudio.com/_apis/public/gallery/publishers/adocweave/vsextensions/adocweave/1.2.3/vspackage",
     );
   } finally {
     await source.close();
@@ -85,14 +89,17 @@ test("未公開のversionをmissingとして報告する", async () => {
 test("Marketplace署名を除く内容が同じならpublishedとして報告する", async () => {
   const source = await fixture();
   try {
+    const published = zipSync(signedEntries());
     assert.equal(
       await checkMarketplacePublication({
         ...expected,
         candidatePath: source.candidatePath,
-        request: async () => response(signedEntries()),
+        outputPath: source.outputPath,
+        request: async () => new Response(published),
       }),
       "published",
     );
+    assert.deepEqual(await readFile(source.outputPath), Buffer.from(published));
   } finally {
     await source.close();
   }

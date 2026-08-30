@@ -87,9 +87,6 @@ NixOS以外では、同じ値をシステムの``nix.conf``へ記載します。
 |Zed開発拡張
 3+|``adocweave-zed-<version>.tar.xz``
 
-|VS Code拡張
-3+|``adocweave-vscode-<version>.vsix``
-
 |textlint用Processor
 3+|``adocweave-textlint-plugin-asciidoc-<version>.tgz``
 |===
@@ -349,28 +346,31 @@ Language Serverの場所を指定する場合は、``lsp.adocweave.binary.path``
 [#vscode-installation]
 === VS Codeへの導入
 
-Open VSX RegistryまたはVisual Studio Marketplaceから``adocweave.adocweave-vscode``を導入できます。
+Open VSX RegistryまたはVisual Studio Marketplaceから``adocweave.adocweave``を導入できます。
 発行者は``adocweave``です。
 
 [source,console]
 ----
-codium --install-extension adocweave.adocweave-vscode
-code --install-extension adocweave.adocweave-vscode
+codium --install-extension adocweave.adocweave
+code --install-extension adocweave.adocweave
 ----
 
-ReleaseのVSIXを使用する場合は、チェックサムとArtifact Attestationを確認してから導入します。特定の
-バージョンへ固定する場合もこの方法を使用します。
+拡張は``adocweave lsp``を使用するため、native実行ファイルは0.51.0以降が必要です。拡張の版と
+native実行ファイルの版を一致させる必要はありません。利用できる機能は、Language Serverが初期化時に示す
+LSP capabilityに基づいて決まります。capabilityは、Language Serverが対応している機能をエディタへ伝える情報です。
+
+特定の拡張版を導入する場合は、拡張IDの後ろに版を指定します。
 
 [source,console]
 ----
-code --install-extension "adocweave-vscode-$VERSION.vsix" --force
+code --install-extension "adocweave.adocweave@$VERSION"
 ----
 
 Language Serverの場所を指定する場合は、machine scopeの``adocweave.server.path``へ絶対パスを設定します。
 設定の変更後は``AdocWeave: Restart Language Server``で再起動してください。
 
-更新時は新しいVSIXを同じコマンドで導入し、ウィンドウを再読み込みします。ロールバックする場合は、以前の
-Releaseから検証済みVSIXを取得して導入します。
+更新はエディタの拡張管理機能を使用します。以前の版へ戻す場合は、拡張画面から版を選ぶか、上のコマンドで
+版を指定します。
 
 == 削除
 
@@ -378,7 +378,7 @@ Zedではdev extensionを、VS Codeでは拡張画面または次のコマンド
 
 [source,console]
 ----
-code --uninstall-extension adocweave.adocweave-vscode
+code --uninstall-extension adocweave.adocweave
 ----
 
 LinuxとmacOSでは、導入したバージョンとAdocWeaveが管理するシンボリックリンクだけを削除します。

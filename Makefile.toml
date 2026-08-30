@@ -357,7 +357,6 @@ private = true
 description = "Build and completely verify each global release candidate"
 dependencies = [
   "textlint-plugin-release-consumer-e2e",
-  "test-vscode-release-determinism",
   "test-zed-release-candidate",
 ]
 
@@ -631,6 +630,34 @@ npm run package --prefix editors/vscode -- --verify-determinism
 npm run test:vsix-installation --prefix editors/vscode
 '''
 
+[tasks.test-vscode-release-candidate]
+category = "CI entry points"
+description = "Build and verify the independent VS Code extension candidate"
+dependencies = [
+  "check-vscode",
+  "test-vscode",
+  "test-vscode-release-determinism",
+  "test-vscode-extension-host",
+]
+
+[tasks.test-vscode-published-extension]
+category = "CI entry points"
+description = "Run a registry VSIX against the real AdocWeave Language Server"
+dependencies = ["build-adoc-check", "vscode-dependencies"]
+script_runner = "@shell"
+script = '''
+test -n "${ADOCWEAVE_TEST_VSIX:-}"
+npm run build:test --prefix editors/vscode
+if [ "$(uname -s)" = Linux ]; then
+  Xvfb :97 -screen 0 1280x1024x24 >/dev/null 2>&1 &
+  xvfb_pid=$!
+  trap 'kill "$xvfb_pid" 2>/dev/null || true' EXIT
+  DISPLAY=:97 npm run test:extension --prefix editors/vscode
+else
+  npm run test:extension --prefix editors/vscode
+fi
+'''
+
 [tasks.clippy-zed]
 private = true
 description = "Run Clippy for the excluded Zed extension crate"
@@ -656,7 +683,7 @@ private = true
 description = "Reject documentation .md files except repository metadata"
 script_runner = "@shell"
 script = '''
-unexpected="$(rg --files --hidden -g '*.md' -g '!.git/**' | rg -v '^(AGENTS\.md|CHANGELOG\.md|\.claude/skills/[^/]+/SKILL\.md|\.github/pull_request_template\.md|\.github/SECURITY\.md|editors/vscode/README\.md|packages/[^/]+/(README|CHANGELOG)\.md)$' || true)"
+unexpected="$(rg --files --hidden -g '*.md' -g '!.git/**' | rg -v '^(AGENTS\.md|CHANGELOG\.md|\.claude/skills/[^/]+/SKILL\.md|\.github/pull_request_template\.md|\.github/SECURITY\.md|editors/vscode/(README|CHANGELOG)\.md|packages/[^/]+/(README|CHANGELOG)\.md)$' || true)"
 if [ -n "$unexpected" ]; then
   echo "repository documentation must use .adoc except repository metadata:" >&2
   echo "$unexpected" >&2

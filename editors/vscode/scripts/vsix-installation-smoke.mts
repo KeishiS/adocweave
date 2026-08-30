@@ -16,7 +16,7 @@ if (process.platform === "linux" && process.env.GITHUB_ACTIONS === "true") {
 }
 
 const packageJson = readJson<ExtensionManifest>("package.json");
-const baseline = resolve("../../target/distrib", `adocweave-vscode-${packageJson.version}.vsix`);
+const baseline = resolve("../../target/distrib", `adocweave-${packageJson.version}.vsix`);
 const extensionId = `${packageJson.publisher}.${packageJson.name}`;
 const scratch = mkdtempSync(join(tmpdir(), "adocweave-vsix-install-"));
 const extensionsDirectory = join(scratch, "extensions");
@@ -43,7 +43,7 @@ function fixtureVersion(version: string): string {
   entries["extension.vsixmanifest"] = Buffer.from(
     vsixManifest.replace(/(<Identity\b[^>]*\bVersion=")[^"]+(")/, `$1${version}$2`),
   );
-  const path = join(scratch, `adocweave-vscode-${version}.vsix`);
+  const path = join(scratch, `adocweave-${version}.vsix`);
   writeFileSync(path, zipSync(entries, { level: 9 }));
   return path;
 }
