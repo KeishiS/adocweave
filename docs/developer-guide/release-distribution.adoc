@@ -11,8 +11,11 @@ attestationの確認はxref:../user-guide/release-installation.adoc[インスト
 |===
 |対象 |正本
 
-|製品のバージョン
+|ネイティブ実行ファイルのバージョン
 |リポジトリ直下のlink:../../Cargo.toml[Cargo workspaceの``package.version``]
+
+|Zed拡張のバージョン
+|link:../../editors/zed/extension.toml[``editors/zed/extension.toml``の``version``]
 
 |native成果物、対象環境、追加成果物および公開方法
 |link:../../dist-workspace.toml[cargo-distのworkspace設定]と各配布packageの``dist.toml``
@@ -35,18 +38,20 @@ attestationの確認はxref:../user-guide/release-installation.adoc[インスト
 実際のファイルを照合します。
 
 [#distribution-boundary]
-== 一つのバージョンとGitHub Release
+== GitHub Releaseの公開単位
 
-すべての製品はCargo workspaceの一つのバージョンを使用します。一つのcommit、一つの``vX.Y.Z``タグおよび
-一つのGitHub Releaseを公開単位とし、同じバージョン番号を別の内容へ再利用しません。
+native実行ファイルと、同じGitHub Releaseへ含める成果物はCargo workspaceのバージョンを使用します。
+一つのcommit、一つの``vX.Y.Z``タグおよび一つのGitHub Releaseを公開単位とし、同じバージョン番号を
+別の内容へ再利用しません。Zed拡張はこの公開単位に含めず、``extension.toml``のバージョンで管理します。
 
 cargo-distは、OSとCPU architectureごとの``adocweave-<target>.zip``をnative成果物として構築します。
-WebAssembly package、textlint用Processor、VS Code拡張およびZed拡張は追加成果物として同じplanと
+WebAssembly package、textlint用ProcessorおよびVS Code拡張は追加成果物として同じplanと
 GitHub Releaseへ含めます。GitHubが自動生成するsource archiveは検証対象の成果物に含めません。
 
-registryへも公開する成果物は、GitHub Releaseへ添付して検証したものと同じbyte列を送ります。VS Code拡張は
+registryへも公開する成果物は、GitHub Releaseへ添付して検証したものと同じ内容を送ります。VS Code拡張は
 Open VSX RegistryとVisual Studio Marketplaceへ、WebAssembly packageとtextlint用Processorはnpm Registryへ
-公開します。registry向けに構築し直しません。Zed拡張はGitHub Releaseへの添付だけを対象とします。
+公開します。registry向けに構築し直しません。Zed拡張はGitHub Releaseへ添付せず、公式Zed拡張レジストリが
+``editors/zed``のソースを構築して配布します。
 Rust crateはcrates.ioへ公開しません。
 
 Visual Studio Marketplaceは公開後のVSIXへ署名情報を追加するため、取得したVSIX archive全体のbyte列は送信元と
@@ -81,8 +86,8 @@ xref:core-profile.adoc#wasm-api[WebAssembly API]を基準とし、Worker内部�
 直接依存しない公開入口を提供します。
 
 VS Code拡張とZed拡張はLanguage Serverを同梱しません。設定で指定した絶対path、``PATH``、自動取得の順で
-``adocweave``を選び、``lsp``引数を付けて起動します。自動取得では同じGitHub Releaseの
-``adocweave-<target>.zip``を使用します。現在の選択規則と手動導入方法は利用者向け文書を基準とし、
+``adocweave``を選び、``lsp``引数を付けて起動します。Zed拡張は最新の安定版GitHub Releaseにある
+``adocweave-<target>.zip``を使用し、拡張版との一致を求めません。現在の選択規則と手動導入方法は利用者向け文書を基準とし、
 この分担の理由はxref:adr/0028-editor-language-server-boundary.adoc[ADR 0028]を参照してください。
 
 textlint用ProcessorはProcessor、TxtAST変換、型定義、Node.js向けWebAssembly、licenseおよび第三者依存の通知を

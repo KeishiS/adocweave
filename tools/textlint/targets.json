@@ -3,7 +3,7 @@
   "authoredFiles": [
     "CONTRIBUTING.adoc",
     "README.adoc",
-    "editors/zed/README.adoc",
+    "editors/zed/README.md",
     "fuzz/corpus/README.adoc"
   ],
   "authoredDirectories": [

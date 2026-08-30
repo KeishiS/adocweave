@@ -90,7 +90,6 @@ export function requiredInstallationAssets(kind, target, version) {
     wasm: `adocweave-wasm-${version}.tgz`,
     textlint: `adocweave-textlint-plugin-asciidoc-${version}.tgz`,
     vscode: `adocweave-vscode-${version}.vsix`,
-    zed: `adocweave-zed-${version}.tar.xz`,
   };
   if (!Object.hasOwn(names, kind)) throw new Error(`unsupported installation kind: ${kind}`);
   return [names[kind]];
@@ -110,7 +109,6 @@ export function installationLayout(prefix, version, pathApi) {
     currentLink: pathApi.join(nativeRoot, "current"),
     activeMarker: pathApi.join(nativeRoot, "active-version"),
     wasmRoot: pathApi.join(shareRoot, "wasm"),
-    zedRoot: pathApi.join(shareRoot, "zed"),
     vscodeRoot: pathApi.join(shareRoot, "vscode"),
   };
 }

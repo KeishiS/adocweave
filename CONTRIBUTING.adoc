@@ -240,7 +240,7 @@ cargo make acceptance
 ----
 
 このtaskは``verify``済みのsourceを前提に、cross target、実WASM、editor、fuzzおよびNixの統合検査を行い、
-Browser、textlint、VS Code、Zedの配布candidateを構築して受入検査を実行します。``release-check``は
+Browser、textlintおよびVS Codeの配布candidateとZed開発用拡張を構築して受入検査を実行します。``release-check``は
 ``verify``と``acceptance``を一つの実行計画へ合成するため、同じtaskを重複して実行しません。
 
 手元とCIでは、``flake.lock``で固定した開発環境のChromiumを使用します。別のbrowserを確認する場合は
@@ -259,9 +259,15 @@ release gateが成功した後にtagを作成して``upstream``へpushします�
 GitHub Releaseを作成します。公開済みtagの更新と削除は行いません。tagの作成条件と公開失敗時の扱いは
 xref:docs/developer-guide/release-distribution.adoc[GitHub Releases配布仕様]を基準とします。
 
+Zed拡張はこのtagとGitHub Releaseに含めません。``editors/zed/extension.toml``で独立してバージョンを管理し、
+公開branchのcommitを公式Zed拡張レジストリへ提出します。
+
 == Release
 
 release作業も通常の変更と同様に、短命なブランチとpull requestから開始します。
+
+この節はGitHub Releaseへ含める成果物の手順です。Zed拡張の更新と提出は
+xref:docs/developer-guide/zed-development.adoc#zed-registry-submission[公式レジストリへの提出]に従います。
 
 . リポジトリ全体の変更について、互換性および利用者への影響に応じたSemantic Versioningのバージョンを決めます。
   続いて、workspace版と登録済みのmanifestを一括更新します。
@@ -415,7 +421,7 @@ clean環境で、公開assetだけを使って実行します。
 ありません。問題が見つかった場合はIssueへ記録し、修正は新しいバージョンで公開します。
 
 * [ ] VS Code拡張: Open VSXまたは公開VSIXから導入し、AsciiDoc認識、基本構文色付けおよび設定したLanguage Serverとの接続を確認する。
-* [ ] Zed拡張: 公開archiveを導入し、AsciiDoc認識と設定したLanguage ServerによるLSP機能を確認する。
+* [ ] Zed拡張: 公式レジストリ版を導入し、``AsciiDoc``拡張との併用とLanguage ServerによるLSP機能を確認する。
 * [ ] browser package: cross-origin isolationを使わない環境で実WASMを読み込み、HTML、診断、構造情報、解析の取消しおよび
       取消し後の再解析を確認する。
 * [ ] textlint用Processor: 新しいプロジェクトへ導入し、``.adoc``の検査と``textlint --fix``で入力が変化しないことを

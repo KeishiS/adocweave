@@ -104,26 +104,16 @@ ${groupedRows(packages)}
 |===`;
 }
 
-export function renderThirdPartyNotices(rootMetadata, zedMetadata, vscodePackages = []) {
+export function renderThirdPartyNotices(rootMetadata, vscodePackages = []) {
   const rootPackages = thirdPartyPackages(rootMetadata);
-  const rootKeys = new Set(rootPackages.map(packageKey));
-  const zedOnlyPackages = thirdPartyPackages(zedMetadata)
-    .filter((pkg) => !rootKeys.has(packageKey(pkg)));
 
   return `= Third-party notices
 
-このファイルはroot workspaceとZed拡張のlockfileから、配布時に生成される。各項目にはSPDX license expressionと
-crate versionを記載する。各licenseの全文と著作権表示は、crate packageおよび記載されたSPDX licenseを参照する。
-この表はAdocWeave自身の\`MIT OR Apache-2.0\` licenseを置き換えない。
+このファイルはroot workspaceのlockfileから、配布時に生成される。各項目にはSPDX license expressionとcrate versionを
+記載する。各licenseの全文と著作権表示は、crate packageおよび記載されたSPDX licenseを参照する。この表は
+AdocWeave自身の\`MIT OR Apache-2.0\` licenseを置き換えない。
 
 ${table(rootPackages)}
-
-== Zed開発拡張archiveの追加依存
-
-Zed開発拡張はsource archiveとして配布され、初回導入時にZedが追加crateをbuildする。root workspaceにも同一の
-name・version・licenseで含まれるcrateは重複記載しない。
-
-${table(zedOnlyPackages)}
 
 == VS Code拡張の実行時依存
 
@@ -168,13 +158,12 @@ function cargoMetadata(args) {
 
 export function generateThirdPartyNotices(outputPath) {
   const rootMetadata = cargoMetadata([]);
-  const zedMetadata = cargoMetadata(["--manifest-path", "editors/zed/Cargo.toml"]);
   const vscodeManifest = JSON.parse(readFileSync(new URL("../editors/vscode/package.json", import.meta.url), "utf8"));
   const vscodeLock = JSON.parse(readFileSync(new URL("../editors/vscode/package-lock.json", import.meta.url), "utf8"));
   const vscodePackages = vscodeRuntimePackages(vscodeManifest, vscodeLock);
   const output = resolve(root, outputPath);
   mkdirSync(dirname(output), { recursive: true });
-  writeFileSync(output, renderThirdPartyNotices(rootMetadata, zedMetadata, vscodePackages));
+  writeFileSync(output, renderThirdPartyNotices(rootMetadata, vscodePackages));
 }
 
 export function generateTextlintPluginNotices(outputPath) {
