@@ -87,8 +87,8 @@ args = ["--test", "packages/wasm/protocol-wasm.test.mjs"]
 category = "CI entry points"
 description = "Verify the native version, release tag, cargo-dist artifacts, and Cargo metadata"
 dependencies = [
-  "release-version-check",
-  "release-workflow-policy",
+  "native-version-check",
+  "workflow-policy",
 ]
 script_runner = "@shell"
 script = '''
@@ -131,17 +131,16 @@ node tools/native-release-acceptance.mjs "$RELEASE_TAG" "$scratch/release.json" 
 for asset in "$assets"/*; do
   gh attestation verify "$asset" --repo "$repository"
 done
-NATIVE_ARTIFACT_DIR="$assets" NATIVE_MANIFEST="$assets/dist-manifest.json" \
-  node tools/local-native-check.mjs installation
+node tools/native-release-installation.mjs "$assets" "$assets/dist-manifest.json"
 '''
 
-[tasks.release-version-check]
+[tasks.native-version-check]
 private = true
-description = "Verify the explicit release version allowlist and generated outputs"
+description = "Verify the native workspace, lockfiles, and changelog version"
 script_runner = "@shell"
 script = '''
-node --test tools/sync-release-version.test.mjs
-node tools/sync-release-version.mjs --check
+node --test tools/native-release-version.test.mjs
+node tools/native-release-version.mjs --check
 '''
 
 [tasks.security-audit]
@@ -150,26 +149,37 @@ description = "Audit distributed dependency licenses, sources, and current advis
 command = "bash"
 args = ["tools/security-audit.sh"]
 
-[tasks.release-workflow-policy]
+[tasks.workflow-policy]
 private = true
-description = "Verify release workflow pins, permissions, gates, and publication isolation"
+description = "Verify common workflow safety and each distribution workflow"
 script_runner = "@shell"
 script = '''
-node tools/release-workflow-policy.mjs
+node tools/workflow-safety.mjs
+node tools/native-release-workflow.mjs
+node tools/cachix-publish-workflow.mjs
+node tools/textlint-plugin-publish-workflow.mjs
+node tools/wasm-publish-workflow.mjs
+node tools/vscode-publish-workflow.mjs
 node --test \
+  tools/workflow-safety.test.mjs \
+  tools/native-release-workflow.test.mjs \
+  tools/cachix-publish-workflow.test.mjs \
+  tools/textlint-plugin-publish-workflow.test.mjs \
+  tools/wasm-publish-workflow.test.mjs \
+  tools/vscode-publish-workflow.test.mjs \
   tools/cachix-smoke.test.mjs \
   tools/wasm-release-budget.test.mjs \
   tools/npm-publication.test.mjs \
   tools/normalize-darwin-archives.test.mjs \
   tools/open-vsx-publication.test.mjs \
-  tools/release-workflow-policy.test.mjs \
+  tools/workflow-policy-library.test.mjs \
   tools/security-audit.test.mjs
 '''
 
 [tasks.workflow-lint]
 private = true
 description = "Lint GitHub Actions syntax and enforce the release security policy"
-dependencies = ["release-workflow-policy"]
+dependencies = ["workflow-policy"]
 command = "actionlint"
 args = [
   "-ignore",
@@ -185,15 +195,22 @@ private = true
 description = "Run the native release checks, workflow lint, and cargo-dist plan used by pull requests"
 dependencies = ["native-release-checks", "workflow-lint", "dist-plan"]
 
-[tasks.platform-contract]
+[tasks.native-platform-contract]
 private = true
-description = "Verify Windows and macOS release contracts without requiring the target operating system"
+description = "Verify native archive and operating-system contracts without requiring each target host"
+command = "node"
+args = [
+  "--test",
+  "tools/native-platform.test.mjs",
+]
+
+[tasks.npm-package-contracts]
+private = true
+description = "Verify WebAssembly and textlint package installation contracts"
 command = "node"
 args = [
   "--test",
   "tools/wasm-npm-smoke.test.mjs",
-  "tools/platform-contract.test.mjs",
-  "tools/release-installation-e2e.test.mjs",
   "tools/textlint-plugin-npm-smoke.test.mjs",
   "tools/textlint-plugin-npx-smoke.test.mjs",
   "tools/textlint-plugin-consumer-e2e.test.mjs",
@@ -231,7 +248,7 @@ dependencies = ["check-windows-target", "check-macos-target"]
 
 [tasks.dist-plan]
 private = true
-description = "Run the pinned cargo-dist plan for the unified release"
+description = "Run the pinned cargo-dist plan for the native release"
 script_runner = "@shell"
 script = '''
 node tools/generate-third-party-notices.mjs THIRD_PARTY_NOTICES.adoc
@@ -267,7 +284,7 @@ wasm-bindgen \
 
 [tasks.package-wasm-release]
 private = true
-description = "Build the deterministic WebAssembly extra artifact consumed by dist"
+description = "Build the deterministic WebAssembly npm package candidate"
 command = "bash"
 args = ["tools/package-wasm-release.sh"]
 
@@ -375,15 +392,8 @@ dependencies = [
 
 [tasks.test-wasm-release-candidate]
 category = "CI entry points"
-description = "Build, verify, run, install, and remove the WebAssembly release candidate"
+description = "Build, verify, and run the WebAssembly release candidate"
 dependencies = ["wasm-runtime-check"]
-command = "node"
-args = [
-  "tools/release-installation-e2e.mjs",
-  "wasm",
-  "target/distrib",
-  "x86_64-unknown-linux-musl",
-]
 
 [tasks.build-wasm-node]
 private = true
@@ -714,7 +724,8 @@ dependencies = [
   "clippy",
   "test",
   "native-release-ci",
-  "platform-contract",
+  "native-platform-contract",
+  "npm-package-contracts",
   "doc-check",
   "docs-check",
   "adoc-check",

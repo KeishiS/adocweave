@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { shouldRetryRemoval } from "./platform-contract.mjs";
+import { shouldRetryRemoval } from "./native-platform.mjs";
 import { hasExited, waitForExit } from "./process-lifecycle.mjs";
 
 export const LSP_SMOKE_TOTAL_TIMEOUT_MS = 45_000;

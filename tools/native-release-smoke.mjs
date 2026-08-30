@@ -13,14 +13,14 @@ import {
   nativeArtifactFromPlan,
   unexpectedWindowsDlls,
   validateArchiveEntries,
-} from "./platform-contract.mjs";
+} from "./native-platform.mjs";
 import {
   combineNativeSmokeErrors,
   createNativeSmokeDeadline,
   removeNativeSmokeDirectory,
   smokeLsp,
 } from "./native-lsp-smoke.mjs";
-import { workspaceVersion } from "./release-version.mjs";
+import { workspaceVersion } from "./native-release-version.mjs";
 
 const runtime = createRuntimeAdapters({
   fileSystem: nodeFileSystem,

@@ -1,8 +1,11 @@
 import { readFileSync } from "node:fs";
 import process from "node:process";
 
-import { checkReleaseVersion, validateRegistry } from "./sync-release-version.mjs";
-import { releaseTag, workspaceVersion } from "./release-version.mjs";
+import {
+  checkNativeReleaseVersion,
+  releaseTag,
+  workspaceVersion,
+} from "./native-release-version.mjs";
 
 const ROOT = new URL("../", import.meta.url);
 export const NATIVE_TARGETS = [
@@ -49,7 +52,7 @@ export function validateDistPlan(plan, tag = releaseTag()) {
   if (plan.releases?.length !== 1) fail("dist plan must contain one release");
   const release = plan.releases[0];
   if (release.app_name !== "adocweave" || release.app_version !== version) {
-    fail("dist plan must contain the unified adocweave app");
+    fail("dist plan must contain the native adocweave app");
   }
   const actualAssets = [...(release.artifacts ?? [])].sort();
   const expectedAssets = expectedReleaseAssets();
@@ -77,9 +80,7 @@ export function validateDistPlan(plan, tag = releaseTag()) {
 }
 
 export function verifyRepository() {
-  const version = workspaceVersion();
-  const registry = validateRegistry(JSON.parse(read("release/version-sync.json")));
-  checkReleaseVersion({ registry });
+  const version = checkNativeReleaseVersion();
   const dist = read("dist-workspace.toml");
   for (const required of [
     'packages = ["adocweave-cli"]',

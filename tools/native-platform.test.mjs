@@ -6,29 +6,28 @@ import {
   archiveEntries,
   createRuntimeAdapters,
   importedWindowsDlls,
-  installationLayout,
+  nativeInstallationLayout,
   isPathInside,
   macosMinimumVersion,
   nativeArtifactFromPlan,
   nativeExecutableName,
   pathImplementation,
   shouldRetryRemoval,
-  targetPlatform,
+  nativeTargetPlatform,
   unexpectedMacosDependencies,
   unexpectedWindowsDlls,
   validateArchiveEntries,
-} from "./platform-contract.mjs";
+} from "./native-platform.mjs";
 
 test("Windowsの実行ファイル名とインストール先を計算する", () => {
   const pathApi = pathImplementation("win32");
   assert.equal(pathApi, path.win32);
   assert.equal(nativeExecutableName(".exe"), "adocweave.exe");
-  assert.deepEqual(installationLayout("C:\\Users\\tester\\.local", "0.16.0", pathApi), {
+  assert.deepEqual(nativeInstallationLayout("C:\\Users\\tester\\.local", "0.16.0", pathApi), {
     binDirectory: "C:\\Users\\tester\\.local\\bin",
     versionRoot: "C:\\Users\\tester\\.local\\lib\\adocweave\\0.16.0",
     currentLink: "C:\\Users\\tester\\.local\\lib\\adocweave\\current",
     activeMarker: "C:\\Users\\tester\\.local\\lib\\adocweave\\active-version",
-    wasmRoot: "C:\\Users\\tester\\.local\\share\\adocweave\\0.16.0\\wasm",
   });
 });
 
@@ -37,7 +36,7 @@ test("macOSの実行ファイル名とインストール先を計算する", () 
   assert.equal(pathApi, path.posix);
   assert.equal(nativeExecutableName(""), "adocweave");
   assert.equal(
-    installationLayout("/Users/tester/.local", "0.16.0", pathApi).versionRoot,
+    nativeInstallationLayout("/Users/tester/.local", "0.16.0", pathApi).versionRoot,
     "/Users/tester/.local/lib/adocweave/0.16.0",
   );
 });
@@ -59,7 +58,7 @@ test("cargo-dist planから単一native成果物を取得する", () => {
   const resolved = nativeArtifactFromPlan(plan, target);
   assert.equal(resolved.artifact.name, name);
   assert.equal(resolved.executable, "adocweave.exe");
-  assert.deepEqual(targetPlatform(target), {
+  assert.deepEqual(nativeTargetPlatform(target), {
     architecture: "x64",
     archive: "zip",
     executableSuffix: ".exe",

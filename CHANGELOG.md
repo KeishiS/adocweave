@@ -5,6 +5,7 @@
 ### Main changes
 
 - Native GitHub Releases contain only four cargo-dist archives, their individual SHA-256 files, `sha256.sum`, the standard manifest, and attestations. Cachix is the only external publication started by the native Release workflow.
+- Native version updates, native installation acceptance, platform checks, and workflow policies are owned by their distribution instead of a repository-wide release registry and shared installation path.
 - The Language Server analyzes open documents and their transitive include and local-reference targets instead of scanning every AsciiDoc file below workspace folders.
 - Workspace folders define configuration-search and filesystem-authority roots. The innermost containing folder wins; a file folder uses its parent directory as authority.
 - The `workspace.scan` project setting is removed. Old configurations are rejected instead of accepted through an alias or warning.

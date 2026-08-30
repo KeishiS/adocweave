@@ -60,8 +60,8 @@ assert.match(extensionSource, /latest_github_release/u);
 assert.match(extensionSource, /pre_release: false/u);
 assert.doesNotMatch(extensionSource, /latest_lsp_release|RELEASES_URL/u);
 
-const versionSync = read(new URL("release/version-sync.json", ROOT));
-assert.doesNotMatch(versionSync, /editors\/zed/u);
+const nativeVersionTool = read(new URL("tools/native-release-version.mjs", ROOT));
+assert.doesNotMatch(nativeVersionTool, /editors\/zed/u);
 assert.doesNotMatch(read(new URL("dist-workspace.toml", ROOT)), /adocweave-zed/u);
 assert.doesNotMatch(read(new URL("Makefile.toml", ROOT)), /package-zed-release|test-zed-release/u);
 

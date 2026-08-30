@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import process from "node:process";
 
 import toolchains from "../toolchains.json" with { type: "json" };
-import { workspaceVersion } from "./release-version.mjs";
+import { workspaceVersion } from "./native-release-version.mjs";
 
 const [path] = process.argv.slice(2);
 if (!path || process.argv.length !== 3) {
