@@ -1,13 +1,4 @@
 {
-  "$defs": {
-    "workspaceScanPattern": {
-      "description": "ワークスペースルートを基準とする相対ディレクトリのパターン。区切りは`/`だけを使い、`*`と`?`は1階層、単独の`**`は複数階層に一致します。",
-      "maxLength": 1024,
-      "minLength": 1,
-      "pattern": "^(?![A-Za-z]:)(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?:\\*\\*|(?:[^/\\[\\]{}\\\\*\\x00-\\x1F\\x7F-\\x9F]|\\*(?!\\*))+)(?:/(?:\\*\\*|(?:[^/\\[\\]{}\\\\*\\x00-\\x1F\\x7F-\\x9F]|\\*(?!\\*))+))*$",
-      "type": "string"
-    }
-  },
   "$id": "https://github.com/KeishiS/adocweave/config/adocweave.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
@@ -275,27 +266,6 @@
     "schema-version": {
       "const": 2,
       "type": "integer"
-    },
-    "workspace": {
-      "additionalProperties": false,
-      "properties": {
-        "scan": {
-          "additionalProperties": false,
-          "properties": {
-            "exclude": {
-              "default": [],
-              "description": "初期ワークスペース走査で組込みの除外patternへ追加するpattern。組込みの**/.git、**/.venv、**/node_modulesおよび**/targetは常に適用し、同じpatternの重複は無視します。",
-              "items": {
-                "$ref": "#/$defs/workspaceScanPattern"
-              },
-              "maxItems": 256,
-              "type": "array"
-            }
-          },
-          "type": "object"
-        }
-      },
-      "type": "object"
     }
   },
   "required": [

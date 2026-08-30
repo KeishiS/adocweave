@@ -171,6 +171,7 @@ pub(super) struct WorkspaceScanCoordinator {
 }
 
 impl WorkspaceScanCoordinator {
+    #[cfg(test)]
     pub(super) fn request_replacement(&mut self) -> Option<WorkspaceScanStart> {
         self.disarm_recovery();
         self.watched_changes.clear();
@@ -977,70 +978,6 @@ mod tests {
         assert!(coordinator.request_recovery(stale_recovery).is_none());
         fs::remove_dir_all(root).expect("cleanup");
     }
-
-    #[test]
-    fn failed_structural_install_keeps_journal_and_reserves_a_successor() {
-        let (root, document_uri, mut service) =
-            scan_race_service("adocweave-structural-install-failure");
-        let config = root.join(adocweave_config::FILE_NAME);
-        fs::write(&config, "schema-version = 2\n").expect("configuration");
-        let config_uri = Url::from_file_path(&config).expect("configuration URI");
-        let replacement = service.handle_workspace_files_changed(DidChangeWatchedFilesParams {
-            changes: vec![FileEvent::new(config_uri, FileChangeType::CHANGED)],
-        });
-        assert!(replacement.rebuild.is_some());
-        fs::remove_file(&config).expect("remove configuration");
-        fs::create_dir(&config).expect("unreadable configuration entry");
-        let failed_scan = service.plan_workspace_scan(&adocweave::NeverCancel);
-        let mut coordinator = WorkspaceScanCoordinator::default();
-        let active = coordinator.request_replacement().expect("active scan");
-        let watched_uri = Url::from_file_path(root.join("watched.txt")).expect("watched URI");
-        assert!(
-            coordinator
-                .record_watched_changes(&[FileEvent::new(
-                    watched_uri.clone(),
-                    FileChangeType::CHANGED
-                )])
-                .is_none()
-        );
-
-        let transition = coordinator
-            .complete(
-                &mut service,
-                WorkspaceScanned {
-                    sequence: active.sequence,
-                    scan: Ok(failed_scan),
-                },
-            )
-            .expect("failed scan completion");
-
-        assert!(transition.jobs.is_empty());
-        assert!(service.workspace_rebuild_is_pending());
-        assert_eq!(
-            service
-                .workspace_resource(&document_uri)
-                .expect("preserved workspace")
-                .as_ref(),
-            "= Before\n"
-        );
-        assert_eq!(coordinator.watched_changes.changes.len(), 1);
-        assert!(
-            coordinator
-                .watched_changes
-                .changes
-                .contains_key(&watched_uri)
-        );
-        let WorkspaceRecoveryTimerUpdate::Arm(generation) = transition.recovery_timer else {
-            panic!("failed structural install must arm recovery");
-        };
-        assert_eq!(coordinator.recovery_generation(), Some(generation));
-        assert_eq!(
-            coordinator.recovery_minimum_scan_sequence(),
-            Some(active.sequence.checked_add(1).expect("next sequence"))
-        );
-        fs::remove_dir_all(root).expect("cleanup");
-    }
-
     #[test]
     fn recovery_timer_before_completion_preserves_the_replay_journal() {
         let (root, document_uri, mut service) =
@@ -1301,46 +1238,6 @@ mod tests {
         );
         fs::remove_dir_all(root).expect("cleanup");
     }
-
-    #[test]
-    fn replay_propagates_a_new_recovery_requirement() {
-        let (root, _, mut service) = scan_race_service("adocweave-scan-replay-recovery");
-        let mut coordinator = WorkspaceScanCoordinator::default();
-        let active = coordinator.request_replacement().expect("active scan");
-        let scan = service.plan_workspace_scan(&adocweave::NeverCancel);
-        let changes = (0..129)
-            .map(|index| {
-                let path = root.join(format!("missing-{index}.adoc"));
-                FileEvent::new(
-                    Url::from_file_path(path).expect("file URI"),
-                    FileChangeType::CREATED,
-                )
-            })
-            .collect::<Vec<_>>();
-        assert!(coordinator.record_watched_changes(&changes).is_none());
-        let first_pass =
-            service.workspace_files_changed_with_journal(DidChangeWatchedFilesParams {
-                changes: changes.clone(),
-            });
-        assert!(first_pass.recovery_required);
-
-        let transition = coordinator
-            .complete(
-                &mut service,
-                WorkspaceScanned {
-                    sequence: active.sequence,
-                    scan: Ok(scan),
-                },
-            )
-            .expect("scan completion");
-
-        let WorkspaceRecoveryTimerUpdate::Arm(recovery) = transition.recovery_timer else {
-            panic!("replay must arm recovery");
-        };
-        assert_eq!(coordinator.recovery_generation(), Some(recovery));
-        fs::remove_dir_all(root).expect("cleanup");
-    }
-
     #[test]
     fn unreplayable_watch_batch_survives_completion_of_the_older_scan() {
         let (root, document_uri, mut service) = scan_race_service("adocweave-unreplayable-watch");

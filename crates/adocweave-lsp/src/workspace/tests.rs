@@ -1,6 +1,81 @@
 //! Behaviour tests for the LSP workspace adapter.
 
 use super::*;
+
+#[test]
+fn configuring_workspace_folders_does_not_enumerate_documents() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    std::fs::write(directory.path().join("first.adoc"), "= First\n").expect("first document");
+    std::fs::write(directory.path().join("second.adoc"), "= Second\n").expect("second document");
+    let root = Url::from_directory_path(directory.path()).expect("root URI");
+    let mut resources = WorkspaceResources::default();
+
+    resources
+        .configure_roots(&[root], &[])
+        .expect("configure workspace folder");
+
+    assert_eq!(resources.resource_count(), 0);
+}
+
+#[test]
+fn innermost_workspace_folder_owns_an_open_document() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let nested = directory.path().join("nested");
+    std::fs::create_dir(&nested).expect("nested directory");
+    let document = nested.join("guide.adoc");
+    std::fs::write(&document, "= Guide\n").expect("document");
+    let outer_uri = Url::from_directory_path(directory.path()).expect("outer URI");
+    let nested_uri = Url::from_directory_path(&nested).expect("nested URI");
+    let document_uri = Url::from_file_path(&document).expect("document URI");
+    let mut resources = WorkspaceResources::default();
+    resources
+        .configure_roots(&[outer_uri, nested_uri], &[])
+        .expect("configure nested folders");
+
+    resources
+        .upsert_open(document_uri.clone(), 1, Arc::from("= Open\n"))
+        .expect("open document");
+    let context = resources
+        .project_analysis_context(&document_uri)
+        .expect("project context");
+
+    assert_eq!(
+        context.project_root,
+        nested.canonicalize().expect("canonical nested root")
+    );
+}
+
+#[test]
+fn file_workspace_folder_uses_its_parent_as_authority_without_admitting_siblings() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let selected = directory.path().join("selected.adoc");
+    let sibling = directory.path().join("sibling.adoc");
+    std::fs::write(&selected, "= Selected\n").expect("selected document");
+    std::fs::write(&sibling, "= Sibling\n").expect("sibling document");
+    let selected_uri = Url::from_file_path(&selected).expect("selected URI");
+    let sibling_uri = Url::from_file_path(&sibling).expect("sibling URI");
+    let mut resources = WorkspaceResources::default();
+    resources
+        .configure_roots(std::slice::from_ref(&selected_uri), &[])
+        .expect("configure file folder");
+
+    resources
+        .upsert_open(selected_uri.clone(), 1, Arc::from("= Open\n"))
+        .expect("open selected document");
+    let context = resources
+        .project_analysis_context(&selected_uri)
+        .expect("project context");
+
+    assert_eq!(
+        context.project_root,
+        directory.path().canonicalize().expect("canonical parent")
+    );
+    assert!(
+        resources
+            .upsert_open(sibling_uri, 1, Arc::from("= Sibling\n"))
+            .is_err()
+    );
+}
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
@@ -517,83 +592,6 @@ fn cancellation_after_the_last_read_discards_the_candidate_before_commit() {
     );
     assert!(replacement.inner.roots().is_empty());
 }
-
-#[test]
-fn scan_exclusion_defers_include_loading_without_promoting_the_resource_to_a_root() {
-    let root = TestDirectory::new();
-    let generated = root.0.join("nested/generated");
-    std::fs::create_dir_all(&generated).expect("generated directory");
-    std::fs::write(
-        root.0.join(adocweave_config::FILE_NAME),
-        concat!(
-            "schema-version = 2\n",
-            "[resources]\ninclude = true\nroots = [\".\"]\n",
-            "[workspace.scan]\nexclude = [\"**/generated\"]\n",
-        ),
-    )
-    .expect("project configuration");
-    let source = root.0.join("root.adoc");
-    let included = generated.join("part.adoc");
-    std::fs::write(&source, "include::nested/generated/part.adoc[]\n").expect("source");
-    std::fs::write(&included, "included\n").expect("included source");
-    let root_uri = Url::from_directory_path(&root.0).expect("root URI");
-    let source_uri = Url::from_file_path(&source).expect("source URI");
-    let included_uri = Url::from_file_path(&included).expect("included URI");
-    let mut resources = WorkspaceResources::default();
-
-    resources.load_roots(&[root_uri]).expect("load workspace");
-
-    assert_eq!(
-        resources.inner.roots(),
-        &BTreeSet::from([uri_id(&source_uri).expect("source ID")])
-    );
-    assert!(resources.get(&included_uri).is_none());
-
-    let analysis = analyze_and_apply(&mut resources, &source_uri)
-        .expect("workspace analysis")
-        .expect("adopted analysis");
-
-    assert_eq!(
-        resources.inner.roots(),
-        &BTreeSet::from([uri_id(&source_uri).expect("source ID")]),
-        "an excluded include acquired during analysis must not become a root",
-    );
-    assert!(analysis.analysis.source().contains("included"));
-
-    std::fs::write(&included, "updated include\n").expect("updated include");
-    resources
-        .reload_file(included_uri.clone())
-        .expect("reload known include");
-    assert_eq!(
-        resources.inner.roots(),
-        &BTreeSet::from([uri_id(&source_uri).expect("source ID")]),
-        "a watched include must not become an analysis root",
-    );
-    assert_eq!(
-        resources
-            .get(&included_uri)
-            .expect("updated include resource")
-            .text()
-            .as_ref(),
-        "updated include\n",
-    );
-
-    let unrelated = generated.join("unrelated.adoc");
-    let unrelated_uri = Url::from_file_path(&unrelated).expect("unrelated URI");
-    std::fs::write(&unrelated, "unrelated\n").expect("unrelated source");
-    assert!(
-        resources
-            .reload_file(unrelated_uri.clone())
-            .expect("ignore excluded watcher discovery")
-            .is_empty()
-    );
-    assert!(resources.get(&unrelated_uri).is_none());
-    assert_eq!(
-        resources.inner.roots(),
-        &BTreeSet::from([uri_id(&source_uri).expect("source ID")]),
-    );
-}
-
 /// A result the workspace has moved past is rejected without installing any
 /// part of it, including the includes the run acquired along the way.
 #[test]
@@ -606,14 +604,13 @@ fn a_result_from_an_older_generation_installs_nothing() {
         concat!(
             "schema-version = 2\n",
             "[resources]\ninclude = true\nroots = [\".\"]\n",
-            "[workspace.scan]\nexclude = [\"generated\"]\n",
         ),
     )
     .expect("project configuration");
     let source = root.0.join("root.adoc");
-    let included = generated.join("part.adoc");
+    let included = generated.join("part.inc");
     let unrelated = root.0.join("unrelated.adoc");
-    std::fs::write(&source, "include::generated/part.adoc[]\n").expect("source");
+    std::fs::write(&source, "include::generated/part.inc[]\n").expect("source");
     std::fs::write(&included, "included\n").expect("included source");
     let root_uri = Url::from_directory_path(&root.0).expect("root URI");
     let source_uri = Url::from_file_path(&source).expect("source URI");
@@ -642,8 +639,12 @@ fn a_result_from_an_older_generation_installs_nothing() {
     // The workspace moves on before the result comes back.
     std::fs::write(&unrelated, "unrelated\n").expect("unrelated source");
     resources
-        .reload_file(Url::from_file_path(&unrelated).expect("unrelated URI"))
-        .expect("discover an unrelated source");
+        .upsert_open(
+            Url::from_file_path(&unrelated).expect("unrelated URI"),
+            1,
+            "unrelated\n",
+        )
+        .expect("open an unrelated source");
     let generation = resources.generation();
 
     assert!(
@@ -669,13 +670,12 @@ fn semantic_adoption_failure_commits_no_include_session() {
         concat!(
             "schema-version = 2\n",
             "[resources]\ninclude = true\nroots = [\".\"]\n",
-            "[workspace.scan]\nexclude = [\"generated\"]\n",
         ),
     )
     .expect("project configuration");
     let source = root.0.join("root.adoc");
-    let included = generated.join("part.adoc");
-    std::fs::write(&source, "include::generated/part.adoc[]\n").expect("source");
+    let included = generated.join("part.inc");
+    std::fs::write(&source, "include::generated/part.inc[]\n").expect("source");
     std::fs::write(&included, "included\n").expect("included source");
     let root_uri = Url::from_directory_path(&root.0).expect("root URI");
     let source_uri = Url::from_file_path(&source).expect("source URI");
@@ -833,13 +833,12 @@ fn an_analysis_that_is_never_adopted_leaves_no_include_behind() {
         concat!(
             "schema-version = 2\n",
             "[resources]\ninclude = true\nroots = [\".\"]\n",
-            "[workspace.scan]\nexclude = [\"**/generated\"]\n",
         ),
     )
     .expect("project configuration");
     let source = root.0.join("root.adoc");
-    let included = generated.join("part.adoc");
-    std::fs::write(&source, "include::nested/generated/part.adoc[]\n").expect("source");
+    let included = generated.join("part.inc");
+    std::fs::write(&source, "include::nested/generated/part.inc[]\n").expect("source");
     std::fs::write(&included, "included\n").expect("included source");
     let root_uri = Url::from_directory_path(&root.0).expect("root URI");
     let source_uri = Url::from_file_path(&source).expect("source URI");
@@ -868,13 +867,12 @@ fn closing_an_open_include_removes_only_its_open_root_role() {
         concat!(
             "schema-version = 2\n",
             "[resources]\ninclude = true\nroots = [\".\"]\n",
-            "[workspace.scan]\nexclude = [\"generated\"]\n",
         ),
     )
     .expect("project configuration");
     let source = root.0.join("root.adoc");
-    let included = generated.join("part.adoc");
-    std::fs::write(&source, "include::generated/part.adoc[]\n").expect("source");
+    let included = generated.join("part.inc");
+    std::fs::write(&source, "include::generated/part.inc[]\n").expect("source");
     std::fs::write(&included, "included\n").expect("included source");
     let root_uri = Url::from_directory_path(&root.0).expect("root URI");
     let source_uri = Url::from_file_path(&source).expect("source URI");
@@ -942,7 +940,6 @@ fn failed_initial_include_read_keeps_a_bounded_watch_interest() {
         concat!(
             "schema-version = 2\n",
             "[resources]\ninclude = true\nroots = [\".\"]\n",
-            "[workspace.scan]\nexclude = [\"generated\"]\n",
         ),
     )
     .expect("project configuration");
@@ -990,55 +987,6 @@ fn failed_initial_include_read_keeps_a_bounded_watch_interest() {
     );
     assert!(!resources.inner.roots().contains(&included_id));
 }
-
-#[test]
-fn created_excluded_adoc_include_recovers_without_a_scan_root_role() {
-    let root = TestDirectory::new();
-    let generated = root.0.join("generated");
-    std::fs::create_dir_all(&generated).expect("generated directory");
-    std::fs::write(
-        root.0.join(adocweave_config::FILE_NAME),
-        concat!(
-            "schema-version = 2\n",
-            "[resources]\ninclude = true\nroots = [\".\"]\n",
-            "[workspace.scan]\nexclude = [\"generated\"]\n",
-        ),
-    )
-    .expect("project configuration");
-    let source = root.0.join("root.adoc");
-    let included = generated.join("part.adoc");
-    std::fs::write(&source, "include::generated/part.adoc[]\n").expect("source");
-    let root_uri = Url::from_directory_path(&root.0).expect("root URI");
-    let source_uri = Url::from_file_path(&source).expect("source URI");
-    let included_uri = Url::from_file_path(&included).expect("included URI");
-    let included_id = uri_id(&included_uri).expect("included ID");
-    let mut resources = WorkspaceResources::default();
-    resources.load_roots(&[root_uri]).expect("load workspace");
-
-    let (input, analyzed) = analyze_root(&mut resources, &source_uri).expect("workspace analysis");
-    resources
-        .apply_analyzed_root(analyzed, &input, &adocweave::AnalysisOptions::default())
-        .expect("apply analysis with a missing include");
-    assert!(
-        resources.get(&included_uri).is_none(),
-        "the include does not exist yet"
-    );
-
-    std::fs::write(&included, "created\n").expect("create include");
-    let update = resources
-        .apply_watched_file(included_uri.clone(), WatchedFileKind::Upsert)
-        .expect("load created include");
-
-    assert!(update.affected.contains(source_uri.as_str()));
-    assert!(resources.get(&included_uri).is_some());
-    assert!(!resources.inner.roots().contains(&included_id));
-    assert_eq!(
-        resources.analysis_root_roles.get(&included_id),
-        None,
-        "include interest must not imply a scan root role"
-    );
-}
-
 #[test]
 fn missing_include_interests_share_the_dependency_count_limit() {
     let root = TestDirectory::new();
@@ -1078,103 +1026,6 @@ fn missing_include_interests_share_the_dependency_count_limit() {
     );
     assert!(!resources.include_interests.contains(&target));
 }
-
-#[test]
-fn excluded_unknown_watch_candidate_is_ignored_before_nested_config_is_read() {
-    let root = TestDirectory::new();
-    let generated = root.0.join("generated");
-    std::fs::create_dir_all(&generated).expect("generated directory");
-    std::fs::write(
-        root.0.join(adocweave_config::FILE_NAME),
-        "schema-version = 2\n[workspace.scan]\nexclude = [\"generated\"]\n",
-    )
-    .expect("root configuration");
-    std::fs::write(
-        generated.join(adocweave_config::FILE_NAME),
-        "schema-version = 99\n",
-    )
-    .expect("invalid nested configuration");
-    let hidden = generated.join("hidden.adoc");
-    std::fs::write(&hidden, "hidden\n").expect("hidden source");
-    let root_uri = Url::from_directory_path(&root.0).expect("root URI");
-    let hidden_uri = Url::from_file_path(&hidden).expect("hidden URI");
-    let mut resources = WorkspaceResources::default();
-    resources.load_roots(&[root_uri]).expect("load workspace");
-
-    let update = resources
-        .apply_watched_file(hidden_uri.clone(), WatchedFileKind::Upsert)
-        .expect("ignore excluded candidate");
-
-    assert!(!update.journal_relevant);
-    assert!(resources.get(&hidden_uri).is_none());
-}
-
-#[test]
-#[cfg(unix)]
-fn recursive_scan_exclusion_prunes_a_non_utf8_subtree_before_reading_it() {
-    use std::ffi::OsString;
-    use std::os::unix::ffi::OsStringExt;
-
-    let root = TestDirectory::new();
-    std::fs::write(
-        root.0.join(adocweave_config::FILE_NAME),
-        "schema-version = 2\n[workspace.scan]\nexclude = [\"**\"]\n",
-    )
-    .expect("project configuration");
-    let opaque = root.0.join(OsString::from_vec(vec![b'n', 0x80]));
-    std::fs::create_dir(&opaque).expect("non-UTF-8 directory");
-    std::fs::write(opaque.join("invalid.adoc"), [0xff]).expect("invalid source");
-    let root_uri = Url::from_directory_path(&root.0).expect("root URI");
-    let mut resources = WorkspaceResources::default();
-
-    resources
-        .load_roots(&[root_uri])
-        .expect("excluded subtree is not read");
-    assert!(resources.inner.roots().is_empty());
-}
-
-#[test]
-fn each_directory_root_uses_only_its_own_scan_patterns() {
-    let first = TestDirectory::new();
-    let second = TestDirectory::new();
-    for (root, excluded, retained) in [
-        (&first, "first-only", "second-only"),
-        (&second, "second-only", "first-only"),
-    ] {
-        std::fs::write(
-            root.0.join(adocweave_config::FILE_NAME),
-            format!("schema-version = 2\n[workspace.scan]\nexclude = [\"{excluded}\"]\n"),
-        )
-        .expect("project configuration");
-        std::fs::create_dir(root.0.join(excluded)).expect("excluded directory");
-        std::fs::create_dir(root.0.join(retained)).expect("retained directory");
-        std::fs::create_dir(root.0.join("target")).expect("built-in excluded directory");
-        std::fs::write(root.0.join(excluded).join("hidden.adoc"), "hidden\n")
-            .expect("excluded source");
-        std::fs::write(root.0.join(retained).join("kept.adoc"), "kept\n").expect("retained source");
-        std::fs::write(root.0.join("target/generated.adoc"), "generated\n")
-            .expect("built-in excluded source");
-    }
-    let roots = [&first, &second].map(|root| Url::from_directory_path(&root.0).expect("root URI"));
-    let expected = BTreeSet::from([
-        uri_id(
-            &Url::from_file_path(first.0.join("second-only/kept.adoc"))
-                .expect("first retained URI"),
-        )
-        .expect("first retained ID"),
-        uri_id(
-            &Url::from_file_path(second.0.join("first-only/kept.adoc"))
-                .expect("second retained URI"),
-        )
-        .expect("second retained ID"),
-    ]);
-    let mut resources = WorkspaceResources::default();
-
-    resources.load_roots(&roots).expect("load workspaces");
-
-    assert_eq!(resources.inner.roots(), &expected);
-}
-
 #[cfg(target_os = "linux")]
 #[test]
 fn one_root_authority_covers_configuration_scan_and_document_read() {
@@ -1231,7 +1082,6 @@ fn retained_root_covers_reload_open_and_missing_include_after_replacement() {
         concat!(
             "schema-version = 2\n",
             "[resources]\ninclude = true\nroots = [\".\"]\n",
-            "[workspace.scan]\nexclude = [\"generated\"]\n",
         ),
     )
     .expect("trusted configuration");
@@ -1323,35 +1173,6 @@ fn root_replacement_before_authority_fails_without_panicking() {
     assert!(resources.inner.roots().is_empty());
     assert!(resources.last_load_failed_closed());
 }
-
-#[test]
-fn nested_directory_root_applies_its_own_scan_patterns() {
-    let outer = TestDirectory::new();
-    let inner = outer.0.join("nested");
-    let excluded = inner.join("generated");
-    std::fs::create_dir_all(&excluded).expect("excluded directory");
-    std::fs::write(
-        inner.join(adocweave_config::FILE_NAME),
-        "schema-version = 2\n[workspace.scan]\nexclude = [\"generated\"]\n",
-    )
-    .expect("inner project configuration");
-    std::fs::write(excluded.join("hidden.adoc"), "hidden\n").expect("excluded source");
-    let roots = [
-        Url::from_directory_path(&outer.0).expect("outer root URI"),
-        Url::from_directory_path(&inner).expect("inner root URI"),
-    ];
-    let hidden =
-        uri_id(&Url::from_file_path(excluded.join("hidden.adoc")).expect("hidden source URI"))
-            .expect("hidden source ID");
-    let mut resources = WorkspaceResources::default();
-
-    resources
-        .load_roots(&roots)
-        .expect("load nested workspaces");
-
-    assert!(!resources.inner.roots().contains(&hidden));
-}
-
 #[test]
 fn single_file_root_registers_only_the_selected_document() {
     let root = TestDirectory::new();
@@ -1477,62 +1298,6 @@ fn watched_file_reload_reads_the_new_filesystem_snapshot() {
         resources
             .get(&document_uri)
             .expect("updated resource")
-            .text()
-            .as_ref(),
-        "second\n"
-    );
-}
-
-#[test]
-fn watched_file_reloads_share_the_workspace_filesystem_budget() {
-    let root = TestDirectory::new();
-    let first = root.0.join("first.adoc");
-    let second = root.0.join("second.adoc");
-    std::fs::write(&first, "first\n").expect("initial source");
-    let root_uri = Url::from_directory_path(&root.0).expect("root URI");
-    let mut resources = WorkspaceResources::default();
-    let mut limits = WorkspaceLimits::default();
-    limits.resources.max_files = 1;
-    resources
-        .load_roots_with_limits(&[root_uri], limits, &NeverCancel)
-        .expect("load workspace");
-
-    std::fs::write(&second, "second\n").expect("new source");
-    let second_uri = Url::from_file_path(&second).expect("document URI");
-    let error = resources
-        .reload_file(second_uri)
-        .expect_err("shared file limit");
-
-    assert!(error.contains("file limit"), "{error}");
-}
-
-#[test]
-fn removing_a_disk_resource_releases_its_filesystem_charge() {
-    let root = TestDirectory::new();
-    let first = root.0.join("first.adoc");
-    let second = root.0.join("second.adoc");
-    std::fs::write(&first, "first\n").expect("initial source");
-    let root_uri = Url::from_directory_path(&root.0).expect("root URI");
-    let first_uri = Url::from_file_path(&first).expect("first URI");
-    let mut resources = WorkspaceResources::default();
-    let mut limits = WorkspaceLimits::default();
-    limits.resources.max_files = 1;
-    resources
-        .load_roots_with_limits(&[root_uri], limits, &NeverCancel)
-        .expect("load workspace");
-
-    std::fs::remove_file(&first).expect("remove first");
-    resources.remove_disk(&first_uri).expect("remove disk");
-    std::fs::write(&second, "second\n").expect("new source");
-    let second_uri = Url::from_file_path(&second).expect("second URI");
-    resources
-        .reload_file(second_uri.clone())
-        .expect("released file charge");
-
-    assert_eq!(
-        resources
-            .get(&second_uri)
-            .expect("second resource")
             .text()
             .as_ref(),
         "second\n"
@@ -1919,36 +1684,6 @@ fn retained_layer_plan_rejects_overlay_bytes_before_workspace_ingest() {
 }
 
 #[test]
-fn configured_read_charge_is_released_before_a_new_reload() {
-    let root = TestDirectory::new();
-    write_resource_config(&root.0, 1, 8, 8, false);
-    let first = root.0.join("first.adoc");
-    let second = root.0.join("second.adoc");
-    std::fs::write(&first, "first\n").expect("first source");
-    let root_uri = Url::from_directory_path(&root.0).expect("root URI");
-    let first_uri = Url::from_file_path(&first).expect("first URI");
-    let second_uri = Url::from_file_path(&second).expect("second URI");
-    let mut resources = WorkspaceResources::default();
-    resources.load_roots(&[root_uri]).expect("load workspace");
-
-    std::fs::remove_file(first).expect("remove first source");
-    resources.remove_disk(&first_uri).expect("remove disk");
-    std::fs::write(&second, "new\n").expect("second source");
-    resources
-        .reload_file(second_uri.clone())
-        .expect("released read and retention charge");
-
-    assert_eq!(
-        resources
-            .get(&second_uri)
-            .expect("reloaded resource")
-            .text()
-            .as_ref(),
-        "new\n"
-    );
-}
-
-#[test]
 fn changed_project_plan_is_rejected_before_the_existing_session_reads() {
     let root = TestDirectory::new();
     write_resource_config(&root.0, 2, 8, 8, false);
@@ -2002,36 +1737,6 @@ fn retained_byte_rejection_rolls_back_replaced_filesystem_charge() {
     resources
         .reload_file(second_uri)
         .expect("old filesystem charge was restored");
-}
-
-#[test]
-fn retained_count_rejection_rolls_back_a_new_filesystem_charge() {
-    let root = TestDirectory::new();
-    write_resource_config(&root.0, 1, 8, 8, false);
-    let overlay = root.0.join("overlay.adoc");
-    let rejected = root.0.join("rejected.adoc");
-    let accepted = root.0.join("accepted.adoc");
-    let root_uri = Url::from_directory_path(&root.0).expect("root URI");
-    let overlay_uri = Url::from_file_path(&overlay).expect("overlay URI");
-    let rejected_uri = Url::from_file_path(&rejected).expect("rejected URI");
-    let accepted_uri = Url::from_file_path(&accepted).expect("accepted URI");
-    let mut resources = WorkspaceResources::default();
-    resources.load_roots(&[root_uri]).expect("load workspace");
-    resources
-        .upsert_open(overlay_uri.clone(), 1, "open")
-        .expect("overlay");
-
-    std::fs::write(&rejected, "disk").expect("rejected source");
-    let error = resources
-        .reload_file(rejected_uri)
-        .expect_err("overlay already consumes retained count");
-    assert!(error.contains("retained resource count"), "{error}");
-    resources.close_open(&overlay_uri).expect("close overlay");
-
-    std::fs::write(&accepted, "disk").expect("accepted source");
-    resources
-        .reload_file(accepted_uri)
-        .expect("new filesystem charge was removed");
 }
 
 #[test]

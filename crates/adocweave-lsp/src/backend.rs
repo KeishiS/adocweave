@@ -11,9 +11,7 @@ use adocweave_project::{
 };
 use async_lsp::client_monitor::ClientProcessMonitorLayer;
 use async_lsp::concurrency::ConcurrencyLayer;
-use async_lsp::lsp_types::{
-    MessageType, PublishDiagnosticsParams, ShowMessageParams, Url, notification, request,
-};
+use async_lsp::lsp_types::{PublishDiagnosticsParams, Url, notification, request};
 use async_lsp::panic::CatchUnwindLayer;
 use async_lsp::router::Router;
 use async_lsp::tracing::TracingLayer;
@@ -26,10 +24,8 @@ use crate::cancellation::{QueryCancellation, QueryError, QueryResult};
 use crate::lifecycle::ProtocolLifecycleLayer;
 use crate::service::{Session, project_observations_are_current};
 use crate::state::{AnalysisJob, ProjectProblem, ProjectSourceIndex};
-use crate::workspace::WorkspaceScanNotice;
 use crate::workspace_scan::{
-    WorkspaceRecoveryTimerUpdate, WorkspaceScanRecovery, WorkspaceScanRecoveryTimer,
-    WorkspaceScanStart, WorkspaceScanTransition, WorkspaceScanned,
+    WorkspaceScanRecovery, WorkspaceScanRecoveryTimer, WorkspaceScanStart, WorkspaceScanned,
 };
 use crate::{HostReferenceIndex, NoHostReferenceIndex};
 
@@ -120,10 +116,6 @@ impl Backend {
             })
             .notification::<notification::Initialized>(|state, _| {
                 state.register_dynamic_capabilities();
-                // The workspace walk runs on a worker rather than here, so the
-                // event loop answers requests while every `.adoc` file below
-                // the roots is read.
-                state.schedule_workspace_scan();
                 ControlFlow::Continue(())
             })
             .request::<request::Shutdown, _>(|state, _| {
@@ -181,8 +173,8 @@ impl Backend {
                 ControlFlow::Continue(())
             })
             .notification::<notification::DidChangeWorkspaceFolders>(|state, params| {
-                if state.session.workspace_folders_changed(params) {
-                    state.schedule_workspace_scan();
+                for job in state.session.workspace_folders_changed(params) {
+                    state.schedule_analysis(job);
                 }
                 ControlFlow::Continue(())
             })
@@ -323,57 +315,6 @@ impl Backend {
             })
             .event::<ProjectValidationCompleted>(|state, completed| {
                 state.project_validation_completed(completed)
-            })
-            .event::<WorkspaceScanned>(|state, scanned| {
-                let Some(transition) = state.session.complete_workspace_scan(scanned) else {
-                    return ControlFlow::Continue(());
-                };
-                let WorkspaceScanTransition {
-                    jobs,
-                    notices,
-                    next,
-                    recovery_timer,
-                } = transition;
-                // What the scan could not finish concerns the workspace, not
-                // any one document, so it is announced instead of marking every
-                // open file with a diagnostic nobody can act on from there.
-                if let Some(message) = scan_notice_message(&notices) {
-                    let _ = state
-                        .client
-                        .notify::<notification::ShowMessage>(ShowMessageParams {
-                            typ: MessageType::WARNING,
-                            message,
-                        });
-                }
-                for job in jobs {
-                    state.schedule_analysis(job);
-                }
-                if let Some(next) = next {
-                    state.spawn_workspace_scan(next);
-                }
-                match recovery_timer {
-                    WorkspaceRecoveryTimerUpdate::Keep => {}
-                    WorkspaceRecoveryTimerUpdate::Cancel => {
-                        state.cancel_workspace_scan_recovery();
-                    }
-                    WorkspaceRecoveryTimerUpdate::Arm(generation) => {
-                        state.schedule_workspace_scan_recovery(generation);
-                    }
-                }
-                ControlFlow::Continue(())
-            })
-            .event::<WorkspaceScanRecovery>(|state, recovery| {
-                let generation = recovery.generation();
-                if !state.session.workspace_scan_recovery_is_current(generation) {
-                    return ControlFlow::Continue(());
-                }
-                if !state.workspace_scan_recovery_timer.complete() {
-                    return ControlFlow::Continue(());
-                }
-                if let Some(start) = state.session.request_workspace_scan_recovery(recovery) {
-                    state.spawn_workspace_scan(start);
-                }
-                ControlFlow::Continue(())
             });
 
         ServiceBuilder::new()
@@ -418,20 +359,6 @@ impl Backend {
             })
             .await
         }
-    }
-
-    /// Reads the workspace roots on a worker and installs the result later.
-    ///
-    /// The walk takes time proportional to the workspace, so running it here
-    /// would stop the event loop from answering anything until it finished.
-    /// A replacement request cancels the active worker but waits for its
-    /// completion event before starting the next worker.
-    fn schedule_workspace_scan(&mut self) {
-        self.cancel_workspace_scan_recovery();
-        let Some(start) = self.session.request_workspace_scan() else {
-            return;
-        };
-        self.spawn_workspace_scan(start);
     }
 
     fn spawn_workspace_scan(&self, start: WorkspaceScanStart) {
@@ -691,87 +618,6 @@ fn zero_range() -> adocweave::text::TextRange {
     .expect("zero range is ordered")
 }
 
-const MAX_REPORTED_SCAN_NOTICE_PROJECTS: usize = 5;
-const MAX_REPORTED_SCAN_NOTICE_PATH_CHARS: usize = 240;
-
-fn scan_notice_message(notices: &[WorkspaceScanNotice]) -> Option<String> {
-    let [notice] = notices else {
-        if notices.is_empty() {
-            return None;
-        }
-        let directory_limit = notices.iter().find_map(|notice| match notice {
-            WorkspaceScanNotice::DirectoryEntryLimit { limit } => Some(*limit),
-            WorkspaceScanNotice::ProjectResourceLimit { .. } => None,
-        });
-        let projects = notices
-            .iter()
-            .filter_map(|notice| match notice {
-                WorkspaceScanNotice::ProjectResourceLimit { project } => Some(project),
-                WorkspaceScanNotice::DirectoryEntryLimit { .. } => None,
-            })
-            .collect::<Vec<_>>();
-        let mut message = String::from(
-            "the initial workspace scan stopped before all documents were registered.",
-        );
-        if let Some(limit) = directory_limit {
-            message.push_str(&format!(
-                " It reached the limit of {limit} directory entries; list directories to leave \
-                 out under workspace.scan.exclude."
-            ));
-        }
-        if !projects.is_empty() {
-            let displayed = projects
-                .iter()
-                .take(MAX_REPORTED_SCAN_NOTICE_PROJECTS)
-                .map(|path| abbreviated_scan_notice_path(path))
-                .collect::<Vec<_>>()
-                .join(", ");
-            message.push_str(&format!(
-                " It reached the resource limits of {} projects; raise resources.max-files or \
-                 the byte limits there. Affected projects: {displayed}",
-                projects.len()
-            ));
-            if projects.len() > MAX_REPORTED_SCAN_NOTICE_PROJECTS {
-                message.push_str(&format!(
-                    ", and {} more",
-                    projects.len() - MAX_REPORTED_SCAN_NOTICE_PROJECTS
-                ));
-            }
-            message.push('.');
-        }
-        message.push_str(" Documents that were not registered can still be opened and included.");
-        return Some(message);
-    };
-    Some(match notice {
-        WorkspaceScanNotice::DirectoryEntryLimit { limit } => format!(
-            "the initial workspace scan stopped at its limit of {limit} directory entries, so \
-             some documents are not registered as analysis roots. List the directories to leave \
-             out under workspace.scan.exclude in the .adocweave.toml at the workspace folder \
-             root. Documents that were not registered can still be opened and included."
-        ),
-        WorkspaceScanNotice::ProjectResourceLimit { project } => format!(
-            "the initial workspace scan reached the resource limits of {}, so some documents \
-             under it are not registered as analysis roots. Raise resources.max-files or the \
-             byte limits there. Documents that were not registered can still be opened and \
-             included.",
-            abbreviated_scan_notice_path(project),
-        ),
-    })
-}
-
-fn abbreviated_scan_notice_path(path: &std::path::Path) -> String {
-    let rendered = path.display().to_string();
-    if rendered.chars().count() <= MAX_REPORTED_SCAN_NOTICE_PATH_CHARS {
-        return rendered;
-    }
-    let mut abbreviated = rendered
-        .chars()
-        .take(MAX_REPORTED_SCAN_NOTICE_PATH_CHARS - 3)
-        .collect::<String>();
-    abbreviated.push_str("...");
-    abbreviated
-}
-
 struct CancelWorkerOnDrop(Arc<CancellationToken>);
 
 impl Drop for CancelWorkerOnDrop {
@@ -864,7 +710,6 @@ fn content_modified() -> ResponseError {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
@@ -904,52 +749,6 @@ mod tests {
             .await
             .expect("workspace gate released after worker exit")
             .expect("workspace permit");
-    }
-
-    #[test]
-    fn multiple_scan_notices_are_bounded_in_one_actionable_message() {
-        let mut notices = vec![WorkspaceScanNotice::DirectoryEntryLimit { limit: 8 }];
-        notices.extend(
-            (0..7).map(|index| WorkspaceScanNotice::ProjectResourceLimit {
-                project: PathBuf::from(format!("/workspace/project-{index}/.adocweave.toml")),
-            }),
-        );
-
-        let message = scan_notice_message(&notices).expect("scan notice");
-
-        assert!(
-            message.contains("limit of 8 directory entries"),
-            "{message}"
-        );
-        assert!(message.contains("workspace.scan.exclude"), "{message}");
-        assert!(
-            message.contains("resource limits of 7 projects"),
-            "{message}"
-        );
-        assert!(message.contains("resources.max-files"), "{message}");
-        assert!(message.contains("project-0"), "{message}");
-        assert!(message.contains("project-4"), "{message}");
-        assert!(!message.contains("project-5"), "{message}");
-        assert!(message.contains("and 2 more"), "{message}");
-    }
-
-    #[test]
-    fn scan_notice_paths_are_abbreviated_at_unicode_boundaries() {
-        let path = PathBuf::from(format!("/workspace/{}", "界".repeat(300)));
-
-        let abbreviated = abbreviated_scan_notice_path(&path);
-        let message = scan_notice_message(&[WorkspaceScanNotice::ProjectResourceLimit {
-            project: path.clone(),
-        }])
-        .expect("scan notice");
-
-        assert_eq!(
-            abbreviated.chars().count(),
-            MAX_REPORTED_SCAN_NOTICE_PATH_CHARS
-        );
-        assert!(abbreviated.ends_with("..."));
-        assert!(message.contains(&abbreviated));
-        assert!(!message.contains(path.to_string_lossy().as_ref()));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

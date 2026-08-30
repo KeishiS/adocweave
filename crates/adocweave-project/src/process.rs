@@ -19,8 +19,7 @@ use adocweave_host::{
 };
 
 use crate::selection::{
-    NormalizedSelector, absolute_lexical, identity_path, normalize_selectors,
-    scan_root_for_selector, select_targets,
+    NormalizedSelector, absolute_lexical, identity_path, normalize_selectors, select_targets,
 };
 use crate::{
     ConfigSelection, ProjectAnalysis, ProjectConfigRequest, ProjectConfigResult,
@@ -544,22 +543,11 @@ impl<'request> Processor<'request> {
 
     fn run(mut self) -> ProjectOutcome {
         let selectors = self.selectors.clone();
-        let mut scan_settings = BTreeMap::new();
-        for selector in &selectors {
-            if self.cancellation.is_cancelled() {
-                return Err(ProjectError::Cancelled);
-            }
-            if let Some(root) = scan_root_for_selector(selector)? {
-                let config = self.resolve_config_at(&root, true)?;
-                scan_settings.insert(root, config.resolved.workspace.scan.clone());
-            }
-        }
         let paths = select_targets(
             &selectors,
             &mut self.authority,
             self.host_limits,
             &self.job,
-            &scan_settings,
             &mut self.warnings,
             self.cancellation,
         )?;

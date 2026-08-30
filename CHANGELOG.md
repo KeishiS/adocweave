@@ -1,20 +1,26 @@
 # Changelog
 
-## [0.53.0] - 2026-08-30
+## [0.54.0] - 2026-08-30
 
 ### Main changes
 
+- The Language Server analyzes open documents and their transitive include and local-reference targets instead of scanning every AsciiDoc file below workspace folders.
+- Workspace folders define configuration-search and filesystem-authority roots. The innermost containing folder wins; a file folder uses its parent directory as authority.
+- The `workspace.scan` project setting is removed. Old configurations are rejected instead of accepted through an alias or warning.
 - Language Server analysis now consumes one owned `ProjectRequest` per document revision. Open primary documents and include files use the captured editor contents, while closed includes return to filesystem contents.
 - Primary-source language features remain available when include expansion fails. Non-file document URIs are rejected as `unsupported-uri` without filesystem access.
 - Project source identifiers are opaque values mapped to LSP URIs only at the protocol boundary. Diagnostics, navigation, hover, completion, formatting, symbols, links, rename, and semantic tokens share the same adopted project result.
 
 ### Rust API
 
+- `ProjectTarget::Workspace` is removed. Use `ProjectTarget::Directory` or `ProjectTarget::Glob` when a caller explicitly requests multi-file discovery.
 - `ConfigSelection::Resolved` accepts an `Arc<ResolvedProjectConfig>`. Live callers can freeze and share configuration with the rest of a request instead of discovering or rereading a project file during processing.
 - `ProjectResourceResult.requested_at` identifies the source and optional source range that requested a related resource.
 
 ### Migration
 
+- Remove `[workspace.scan]` from `.adocweave.toml`. There is no replacement because the Language Server no longer performs a workspace scan.
+- Replace `ProjectTarget::Workspace` with an explicit file, directory, glob, or in-memory source target.
 - Construct `ProjectResourceResult` with `requested_at`. Use `None` for resources without a requesting source, and use `ProjectSourceLocation.range = None` when no authored position exists.
 
 ## [0.52.0] - 2026-08-30
@@ -96,6 +102,6 @@ const result = await analyze({
 - `ProjectRequest` is consumed by each stateless processing call. `ProjectAuthority::observation_access`, resource observations, and `ProjectError::repair_candidate` let live callers detect changes through the same retained filesystem authority. `ProjectTarget::PathNoSymlinks` supports callers that must reject symbolic links in an authored target path.
 - Rust crate versions now follow the repository-wide version.
 
-[0.53.0]: https://github.com/KeishiS/adocweave/releases/tag/v0.53.0
+[0.54.0]: https://github.com/KeishiS/adocweave/releases/tag/v0.54.0
 [0.52.0]: https://github.com/KeishiS/adocweave/releases/tag/v0.52.0
 [0.51.0]: https://github.com/KeishiS/adocweave/releases/tag/v0.51.0

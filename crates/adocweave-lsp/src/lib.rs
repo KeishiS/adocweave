@@ -19,6 +19,7 @@ mod semantic_tokens;
 mod service;
 mod state;
 mod workspace;
+#[allow(dead_code)]
 mod workspace_scan;
 
 pub use position::PositionEncoding;

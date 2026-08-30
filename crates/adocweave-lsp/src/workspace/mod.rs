@@ -30,6 +30,7 @@ use async_lsp::lsp_types::Url;
 
 const MAX_WATCHED_INCLUDE_RESOURCES: usize = 10_000;
 
+#[allow(dead_code)]
 pub(crate) const fn workspace_scan_job_limits() -> FilesystemJobLimits {
     let reads = FilesystemReadLimits::DEFAULT;
     FilesystemJobLimits {
@@ -184,6 +185,7 @@ impl std::fmt::Display for ScopeConfigError {
 ///
 /// Produced by [`WorkspaceResources::load_roots_detached`] and consumed by
 /// [`WorkspaceResources::apply_loaded_roots`].
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct LoadedRoots {
     replacement: WorkspaceResources,
@@ -197,7 +199,6 @@ pub struct WorkspaceResources {
     roots: Vec<PathBuf>,
     directory_roots: Vec<PathBuf>,
     single_file_roots: Arc<BTreeSet<PathBuf>>,
-    scan_settings: Arc<BTreeMap<PathBuf, adocweave_config::WorkspaceScanSettings>>,
     filesystem_policy: Option<LocalFilesystemPolicy>,
     filesystems: Arc<BTreeMap<ProjectScopeId, Arc<Mutex<LocalFilesystemSession>>>>,
     project_plans: Arc<BTreeMap<ProjectScopeId, adocweave_config::ResolvedResourceLimitPlan>>,
@@ -639,6 +640,99 @@ impl PreparedWorkspaceRead {
 }
 
 impl WorkspaceResources {
+    /// Installs workspace-folder authority without enumerating its contents.
+    ///
+    /// Directory folders define independent authority roots. A regular-file
+    /// folder contributes its parent as authority while only the file itself is
+    /// an analysis root. Open documents are then overlaid onto the empty
+    /// workspace; include and local-reference targets are acquired later when
+    /// an open document actually requests them.
+    pub(crate) fn configure_roots(
+        &mut self,
+        roots: &[Url],
+        open_sources: &[(Url, i64, Arc<str>)],
+    ) -> Result<(), String> {
+        let root_paths = roots
+            .iter()
+            .map(|root| {
+                root.to_file_path()
+                    .map_err(|()| format!("workspace root is not a file URI: {root}"))?
+                    .canonicalize()
+                    .map_err(|error| format!("cannot canonicalize workspace root: {error}"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut directory_roots = Vec::new();
+        let mut single_file_roots = BTreeSet::new();
+        let mut standalone_authority_roots = Vec::new();
+        for path in root_paths {
+            if path.is_dir() {
+                directory_roots.push(path);
+            } else if path.is_file() {
+                single_file_roots.insert(path);
+            } else {
+                return Err("workspace root is neither a directory nor a regular file".to_owned());
+            }
+        }
+        if roots.is_empty() {
+            for (uri, _, _) in open_sources {
+                let path = uri
+                    .to_file_path()
+                    .map_err(|()| format!("workspace resource is not a file URI: {uri}"))?;
+                let parent = path
+                    .parent()
+                    .ok_or_else(|| format!("workspace resource has no parent directory: {uri}"))?;
+                let parent = match parent.canonicalize() {
+                    Ok(parent) => parent,
+                    #[cfg(test)]
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        // URI-only fixtures use paths that intentionally do not
+                        // exist. Production documents must still establish
+                        // authority from a real parent directory.
+                        continue;
+                    }
+                    Err(error) => {
+                        return Err(format!(
+                            "cannot canonicalize document parent directory: {error}"
+                        ));
+                    }
+                };
+                single_file_roots.insert(path);
+                standalone_authority_roots.push(parent);
+            }
+        }
+        directory_roots.sort();
+        directory_roots.dedup();
+        let mut authority_roots = directory_roots.clone();
+        authority_roots.extend(standalone_authority_roots);
+        authority_roots.extend(
+            single_file_roots
+                .iter()
+                .filter_map(|path| path.parent().map(Path::to_owned)),
+        );
+        authority_roots.sort();
+        authority_roots.dedup();
+        let filesystem_policy = (!authority_roots.is_empty())
+            .then(|| {
+                LocalFilesystemPolicy::new(
+                    authority_roots.clone(),
+                    adocweave_host::FilesystemReadLimits::default(),
+                )
+            })
+            .transpose()
+            .map_err(|error| error.to_string())?;
+        let seed = Generation::new(self.inner.generation().get().saturating_add(1));
+        let replacement = Self {
+            inner: Workspace::new_at_generation(adapter_managed_workspace_limits(), seed),
+            roots: authority_roots,
+            directory_roots,
+            single_file_roots: Arc::new(single_file_roots),
+            filesystem_policy,
+            next_disk_version: self.next_disk_version,
+            ..Self::default()
+        };
+        self.overlay_open_sources(replacement, open_sources)
+    }
+
     pub fn record_project_dependencies(
         &mut self,
         root: &Url,
@@ -725,6 +819,7 @@ impl WorkspaceResources {
     ///
     /// The open documents are read here rather than when the walk started, so
     /// a document opened while the walk was running is not lost.
+    #[allow(dead_code)]
     pub fn apply_loaded_roots(
         &mut self,
         loaded: LoadedRoots,
@@ -973,9 +1068,8 @@ impl WorkspaceResources {
                 .map_err(|error| error.to_string())?;
             let mut config_by_directory = BTreeMap::new();
             let mut config_by_path = BTreeMap::new();
-            let mut scan_settings = BTreeMap::new();
             for root in &directory_roots {
-                let snapshot = scan_config_for_path(
+                let _ = scan_config_for_path(
                     &paths,
                     authority.as_ref(),
                     config_draft.as_mut(),
@@ -988,13 +1082,6 @@ impl WorkspaceResources {
                     preserve_previous.set(error.preserves_previous());
                     error.to_string()
                 })?;
-                scan_settings.insert(
-                    root.clone(),
-                    snapshot.map_or_else(
-                        adocweave_config::WorkspaceScanSettings::default,
-                        |snapshot| snapshot.config.workspace.scan,
-                    ),
-                );
             }
             let discovery = authority
                 .as_ref()
@@ -1016,12 +1103,8 @@ impl WorkspaceResources {
                         .discover_adoc_paths_within_budget(
                             |root, relative| {
                                 let directory = root.join(relative);
-                                let is_nested_workspace_root = directory != root
-                                    && directory_roots.binary_search(&directory).is_ok();
-                                is_nested_workspace_root
-                                    || scan_settings
-                                        .get(root)
-                                        .is_some_and(|settings| settings.excludes(relative))
+                                directory != root
+                                    && directory_roots.binary_search(&directory).is_ok()
                             },
                             || cancellation.is_cancelled(),
                         )
@@ -1190,7 +1273,6 @@ impl WorkspaceResources {
             self.roots = paths.clone();
             self.directory_roots = directory_roots;
             self.single_file_roots = Arc::new(single_file_roots);
-            self.scan_settings = Arc::new(scan_settings);
             self.scan_notices = scan_notices;
             self.filesystem_policy = authority;
             self.filesystems = Arc::new(filesystems);
@@ -1239,6 +1321,7 @@ impl WorkspaceResources {
     }
 
     /// Returns the reasons why the installed scan stopped at a budget.
+    #[allow(dead_code)]
     pub(crate) fn scan_notices(&self) -> &BTreeSet<WorkspaceScanNotice> {
         &self.scan_notices
     }
@@ -1286,7 +1369,6 @@ impl WorkspaceResources {
         let known_include = self.include_interests.contains(&id);
         let known_local_target = self.local_target_interests.contains(&id);
         let tracked = roles.is_root() || known_include || known_local_target;
-        let is_adoc = path.extension().and_then(|value| value.to_str()) == Some("adoc");
         if known_local_target && !known_include && !roles.is_root() {
             return Ok(WatchedFileUpdate {
                 affected: self.local_target_dependents(&id),
@@ -1314,26 +1396,10 @@ impl WorkspaceResources {
                 journal_relevant: true,
             });
         }
-        if !tracked && !is_adoc {
+        if !tracked {
             return Ok(WatchedFileUpdate::default());
         }
-        if !tracked && !self.path_is_analysis_root(&path) {
-            return Ok(WatchedFileUpdate::default());
-        }
-        let journal_relevant = tracked || is_adoc;
-        let logical_path =
-            workspace_logical_path(&self.roots, self.filesystem_policy.as_ref(), &path).map_err(
-                |message| WatchedFileError {
-                    message,
-                    journal_relevant,
-                },
-            )?;
-        // Scan exclusions are discovery rules, not filesystem authority. For
-        // an unknown candidate they can be decided from the normalized URI
-        // path before any file or nested project configuration is read.
-        if !tracked && self.path_is_scan_excluded(&logical_path) {
-            return Ok(WatchedFileUpdate::default());
-        }
+        let journal_relevant = true;
         let admitted_path =
             workspace_logical_file(&self.roots, self.filesystem_policy.as_ref(), &path).map_err(
                 |message| WatchedFileError {
@@ -1353,11 +1419,7 @@ impl WorkspaceResources {
             message: error.to_string(),
             journal_relevant,
         })?;
-        let discover_as_root =
-            is_adoc && !roles.scan_root && !self.path_is_scan_excluded(&admitted_path);
-        if !tracked && !discover_as_root {
-            return Ok(WatchedFileUpdate::default());
-        }
+        let discover_as_root = false;
         if !resource_path_is_allowed(config.as_ref(), &admitted_path) {
             let affected =
                 self.remove_outside_authority(&id)
@@ -2050,11 +2112,14 @@ impl WorkspaceResources {
                 .map_err(|error| error.to_string())?;
             Ok::<bool, String>(true)
         })?;
-        let authority_roots = if self.roots.is_empty() {
-            vec![root_scope.workspace_root.clone()]
-        } else {
-            self.roots.clone()
-        };
+        // A project receives only its own folder authority. Other workspace
+        // folders, including parents synthesized for standalone open
+        // documents, must not become readable merely because they share one
+        // Language Server connection.
+        let mut authority_roots = vec![root_scope.workspace_root.clone()];
+        authority_roots.extend(allowed_roots);
+        authority_roots.sort();
+        authority_roots.dedup();
         Ok(ProjectAnalysisContext {
             workspace_generation: snapshot.generation(),
             primary_resource_id: root_id,
@@ -2475,36 +2540,6 @@ impl WorkspaceResources {
 
     fn path_is_analysis_root(&self, path: &Path) -> bool {
         path_is_analysis_root(path, &self.directory_roots, &self.single_file_roots)
-    }
-
-    fn path_is_scan_excluded(&self, path: &Path) -> bool {
-        if self.single_file_roots.contains(path) {
-            return false;
-        }
-        let Some(root) = self
-            .directory_roots
-            .iter()
-            .filter(|root| path.starts_with(root))
-            .max_by_key(|root| root.components().count())
-        else {
-            return false;
-        };
-        let Some(settings) = self.scan_settings.get(root) else {
-            return false;
-        };
-        let mut directory = path.parent();
-        while let Some(candidate) = directory {
-            if candidate == root {
-                break;
-            }
-            if let Ok(relative) = candidate.strip_prefix(root)
-                && settings.excludes(relative)
-            {
-                return true;
-            }
-            directory = candidate.parent();
-        }
-        false
     }
 }
 
