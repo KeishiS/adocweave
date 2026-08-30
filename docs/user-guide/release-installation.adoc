@@ -336,11 +336,9 @@ VS Code拡張とZed拡張は、必要なLanguage Serverを自動取得します�
 [#zed-installation]
 === Zedへの導入
 
-ZedのExtensions画面から``AsciiDoc``と``AdocWeave``を導入します。``AsciiDoc``拡張は言語認識と構文強調、
-``AdocWeave``拡張はLanguage Serverとの接続を提供します。
-
-ソースから使用する場合は``AsciiDoc``拡張を導入した後、リポジトリを取得し、``Install Dev Extension``または
-``zed: install dev extension``から``editors/zed``を選択します。
+ZedのExtensions画面から、言語認識と構文強調を提供する``AsciiDoc``拡張を導入します。続いてこのリポジトリを取得し、
+``Install Dev Extension``または``zed: install dev extension``から``editors/zed``を選択します。
+この開発用拡張がLanguage Serverとの接続を提供します。
 
 Language Serverの場所を指定する場合は、``lsp.adocweave.binary.path``へ絶対パスを設定します。
 指定がなければ``PATH``を確認し、見つからない場合は最新の安定版GitHub Releaseから対応するネイティブ実行ファイルを

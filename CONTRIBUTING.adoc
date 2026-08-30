@@ -203,9 +203,11 @@ Nix入力はDependabotの対象外であり、``flake.lock``を手動で更新�
 * 新しい文書を追加する前に、既存の文書へ統合できないか確認します。
 * 利用者向けの手順は代表的な経路だけを書きます。成果物ごとの網羅した手順を並べず、詳細はCLIのhelpと
   Release Notesへ委ねます。
-* バージョン固有の変更内容と移行手順は、rootの``CHANGELOG.md``へ記載します。cargo-distは対象版の項目を
-  GitHub Release Notesへ取り込みます。VS Code拡張の``editors/vscode/README.md``も、拡張registryとeditorの
-  拡張画面がMarkdownだけを表示するため``.md``です。
+* ネイティブ版と同じ版で公開する成果物の変更内容と移行手順は、rootの``CHANGELOG.md``へ記載します。cargo-distは
+  対象版の項目をGitHub Release Notesへ取り込みます。独立した版を持つWebAssemblyパッケージ、textlint用Processorおよび
+  Zed拡張の変更は、それぞれのディレクトリにある``CHANGELOG.md``へ記載します。VS Code拡張の
+  ``editors/vscode/README.md``とZed拡張の``editors/zed/README.md``は、拡張registryとエディタの拡張画面が
+  Markdownだけを表示するため``.md``です。
 * CLI option、診断code、パッケージバージョン、対応target、公開APIおよびschemaなど、codeやJSON形式の
   manifestから取得できる情報を文書へ重複して記載しません。
 * 現行仕様、設計理由および作業計画を同じ文書に混在させません。現行仕様は``docs/``、設計理由はADR、
@@ -281,7 +283,7 @@ node tools/sync-release-version.mjs --version X.Y.Z
 +
 このtoolはlink:release/version-sync.json[バージョン同期対象]に明示したmanifestとlockfileだけを
 更新します。更新前に部分的なバージョン変更を検出した場合は、ファイルを書き換えず停止します。
-. ``CHANGELOG.md``の先頭へ対象版の項目を追加します。利用者から見える変更、移行手順およびRustの公開APIに
+. rootの``CHANGELOG.md``の先頭へネイティブ対象版の項目を追加します。利用者から見える変更、移行手順およびRustの公開APIに
   互換性のない変更がある場合は、その内容を記載します。必要な仕様文書とテスト用入力も更新してから、
   登録したmanifestのversionがworkspace版と一致することを検査します。
 +
@@ -307,12 +309,12 @@ git push upstream vX.Y.Z
   必要に応じて、xref:#release-checklist[Release checklist]の任意の受入確認を行います。
 
 CLI引数、Language Server protocol、設定schemaなど、外部から利用する仕様を変更した場合は、変更内容と影響を
-``CHANGELOG.md``へ記載します。利用者の作業が必要な場合は``Migration``、Rustの公開APIに互換性のない変更が
+rootの``CHANGELOG.md``へ記載します。利用者の作業が必要な場合は``Migration``、Rustの公開APIに互換性のない変更が
 ある場合は``Rust API``へ記載します。
 前の版と比較していない仕様を「変更していません」と機械生成しません。
 
 ``tools/sync-release-version.mjs``は``release/version-sync.json``に登録したfileだけを変更します。
-``CHANGELOG.md``の本文と日付は人が確認します。cargo-distは対象版の項目をGitHub Release Notesへ直接取り込むため、
+rootの``CHANGELOG.md``の本文と日付は人が確認します。cargo-distは対象版の項目をGitHub Release Notesへ直接取り込むため、
 別のRelease Notes生成器は使用しません。
 
 公開処理の権限、同一runでのcandidate検証およびReleaseの状態遷移は

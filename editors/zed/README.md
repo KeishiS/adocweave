@@ -36,9 +36,9 @@ To use a specific executable, add its absolute path to Zed settings:
 }
 ```
 
-Install both `AsciiDoc` and the published `AdocWeave` extension from the Zed
-Extensions view. For local development, install `AsciiDoc`, then use **Install
-Dev Extension** and select this `editors/zed` directory.
+Install `AsciiDoc` from the Zed Extensions view. If `AdocWeave` is also listed
+there, install it from that view. To use a repository checkout directly, choose
+**Install Dev Extension** and select this `editors/zed` directory.
 
 The extension does not bundle the Language Server. Zed's extension API does not
 expose downloaded bytes for checksum verification, so automatic download relies

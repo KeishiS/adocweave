@@ -17,7 +17,7 @@ function manifestValue(source, key) {
 const manifest = read(new URL("extension.toml", ZED));
 const version = manifestValue(manifest, "version");
 assert.match(version, /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/u);
-assert.equal(manifestValue(manifest, "id"), "adocweave");
+assert.equal(manifestValue(manifest, "id"), "adocweave-lsp");
 assert.equal(manifestValue(manifest, "name"), "AdocWeave");
 assert.equal(manifestValue(manifest, "repository"), "https://github.com/KeishiS/adocweave");
 assert.match(manifest, /^schema_version = 1$/mu);
@@ -40,6 +40,8 @@ const readme = read(new URL("README.md", ZED));
 assert.match(readme, /<img src="icon\.png" width="128" height="128" alt="AdocWeave icon">/u);
 assert.match(readme, /AdocWeave 0\.51\.0 or newer is required/u);
 assert.match(readme, /Install Zed's `AsciiDoc` extension first/u);
+assert.match(readme, /If `AdocWeave` is also listed/u);
+assert.doesNotMatch(readme, /published `AdocWeave` extension/u);
 
 const changelog = read(new URL("CHANGELOG.md", ZED));
 assert.match(changelog, new RegExp(`^## \\[${version.replaceAll(".", "\\.")}\\]$`, "mu"));
@@ -65,8 +67,8 @@ assert.doesNotMatch(read(new URL("Makefile.toml", ROOT)), /package-zed-release|t
 
 const developmentGuide = read(new URL("docs/developer-guide/zed-development.adoc", ROOT));
 for (const required of [
-  "[adocweave]",
-  'submodule = "extensions/adocweave"',
+  "[adocweave-lsp]",
+  'submodule = "extensions/adocweave-lsp"',
   'path = "editors/zed"',
   'version = "<extension.tomlのversion>"',
 ]) {
@@ -74,4 +76,8 @@ for (const required of [
 }
 assert.match(developmentGuide, /Zed公式レジストリの\n``AsciiDoc``拡張/u);
 
-process.stdout.write(`Zed registry contract verified: ${version}\n`);
+const userGuide = read(new URL("docs/user-guide/release-installation.adoc", ROOT));
+assert.match(userGuide, /``zed: install dev extension``から``editors\/zed``を選択/u);
+assert.doesNotMatch(userGuide, /Extensions画面から``AsciiDoc``と``AdocWeave``を導入/u);
+
+process.stdout.write(`Zed registry requirements verified: ${version}\n`);

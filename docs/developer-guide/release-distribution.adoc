@@ -15,7 +15,8 @@ attestationの確認はxref:../user-guide/release-installation.adoc[インスト
 |リポジトリ直下のlink:../../Cargo.toml[Cargo workspaceの``package.version``]
 
 |Zed拡張のバージョン
-|link:../../editors/zed/extension.toml[``editors/zed/extension.toml``の``version``]
+|link:../../editors/zed/extension.toml[``editors/zed/extension.toml``の``version``]。変更内容は
+link:../../editors/zed/CHANGELOG.md[Zed拡張のChangelog]に記録します。
 
 |WebAssemblyパッケージの版
 |link:../../packages/wasm/package.json[``packages/wasm/package.json``]。変更内容は
@@ -37,7 +38,7 @@ link:../../packages/wasm/CHANGELOG.md[パッケージのChangelog]に記録し�
 |RustとNode.jsの構築版
 |link:../../toolchains.json[toolchain manifest]
 
-|人が記述するバージョン固有の変更
+|ネイティブ版と同じ版で公開する成果物の変更
 |link:../../CHANGELOG.md[Changelog]。cargo-distが対応するバージョンの内容をGitHub Release本文へ取り込みます。
 |===
 

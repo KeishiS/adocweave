@@ -6,9 +6,10 @@ xref:../user-guide/release-installation.adoc#zed-installation[Zedへの導入]�
 
 AdocWeave拡張はLanguage Serverとの接続だけを提供します。AsciiDoc言語の登録と構文強調には、Zed公式レジストリの
 ``AsciiDoc``拡張を使用します。
+``extension.toml``の``id = "adocweave-lsp"``は公式レジストリで拡張を識別するIDです。
 ``extension.toml``の``language_servers.adocweave.languages = ["AsciiDoc"]``は、その拡張が登録する
-``AsciiDoc``言語へAdocWeave Language Serverを関連付けます。これにより、同じ言語定義とTree-sitter grammarを
-二つの拡張で管理しません。
+``AsciiDoc``言語へAdocWeave Language Serverを関連付けます。``adocweave``はLanguage Serverの内部IDであり、
+Zedの``lsp.adocweave``設定にも使用します。これにより、同じ言語定義とTree-sitter grammarを二つの拡張で管理しません。
 
 [#zed-development-prerequisites]
 == 前提条件
@@ -92,12 +93,12 @@ GitHub Releaseから現在のOSとCPUに合うnative実行ファイルを取得�
 
 提出するcommitについて、この文書の検査と開発用拡張の確認を完了し、公開branchに含まれることを確認します。
 Zed公式の``zed-industries/extensions``リポジトリでは、HTTPSのsubmoduleを
-``extensions/adocweave``へ追加し、``extensions.toml``へ次の項目を追加します。
+``extensions/adocweave-lsp``へ追加し、``extensions.toml``へ次の項目を追加します。
 
 [source,toml]
 ----
-[adocweave]
-submodule = "extensions/adocweave"
+[adocweave-lsp]
+submodule = "extensions/adocweave-lsp"
 path = "editors/zed"
 version = "<extension.tomlのversion>"
 ----
