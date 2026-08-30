@@ -95,6 +95,7 @@ struct Processor<'request> {
     limits: crate::ProjectLimits,
     host_limits: crate::ProjectLimits,
     selectors: Vec<NormalizedSelector>,
+    no_symlink_targets: BTreeSet<PathBuf>,
     source_targets: BTreeSet<LogicalSourceId>,
     authority: LocalFilesystemPolicy,
     identity_roots: Vec<PathBuf>,
@@ -199,6 +200,7 @@ struct FixedReadRequest {
     source_id: LogicalSourceId,
     path: PathBuf,
     allowance: Option<ScopeReadAllowance>,
+    no_symlinks: bool,
 }
 
 struct InspectionRequest<'request> {
@@ -215,14 +217,16 @@ impl FixedInspection {
             source_id: SourceId::new(self.source_id.as_str()),
             path: self.path.clone(),
             requested_path: self.requested_path.clone(),
-            watch_path: watch_path(
-                &self.outcome,
-                &self.path,
-                crate::ProjectResourceOrigin::Filesystem,
-            ),
             kind: ProjectResourceKind::LocalTarget,
             origin: crate::ProjectResourceOrigin::Filesystem,
             requested_by: requested_by.map(|value| SourceId::new(value.as_str())),
+            observation: observation_candidate(
+                &self.outcome,
+                &self.requested_path,
+                crate::ProjectResourceOrigin::Filesystem,
+                crate::ProjectObservationKind::Existence,
+                self.authority.is_some(),
+            ),
             outcome: self.outcome.clone(),
         }
     }
@@ -238,10 +242,20 @@ impl FixedResource {
             source_id: SourceId::new(self.source_id.as_str()),
             path: self.path.clone(),
             requested_path: self.requested_path.clone(),
-            watch_path: watch_path(&self.outcome, &self.path, self.origin),
             kind,
             origin: self.origin,
             requested_by: requested_by.map(|value| SourceId::new(value.as_str())),
+            observation: observation_candidate(
+                &self.outcome,
+                &self.requested_path,
+                self.origin,
+                if self.no_symlinks {
+                    crate::ProjectObservationKind::ContentsNoSymlinks
+                } else {
+                    crate::ProjectObservationKind::Contents
+                },
+                self.authority.is_some(),
+            ),
             outcome: self.outcome.clone(),
         }
     }
@@ -426,6 +440,14 @@ impl<'request> Processor<'request> {
                 .map_err(project_authority_error)?
         };
         let project_root = project_policy.root().to_owned();
+        let no_symlink_targets = targets
+            .iter()
+            .filter_map(|target| match target {
+                crate::ProjectTarget::PathNoSymlinks(path) => Some(path),
+                _ => None,
+            })
+            .map(|path| absolute_lexical(&project_root, path).map_err(project_authority_error))
+            .collect::<Result<BTreeSet<_>, _>>()?;
         let retained_roots = authority.roots().to_vec();
         let identity_roots = retained_roots.clone();
         authority = authority
@@ -464,6 +486,7 @@ impl<'request> Processor<'request> {
             limits,
             host_limits,
             selectors,
+            no_symlink_targets,
             source_targets,
             authority,
             identity_roots,
@@ -520,7 +543,8 @@ impl<'request> Processor<'request> {
                 return Err(ProjectError::Cancelled);
             }
             processed.insert(path.clone());
-            let target = self.process_target(path)?;
+            let no_symlinks = self.no_symlink_targets.contains(&path);
+            let target = self.process_target(path, no_symlinks)?;
             if self.cancellation.is_cancelled() {
                 return Err(ProjectError::Cancelled);
             }
@@ -537,7 +561,7 @@ impl<'request> Processor<'request> {
                 .expect("validated source target remains reserved")
             {
                 if processed.insert(path.clone()) {
-                    let target = self.process_target(path)?;
+                    let target = self.process_target(path, false)?;
                     if self.cancellation.is_cancelled() {
                         return Err(ProjectError::Cancelled);
                     }
@@ -613,7 +637,11 @@ impl<'request> Processor<'request> {
         ))
     }
 
-    fn process_target(&mut self, path: PathBuf) -> Result<ProjectTargetResult, ProjectError> {
+    fn process_target(
+        &mut self,
+        path: PathBuf,
+        no_symlinks: bool,
+    ) -> Result<ProjectTargetResult, ProjectError> {
         let (config_target, target_is_directory) = self.memory_sources.get(&path).map_or_else(
             || (path.clone(), false),
             |source| {
@@ -645,7 +673,8 @@ impl<'request> Processor<'request> {
             .get_mut(&scope)
             .expect("a resolved configuration creates its inspection budget")
             .reserve(&source_id, primary_authority.as_ref());
-        let primary = self.read_document_fixed_scoped(&scope, source_id.clone(), path.clone());
+        let primary =
+            self.read_document_fixed_scoped(&scope, source_id.clone(), path.clone(), no_symlinks);
         let mut resources = config_resource.into_iter().collect::<Vec<_>>();
         let pathless_primary = self
             .memory_sources
@@ -1165,6 +1194,14 @@ impl<'request> Processor<'request> {
             });
         };
         let snapshot = self.load_config(path.clone())?;
+        let source_id = self.filesystem_source_id_for_path(&path)?;
+        let resource = self.fixed.get(&source_id).and_then(|fixed| {
+            reusable_resource(fixed, &path, &self.filesystem, true)
+                .map(|fixed| fixed.result(ProjectResourceKind::Config, None))
+        });
+        let repair_candidate = resource
+            .as_ref()
+            .and_then(|resource| resource.observation.clone());
         if !snapshot.path.starts_with(&self.project_root) {
             for configured in snapshot
                 .config
@@ -1190,17 +1227,14 @@ impl<'request> Processor<'request> {
                 )
             {
                 if !configured.starts_with(&self.project_root) {
-                    return Err(project_authority_error(ResourceError::OutsideRoots(
-                        configured.clone(),
-                    )));
+                    let error =
+                        project_authority_error(ResourceError::OutsideRoots(configured.clone()));
+                    return Err(repair_candidate.clone().map_or(error.clone(), |candidate| {
+                        error.with_repair_candidate(candidate)
+                    }));
                 }
             }
         }
-        let source_id = self.filesystem_source_id_for_path(&path)?;
-        let resource = self.fixed.get(&source_id).and_then(|fixed| {
-            reusable_resource(fixed, &path, &self.filesystem, true)
-                .map(|fixed| fixed.result(ProjectResourceKind::Config, None))
-        });
         let resolved = self.resolved_config_for(Some(&snapshot));
         Ok(TargetConfig {
             snapshot: Some(snapshot),
@@ -1257,16 +1291,31 @@ impl<'request> Processor<'request> {
         let source_id = self.filesystem_source_id_for_path(&path)?;
         let fixed = self.read_fixed_no_symlinks(source_id, path.clone());
         let ProjectResourceOutcome::Loaded { source } = &fixed.outcome else {
+            let candidate = observation_candidate(
+                &fixed.outcome,
+                &fixed.requested_path,
+                fixed.origin,
+                crate::ProjectObservationKind::ContentsNoSymlinks,
+                fixed.authority.is_some(),
+            );
             return match &fixed.outcome {
-                ProjectResourceOutcome::Missing => {
-                    Err(project_authority_error(ResourceError::Missing(path)))
-                }
+                ProjectResourceOutcome::Missing => Err(candidate.map_or_else(
+                    || project_authority_error(ResourceError::Missing(path.clone())),
+                    |candidate| {
+                        project_authority_error(ResourceError::Missing(path.clone()))
+                            .with_repair_candidate(candidate)
+                    },
+                )),
                 ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(limit)) => {
                     Err(ProjectError::Limit(*limit))
                 }
-                ProjectResourceOutcome::Failed(failure) => {
-                    Err(project_authority_error(failure.error().clone()))
-                }
+                ProjectResourceOutcome::Failed(failure) => Err(candidate.map_or_else(
+                    || project_authority_error(failure.error().clone()),
+                    |candidate| {
+                        project_authority_error(failure.error().clone())
+                            .with_repair_candidate(candidate)
+                    },
+                )),
                 ProjectResourceOutcome::Present
                 | ProjectResourceOutcome::Loaded { .. }
                 | ProjectResourceOutcome::LoadedOmitted { .. } => {
@@ -1276,7 +1325,9 @@ impl<'request> Processor<'request> {
         };
         let snapshot = Arc::new(
             adocweave_config::ConfigSnapshot::from_utf8_source(fixed.path.clone(), source)
-                .map_err(project_config_error)?,
+                .map_err(|error| {
+                    project_config_error(fixed.path.clone(), source.as_bytes(), error)
+                })?,
         );
         self.retain_config_output(source.len())?;
         self.configs.insert(path, Arc::clone(&snapshot));
@@ -1745,6 +1796,18 @@ impl<'request> Processor<'request> {
         scope: &Path,
         resources: &mut Vec<ProjectResourceResult>,
     ) {
+        let source_limit =
+            usize::try_from(adocweave::output::html::StylesheetPolicy::default().max_sources)
+                .unwrap_or(usize::MAX);
+        if config
+            .html
+            .stylesheet_files
+            .len()
+            .saturating_add(config.html.stylesheet_urls.len())
+            > source_limit
+        {
+            return;
+        }
         for path in &config.html.stylesheet_files {
             let source_id = match self.filesystem_source_id_for_path(path) {
                 Ok(source_id) => source_id,
@@ -1961,6 +2024,7 @@ impl<'request> Processor<'request> {
                 source_id,
                 path,
                 allowance: Some(allowance),
+                no_symlinks: false,
             },
             &mut self.filesystem,
         )
@@ -1990,6 +2054,7 @@ impl<'request> Processor<'request> {
         scope: &Path,
         source_id: LogicalSourceId,
         path: PathBuf,
+        no_symlinks: bool,
     ) -> FixedResource {
         let authority = self.filesystem.policy_for_path(&path).cloned();
         if let Err(limit) = self.reserve_scope(scope, &source_id, authority.as_ref()) {
@@ -2003,7 +2068,19 @@ impl<'request> Processor<'request> {
             Ok(allowance) => allowance,
             Err(limit) => return limited_resource(source_id, path, false, authority, limit),
         };
-        let fixed = self.read_fixed(source_id.clone(), path.clone(), allowance);
+        let fixed = read_fixed_from(
+            &self.job,
+            &mut self.fixed,
+            &self.inspections,
+            self.limits,
+            FixedReadRequest {
+                source_id: source_id.clone(),
+                path: path.clone(),
+                allowance: Some(allowance),
+                no_symlinks,
+            },
+            &mut self.filesystem,
+        );
         self.fix_scope_read_limit(scope, &source_id, authority.as_ref(), &fixed, allowance);
         self.apply_body_budget(scope, fixed, source_id, path)
     }
@@ -2036,6 +2113,7 @@ impl<'request> Processor<'request> {
                 source_id: source_id.clone(),
                 path: path.clone(),
                 allowance: Some(allowance),
+                no_symlinks: false,
             },
             filesystem,
         );
@@ -2577,10 +2655,11 @@ fn read_fixed_from(
         source_id,
         path,
         allowance,
+        no_symlinks,
     } = request;
     if let Some(fixed) = fixed_resources
         .get(&source_id)
-        .and_then(|fixed| reusable_resource(fixed, &path, filesystem, false))
+        .and_then(|fixed| reusable_resource(fixed, &path, filesystem, no_symlinks))
     {
         return fixed;
     }
@@ -2594,7 +2673,7 @@ fn read_fixed_from(
             requested_path: path,
             path: inspection.path,
             base: None,
-            no_symlinks: false,
+            no_symlinks,
             authority: inspection.authority,
             outcome: ProjectResourceOutcome::Missing,
             origin: crate::ProjectResourceOrigin::Filesystem,
@@ -2614,7 +2693,12 @@ fn read_fixed_from(
             let request = IncludeFilesystemPathRequest::new(source_id.clone(), path.clone());
             let outcome = match allowance {
                 Some(allowance) => {
-                    match transaction.read_utf8_within_limits(request, allowance.limits) {
+                    let outcome = if no_symlinks {
+                        transaction.read_utf8_no_symlinks_within_limits(request, allowance.limits)
+                    } else {
+                        transaction.read_utf8_within_limits(request, allowance.limits)
+                    };
+                    match outcome {
                         IncludeFilesystemLimitedOutcome::Found(found) => {
                             Ok(IncludeFilesystemBudgetedOutcome::Found(found))
                         }
@@ -2683,7 +2767,7 @@ fn read_fixed_from(
         requested_path,
         path: resolved_path,
         base,
-        no_symlinks: false,
+        no_symlinks,
         authority,
         outcome,
         origin: crate::ProjectResourceOrigin::Filesystem,
@@ -2893,26 +2977,32 @@ fn target_result(parts: TargetResultParts) -> ProjectTargetResult {
     }
 }
 
-fn watch_path(
+fn observation_candidate(
     outcome: &ProjectResourceOutcome,
     path: &Path,
     origin: crate::ProjectResourceOrigin,
-) -> Option<PathBuf> {
+    kind: crate::ProjectObservationKind,
+    safely_repeat_rejection: bool,
+) -> Option<crate::ProjectObservationCandidate> {
     if origin == crate::ProjectResourceOrigin::Input {
         return None;
     }
-    match outcome {
+    let observable = match outcome {
         ProjectResourceOutcome::Loaded { .. }
         | ProjectResourceOutcome::LoadedOmitted { .. }
         | ProjectResourceOutcome::Present
-        | ProjectResourceOutcome::Missing => Some(path.to_owned()),
-        ProjectResourceOutcome::Failed(ProjectResourceFailure::Unreadable(_)) => {
-            Some(path.to_owned())
+        | ProjectResourceOutcome::Missing => true,
+        ProjectResourceOutcome::Failed(ProjectResourceFailure::Unreadable(_)) => true,
+        ProjectResourceOutcome::Failed(ProjectResourceFailure::Rejected(_)) => {
+            safely_repeat_rejection
         }
-        ProjectResourceOutcome::Failed(
-            ProjectResourceFailure::Rejected(_) | ProjectResourceFailure::Limit(_),
-        ) => None,
-    }
+        ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(_)) => false,
+    };
+    observable.then(|| crate::ProjectObservationCandidate {
+        path: path.to_owned(),
+        kind,
+        observation: crate::ProjectResourceObservation::from_outcome(outcome),
+    })
 }
 
 fn include_roots(

@@ -493,6 +493,46 @@ impl IncludeFilesystemTransaction {
         }
     }
 
+    /// Reads one UTF-8 file under an additional ceiling while rejecting
+    /// symbolic links.
+    pub fn read_utf8_no_symlinks_within_limits(
+        &mut self,
+        request: IncludeFilesystemPathRequest,
+        limits: FilesystemReadLimits,
+    ) -> IncludeFilesystemLimitedOutcome {
+        let IncludeFilesystemPathRequest { source_id, path } = request;
+        match self
+            .draft_mut()
+            .read_utf8_no_symlinks_within_limits(source_id.clone(), &path, limits)
+        {
+            Ok(FilesystemLimitedReadOutcome::Read(outcome)) => match map_read(outcome) {
+                IncludeFilesystemOutcome::Found(found) => {
+                    IncludeFilesystemLimitedOutcome::Found(found)
+                }
+                IncludeFilesystemOutcome::NotFound(missing) => {
+                    IncludeFilesystemLimitedOutcome::NotFound(missing)
+                }
+                IncludeFilesystemOutcome::Failed(_) => unreachable!("successful read mapping"),
+            },
+            Ok(FilesystemLimitedReadOutcome::AdditionalLimit) => {
+                IncludeFilesystemLimitedOutcome::Limit {
+                    source_id,
+                    cause: IncludeFilesystemReadLimit::Additional,
+                }
+            }
+            Ok(FilesystemLimitedReadOutcome::EstablishedLimit(error)) => {
+                IncludeFilesystemLimitedOutcome::Limit {
+                    source_id,
+                    cause: IncludeFilesystemReadLimit::Established(error),
+                }
+            }
+            Err(error) => IncludeFilesystemLimitedOutcome::Failed(FailedIncludeFilesystemSource {
+                source_id,
+                error,
+            }),
+        }
+    }
+
     /// Reads a policy-bearing UTF-8 file while rejecting every symbolic link.
     pub fn read_utf8_no_symlinks_within_budget(
         &mut self,

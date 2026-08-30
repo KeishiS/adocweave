@@ -107,6 +107,15 @@ fn show_config(arguments: &Arguments, current: &Path) -> Result<ExitCode, CliErr
 }
 
 fn request(arguments: &Arguments, current: &Path) -> Result<ProjectRequest, CliError> {
+    let authority = project_authority(arguments, current)?;
+    request_with_authority(arguments, current, authority)
+}
+
+pub(crate) fn request_with_authority(
+    arguments: &Arguments,
+    current: &Path,
+    authority: ProjectAuthority,
+) -> Result<ProjectRequest, CliError> {
     if arguments.no_include
         && (arguments.stdin_base.is_some() || !arguments.allowed_roots.is_empty())
     {
@@ -161,10 +170,12 @@ fn request(arguments: &Arguments, current: &Path) -> Result<ProjectRequest, CliE
         None
     };
     let stylesheet_files = match &arguments.command {
-        CommandOptions::Convert { css, .. } => css
+        CommandOptions::Convert { css, .. } | CommandOptions::Preview { css, .. } => css
             .iter()
             .filter_map(|value| match value {
-                commands::html_policy::StylesheetArgument::File(path) => Some(path.clone()),
+                commands::html_policy::StylesheetArgument::File(path) => {
+                    Some(absolute_lexical(current, path))
+                }
                 commands::html_policy::StylesheetArgument::Url(_) => None,
             })
             .collect(),
@@ -175,8 +186,14 @@ fn request(arguments: &Arguments, current: &Path) -> Result<ProjectRequest, CliE
         _ => Vec::new(),
     };
     let resource_selection = ProjectResourceSelection {
-        local_targets: matches!(arguments.command, CommandOptions::Check(_)),
-        stylesheets: matches!(arguments.command, CommandOptions::Convert { .. }),
+        local_targets: matches!(
+            arguments.command,
+            CommandOptions::Check(_) | CommandOptions::Preview { .. }
+        ),
+        stylesheets: matches!(
+            arguments.command,
+            CommandOptions::Convert { .. } | CommandOptions::Preview { .. }
+        ),
     };
     Ok(ProjectRequest {
         targets,
@@ -203,7 +220,7 @@ fn request(arguments: &Arguments, current: &Path) -> Result<ProjectRequest, CliE
             CommandOptions::Check(commands::check::Options { fix: true, .. })
         ),
         resource_selection,
-        authority: project_authority(arguments, current)?,
+        authority,
         limits,
     })
 }
@@ -500,7 +517,15 @@ fn check_sources<'target>(
     Ok(sources)
 }
 
-fn project_authority(arguments: &Arguments, current: &Path) -> Result<ProjectAuthority, CliError> {
+pub(crate) fn project_authority(
+    arguments: &Arguments,
+    current: &Path,
+) -> Result<ProjectAuthority, CliError> {
+    ProjectAuthority::open(current.to_owned(), authority_roots(arguments, current))
+        .map_err(|error| CliError::Project(adocweave_project::ProjectError::Authority(error)))
+}
+
+pub(crate) fn authority_roots(arguments: &Arguments, current: &Path) -> BTreeSet<PathBuf> {
     let mut roots = BTreeSet::from([current.to_owned()]);
     let mut add_directory = |path: &Path| {
         let path = absolute_lexical(current, path);
@@ -528,7 +553,9 @@ fn project_authority(arguments: &Arguments, current: &Path) -> Result<ProjectAut
             .map_or_else(|| path.parent().unwrap_or(current), |_| path.as_path());
         add_directory(directory);
     }
-    if let CommandOptions::Convert { css, .. } = &arguments.command {
+    if let CommandOptions::Convert { css, .. } | CommandOptions::Preview { css, .. } =
+        &arguments.command
+    {
         for path in css.iter().filter_map(|value| match value {
             commands::html_policy::StylesheetArgument::File(path) => Some(path),
             commands::html_policy::StylesheetArgument::Url(_) => None,
@@ -537,8 +564,7 @@ fn project_authority(arguments: &Arguments, current: &Path) -> Result<ProjectAut
             add_directory(path.parent().unwrap_or(current));
         }
     }
-    ProjectAuthority::open(current.to_owned(), roots)
-        .map_err(|error| CliError::Project(adocweave_project::ProjectError::Authority(error)))
+    roots
 }
 
 fn path_target(current: &Path, path: &Path) -> ProjectTarget {

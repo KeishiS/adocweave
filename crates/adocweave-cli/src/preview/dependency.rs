@@ -1,92 +1,90 @@
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 
-/// Selects the retained filesystem authority used for one preview dependency.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) enum DependencyAuthority {
-    Workspace,
-    Configuration,
-    ExplicitStylesheet,
-}
+use adocweave_project::ProjectResourceObservation;
 
 /// Stable logical identity of one file observed by live preview.
-///
-/// Authority is part of the key because the same path spelling can refer to a
-/// different retained namespace for project settings and an explicit option.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct Dependency {
-    authority: DependencyAuthority,
     path: PathBuf,
+    kind: DependencyKind,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) enum DependencyKind {
+    Contents,
+    ContentsNoSymlinks,
+    Existence,
 }
 
 impl Dependency {
-    pub(crate) fn workspace(path: impl Into<PathBuf>) -> Self {
+    pub(crate) fn contents(path: impl Into<PathBuf>) -> Self {
         Self {
-            authority: DependencyAuthority::Workspace,
             path: path.into(),
+            kind: DependencyKind::Contents,
         }
     }
 
-    pub(crate) fn configuration(path: impl Into<PathBuf>) -> Self {
+    pub(crate) fn contents_no_symlinks(path: impl Into<PathBuf>) -> Self {
         Self {
-            authority: DependencyAuthority::Configuration,
             path: path.into(),
+            kind: DependencyKind::ContentsNoSymlinks,
         }
     }
 
-    pub(crate) fn explicit_stylesheet(path: impl Into<PathBuf>) -> Self {
+    pub(crate) fn existence(path: impl Into<PathBuf>) -> Self {
         Self {
-            authority: DependencyAuthority::ExplicitStylesheet,
             path: path.into(),
+            kind: DependencyKind::Existence,
         }
-    }
-
-    pub(crate) const fn authority(&self) -> DependencyAuthority {
-        self.authority
     }
 
     pub(crate) fn path(&self) -> &Path {
         &self.path
     }
+
+    pub(crate) const fn kind(&self) -> DependencyKind {
+        self.kind
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Fingerprint {
-    state: FingerprintState,
-    len: u64,
-    content_hash: u64,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum FingerprintState {
-    Regular,
-    Unavailable,
+    observation: ProjectResourceObservation,
 }
 
 impl Fingerprint {
     /// Captures content which was read through the dependency's authority.
+    #[cfg(test)]
     pub(crate) fn from_loaded_bytes(bytes: &[u8]) -> Self {
         Self {
-            state: FingerprintState::Regular,
-            len: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
-            content_hash: hash(bytes),
+            observation: ProjectResourceObservation::from_bytes(bytes),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn present() -> Self {
+        Self {
+            observation: ProjectResourceObservation::present(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn missing() -> Self {
+        Self {
+            observation: ProjectResourceObservation::missing(),
+        }
+    }
+
+    pub(crate) fn from_observation(observation: ProjectResourceObservation) -> Self {
+        Self { observation }
     }
 
     /// Captures a typed read failure without exposing filesystem paths as data.
-    pub(crate) fn unavailable(reason: &str) -> Self {
+    pub(crate) fn unavailable(_reason: &str) -> Self {
         Self {
-            state: FingerprintState::Unavailable,
-            len: 0,
-            content_hash: hash(reason.as_bytes()),
+            observation: ProjectResourceObservation::unavailable(),
         }
     }
-}
-
-fn hash(value: &[u8]) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    value.hash(&mut hasher);
-    hasher.finish()
 }
 
 #[cfg(test)]
@@ -102,25 +100,28 @@ mod tests {
     }
 
     #[test]
-    fn authority_is_part_of_dependency_identity() {
-        let path = PathBuf::from("style.css");
-        assert_ne!(
-            Dependency::workspace(path.clone()),
-            Dependency::configuration(path.clone())
-        );
-        assert_ne!(
-            Dependency::configuration(path.clone()),
-            Dependency::explicit_stylesheet(path)
+    fn dependencies_use_their_absolute_path_as_identity() {
+        assert_eq!(
+            Dependency::contents(PathBuf::from("style.css")),
+            Dependency::contents(PathBuf::from("style.css"))
         );
     }
 
     #[test]
-    fn unavailable_reasons_have_stable_distinct_fingerprints() {
+    fn observation_kind_is_part_of_dependency_identity() {
+        assert_ne!(
+            Dependency::contents(PathBuf::from("asset.bin")),
+            Dependency::existence(PathBuf::from("asset.bin"))
+        );
+    }
+
+    #[test]
+    fn unavailable_reasons_share_one_stable_fingerprint() {
         assert_eq!(
             Fingerprint::unavailable("missing"),
             Fingerprint::unavailable("missing")
         );
-        assert_ne!(
+        assert_eq!(
             Fingerprint::unavailable("missing"),
             Fingerprint::unavailable("permission-denied")
         );

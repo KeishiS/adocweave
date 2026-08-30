@@ -15,7 +15,7 @@ use serde::Serialize;
 mod dependency;
 mod http;
 
-pub(crate) use dependency::{Dependency, DependencyAuthority, Fingerprint};
+pub(crate) use dependency::{Dependency, DependencyKind, Fingerprint};
 use http::{HttpSnapshot, HttpWorkers};
 
 const ACCEPT_RETRY_INTERVAL: Duration = Duration::from_millis(20);
@@ -77,6 +77,7 @@ pub struct Build {
     pub diagnostics: String,
     dependencies: BTreeMap<Dependency, Fingerprint>,
     style_origins: BTreeSet<String>,
+    retain_previous_dependencies: bool,
 }
 
 impl Build {
@@ -90,12 +91,16 @@ impl Build {
             diagnostics,
             dependencies,
             style_origins: BTreeSet::new(),
+            retain_previous_dependencies: false,
         }
     }
 
     pub fn failure(message: String, dependencies: BTreeMap<Dependency, Fingerprint>) -> Self {
         let diagnostics = failure_diagnostics(&message);
-        Self::new(error_document(&message), diagnostics, dependencies)
+        Self {
+            retain_previous_dependencies: true,
+            ..Self::new(error_document(&message), diagnostics, dependencies)
+        }
     }
 
     pub fn with_style_origins(mut self, origins: BTreeSet<String>) -> Self {
@@ -103,11 +108,33 @@ impl Build {
         self
     }
 
+    #[cfg(test)]
+    pub(crate) fn dependency_count(&self) -> usize {
+        self.dependencies.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_dependency(&self, path: &std::path::Path) -> bool {
+        self.dependencies
+            .keys()
+            .any(|dependency| dependency.path() == path)
+    }
+
     fn changed(
         &mut self,
         snapshot: &mut impl FnMut(&[Dependency]) -> BTreeMap<Dependency, Fingerprint>,
     ) -> bool {
         refresh_dependencies(&mut self.dependencies, snapshot)
+    }
+
+    fn retain_dependencies_from(&mut self, previous: &BTreeMap<Dependency, Fingerprint>) {
+        if self.retain_previous_dependencies {
+            for (dependency, fingerprint) in previous {
+                self.dependencies
+                    .entry(dependency.clone())
+                    .or_insert_with(|| fingerprint.clone());
+            }
+        }
     }
 }
 
@@ -345,6 +372,7 @@ pub fn run(
             let next_generation = state.http.generation().saturating_add(1);
             match result {
                 Ok(mut next) => {
+                    next.retain_dependencies_from(&state.dependencies);
                     if next.changed(&mut snapshot) {
                         state.refresh(&mut snapshot);
                         dependency_poll.reset(Instant::now());
@@ -406,10 +434,21 @@ mod tests {
             .iter()
             .cloned()
             .map(|dependency| {
-                let fingerprint = fs::read(dependency.path()).map_or_else(
-                    |error| Fingerprint::unavailable(&error.kind().to_string()),
-                    |bytes| Fingerprint::from_loaded_bytes(&bytes),
-                );
+                let fingerprint = match dependency.kind() {
+                    DependencyKind::Contents | DependencyKind::ContentsNoSymlinks => {
+                        fs::read(dependency.path()).map_or_else(
+                            |error| Fingerprint::unavailable(&error.kind().to_string()),
+                            |bytes| Fingerprint::from_loaded_bytes(&bytes),
+                        )
+                    }
+                    DependencyKind::Existence => {
+                        if dependency.path().is_file() {
+                            Fingerprint::present()
+                        } else {
+                            Fingerprint::missing()
+                        }
+                    }
+                };
                 (dependency, fingerprint)
             })
             .collect()
@@ -419,7 +458,7 @@ mod tests {
         paths
             .into_iter()
             .map(|path| {
-                let dependency = Dependency::workspace(path);
+                let dependency = Dependency::contents(path);
                 let fingerprint = snapshot_dependencies(std::slice::from_ref(&dependency))
                     .remove(&dependency)
                     .expect("dependency fingerprint");
@@ -463,6 +502,24 @@ mod tests {
             serde_json::from_str(&build.diagnostics).expect("JSON diagnostics");
         assert_eq!(diagnostics[0]["code"], "preview-build");
         assert_eq!(diagnostics[0]["message"], "missing include");
+    }
+
+    #[test]
+    fn build_failures_retain_dependencies_from_the_last_usable_build() {
+        let old = Dependency::contents(PathBuf::from("document.adoc"));
+        let new = Dependency::contents(PathBuf::from(".adocweave.toml"));
+        let old_fingerprint = Fingerprint::from_loaded_bytes(b"document");
+        let new_fingerprint = Fingerprint::from_loaded_bytes(b"config");
+        let previous = BTreeMap::from([(old.clone(), old_fingerprint.clone())]);
+        let mut failure = Build::failure(
+            "resource limit exceeded".to_owned(),
+            BTreeMap::from([(new.clone(), new_fingerprint.clone())]),
+        );
+
+        failure.retain_dependencies_from(&previous);
+
+        assert_eq!(failure.dependencies.get(&old), Some(&old_fingerprint));
+        assert_eq!(failure.dependencies.get(&new), Some(&new_fingerprint));
     }
 
     #[test]
@@ -635,6 +692,55 @@ mod tests {
         shutdown.store(true, Ordering::Release);
         thread.join().expect("server thread").expect("server");
         TcpListener::bind(address).expect("shutdown released port");
+    }
+
+    #[test]
+    fn rapid_changes_are_combined_into_one_rebuild() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let dependency = directory.path().join("dependency.adoc");
+        fs::write(&dependency, "initial").expect("dependency");
+        let reservation = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("reserve port");
+        let address = reservation.local_addr().expect("address");
+        drop(reservation);
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let builds = Arc::new(AtomicU64::new(0));
+        let server_shutdown = Arc::clone(&shutdown);
+        let server_builds = Arc::clone(&builds);
+        let server_dependency = dependency.clone();
+        let thread = std::thread::spawn(move || {
+            run(
+                Options {
+                    bind: address.ip(),
+                    port: address.port(),
+                    debounce: Duration::from_millis(50),
+                },
+                |_| {
+                    let generation = server_builds.fetch_add(1, Ordering::Relaxed) + 1;
+                    Ok(Build::new(
+                        format!("<p>{generation}</p>"),
+                        "[]".to_owned(),
+                        snapshots([server_dependency.clone()]),
+                    ))
+                },
+                snapshot_dependencies,
+                &server_shutdown,
+            )
+        });
+
+        request(address, "/events");
+        for contents in ["one", "two", "three"] {
+            fs::write(&dependency, contents).expect("rapid change");
+        }
+        for _ in 0..200 {
+            if request(address, "/events").contains("\"generation\":2") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(builds.load(Ordering::Relaxed), 2);
+
+        shutdown.store(true, Ordering::Release);
+        thread.join().expect("server thread").expect("server");
     }
 
     #[test]

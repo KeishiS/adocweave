@@ -88,6 +88,7 @@ fn selector_sort_key(selector: &ProjectTarget) -> (u8, String) {
     match selector {
         ProjectTarget::Source(source_id) => (0, source_id.as_str().to_owned()),
         ProjectTarget::Path(path) => (1, format!("{path:?}")),
+        ProjectTarget::PathNoSymlinks(path) => (1, format!("{path:?}")),
         ProjectTarget::Directory(path) => (2, format!("{path:?}")),
         ProjectTarget::Glob(pattern) => (3, pattern.clone()),
         ProjectTarget::Workspace(path) => (4, format!("{path:?}")),
@@ -103,6 +104,9 @@ fn normalize_selector(
             unreachable!("source targets are resolved before selector normalization")
         }
         ProjectTarget::Path(path) => absolute_lexical(project_root, path)
+            .map(NormalizedSelector::Path)
+            .map_err(project_authority_error),
+        ProjectTarget::PathNoSymlinks(path) => absolute_lexical(project_root, path)
             .map(NormalizedSelector::Path)
             .map_err(project_authority_error),
         ProjectTarget::Directory(path) => absolute_lexical(project_root, path)

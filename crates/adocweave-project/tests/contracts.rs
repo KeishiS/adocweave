@@ -233,7 +233,7 @@ fn configuration_can_be_resolved_without_processing_a_target() {
         result
             .resources
             .iter()
-            .any(|resource| resource.watch_path.is_some())
+            .any(|resource| resource.observation.is_some())
     );
 }
 
@@ -558,13 +558,13 @@ fn pathless_input_does_not_replace_a_real_file_with_a_synthetic_name() {
             .source
             .contains("disk content")
     );
-    assert!(
-        target
-            .resources
-            .iter()
-            .all(|resource| resource.watch_path.as_deref()
-                != Some(directory.path().join("stdin.adoc").as_path()))
-    );
+    assert!(target.resources.iter().all(|resource| {
+        resource
+            .observation
+            .as_ref()
+            .map(|value| value.path.as_path())
+            != Some(directory.path().join("stdin.adoc").as_path())
+    }));
 }
 
 #[test]
@@ -599,7 +599,7 @@ fn file_overlay_is_identified_as_input_and_is_not_watched() {
         })
         .expect("primary observation");
     assert_eq!(primary.origin, ProjectResourceOrigin::Input);
-    assert_eq!(primary.watch_path, None);
+    assert_eq!(primary.observation, None);
 }
 
 #[test]
@@ -706,7 +706,7 @@ fn file_overlay_is_reused_inside_a_narrow_include_authority() {
         resource.kind == ProjectResourceKind::Include
             && resource.source_id == overlay_id
             && resource.origin == ProjectResourceOrigin::Input
-            && resource.watch_path.is_none()
+            && resource.observation.is_none()
     }));
 }
 

@@ -250,7 +250,7 @@ adocweave preview manual.adoc
 adocweave preview --port 8080 --css theme.css manual.adoc
 ----
 
-ポートを自動選択する場合は``--port 0``を指定します。起点文書、include先およびCSSの変更は自動的に反映されます。
+ポートを自動選択する場合は``--port 0``を指定します。起点文書、include先、CSSおよびプロジェクト設定の変更は自動的に反映されます。
 連続した変更をまとめる待ち時間は``--debounce-ms``で指定できます。
 
 既定では同じ端末からだけ接続できます。ほかの端末から接続できるようにするには

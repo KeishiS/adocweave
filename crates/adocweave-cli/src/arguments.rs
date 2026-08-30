@@ -40,12 +40,6 @@ pub(crate) enum CommandOptions {
     ConfigShow,
 }
 
-impl CommandOptions {
-    pub(crate) const fn uses_stylesheets(&self) -> bool {
-        matches!(self, Self::Convert { .. } | Self::Preview { .. })
-    }
-}
-
 pub(crate) struct Arguments {
     pub(crate) command: CommandOptions,
     pub(crate) input: Option<PathBuf>,

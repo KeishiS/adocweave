@@ -13,7 +13,7 @@ VS Code・Zed ──LSP──> adocweave lsp
 ブラウザークライアント ──> Web Worker ──> adocweave-wasm ──> adocweave
 textlint ──> adocweave-textlint ──> adocweave
 
-adocweave-cli ──> adocweave-lsp, adocweave-config, adocweave-host, adocweave-workspace, adocweave
+adocweave-cli ──> adocweave-lsp, adocweave-project, adocweave-host, adocweave
 adocweave-lsp ──> adocweave-config, adocweave-host, adocweave-workspace, adocweave
 adocweave-project ──> adocweave-config, adocweave-host, adocweave
 adocweave-config ──> adocweave-host, adocweave-workspace, adocweave
@@ -88,8 +88,9 @@ BrowserのWorker入口とNode.jsのdirect入口は、同じWebAssembly要求、�
 利用側アプリは外部リソースを取得して権限と上限を確認し、一回の処理中に変化しないスナップショットとして渡します。
 
 ローカルファイルの安全性は``adocweave-host``、保持中のリソースと解析世代は``adocweave-workspace``、
-設定と上限の解決は``adocweave-config``が所有します。CLIとLanguage Serverはこれらを組み合わせますが、
-同じパス検査、予算計測またはinclude規則を独自に実装しません。
+設定と上限の解決は``adocweave-config``が所有します。CLIは``adocweave-project``を通じてこれらを利用し、
+Language Serverは編集途中の文書を扱うために各コンポーネントを組み合わせます。どちらも同じパス検査、
+使用量の計測またはinclude規則を独自に実装しません。
 
 ``adocweave-project``の``process``は、一つの所有された要求を同期的に処理します。対象の探索、設定の読込、
 主文書、include、スタイルシートおよびローカル参照先の取得では、要求が持つ同じ権限と使用量上限を共有します。

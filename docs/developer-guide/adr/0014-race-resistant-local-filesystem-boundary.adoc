@@ -81,9 +81,9 @@ CLIは作業ディレクトリのroot handleから、その範囲内の入力デ
 ディレクトリ内にある場合も利用者が直接選んだ独立したauthorityとして扱えます。作業ディレクトリ外を指す
 ``--config``は設定本文だけを独立したauthorityで読み、その設定に記載されたpathへauthorityを引き継ぎません。
 設定由来のpathは作業ディレクトリのauthority内にある場合だけ利用します。
-live previewの依存関係は、workspace、設定由来stylesheet、command lineで指定したstylesheetのauthorityを
-識別子に含めます。監視時も各authorityから新しい上限付きsessionを作って本文を読み、raw pathからhash対象を
-開き直しません。
+live previewの各再構築は、ほかのCLIコマンドと同じ``ProjectRequest``で主文書、include先、stylesheetおよび設定を
+読みます。変更監視には、起動時に開いた``LocalFilesystemPolicy``を使い続けます。監視のたびにroot pathから
+読込み許可範囲を開き直しません。
 Linuxの``format --write``と``check --fix``は、入力読込時に選んだauthorityから対象の親ディレクトリを開き、
 内容の再確認、一時ファイルの作成およびrenameを同じディレクトリhandleに対して実行します。
 ``LocalFilesystemPolicy``が同時に保持するrootは128件までとします。この上限は本文の読込件数とは独立して適用し、

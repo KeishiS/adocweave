@@ -19,6 +19,7 @@ mod process;
 mod selection;
 
 use std::fmt;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -30,8 +31,8 @@ use adocweave::preprocess::{AnalysisProjection, PreprocessedAnalysis, Preprocess
 use adocweave::{Analysis, AnalysisOptions, SourceId};
 use adocweave_config::{ConfigError, ConfigErrorCode, ConfigSnapshot, ResolvedProjectConfig};
 use adocweave_host::{
-    DerivedFilesystemRoots, FilesystemReadLimits, LocalFilesystemPolicy, LocalTargetPolicy,
-    ResourceError,
+    DerivedFilesystemRoots, FilesystemReadLimits, FilesystemReadOutcome, LocalFilesystemPolicy,
+    LocalFilesystemSession, LocalTargetError, LocalTargetPolicy, LogicalSourceId, ResourceError,
 };
 
 pub use process::{process, resolve_config};
@@ -40,8 +41,12 @@ pub(crate) fn project_authority_error(error: ResourceError) -> ProjectError {
     ProjectError::Authority(ProjectResourceError::from_host(error))
 }
 
-pub(crate) fn project_config_error(error: ConfigError) -> ProjectError {
-    ProjectError::Config(ProjectConfigError::from_config(error))
+pub(crate) fn project_config_error(
+    path: PathBuf,
+    source: &[u8],
+    error: ConfigError,
+) -> ProjectError {
+    ProjectError::Config(ProjectConfigError::from_config(path, source, error))
 }
 
 pub(crate) fn project_target_read(error: ResourceError) -> ProjectTargetError {
@@ -67,6 +72,10 @@ pub(crate) const MAX_TOTAL_GLOB_PATTERN_BYTES: usize = 64 * 1024;
 /// scope. Paths read from configuration may narrow this scope but cannot widen
 /// it. [`ProjectSource`] values replace primary/include bodies only; they never
 /// replace configuration, stylesheets or local-target inspection.
+///
+/// A live caller which needs to compare returned observations after this
+/// request must retain [`ProjectAuthority::observation_access`] before passing
+/// the request to [`process`].
 #[derive(Debug)]
 pub struct ProjectRequest {
     pub targets: Vec<ProjectTarget>,
@@ -155,8 +164,102 @@ impl ProjectAuthority {
         &self.project_root
     }
 
+    /// Clones the already opened filesystem authority for caller-owned change
+    /// observation. The clone retains the same directory handles and does not
+    /// widen the permitted roots.
+    pub fn observation_access(&self) -> ProjectObservationAccess {
+        ProjectObservationAccess {
+            policy: self.policy.clone(),
+        }
+    }
+
     pub(crate) fn into_parts(self) -> (PathBuf, LocalFilesystemPolicy) {
         (self.project_root, self.policy)
+    }
+}
+
+/// Retained filesystem access for caller-owned change observation.
+#[derive(Clone, Debug)]
+pub struct ProjectObservationAccess {
+    policy: LocalFilesystemPolicy,
+}
+
+impl ProjectObservationAccess {
+    /// Starts one observation pass with one budget shared by every resource.
+    pub fn session(&self) -> Result<ProjectObservationSession, ProjectResourceError> {
+        let remaining = self.policy.limits().max_files;
+        let filesystem = self
+            .policy
+            .session()
+            .map_err(ProjectResourceError::from_host)?;
+        Ok(ProjectObservationSession {
+            policy: self.policy.clone(),
+            filesystem,
+            remaining,
+            next_source: 0,
+        })
+    }
+}
+
+/// Type of state needed to detect a later project resource change.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProjectObservationKind {
+    Contents,
+    ContentsNoSymlinks,
+    Existence,
+}
+
+/// One bounded caller-owned observation pass.
+pub struct ProjectObservationSession {
+    policy: LocalFilesystemPolicy,
+    filesystem: LocalFilesystemSession,
+    remaining: usize,
+    next_source: usize,
+}
+
+impl ProjectObservationSession {
+    /// Observes one path without granting access beyond the retained authority.
+    pub fn observe(
+        &mut self,
+        path: &Path,
+        kind: ProjectObservationKind,
+    ) -> ProjectResourceObservation {
+        if self.remaining == 0 {
+            return ProjectResourceObservation::unavailable();
+        }
+        self.remaining -= 1;
+        let source_id = LogicalSourceId::new(format!("project-observation:{}", self.next_source));
+        self.next_source = self.next_source.saturating_add(1);
+        let Ok(source_id) = source_id else {
+            return ProjectResourceObservation::unavailable();
+        };
+        match kind {
+            ProjectObservationKind::Existence => self.policy.policy_for_path(path).map_or(
+                ProjectResourceObservation::unavailable(),
+                |policy| match policy.inspect_candidate_no_symlinks(path) {
+                    Ok(_) => ProjectResourceObservation::present(),
+                    Err(LocalTargetError::Missing(_)) => ProjectResourceObservation::missing(),
+                    Err(_) => ProjectResourceObservation::unavailable(),
+                },
+            ),
+            ProjectObservationKind::Contents | ProjectObservationKind::ContentsNoSymlinks => {
+                let result = if kind == ProjectObservationKind::ContentsNoSymlinks {
+                    self.filesystem
+                        .read_utf8_no_symlinks_outcome(source_id, path)
+                } else {
+                    self.filesystem.read_utf8_outcome(source_id, path)
+                };
+                match result {
+                    Ok(FilesystemReadOutcome::Found(source)) => {
+                        ProjectResourceObservation::from_bytes(source.source().as_bytes())
+                    }
+                    Ok(FilesystemReadOutcome::NotFound { .. }) => {
+                        ProjectResourceObservation::missing()
+                    }
+                    Err(_) => ProjectResourceObservation::unavailable(),
+                }
+            }
+        }
     }
 }
 
@@ -167,6 +270,8 @@ pub enum ProjectTarget {
     Source(SourceId),
     /// One authored file path.
     Path(PathBuf),
+    /// One authored file path which must not contain symbolic links.
+    PathNoSymlinks(PathBuf),
     /// Every supported document selected below one directory.
     Directory(PathBuf),
     /// Files selected by one authored glob pattern.
@@ -428,17 +533,82 @@ pub struct ProjectResourceResult {
     pub path: PathBuf,
     /// Authored or discovered path before filesystem resolution.
     pub requested_path: PathBuf,
-    /// Path that is safe for a caller to watch for a later change.
-    ///
-    /// Missing and unreadable filesystem resources remain watchable so a
-    /// caller can observe their repair. Caller input, policy rejection and
-    /// limit failures do not expose a watch path.
-    pub watch_path: Option<PathBuf>,
     pub kind: ProjectResourceKind,
     pub origin: ProjectResourceOrigin,
     /// Source which requested this resource, including each include edge.
     pub requested_by: Option<SourceId>,
+    /// Safely repeatable observation made during this request.
+    ///
+    /// The path, observation method and acquired state are kept together so a
+    /// live caller does not need to infer how to detect a later change.
+    pub observation: Option<ProjectObservationCandidate>,
     pub outcome: ProjectResourceOutcome,
+}
+
+/// Comparable state observed while acquiring one project resource.
+///
+/// Live callers can compare a later filesystem observation with this value
+/// without rereading a resource between acquisition and result publication.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectResourceObservation {
+    state: ProjectResourceObservationState,
+    len: u64,
+    content_hash: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ProjectResourceObservationState {
+    Content,
+    Present,
+    Missing,
+    Unavailable,
+}
+
+impl ProjectResourceObservation {
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        let mut hasher = DefaultHasher::new();
+        bytes.hash(&mut hasher);
+        Self {
+            state: ProjectResourceObservationState::Content,
+            len: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+            content_hash: hasher.finish(),
+        }
+    }
+
+    pub const fn present() -> Self {
+        Self {
+            state: ProjectResourceObservationState::Present,
+            len: 0,
+            content_hash: 0,
+        }
+    }
+
+    pub const fn missing() -> Self {
+        Self {
+            state: ProjectResourceObservationState::Missing,
+            len: 0,
+            content_hash: 0,
+        }
+    }
+
+    pub const fn unavailable() -> Self {
+        Self {
+            state: ProjectResourceObservationState::Unavailable,
+            len: 0,
+            content_hash: 0,
+        }
+    }
+
+    pub(crate) fn from_outcome(outcome: &ProjectResourceOutcome) -> Self {
+        match outcome {
+            ProjectResourceOutcome::Loaded { source } => Self::from_bytes(source.as_bytes()),
+            ProjectResourceOutcome::Present => Self::present(),
+            ProjectResourceOutcome::Missing => Self::missing(),
+            ProjectResourceOutcome::Failed(_) | ProjectResourceOutcome::LoadedOmitted { .. } => {
+                Self::unavailable()
+            }
+        }
+    }
 }
 
 /// Origin of a fixed resource value.
@@ -630,6 +800,36 @@ impl std::error::Error for ProjectError {
     }
 }
 
+impl ProjectError {
+    /// Returns state safely observed during this request whose later change
+    /// may repair the error. Live callers must have retained observation access
+    /// from the request authority before calling [`process`].
+    pub fn repair_candidate(&self) -> Option<&ProjectObservationCandidate> {
+        match self {
+            Self::Config(error) => Some(error.repair_candidate.as_ref()),
+            Self::Authority(error) => error.repair_candidate.as_deref(),
+            Self::TargetSelection(_) | Self::Cancelled | Self::InvalidInput(_) | Self::Limit(_) => {
+                None
+            }
+        }
+    }
+
+    pub(crate) fn with_repair_candidate(mut self, candidate: ProjectObservationCandidate) -> Self {
+        if let Self::Authority(error) = &mut self {
+            error.repair_candidate = Some(Box::new(candidate));
+        }
+        self
+    }
+}
+
+/// One safely acquired state which a live caller may observe again.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectObservationCandidate {
+    pub path: PathBuf,
+    pub kind: ProjectObservationKind,
+    pub observation: ProjectResourceObservation,
+}
+
 /// Caller-owned request values are internally inconsistent.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProjectInputError {
@@ -683,12 +883,15 @@ pub enum ProjectConfigErrorCode {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProjectConfigError {
     pub code: ProjectConfigErrorCode,
+    /// Configuration file which produced this error.
+    pub path: PathBuf,
     pub field: Option<String>,
+    repair_candidate: Box<ProjectObservationCandidate>,
     message: String,
 }
 
 impl ProjectConfigError {
-    fn from_config(error: ConfigError) -> Self {
+    fn from_config(path: PathBuf, source: &[u8], error: ConfigError) -> Self {
         let code = match error.code {
             ConfigErrorCode::ReadFailed => ProjectConfigErrorCode::ReadFailed,
             ConfigErrorCode::OutsideBoundary => ProjectConfigErrorCode::OutsideBoundary,
@@ -702,7 +905,13 @@ impl ProjectConfigError {
         };
         Self {
             code,
+            path: path.clone(),
             field: error.field.clone(),
+            repair_candidate: Box::new(ProjectObservationCandidate {
+                path,
+                kind: ProjectObservationKind::ContentsNoSymlinks,
+                observation: ProjectResourceObservation::from_bytes(source),
+            }),
             message: error.to_string(),
         }
     }
@@ -736,6 +945,7 @@ pub struct ProjectResourceError {
     pub path: Option<PathBuf>,
     message: String,
     host: ResourceError,
+    repair_candidate: Option<Box<ProjectObservationCandidate>>,
 }
 
 impl ProjectResourceError {
@@ -779,6 +989,7 @@ impl ProjectResourceError {
             path,
             message: error.to_string(),
             host: error,
+            repair_candidate: None,
         }
     }
 

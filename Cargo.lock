@@ -16,11 +16,9 @@ name = "adocweave-cli"
 version = "0.51.0"
 dependencies = [
  "adocweave",
- "adocweave-config",
  "adocweave-host",
  "adocweave-lsp",
  "adocweave-project",
- "adocweave-workspace",
  "clap",
  "clap_complete",
  "libc",
