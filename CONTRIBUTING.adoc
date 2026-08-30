@@ -333,8 +333,8 @@ and tagsを選びます。``npm-publish``では``wasm/v*``と``textlint-plugin-a
 ``vscode/v*``、ほかのenvironmentでは``v*``だけを許可します。公開workflowはtag pushで動くため、``main``だけを
 許可する設定では公開jobを開始できません。Open VSXとCachixのtokenは対応するenvironmentへ移します。
 textlint用Processorのnpm Trusted Publisherには``textlint-plugin-publish.yml``と``npm-publish`` environment、
-Visual Studio MarketplaceのTrusted Publisherには``vscode-publish.yml``と``marketplace-publish`` environmentを
-登録します。
+Visual Studio Marketplace用の``marketplace-publish`` environmentには``AZURE_CLIENT_ID``と
+``AZURE_TENANT_ID``を変数として登録します。
 
 [#vscode-release]
 === VS Code拡張のRelease
@@ -363,10 +363,13 @@ Open VSXへの公開には``open-vsx-publish`` environmentの``OPEN_VSX_TOKEN``�
 [#marketplace-publication]
 === Visual Studio Marketplaceへの公開
 
-Visual Studio Marketplaceのpublisher設定でTrusted PublisherへGitHubのorganizationまたはuser、repository、
-workflow file``vscode-publish.yml``およびenvironment``marketplace-publish``を登録します。workflowは対象versionが
-未公開の場合だけ``vsce publish --oidc``で送信します。PAT、Azure loginおよびEntra ID用のrepository変数は
-使用しません。
+Azureでユーザー割り当てマネージドIDを作成し、そのフェデレーション資格情報をGitHubのrepository
+``KeishiS/adocweave``とenvironment``marketplace-publish``へ関連付けます。このIDはVisual Studio Marketplaceの
+publisher``adocweave``へContributorとして登録します。Client IDとTenant IDは秘密情報ではないため、
+``marketplace-publish`` environmentの``AZURE_CLIENT_ID``と``AZURE_TENANT_ID``へ変数として保存します。
+
+workflowはGitHubのOIDC tokenでMicrosoft Entra IDへログインし、対象versionが未公開の場合だけ
+``vsce publish --azure-credential``で送信します。PAT、client secretおよび証明書は使用しません。
 
 対象versionが公開済みの場合は送信せず、MarketplaceからVSIXを取得して候補と照合します。
 Marketplaceが追加する署名領域はarchive全体のbyte列を変えるため比較から除きますが、拡張ID、version、target、

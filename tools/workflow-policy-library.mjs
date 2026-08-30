@@ -754,11 +754,22 @@ export function validateVscodePublication(workflows) {
     fail("VS Code registry credentials must use separate GitHub environments");
   }
   const marketplaceSource = jobRuns(marketplace);
-  if (!marketplaceSource.includes("vsce publish") || !marketplaceSource.includes("--oidc") ||
-      /--azure-credential|AZURE_CLIENT_ID|AZURE_TENANT_ID|Azure\/login|VSCE_PAT/iu.test(
-        JSON.stringify(marketplace),
-      )) {
-    fail("Marketplace publication must use only vsce trusted publishing with OIDC");
+  const marketplaceJson = JSON.stringify(marketplace);
+  const azureLogin = (marketplace.steps ?? []).find((step) =>
+    typeof step.uses === "string" && step.uses.toLowerCase().startsWith("azure/login@")
+  );
+  if (!marketplaceSource.includes("vsce publish") ||
+      !marketplaceSource.includes("--azure-credential") ||
+      marketplaceSource.includes("--oidc") ||
+      marketplaceJson.includes("VSCE_PAT")) {
+    fail("Marketplace publication must use only a Microsoft Entra ID credential");
+  }
+  if (azureLogin?.with?.["client-id"] !== "${{ vars.AZURE_CLIENT_ID }}" ||
+      azureLogin?.with?.["tenant-id"] !== "${{ vars.AZURE_TENANT_ID }}" ||
+      azureLogin?.with?.["allow-no-subscriptions"] !== true ||
+      marketplace.env?.AZURE_CLIENT_ID !== "${{ vars.AZURE_CLIENT_ID }}" ||
+      marketplace.env?.AZURE_TENANT_ID !== "${{ vars.AZURE_TENANT_ID }}") {
+    fail("Marketplace publication must bind its federated Azure identity from environment variables");
   }
   const openVsxSource = jobRuns(openVsx);
   if (!openVsxSource.includes("ovsx publish") ||
