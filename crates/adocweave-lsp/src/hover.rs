@@ -1,7 +1,6 @@
 //! Pure Hover projection over an adopted analysis snapshot.
 
 use adocweave::Analysis;
-use adocweave::preprocess::AnalysisProjection;
 use adocweave::semantic as parser;
 use adocweave::semantic::{
     DocumentElement, Inline, MathLanguage, document_element_at, generate_heading_ids,
@@ -10,6 +9,7 @@ use adocweave::text::TextRange;
 use async_lsp::lsp_types as lsp;
 
 use crate::position::{PositionEncoding, range_contains_offset, range_to_lsp};
+use crate::state::ExpandedDocumentAnalysis;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum HoverPresentation {
@@ -23,7 +23,7 @@ pub(crate) fn hover<'a>(
     analysis: &Analysis,
     uri: &lsp::Url,
     offset: u32,
-    projections: impl IntoIterator<Item = &'a AnalysisProjection>,
+    projects: impl IntoIterator<Item = &'a ExpandedDocumentAnalysis>,
     encoding: PositionEncoding,
     presentation: HoverPresentation,
 ) -> Result<Option<lsp::Hover>, String> {
@@ -45,9 +45,8 @@ pub(crate) fn hover<'a>(
             presentation,
         );
     }
-    for projection in projections {
-        if let Some((reference, origin)) = projected_attribute_reference_at(projection, uri, offset)
-        {
+    for project in projects {
+        if let Some((reference, origin)) = projected_attribute_reference_at(project, uri, offset) {
             return make_hover(
                 attribute_reference_hover(reference),
                 origin.range.text_range(),
@@ -232,14 +231,15 @@ fn attribute_reference_hover(reference: &adocweave::semantic::AttributeReference
 }
 
 fn projected_attribute_reference_at<'a>(
-    projection: &'a AnalysisProjection,
+    project: &'a ExpandedDocumentAnalysis,
     uri: &lsp::Url,
     offset: u32,
 ) -> Option<(
     &'a adocweave::semantic::AttributeReference,
     &'a adocweave::preprocess::SourceOrigin,
 )> {
-    projection
+    project
+        .projection
         .attribute_references
         .iter()
         .find_map(|reference| {
@@ -247,11 +247,9 @@ fn projected_attribute_reference_at<'a>(
                 .origins
                 .iter()
                 .find(|origin| {
-                    origin
-                        .source_id
-                        .as_ref()
-                        .is_some_and(|source_id| source_id.as_str() == uri.as_str())
-                        && range_contains_offset(origin.range.text_range(), offset)
+                    origin.source_id.as_ref().is_some_and(|source_id| {
+                        project.uri_for_source_id(source_id) == Some(uri.as_str())
+                    }) && range_contains_offset(origin.range.text_range(), offset)
                 })
                 .map(|origin| (&reference.value, origin))
         })

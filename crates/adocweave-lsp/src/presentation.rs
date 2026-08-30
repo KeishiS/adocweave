@@ -1,26 +1,26 @@
-//! Stateless completion presentation over selected document and workspace analyses.
+//! Stateless completion presentation over selected document and expanded_analysis analyses.
 
 use adocweave::Analysis;
 use adocweave::semantic::{DocumentElement, document_element_at, source_language_candidates};
 use async_lsp::lsp_types as lsp;
 
 use crate::position::{PositionEncoding, cursor_touches_range, request_offset};
-use crate::state::WorkspaceAnalysis;
+use crate::state::ExpandedDocumentAnalysis;
 
 pub(crate) fn completion(
     analysis: &Analysis,
-    workspaces: &[&WorkspaceAnalysis],
+    expanded_analyses: &[&ExpandedDocumentAnalysis],
     uri: &lsp::Url,
     position: lsp::Position,
     encoding: PositionEncoding,
 ) -> Result<lsp::CompletionResponse, String> {
     let offset = request_offset(analysis.source_document(), position, encoding)?;
     if attribute_completion_context(analysis.source(), offset as usize) {
-        let values = workspaces
+        let values = expanded_analyses
             .iter()
-            .find_map(|workspace| {
-                expanded_offset_for_origin(workspace, uri, offset).map(|expanded| {
-                    workspace
+            .find_map(|expanded_analysis| {
+                expanded_offset_for_origin(expanded_analysis, uri, offset).map(|expanded| {
+                    expanded_analysis
                         .analysis
                         .attribute_environment()
                         .values_at(expanded)
@@ -151,17 +151,17 @@ fn items(items: impl IntoIterator<Item = lsp::CompletionItem>) -> lsp::Completio
 }
 
 fn expanded_offset_for_origin(
-    workspace: &WorkspaceAnalysis,
+    expanded: &ExpandedDocumentAnalysis,
     uri: &lsp::Url,
     offset: u32,
 ) -> Option<adocweave::text::TextSize> {
-    workspace.document.source_map().iter().find_map(|segment| {
+    expanded.document.source_map().iter().find_map(|segment| {
         if segment.mapping != adocweave::preprocess::SourceMapping::Identity
             || segment
                 .origin
                 .source_id
                 .as_ref()
-                .is_none_or(|source_id| source_id.as_str() != uri.as_str())
+                .is_none_or(|source_id| expanded.uri_for_source_id(source_id) != Some(uri.as_str()))
         {
             return None;
         }

@@ -1,13 +1,23 @@
 //! Runtime-independent language features over owned document analyses.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use adocweave::CancellationCheck;
+use adocweave::SourceId;
 use adocweave::output::diagnostics::{RuleSettings, lint_rule};
+#[cfg(test)]
 use adocweave::output::formatter;
 use adocweave::resolution::ReferenceKey;
 use adocweave::text::SourceDocument;
+use adocweave_project::{
+    ConfigSelection, ProjectAuthority, ProjectExpansionError, ProjectLimits,
+    ProjectObservationAccess, ProjectOverrides, ProjectRequest, ProjectResourceErrorCode,
+    ProjectResourceKind, ProjectResourceOutcome, ProjectResourceResult, ProjectResourceSelection,
+    ProjectResult, ProjectSource, ProjectTarget, ProjectTargetError,
+};
+use adocweave_workspace::{ResourceId, ResourceLayer};
 use async_lsp::lsp_types as lsp;
 use serde::Deserialize;
 
@@ -21,8 +31,8 @@ use crate::position::{PositionEncoding, lsp_position_to_core, negotiate_encoding
 use crate::presentation;
 use crate::state::DocumentStore;
 use crate::state::{
-    Adoption, AnalysisJob, DocumentSnapshot, WorkspaceAnalysis as DocumentWorkspaceAnalysis,
-    WorkspaceProblem,
+    Adoption, AnalysisJob, DocumentSnapshot, ExpandedDocumentAnalysis, PreparedProjectRequest,
+    ProjectAdoption, ProjectProblem, ProjectSourceIndex, ProjectSourceState,
 };
 use crate::workspace::{WatchedFileKind, WorkspaceResources, WorkspaceScanNotice};
 use crate::workspace_scan::{
@@ -241,6 +251,12 @@ pub(crate) struct Session {
     workspace_input_status: WorkspaceInputStatus,
 }
 
+pub(crate) struct SessionCloseOutcome {
+    pub closed: bool,
+    pub reanalysis_jobs: Vec<AnalysisJob>,
+    pub diagnostic_uris: std::collections::BTreeSet<String>,
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum WorkspaceInputStatus {
     #[default]
@@ -334,15 +350,15 @@ impl Default for ServerSettings {
     }
 }
 
-fn attach_workspace(
+fn attach_project_context(
     job: &mut AnalysisJob,
-    input: Result<crate::workspace::WorkspaceInput, String>,
+    context: Result<crate::workspace::ProjectAnalysisContext, String>,
 ) {
-    match input {
-        Ok(input) => job.workspace = Some(input),
+    match context {
+        Ok(context) => job.project_context = Some(context),
         Err(message) => {
-            job.workspace_problem = Some(WorkspaceProblem {
-                source_id: Some(job.uri.clone()),
+            job.project_problem = Some(ProjectProblem {
+                document_uri: Some(job.uri.clone()),
                 range: adocweave::text::TextRange::new(
                     adocweave::text::TextSize::ZERO,
                     adocweave::text::TextSize::ZERO,
@@ -355,29 +371,347 @@ fn attach_workspace(
     }
 }
 
+fn reject_unsupported_uri(job: &mut AnalysisJob, uri: &lsp::Url) -> bool {
+    if uri.scheme() == "file" {
+        return false;
+    }
+    job.project_problem = Some(ProjectProblem {
+        document_uri: Some(job.uri.clone()),
+        range: zero_text_range(),
+        code: "unsupported-uri".to_owned(),
+        message: format!(
+            "The URI scheme '{}' is not supported. Only file URIs can be analyzed.",
+            uri.scheme()
+        ),
+    });
+    true
+}
+
 fn parse_open_sources(sources: &[(String, i32, String)]) -> Vec<(lsp::Url, i64, Arc<str>)> {
     sources
         .iter()
         .filter_map(|(uri, version, source)| {
-            Some((
-                uri.parse().ok()?,
-                i64::from(*version),
-                Arc::<str>::from(source.as_str()),
-            ))
+            let uri: lsp::Url = uri.parse().ok()?;
+            if uri.scheme() != "file" {
+                return None;
+            }
+            Some((uri, i64::from(*version), Arc::<str>::from(source.as_str())))
         })
         .collect()
 }
 
+fn zero_text_range() -> adocweave::text::TextRange {
+    adocweave::text::TextRange::new(
+        adocweave::text::TextSize::ZERO,
+        adocweave::text::TextSize::ZERO,
+    )
+    .expect("zero range")
+}
+
+fn target_problem(job: &AnalysisJob, error: ProjectTargetError) -> ProjectProblem {
+    let code = match &error {
+        ProjectTargetError::Read(_) => "project-read-error",
+        ProjectTargetError::Parse(_) => "project-parse-error",
+        ProjectTargetError::EditConflict(_) => "project-edit-conflict",
+        ProjectTargetError::Incomplete(_) => "project-limit",
+    };
+    ProjectProblem {
+        document_uri: Some(job.uri.clone()),
+        range: zero_text_range(),
+        code: code.to_owned(),
+        message: error.to_string(),
+    }
+}
+
+fn expansion_problem(
+    job: &AnalysisJob,
+    sources: &ProjectSourceIndex,
+    resources: &[ProjectResourceResult],
+    error: ProjectExpansionError,
+) -> ProjectProblem {
+    if let ProjectExpansionError::Preprocess(error) = &error {
+        return ProjectProblem {
+            document_uri: error
+                .source_id
+                .as_ref()
+                .and_then(|source_id| sources.get(source_id))
+                .map(|source| source.uri.clone())
+                .or_else(|| Some(job.uri.clone())),
+            range: error.range,
+            code: error.kind.as_str().to_owned(),
+            message: error.message.clone(),
+        };
+    }
+    let code = match &error {
+        ProjectExpansionError::Resource(error) => match error.code {
+            ProjectResourceErrorCode::Missing => "missing-resource",
+            ProjectResourceErrorCode::OutsideAuthority => "unsafe-target",
+            ProjectResourceErrorCode::Limit => "project-limit",
+            ProjectResourceErrorCode::PermissionDenied
+            | ProjectResourceErrorCode::InvalidUtf8
+            | ProjectResourceErrorCode::InvalidPath
+            | ProjectResourceErrorCode::ReadFailed
+            | ProjectResourceErrorCode::Unverifiable => "project-resource-error",
+        },
+        ProjectExpansionError::Options(_) => "project-options-error",
+        ProjectExpansionError::Preprocess(_) => unreachable!(),
+        ProjectExpansionError::Parse(_) => "project-parse-error",
+        ProjectExpansionError::Projection(_) => "project-source-mapping-error",
+        ProjectExpansionError::Incomplete(_) => "project-limit",
+    };
+    let resource_request = match &error {
+        ProjectExpansionError::Resource(error) => resources.iter().rev().find(|resource| {
+            resource.kind == ProjectResourceKind::Include
+                && resource
+                    .requested_at
+                    .as_ref()
+                    .is_some_and(|location| location.range.is_some())
+                && error
+                    .path
+                    .as_ref()
+                    .is_none_or(|path| path == &resource.path || path == &resource.requested_path)
+        }),
+        _ => None,
+    };
+    ProjectProblem {
+        document_uri: resource_request
+            .and_then(|resource| resource.requested_at.as_ref())
+            .and_then(|location| sources.get(&location.source_id))
+            .map(|source| source.uri.clone())
+            .or_else(|| Some(job.uri.clone())),
+        range: resource_request
+            .and_then(|resource| resource.requested_at.as_ref()?.range)
+            .unwrap_or_else(zero_text_range),
+        code: code.to_owned(),
+        message: error.to_string(),
+    }
+}
+
+pub(crate) fn project_observations_are_current(
+    result: &ProjectResult,
+    access: &ProjectObservationAccess,
+    cancellation: &dyn CancellationCheck,
+) -> bool {
+    let Ok(mut session) = access.session() else {
+        return false;
+    };
+    for candidate in result
+        .resources
+        .iter()
+        .chain(result.targets.iter().flat_map(|target| &target.resources))
+        .filter_map(|resource| resource.observation.as_ref())
+    {
+        if cancellation.is_cancelled()
+            || session.observe(&candidate.path, candidate.kind) != candidate.observation
+        {
+            return false;
+        }
+    }
+    true
+}
+
 impl Session {
-    fn attach_workspace_input(
+    fn prepare_project_job(
         &mut self,
         job: &mut AnalysisJob,
-        input: Result<crate::workspace::WorkspaceInput, String>,
+        context: Result<crate::workspace::ProjectAnalysisContext, String>,
     ) {
-        attach_workspace(job, input);
-        if job.workspace_problem.is_some() {
-            self.documents.reject_workspace_input(job);
+        attach_project_context(job, context);
+        if job.project_problem.is_some() {
+            self.documents.reject_project_input(job);
+            return;
         }
+        match self.prepare_project_request(job) {
+            Ok(request) => job.prepared_request = Some(request),
+            Err(problem) => {
+                job.project_problem = Some(problem);
+                self.documents.reject_project_input(job);
+            }
+        }
+    }
+
+    fn prepare_project_request(
+        &self,
+        job: &AnalysisJob,
+    ) -> Result<PreparedProjectRequest, ProjectProblem> {
+        let unsupported = |message: String| ProjectProblem {
+            document_uri: Some(job.uri.clone()),
+            range: zero_text_range(),
+            code: "unsupported-uri".to_owned(),
+            message,
+        };
+        let primary_uri: lsp::Url = job
+            .uri
+            .parse()
+            .map_err(|_| unsupported("The document URI is invalid.".to_owned()))?;
+        if primary_uri.scheme() != "file" {
+            return Err(unsupported(format!(
+                "The URI scheme '{}' is not supported. Only file URIs can be analyzed.",
+                primary_uri.scheme()
+            )));
+        }
+        let primary_path = primary_uri.to_file_path().map_err(|_| {
+            unsupported("The file URI cannot be converted to a file path.".to_owned())
+        })?;
+        let input = job.project_context.as_ref().ok_or_else(|| ProjectProblem {
+            document_uri: Some(job.uri.clone()),
+            range: zero_text_range(),
+            code: "project-input-error".to_owned(),
+            message: "Project context is unavailable.".to_owned(),
+        })?;
+        #[cfg(test)]
+        let (project_root, authority_roots, synthetic_test_root) =
+            if !input.project_root.is_dir() || input.project_root.parent().is_none() {
+                let temporary = tempfile::tempdir().map_err(|error| ProjectProblem {
+                    document_uri: Some(job.uri.clone()),
+                    range: zero_text_range(),
+                    code: "project-authority-error".to_owned(),
+                    message: error.to_string(),
+                })?;
+                let root = temporary.path().to_owned();
+                (root.clone(), vec![root], Some(temporary))
+            } else {
+                (
+                    input.project_root.clone(),
+                    input.authority_roots.clone(),
+                    None,
+                )
+            };
+        #[cfg(not(test))]
+        let (project_root, authority_roots) =
+            (input.project_root.clone(), input.authority_roots.clone());
+        let authority = ProjectAuthority::open(project_root, authority_roots).map_err(|error| {
+            ProjectProblem {
+                document_uri: Some(job.uri.clone()),
+                range: zero_text_range(),
+                code: "project-authority-error".to_owned(),
+                message: error.to_string(),
+            }
+        })?;
+        let observation_access = authority.observation_access();
+
+        let mut project_sources = Vec::new();
+        let mut source_index = ProjectSourceIndex::default();
+        let primary_id = SourceId::new("lsp:source:0");
+        #[cfg(test)]
+        let primary_path = synthetic_test_root
+            .as_ref()
+            .map_or(primary_path.clone(), |root| {
+                root.path().join(
+                    primary_path
+                        .strip_prefix("/")
+                        .unwrap_or(primary_path.as_path()),
+                )
+            });
+        #[cfg(test)]
+        if synthetic_test_root.is_some()
+            && let Some(parent) = primary_path.parent()
+        {
+            std::fs::create_dir_all(parent).map_err(|error| ProjectProblem {
+                document_uri: Some(job.uri.clone()),
+                range: zero_text_range(),
+                code: "project-authority-error".to_owned(),
+                message: error.to_string(),
+            })?;
+        }
+        project_sources.push(ProjectSource::new(
+            primary_id.clone(),
+            primary_path,
+            job.document_input.source.clone(),
+        ));
+        source_index.insert(
+            primary_id.clone(),
+            ProjectSourceState {
+                uri: job.uri.clone(),
+                text: job.document_input.source.clone(),
+                version: Some(job.document_input.revision.version),
+            },
+        );
+
+        let mut next_source = 1usize;
+        for (uri, version, source) in self.documents.open_sources() {
+            if uri == job.uri {
+                continue;
+            }
+            let Ok(resource_id) = ResourceId::new(uri.clone()) else {
+                continue;
+            };
+            if input.resource_snapshot.get(&resource_id).is_none() {
+                continue;
+            }
+            let Ok(parsed_uri) = lsp::Url::parse(&uri) else {
+                continue;
+            };
+            if parsed_uri.scheme() != "file" {
+                continue;
+            }
+            let Ok(path) = parsed_uri.to_file_path() else {
+                continue;
+            };
+            #[cfg(test)]
+            let path = synthetic_test_root.as_ref().map_or(path.clone(), |root| {
+                root.path()
+                    .join(path.strip_prefix("/").unwrap_or(path.as_path()))
+            });
+            #[cfg(test)]
+            if synthetic_test_root.is_some()
+                && let Some(parent) = path.parent()
+            {
+                std::fs::create_dir_all(parent).map_err(|error| ProjectProblem {
+                    document_uri: Some(job.uri.clone()),
+                    range: zero_text_range(),
+                    code: "project-authority-error".to_owned(),
+                    message: error.to_string(),
+                })?;
+            }
+            let source_id = SourceId::new(format!("lsp:source:{next_source}"));
+            next_source += 1;
+            let source: Arc<str> = Arc::from(source);
+            project_sources.push(ProjectSource::new(source_id.clone(), path, source.clone()));
+            source_index.insert(
+                source_id,
+                ProjectSourceState {
+                    uri,
+                    text: source,
+                    version: Some(i64::from(version)),
+                },
+            );
+        }
+        for (resource_id, resource) in input.resource_snapshot.resources() {
+            if resource.layer() == ResourceLayer::Disk {
+                source_index
+                    .record_version(resource_id.as_str().to_owned(), resource.revision().get());
+            }
+        }
+        let config = ConfigSelection::Resolved(input.project_config.clone());
+        let overrides = ProjectOverrides {
+            enable_lint_rules: self
+                .settings
+                .enabled_rules
+                .iter()
+                .filter_map(|code| lint_rule(code).map(|rule| rule.id))
+                .collect(),
+            ..ProjectOverrides::default()
+        };
+        Ok(PreparedProjectRequest {
+            request: ProjectRequest {
+                targets: vec![ProjectTarget::Source(primary_id)],
+                sources: project_sources,
+                config,
+                overrides,
+                apply_safe_fixes: false,
+                resource_selection: ProjectResourceSelection {
+                    local_targets: true,
+                    stylesheets: false,
+                },
+                authority,
+                limits: ProjectLimits::default(),
+            },
+            source_index,
+            observation_access,
+            #[cfg(test)]
+            _synthetic_root: synthetic_test_root,
+        })
     }
 
     fn advance_input_revision(&mut self) {
@@ -573,18 +907,6 @@ impl Session {
 
     pub fn begin_open(&mut self, params: lsp::DidOpenTextDocumentParams) -> Vec<AnalysisJob> {
         let document = params.text_document;
-        if self.workspace_input_status == WorkspaceInputStatus::Rebuilding {
-            self.advance_input_revision();
-            let job = self.documents.begin_open_with_options(
-                document.uri.to_string(),
-                document.version,
-                document.text,
-                self.analysis_options_for(None),
-                self.input_revision,
-            );
-            self.documents.mark_workspace_input_pending(&job);
-            return Vec::new();
-        }
         self.advance_input_revision();
         let mut job = self.documents.begin_open_with_options(
             document.uri.to_string(),
@@ -593,6 +915,14 @@ impl Session {
             self.analysis_options_for(None),
             self.input_revision,
         );
+        if reject_unsupported_uri(&mut job, &document.uri) {
+            self.documents.reject_project_input(&job);
+            return vec![job];
+        }
+        if self.workspace_input_status == WorkspaceInputStatus::Rebuilding {
+            self.documents.mark_project_input_pending(&job);
+            return Vec::new();
+        }
         let affected = match self.workspace.upsert_open(
             document.uri.clone(),
             i64::from(document.version),
@@ -600,14 +930,14 @@ impl Session {
         ) {
             Ok(affected) => affected,
             Err(error) => {
-                self.attach_workspace_input(&mut job, Err(error));
+                self.prepare_project_job(&mut job, Err(error));
                 return vec![job];
             }
         };
-        let workspace = self.workspace.input(&document.uri);
-        let options = self.analysis_options_for(workspace.as_ref().ok());
+        let project_context = self.workspace.project_analysis_context(&document.uri);
+        let options = self.analysis_options_for(project_context.as_ref().ok());
         self.documents.update_job_options(&mut job, options);
-        self.attach_workspace_input(&mut job, workspace);
+        self.prepare_project_job(&mut job, project_context);
         let mut jobs = vec![job];
         self.append_dependent_jobs(&affected, document.uri.as_str(), &mut jobs);
         jobs
@@ -620,10 +950,10 @@ impl Session {
         let Some(current) = self.documents.get(params.text_document.uri.as_str()) else {
             return Ok(Vec::new());
         };
-        if i64::from(params.text_document.version) <= current.request.revision.version {
+        if i64::from(params.text_document.version) <= current.document_input.revision.version {
             return Ok(Vec::new());
         }
-        let mut source = current.request.source.to_string();
+        let mut source = current.document_input.source.to_string();
         for change in params.content_changes {
             match change.range {
                 None => source = change.text,
@@ -650,19 +980,6 @@ impl Session {
                 }
             }
         }
-        if self.workspace_input_status == WorkspaceInputStatus::Rebuilding {
-            self.advance_input_revision();
-            let job = self.documents.begin_change(
-                params.text_document.uri.as_str(),
-                params.text_document.version,
-                source,
-                self.input_revision,
-            );
-            if let Some(job) = &job {
-                self.documents.mark_workspace_input_pending(job);
-            }
-            return Ok(Vec::new());
-        }
         self.advance_input_revision();
         let Some(mut job) = self.documents.begin_change(
             params.text_document.uri.as_str(),
@@ -672,6 +989,14 @@ impl Session {
         ) else {
             return Ok(Vec::new());
         };
+        if reject_unsupported_uri(&mut job, &params.text_document.uri) {
+            self.documents.reject_project_input(&job);
+            return Ok(vec![job]);
+        }
+        if self.workspace_input_status == WorkspaceInputStatus::Rebuilding {
+            self.documents.mark_project_input_pending(&job);
+            return Ok(Vec::new());
+        }
         let affected = match self.workspace.upsert_open(
             params.text_document.uri.clone(),
             i64::from(params.text_document.version),
@@ -679,14 +1004,16 @@ impl Session {
         ) {
             Ok(affected) => affected,
             Err(error) => {
-                self.attach_workspace_input(&mut job, Err(error));
+                self.prepare_project_job(&mut job, Err(error));
                 return Ok(vec![job]);
             }
         };
-        let workspace = self.workspace.input(&params.text_document.uri);
-        let options = self.analysis_options_for(workspace.as_ref().ok());
+        let project_context = self
+            .workspace
+            .project_analysis_context(&params.text_document.uri);
+        let options = self.analysis_options_for(project_context.as_ref().ok());
         self.documents.update_job_options(&mut job, options);
-        self.attach_workspace_input(&mut job, workspace);
+        self.prepare_project_job(&mut job, project_context);
         let mut jobs = vec![job];
         self.append_dependent_jobs(&affected, params.text_document.uri.as_str(), &mut jobs);
         Ok(jobs)
@@ -705,15 +1032,15 @@ impl Session {
             let Some(mut job) = self.documents.begin_reanalysis(uri, self.input_revision) else {
                 continue;
             };
-            let workspace = self.workspace.input(&parsed);
-            self.attach_workspace_input(&mut job, workspace);
+            let project_context = self.workspace.project_analysis_context(&parsed);
+            self.prepare_project_job(&mut job, project_context);
             jobs.push(job);
         }
     }
 
     fn analysis_options_for(
         &self,
-        workspace: Option<&crate::workspace::WorkspaceInput>,
+        workspace: Option<&crate::workspace::ProjectAnalysisContext>,
     ) -> adocweave::AnalysisOptions {
         let mut options = workspace.map_or_else(adocweave::AnalysisOptions::default, |input| {
             input.project_config.analysis.clone()
@@ -904,16 +1231,29 @@ impl Session {
                 if queued.contains(&uri) {
                     continue;
                 }
-                let Ok(parsed) = uri.parse() else {
+                let Ok(parsed) = uri.parse::<lsp::Url>() else {
                     continue;
                 };
-                let workspace = self.workspace.input(&parsed);
-                let options = self.analysis_options_for(workspace.as_ref().ok());
+                if parsed.scheme() != "file" {
+                    let Some(mut job) = self.documents.reconfigure(
+                        &uri,
+                        self.analysis_options_for(None),
+                        self.input_revision,
+                    ) else {
+                        continue;
+                    };
+                    reject_unsupported_uri(&mut job, &parsed);
+                    self.documents.reject_project_input(&job);
+                    jobs.push(job);
+                    continue;
+                }
+                let project_context = self.workspace.project_analysis_context(&parsed);
+                let options = self.analysis_options_for(project_context.as_ref().ok());
                 if let Some(mut job) =
                     self.documents
                         .reconfigure(&uri, options, self.input_revision)
                 {
-                    self.attach_workspace_input(&mut job, workspace);
+                    self.prepare_project_job(&mut job, project_context);
                     jobs.push(job);
                 }
             }
@@ -1104,7 +1444,7 @@ impl Session {
             self.workspace_scan_failed(outcome.expect_err("failed structural workspace install"))
         } else {
             if installed {
-                self.documents.synchronize_all_workspace_inputs();
+                self.documents.synchronize_all_project_inputs();
             }
             self.workspace_input_status = WorkspaceInputStatus::Ready;
             self.advance_input_revision();
@@ -1146,13 +1486,23 @@ impl Session {
             .open_sources()
             .into_iter()
             .filter_map(|(uri, _, _)| {
-                let parsed = uri.parse().ok()?;
-                let workspace = self.workspace.input(&parsed);
-                let options = self.analysis_options_for(workspace.as_ref().ok());
+                let parsed: lsp::Url = uri.parse().ok()?;
+                if parsed.scheme() != "file" {
+                    let mut job = self.documents.reconfigure(
+                        &uri,
+                        self.analysis_options_for(None),
+                        self.input_revision,
+                    )?;
+                    reject_unsupported_uri(&mut job, &parsed);
+                    self.documents.reject_project_input(&job);
+                    return Some(job);
+                }
+                let project_context = self.workspace.project_analysis_context(&parsed);
+                let options = self.analysis_options_for(project_context.as_ref().ok());
                 let mut job = self
                     .documents
                     .reconfigure(&uri, options, self.input_revision)?;
-                self.attach_workspace_input(&mut job, workspace);
+                self.prepare_project_job(&mut job, project_context);
                 Some(job)
             })
             .collect()
@@ -1172,17 +1522,27 @@ impl Session {
             return open_sources
                 .into_iter()
                 .filter_map(|(uri, _, _)| {
-                    let workspace = if failed_closed {
+                    let parsed: lsp::Url = uri.parse().ok()?;
+                    if parsed.scheme() != "file" {
+                        let mut job = self.documents.reconfigure(
+                            &uri,
+                            self.analysis_options_for(None),
+                            self.input_revision,
+                        )?;
+                        reject_unsupported_uri(&mut job, &parsed);
+                        self.documents.reject_project_input(&job);
+                        return Some(job);
+                    }
+                    let project_context = if failed_closed {
                         Err(error.clone())
                     } else {
-                        let parsed = uri.parse().ok()?;
-                        self.workspace.input(&parsed)
+                        self.workspace.project_analysis_context(&parsed)
                     };
-                    let options = self.analysis_options_for(workspace.as_ref().ok());
+                    let options = self.analysis_options_for(project_context.as_ref().ok());
                     let mut job = self
                         .documents
                         .reconfigure(&uri, options, self.input_revision)?;
-                    self.attach_workspace_input(&mut job, workspace);
+                    self.prepare_project_job(&mut job, project_context);
                     Some(job)
                 })
                 .collect();
@@ -1192,13 +1552,23 @@ impl Session {
         open_sources
             .into_iter()
             .filter_map(|(uri, _, _)| {
-                let parsed = uri.parse().ok()?;
-                let workspace = self.workspace.input(&parsed);
-                let options = self.analysis_options_for(workspace.as_ref().ok());
+                let parsed: lsp::Url = uri.parse().ok()?;
+                if parsed.scheme() != "file" {
+                    let mut job = self.documents.reconfigure(
+                        &uri,
+                        self.analysis_options_for(None),
+                        self.input_revision,
+                    )?;
+                    reject_unsupported_uri(&mut job, &parsed);
+                    self.documents.reject_project_input(&job);
+                    return Some(job);
+                }
+                let project_context = self.workspace.project_analysis_context(&parsed);
+                let options = self.analysis_options_for(project_context.as_ref().ok());
                 let mut job = self
                     .documents
                     .reconfigure(&uri, options, self.input_revision)?;
-                self.attach_workspace_input(&mut job, workspace);
+                self.prepare_project_job(&mut job, project_context);
                 Some(job)
             })
             .collect()
@@ -1270,19 +1640,20 @@ impl Session {
             })
     }
 
+    #[cfg(test)]
     pub fn adopt(&mut self, job: &AnalysisJob, result: adocweave::AnalysisResult) -> Adoption {
         if !self.analysis_job_is_current(job) {
             return Adoption::Stale;
         }
         if job
-            .workspace
+            .project_context
             .as_ref()
-            .is_some_and(|input| !self.workspace.input_is_current(input))
+            .is_some_and(|input| !self.workspace.project_analysis_context_is_current(input))
         {
             return Adoption::Stale;
         }
         let format = job
-            .workspace
+            .project_context
             .as_ref()
             .map_or_else(formatter::FormatConfig::default, |input| {
                 input.project_config.format
@@ -1290,129 +1661,261 @@ impl Session {
         self.documents.adopt_with_format(job, result, format)
     }
 
-    /// Returns a copy of the workspace for one analysis worker to read into.
-    ///
-    /// The worker acquires missing includes on this copy, so nothing it reads is
-    /// visible until [`Self::adopt_analyzed_workspace`] accepts the result.
-    pub(crate) fn workspace_copy(&self) -> crate::workspace::WorkspaceResources {
-        self.workspace.clone()
-    }
-
-    /// Installs one finished analysis together with the includes it acquired.
-    ///
-    /// Returns the resources whose diagnostics the adoption changed. The list is
-    /// empty when the workspace moved on while the worker was running, because
-    /// the result no longer describes the state the editor is showing.
-    pub fn adopt_analyzed_workspace(
+    pub fn adopt_project_result(
         &mut self,
         job: &AnalysisJob,
-        analyzed: crate::workspace::AnalyzedRoot,
+        mut result: ProjectResult,
+        mut sources: ProjectSourceIndex,
     ) -> Vec<String> {
         if !self.analysis_job_is_current(job) {
             return Vec::new();
         }
         if job
-            .workspace
+            .project_context
             .as_ref()
-            .is_none_or(|input| !self.workspace.input_is_current(input))
+            .is_some_and(|input| !self.workspace.project_analysis_context_is_current(input))
         {
             return Vec::new();
         }
-        let Some(input) = job.workspace.as_ref() else {
+        self.record_project_result_dependencies(job, &result, &sources);
+        let Some(target) = result.targets.pop() else {
             return Vec::new();
         };
-        let Ok(Some(analysis)) =
-            self.workspace
-                .apply_analyzed_root(analyzed, input, &job.request.options)
-        else {
-            return Vec::new();
+        let format = *target.config.config.format();
+        let mut resource_versions = BTreeMap::new();
+        for resource in target.resources.iter().chain(result.resources.iter()) {
+            if let Some(source) = sources.get(&resource.source_id) {
+                if let Some(version) = source.version {
+                    resource_versions.insert(source.uri.clone(), version);
+                }
+                continue;
+            }
+            let Ok(uri) = lsp::Url::from_file_path(&resource.path) else {
+                continue;
+            };
+            let uri = uri.to_string();
+            let existing = sources.source_for_uri(&uri).cloned();
+            let text = match &resource.outcome {
+                ProjectResourceOutcome::Loaded { source } => Some(source.clone()),
+                ProjectResourceOutcome::LoadedOmitted { .. }
+                | ProjectResourceOutcome::Present
+                | ProjectResourceOutcome::Missing
+                | ProjectResourceOutcome::Failed(_) => {
+                    existing.as_ref().map(|value| value.text.clone())
+                }
+            };
+            let Some(text) = text else {
+                continue;
+            };
+            let version = existing
+                .as_ref()
+                .and_then(|value| value.version)
+                .or_else(|| sources.version_for_uri(&uri));
+            if let Some(version) = version {
+                resource_versions.insert(uri.clone(), version);
+            }
+            sources.insert(
+                resource.source_id.clone(),
+                ProjectSourceState { uri, text, version },
+            );
+        }
+        let sources = Arc::new(sources);
+        let analysis = match target.analysis {
+            Ok(analysis) => analysis,
+            Err(error) => {
+                let _ = self.adopt_project_problem(job, target_problem(job, error));
+                return Vec::new();
+            }
         };
-        let published = analysis
-            .source_ids()
-            .into_iter()
-            .map(|source_id| source_id.to_string())
-            .collect();
-        if self.adopt_accepted_workspace(job, analysis) == Adoption::Adopted {
-            published
+        let (expanded, problem) = match analysis.expanded {
+            Ok(expanded) => (
+                Some(ExpandedDocumentAnalysis {
+                    document: Arc::new(expanded.preprocessed.document),
+                    analysis: Arc::new(expanded.preprocessed.analysis),
+                    projection: Arc::new(expanded.source_mapping),
+                    resource_versions,
+                    local_target_diagnostics: expanded.local_target_diagnostics,
+                    sources: sources.clone(),
+                }),
+                None,
+            ),
+            Err(error) => (
+                None,
+                Some(expansion_problem(
+                    job,
+                    sources.as_ref(),
+                    &target.resources,
+                    error,
+                )),
+            ),
+        };
+        let mut current_diagnostic_uris = std::collections::BTreeSet::from([job.uri.clone()]);
+        current_diagnostic_uris.extend(target.resources.iter().filter_map(|resource| {
+            matches!(
+                resource.kind,
+                ProjectResourceKind::Primary | ProjectResourceKind::Include
+            )
+            .then(|| sources.get(&resource.source_id))
+            .flatten()
+            .map(|source| source.uri.clone())
+        }));
+        if let Some(uri) = problem
+            .as_ref()
+            .and_then(|problem| problem.document_uri.as_ref())
+        {
+            current_diagnostic_uris.insert(uri.clone());
+        }
+        let mut diagnostic_uris_to_refresh = job.previously_published_diagnostic_uris.clone();
+        diagnostic_uris_to_refresh.extend(current_diagnostic_uris.iter().cloned());
+        if self.documents.adopt_project(
+            job,
+            ProjectAdoption {
+                primary: analysis.primary,
+                expanded,
+                format,
+                sources,
+                problem,
+                published_diagnostic_uris: current_diagnostic_uris,
+            },
+        ) == Adoption::Adopted
+        {
+            diagnostic_uris_to_refresh.into_iter().collect()
         } else {
             Vec::new()
         }
     }
 
-    /// Hands one already accepted workspace analysis to the document store.
-    fn adopt_accepted_workspace(
+    pub fn record_project_result_dependencies(
         &mut self,
         job: &AnalysisJob,
-        analysis: adocweave_workspace::WorkspaceAnalysis,
-    ) -> Adoption {
-        let resource_versions = analysis
-            .resource_revisions
-            .iter()
-            .map(|(id, revision)| (id.to_string(), revision.get()))
-            .collect();
-        self.documents.adopt_workspace(
-            job,
-            DocumentWorkspaceAnalysis {
-                document: analysis.document,
-                analysis: analysis.analysis,
-                projection: analysis.projection,
-                resource_versions,
-            },
-        )
+        result: &ProjectResult,
+        sources: &ProjectSourceIndex,
+    ) -> bool {
+        if !self.analysis_job_is_current(job)
+            || job
+                .project_context
+                .as_ref()
+                .is_none_or(|context| !self.workspace.project_analysis_context_is_current(context))
+        {
+            return false;
+        }
+        let Some(target) = result.targets.first() else {
+            return false;
+        };
+        let Ok(root_uri) = lsp::Url::parse(&job.uri) else {
+            return false;
+        };
+        let dependency_uri = |resource: &ProjectResourceResult| {
+            sources
+                .get(&resource.source_id)
+                .and_then(|source| lsp::Url::parse(&source.uri).ok())
+                .or_else(|| lsp::Url::from_file_path(&resource.path).ok())
+        };
+        let includes = target.resources.iter().filter_map(|resource| {
+            if resource.kind != ProjectResourceKind::Include
+                || !(matches!(
+                    resource.outcome,
+                    ProjectResourceOutcome::Loaded { .. }
+                        | ProjectResourceOutcome::LoadedOmitted { .. }
+                        | ProjectResourceOutcome::Missing
+                ) || matches!(resource.outcome, ProjectResourceOutcome::Failed(_))
+                    && resource.observation.is_some())
+            {
+                return None;
+            }
+            dependency_uri(resource)
+        });
+        let local_targets = target.resources.iter().filter_map(|resource| {
+            if resource.kind != ProjectResourceKind::LocalTarget
+                || !(matches!(
+                    resource.outcome,
+                    ProjectResourceOutcome::Present | ProjectResourceOutcome::Missing
+                ) || matches!(resource.outcome, ProjectResourceOutcome::Failed(_))
+                    && resource.observation.is_some())
+            {
+                return None;
+            }
+            dependency_uri(resource)
+        });
+        let _ = self
+            .workspace
+            .record_project_dependencies(&root_uri, includes, local_targets);
+        true
     }
 
-    /// Rebuilds a current document job when only its workspace input became
-    /// stale while another document loaded or changed a resource.
-    pub fn refresh_stale_workspace(&mut self, job: &AnalysisJob) -> Option<AnalysisJob> {
+    #[cfg(test)]
+    pub(crate) fn workspace_copy(&self) -> crate::workspace::WorkspaceResources {
+        self.workspace.clone()
+    }
+
+    /// Rebuilds a current job when its captured project context became stale
+    /// while the worker was running.
+    pub fn refresh_stale_project(&mut self, job: &AnalysisJob) -> Option<AnalysisJob> {
         if !self.analysis_job_is_current(job) {
             return None;
         }
-        let input = job.workspace.as_ref()?;
-        if self.workspace.input_is_current(input) {
+        let context = job.project_context.as_ref()?;
+        if self.workspace.project_analysis_context_is_current(context) {
             return None;
         }
-        let uri = job.uri.parse().ok()?;
-        let workspace = self.workspace.input(&uri);
-        let options = self.analysis_options_for(workspace.as_ref().ok());
+        self.rebuild_current_project_job(job)
+    }
+
+    pub fn retry_project_analysis(&mut self, job: &AnalysisJob) -> Option<AnalysisJob> {
+        if !self.analysis_job_is_current(job) {
+            return None;
+        }
+        self.rebuild_current_project_job(job)
+    }
+
+    fn rebuild_current_project_job(&mut self, job: &AnalysisJob) -> Option<AnalysisJob> {
+        let uri: lsp::Url = job.uri.parse().ok()?;
+        let context = self.workspace.project_analysis_context(&uri);
+        let options = self.analysis_options_for(context.as_ref().ok());
         let mut retry = self
             .documents
             .reconfigure(&job.uri, options, self.input_revision)?;
-        self.attach_workspace_input(&mut retry, workspace);
+        self.prepare_project_job(&mut retry, context);
         Some(retry)
     }
 
-    pub fn adopt_workspace_problem(
+    pub fn adopt_project_problem(
         &mut self,
         job: &AnalysisJob,
-        problem: WorkspaceProblem,
+        problem: ProjectProblem,
     ) -> Adoption {
         if !self.analysis_job_is_current(job) {
             return Adoption::Stale;
         }
-        if job.workspace_problem.is_none()
+        if job.project_problem.is_none()
             && job
-                .workspace
+                .project_context
                 .as_ref()
-                .is_none_or(|input| !self.workspace.input_is_current(input))
+                .is_none_or(|input| !self.workspace.project_analysis_context_is_current(input))
         {
             return Adoption::Stale;
         }
-        self.documents.adopt_workspace_problem(job, problem)
+        self.documents.adopt_project_problem(job, problem)
     }
 
-    pub fn close(&mut self, uri: &lsp::Url) -> (bool, Vec<AnalysisJob>) {
+    pub fn close(&mut self, uri: &lsp::Url) -> SessionCloseOutcome {
+        let diagnostic_uris = self.documents.published_diagnostic_uris(uri.as_str());
         let closed = self.documents.close(uri.as_str());
         if self.workspace_input_status == WorkspaceInputStatus::Rebuilding {
             if closed {
                 self.advance_input_revision();
             }
-            return (closed, Vec::new());
+            return SessionCloseOutcome {
+                closed,
+                reanalysis_jobs: Vec::new(),
+                diagnostic_uris,
+            };
         }
         let mut affected = self.workspace.close_open(uri).unwrap_or_else(|error| {
             self.set_workspace_error(error);
             std::collections::BTreeSet::new()
         });
-        match self.workspace.forget_include_dependencies(uri) {
+        match self.workspace.forget_project_dependencies(uri) {
             Ok(pruned) => affected.extend(pruned),
             Err(error) => self.set_workspace_error(error),
         }
@@ -1421,7 +1924,11 @@ impl Session {
         }
         let mut jobs = Vec::new();
         self.append_dependent_jobs(&affected, uri.as_str(), &mut jobs);
-        (closed, jobs)
+        SessionCloseOutcome {
+            closed,
+            reanalysis_jobs: jobs,
+            diagnostic_uris,
+        }
     }
 
     pub fn shutdown(&mut self) {
@@ -1441,8 +1948,12 @@ impl Session {
         let mut job = self
             .documents
             .begin_reanalysis(uri.as_str(), self.input_revision)?;
-        let workspace = self.workspace.input(uri);
-        self.attach_workspace_input(&mut job, workspace);
+        if reject_unsupported_uri(&mut job, uri) {
+            self.documents.reject_project_input(&job);
+            return Some(job);
+        }
+        let project_context = self.workspace.project_analysis_context(uri);
+        self.prepare_project_job(&mut job, project_context);
         Some(job)
     }
 
@@ -1478,13 +1989,23 @@ impl Session {
             .open_sources()
             .into_iter()
             .filter_map(|(uri, _, _)| {
-                let parsed = uri.parse().ok()?;
-                let workspace = self.workspace.input(&parsed);
-                let options = self.analysis_options_for(workspace.as_ref().ok());
+                let parsed: lsp::Url = uri.parse().ok()?;
+                if parsed.scheme() != "file" {
+                    let mut job = self.documents.reconfigure(
+                        &uri,
+                        self.analysis_options_for(None),
+                        self.input_revision,
+                    )?;
+                    reject_unsupported_uri(&mut job, &parsed);
+                    self.documents.reject_project_input(&job);
+                    return Some(job);
+                }
+                let project_context = self.workspace.project_analysis_context(&parsed);
+                let options = self.analysis_options_for(project_context.as_ref().ok());
                 let mut job = self
                     .documents
                     .reconfigure(&uri, options, self.input_revision)?;
-                self.attach_workspace_input(&mut job, workspace);
+                self.prepare_project_job(&mut job, project_context);
                 Some(job)
             })
             .collect())
@@ -1499,7 +2020,8 @@ impl Session {
         let document = self.documents.get(uri.as_str());
         let resource = self.workspace.get(uri);
         let source = document
-            .map(|document| document.request.source.as_ref())
+            .map(|document| document.document_input.source.as_ref())
+            .or_else(|| self.documents.adopted_source(uri.as_str()))
             .or_else(|| resource.map(|resource| resource.text().as_ref()));
         let Some(source) = source else {
             return Ok(lsp::PublishDiagnosticsParams::new(
@@ -1516,14 +2038,16 @@ impl Session {
         let version = self
             .client
             .diagnostic_version
-            .then(|| document.map(|document| revision_version_i32(&document.request.revision)))
+            .then(|| {
+                document.map(|document| revision_version_i32(&document.document_input.revision))
+            })
             .flatten();
         let mut diagnostics = document
             .and_then(|document| {
-                if document.workspace_input_problem().is_some() {
+                if document.project_input_problem().is_some() {
                     None
                 } else {
-                    document.view.as_ref().map(|view| view.root.as_ref())
+                    document.view.as_ref().map(|view| view.primary.as_ref())
                 }
             })
             .iter()
@@ -1543,7 +2067,7 @@ impl Session {
         if let Some(error) = &workspace_watch_error {
             diagnostics.push(crate::diagnostics::workspace_error(error));
         }
-        if let Some(problem) = document.and_then(|document| document.workspace_input_problem()) {
+        if let Some(problem) = document.and_then(|document| document.project_input_problem()) {
             diagnostics.push(crate::diagnostics::project_problem(
                 problem.range,
                 &problem.code,
@@ -1552,45 +2076,52 @@ impl Session {
                 self.position_encoding,
             )?);
         }
-        for workspace in self.documents.workspace_analyses() {
-            let current_version = workspace.resource_versions.get(uri.as_str()).copied();
-            let is_root = workspace
-                .analysis
-                .source_id()
-                .is_some_and(|source_id| source_id.as_str() == uri.as_str());
-            if is_root {
-                continue;
-            }
+        for expanded in self.documents.expanded_analyses() {
+            let current_version = expanded.resource_versions.get(uri.as_str()).copied();
+            let is_root = expanded.analysis.source_id().is_some_and(|source_id| {
+                expanded.uri_for_source_id(source_id) == Some(uri.as_str())
+            });
             if current_version
                 != document
-                    .map(|document| document.request.revision.version)
+                    .map(|document| document.document_input.revision.version)
                     .or_else(|| resource.map(|resource| resource.revision().get()))
             {
                 continue;
             }
-            // Reading the map here is intentional: the projection and its source map are one
-            // adopted snapshot and must never be mixed with a later workspace generation.
-            let _source_map = workspace.document.source_map();
-            for projected in &workspace.projection.diagnostics {
-                for origin in &projected.origins {
-                    if origin
-                        .source_id
-                        .as_ref()
-                        .is_none_or(|source_id| source_id.as_str() != uri.as_str())
-                    {
-                        continue;
+            if !is_root {
+                // Reading the map here is intentional: the diagnostics and source map belong to
+                // the same adopted result and must never be mixed with a later project input.
+                let _source_map = expanded.document.source_map();
+                for projected in &expanded.projection.diagnostics {
+                    for origin in &projected.origins {
+                        if origin.source_id.as_ref().is_none_or(|source_id| {
+                            expanded.uri_for_source_id(source_id) != Some(uri.as_str())
+                        }) {
+                            continue;
+                        }
+                        diagnostics.push(crate::diagnostics::projected_diagnostic(
+                            origin.range.text_range(),
+                            &projected.diagnostic,
+                            &source_document,
+                            self.position_encoding,
+                        )?);
                     }
-                    diagnostics.push(crate::diagnostics::projected_diagnostic(
-                        origin.range.text_range(),
-                        &projected.diagnostic,
-                        &source_document,
-                        self.position_encoding,
-                    )?);
                 }
             }
+            for local_target in &expanded.local_target_diagnostics {
+                if expanded.uri_for_source_id(&local_target.source_id) != Some(uri.as_str()) {
+                    continue;
+                }
+                diagnostics.push(crate::diagnostics::projected_diagnostic(
+                    local_target.diagnostic.range,
+                    &local_target.diagnostic,
+                    &source_document,
+                    self.position_encoding,
+                )?);
+            }
         }
-        for problem in self.documents.workspace_problems() {
-            if problem.source_id.as_deref() != Some(uri.as_str()) {
+        for problem in self.documents.project_problems() {
+            if problem.document_uri.as_deref() != Some(uri.as_str()) {
                 continue;
             }
             diagnostics.push(crate::diagnostics::project_problem(
@@ -1704,9 +2235,7 @@ impl Session {
             &document.analysis,
             uri,
             offset,
-            self.documents
-                .workspace_analyses()
-                .map(|workspace| workspace.projection.as_ref()),
+            self.documents.expanded_analyses(),
             self.position_encoding,
             self.client.hover,
         )
@@ -1723,10 +2252,10 @@ impl Session {
         let Some(document) = self.documents.snapshot(uri.as_str()) else {
             return Ok(Some(presentation::empty_completion()));
         };
-        let workspaces = self.documents.workspace_analyses().collect::<Vec<_>>();
+        let expanded_analyses = self.documents.expanded_analyses().collect::<Vec<_>>();
         let response = presentation::completion(
             &document.analysis,
-            &workspaces,
+            &expanded_analyses,
             uri,
             position,
             self.position_encoding,
@@ -1746,12 +2275,12 @@ impl Session {
             return Ok(None);
         };
         let snapshots = self.documents.snapshots();
-        let workspaces = self.documents.workspace_analyses().collect::<Vec<_>>();
+        let expanded_analyses = self.documents.expanded_analyses().collect::<Vec<_>>();
         let source_document = |source_uri: &lsp::Url| self.source_document(source_uri);
         let input = NavigationInput {
             document: &document,
             snapshots: &snapshots,
-            workspaces: &workspaces,
+            expanded_analyses: &expanded_analyses,
             encoding: self.position_encoding,
             source_document: &source_document,
         };
@@ -1783,12 +2312,12 @@ impl Session {
             return Ok(Some(Vec::new()));
         };
         let snapshots = self.documents.snapshots();
-        let workspaces = self.documents.workspace_analyses().collect::<Vec<_>>();
+        let expanded_analyses = self.documents.expanded_analyses().collect::<Vec<_>>();
         let source_document = |source_uri: &lsp::Url| self.source_document(source_uri);
         let input = NavigationInput {
             document: &document,
             snapshots: &snapshots,
-            workspaces: &workspaces,
+            expanded_analyses: &expanded_analyses,
             encoding: self.position_encoding,
             source_document: &source_document,
         };
@@ -1889,12 +2418,12 @@ impl Session {
             locations
         } else {
             let snapshots = self.documents.snapshots();
-            let workspaces = self.documents.workspace_analyses().collect::<Vec<_>>();
+            let expanded_analyses = self.documents.expanded_analyses().collect::<Vec<_>>();
             let source_document = |source_uri: &lsp::Url| self.source_document(source_uri);
             let input = NavigationInput {
                 document,
                 snapshots: &snapshots,
-                workspaces: &workspaces,
+                expanded_analyses: &expanded_analyses,
                 encoding: self.position_encoding,
                 source_document: &source_document,
             };
@@ -1918,12 +2447,12 @@ impl Session {
             return Ok(Some(Vec::new()));
         };
         let snapshots = self.documents.snapshots();
-        let workspaces = self.documents.workspace_analyses().collect::<Vec<_>>();
+        let expanded_analyses = self.documents.expanded_analyses().collect::<Vec<_>>();
         let source_document = |source_uri: &lsp::Url| self.source_document(source_uri);
         let input = NavigationInput {
             document: &document,
             snapshots: &snapshots,
-            workspaces: &workspaces,
+            expanded_analyses: &expanded_analyses,
             encoding: self.position_encoding,
             source_document: &source_document,
         };
@@ -1949,7 +2478,8 @@ impl Session {
         let source = self
             .documents
             .get(uri.as_str())
-            .map(|document| document.request.source.as_ref())
+            .map(|document| document.document_input.source.as_ref())
+            .or_else(|| self.documents.adopted_source(uri.as_str()))
             .or_else(|| {
                 self.workspace
                     .get(uri)

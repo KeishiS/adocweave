@@ -14,6 +14,12 @@ impl TestDirectory {
             "adocweave-lsp-filesystem-session-{}-{id}",
             std::process::id()
         ));
+        for extension in ["retained-reload", "before-authority"] {
+            let stale = path.with_extension(extension);
+            if stale.exists() {
+                std::fs::remove_dir_all(stale).expect("stale test workspace");
+            }
+        }
         std::fs::create_dir(&path).expect("workspace root");
         Self(path)
     }
@@ -32,8 +38,8 @@ impl Drop for TestDirectory {
 fn analyze_root(
     resources: &mut WorkspaceResources,
     root: &Url,
-) -> Result<(WorkspaceInput, AnalyzedRoot), String> {
-    let input = resources.input(root)?;
+) -> Result<(ProjectAnalysisContext, AnalyzedRoot), String> {
+    let input = resources.project_analysis_context(root)?;
     let job = IncludeFilesystemJob::new(document_analysis_job_limits())
         .map_err(|error| error.to_string())?;
     let analyzed = resources.analyze_root_detached(
@@ -83,19 +89,44 @@ fn a_project_file_is_read_once_per_directory_and_forgotten_when_it_changes() {
         .load_roots(std::slice::from_ref(&root_uri))
         .expect("load workspace");
 
-    let first = resources.input(&source_uri).expect("workspace input");
+    let first = resources
+        .project_analysis_context(&source_uri)
+        .expect("workspace input");
     assert_eq!(resources.config_cache.len(), 1);
 
     // Replacing the file on disk without reloading must not change the
     // answer: repeated keystrokes read the remembered configuration.
     write_resource_config(&root.0, 4, 2048, 2048, true);
-    let repeated = resources.input(&source_uri).expect("workspace input");
+    let repeated = resources
+        .project_analysis_context(&source_uri)
+        .expect("workspace input");
     assert_eq!(repeated.config_sha256, first.config_sha256);
 
     // A reload is what tells the server the project file may have changed.
     resources.load_roots(&[root_uri]).expect("reload workspace");
-    let reloaded = resources.input(&source_uri).expect("workspace input");
+    let reloaded = resources
+        .project_analysis_context(&source_uri)
+        .expect("workspace input");
     assert_ne!(reloaded.config_sha256, first.config_sha256);
+}
+
+#[test]
+fn document_without_a_workspace_folder_uses_its_parent_as_authority() {
+    let root = TestDirectory::new();
+    let document = root.0.join("guide.adoc");
+    let document_uri = Url::from_file_path(&document).expect("document URI");
+    let mut resources = WorkspaceResources::default();
+    resources
+        .upsert_open(document_uri.clone(), 1, "= Guide\n")
+        .expect("open document");
+
+    let input = resources
+        .project_analysis_context(&document_uri)
+        .expect("project context");
+    assert_eq!(input.project_root, root.0);
+    assert_eq!(input.authority_roots, vec![root.0.clone()]);
+    adocweave_project::ProjectAuthority::open(input.project_root, input.authority_roots)
+        .expect("the document parent is a valid project authority");
 }
 
 #[test]
@@ -137,13 +168,15 @@ fn filesystem_scan_ingests_logical_resources_before_snapshot_analysis() {
         "second\n"
     );
 
-    let input = resources.input(&first_uri).expect("workspace input");
+    let input = resources
+        .project_analysis_context(&first_uri)
+        .expect("workspace input");
     std::fs::remove_file(first).expect("remove first source after snapshot");
     std::fs::remove_file(second).expect("remove second source after snapshot");
     assert_eq!(
         input
-            .snapshot
-            .get(&input.root)
+            .resource_snapshot
+            .get(&input.primary_resource_id)
             .expect("snapshot resource")
             .text()
             .as_ref(),
@@ -1348,7 +1381,31 @@ fn single_file_root_registers_only_the_selected_document() {
         .expect("ignore unrelated resource");
     assert!(resources.get(&unrelated_uri).is_none());
 
-    assert!(resources.input(&selected_uri).is_ok());
+    assert!(resources.project_analysis_context(&selected_uri).is_ok());
+    resources
+        .record_project_dependencies(&selected_uri, [included_uri.clone()], [])
+        .expect("record include dependency");
+    resources
+        .upsert_open(included_uri.clone(), 1, "overlay include\n")
+        .expect("open known include");
+    resources
+        .reload_roots_with_open_sources(
+            std::slice::from_ref(&selected_uri),
+            &[(
+                included_uri.clone(),
+                1,
+                std::sync::Arc::from("overlay include\n"),
+            )],
+        )
+        .expect("reload single-file workspace with include overlay");
+    assert_eq!(
+        resources
+            .resource_text(&included_uri)
+            .expect("known include overlay")
+            .as_ref(),
+        "overlay include\n"
+    );
+    assert!(resources.get(&unrelated_uri).is_none());
 }
 
 #[test]
@@ -1575,10 +1632,12 @@ fn configless_multi_root_input_excludes_an_include_from_another_scope() {
         ])
         .expect("load roots");
 
-    let input = resources.input(&first_uri).expect("first input");
+    let input = resources
+        .project_analysis_context(&first_uri)
+        .expect("first input");
     assert!(input.options.enable_includes);
-    assert_eq!(input.snapshot.resources().count(), 1);
-    assert!(input.snapshot.get(&second_id).is_none());
+    assert_eq!(input.resource_snapshot.resources().count(), 1);
+    assert!(input.resource_snapshot.get(&second_id).is_none());
     let (_, analyzed) = analyze_root(&mut resources, &first_uri).expect("workspace analysis");
 
     // The include is refused by the root's authority, so the run answers
@@ -1618,10 +1677,12 @@ fn configured_multi_root_without_explicit_roots_excludes_another_workspace_root(
         ])
         .expect("load roots");
 
-    let input = resources.input(&first_uri).expect("first input");
+    let input = resources
+        .project_analysis_context(&first_uri)
+        .expect("first input");
     assert!(input.options.enable_includes);
-    assert_eq!(input.snapshot.resources().count(), 1);
-    assert!(input.snapshot.get(&second_id).is_none());
+    assert_eq!(input.resource_snapshot.resources().count(), 1);
+    assert!(input.resource_snapshot.get(&second_id).is_none());
 }
 
 #[test]
@@ -2100,7 +2161,7 @@ fn invalid_configuration_clears_state_and_rejects_new_input() {
 
     assert!(resources.last_load_failed_closed());
     assert!(resources.get(&document_uri).is_none());
-    assert!(resources.input(&document_uri).is_err());
+    assert!(resources.project_analysis_context(&document_uri).is_err());
 }
 
 #[test]
@@ -2208,7 +2269,7 @@ fn analysis_snapshot_uses_the_root_documents_nearest_plan() {
     resources.load_roots(&[root_uri]).expect("load workspace");
 
     let error = resources
-        .input(&document_uri)
+        .project_analysis_context(&document_uri)
         .expect_err("root snapshot count limit");
 
     assert!(error.contains("analysis snapshot"), "{error}");
@@ -2246,7 +2307,7 @@ fn shared_scope_fixture_has_the_same_root_and_include_count_contract() {
             })
     );
     let error = resources
-        .input(&document_uri)
+        .project_analysis_context(&document_uri)
         .expect_err("the skipped document is not an analysis root");
     assert!(error.contains("missing"), "{error}");
     // That the root and its include share one count is fixed by the
@@ -2273,9 +2334,9 @@ fn analysis_snapshot_does_not_charge_resources_outside_configured_roots() {
     resources.load_roots(&[root_uri]).expect("load workspace");
 
     let input = resources
-        .input(&document_uri)
+        .project_analysis_context(&document_uri)
         .expect("outside resource is not charged");
-    assert_eq!(input.snapshot.resources().count(), 1);
+    assert_eq!(input.resource_snapshot.resources().count(), 1);
 }
 
 #[test]
@@ -2322,7 +2383,7 @@ fn analysis_snapshot_applies_root_single_resource_limit_to_nested_projects() {
     resources.load_roots(&[root_uri]).expect("load workspace");
 
     let error = resources
-        .input(&document_uri)
+        .project_analysis_context(&document_uri)
         .expect_err("root single-resource snapshot limit");
     assert!(error.contains("analysis snapshot"), "{error}");
 }
@@ -2343,7 +2404,7 @@ fn analysis_snapshot_checked_addition_applies_root_total_limit() {
     resources.load_roots(&[root_uri]).expect("load workspace");
 
     let error = resources
-        .input(&document_uri)
+        .project_analysis_context(&document_uri)
         .expect_err("root total snapshot limit");
     assert!(error.contains("analysis snapshot"), "{error}");
 }

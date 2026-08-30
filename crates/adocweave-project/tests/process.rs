@@ -144,9 +144,10 @@ stylesheet-files = ["styles/manual.css"]
         .map(|resource| {
             (
                 resource
-                    .requested_by
+                    .requested_at
                     .as_ref()
                     .expect("include requester")
+                    .source_id
                     .as_str(),
                 resource.source_id.as_str(),
             )
@@ -357,6 +358,27 @@ fn processing_iteration_limit_returns_incomplete_target() {
 }
 
 #[test]
+fn fixed_configuration_is_used_without_reading_a_project_file() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    write(
+        directory.path().join(adocweave_config::FILE_NAME),
+        "schema-version = 999\n",
+    );
+    write(directory.path().join("guide.adoc"), "= Guide\n");
+    let mut request = request(
+        directory.path(),
+        vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
+    );
+    request.config =
+        ConfigSelection::Resolved(Arc::new(adocweave_config::ResolvedProjectConfig::default()));
+
+    let result = process(request).expect("fixed configuration avoids filesystem discovery");
+    assert!(result.resources.is_empty());
+    assert_eq!(result.targets[0].config.path, None);
+    assert!(result.targets[0].analysis.is_ok());
+}
+
+#[test]
 fn missing_include_keeps_the_primary_analysis() {
     let directory = tempfile::tempdir().expect("temporary directory");
     write(
@@ -433,12 +455,73 @@ fn include_outside_configured_roots_keeps_the_primary_analysis() {
     assert!(target.write.is_none());
     assert!(target.resources.iter().any(|resource| {
         resource.kind == ProjectResourceKind::Include
+            && resource.requested_at.as_ref().is_some_and(|location| {
+                location.source_id == target.source_id && location.range.is_some()
+            })
             && matches!(
                 resource.outcome,
                 ProjectResourceOutcome::Failed(ProjectResourceFailure::Rejected(ref error))
                     if error.code == ProjectResourceErrorCode::OutsideAuthority
             )
     }));
+}
+
+#[test]
+fn nested_include_outside_authority_keeps_its_request_location() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let project = directory.path().join("project");
+    fs::create_dir(&project).expect("project directory");
+    write(project.join("guide.adoc"), "include::chapter.adoc[]\n");
+    write(
+        project.join("chapter.adoc"),
+        "= Chapter\n\ninclude::../outside.adoc[]\n",
+    );
+    write(directory.path().join("outside.adoc"), "outside\n");
+    let mut request = request(
+        &project,
+        vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
+    );
+    request.config = ConfigSelection::Disabled;
+    request.overrides.include = Some(true);
+
+    let result = process(request).expect("rejected include remains target-local");
+    let target = &result.targets[0];
+    let chapter = target
+        .resources
+        .iter()
+        .find(|resource| {
+            resource.kind == ProjectResourceKind::Include && resource.path.ends_with("chapter.adoc")
+        })
+        .expect("chapter resource");
+    let rejected = target
+        .resources
+        .iter()
+        .find(|resource| {
+            resource.kind == ProjectResourceKind::Include
+                && matches!(
+                    resource.outcome,
+                    ProjectResourceOutcome::Failed(ProjectResourceFailure::Rejected(ref error))
+                        if error.code == ProjectResourceErrorCode::OutsideAuthority
+                )
+        })
+        .expect("rejected nested include resource");
+    assert_eq!(
+        rejected
+            .requested_at
+            .as_ref()
+            .map(|location| &location.source_id),
+        Some(&chapter.source_id)
+    );
+    assert_eq!(
+        rejected
+            .requested_at
+            .as_ref()
+            .and_then(|location| location.range)
+            .expect("include request range")
+            .start()
+            .to_usize(),
+        11
+    );
 }
 
 #[cfg(unix)]

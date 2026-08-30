@@ -10,6 +10,19 @@ pub(super) fn uri(value: &str) -> lsp::Url {
     value.parse().expect("valid URI")
 }
 
+pub(super) fn analyze_document_input(
+    job: &AnalysisJob,
+    cancellation: &dyn adocweave::CancellationCheck,
+) -> adocweave::AnalysisResult {
+    adocweave::AnalysisRequest {
+        revision: job.document_input.revision.clone(),
+        source: job.document_input.source.clone(),
+        options: job.document_input.options.clone(),
+    }
+    .analyze(cancellation)
+    .expect("document analysis")
+}
+
 /// Runs the lifecycle a client performs: `initialize`, then `initialized`.
 ///
 /// The walk runs on a worker in the server and returns through an event. Here
@@ -146,55 +159,22 @@ pub(super) fn change(
 }
 
 /// Runs one job the way the event loop and its worker do, then adopts it.
-pub(super) fn adopt(service: &mut Session, job: AnalysisJob) {
-    let analysis = job
-        .request
-        .analyze(job.cancellation.as_ref())
-        .expect("analysis");
-    assert_eq!(service.adopt(&job, analysis), Adoption::Adopted);
-    if let Some(problem) = &job.workspace_problem {
+pub(super) fn adopt(service: &mut Session, mut job: AnalysisJob) {
+    if let Some(problem) = &job.project_problem {
         assert_eq!(
-            service.adopt_workspace_problem(&job, problem.clone()),
+            service.adopt_project_problem(&job, problem.clone()),
             Adoption::Adopted
         );
         return;
     }
-    let Some(input) = &job.workspace else {
-        return;
-    };
-    let workspace = service.workspace_copy();
-    match crate::backend::analyze_workspace_root(&workspace, &job, input) {
-        Ok(analyzed) => {
-            let failure = analyzed.failure();
-            service.adopt_analyzed_workspace(&job, analyzed);
-            if let Some(failure) = failure {
-                assert_eq!(
-                    service.adopt_workspace_problem(
-                        &job,
-                        WorkspaceProblem {
-                            source_id: failure.source_id,
-                            range: failure.range.unwrap_or_else(|| {
-                                adocweave::text::TextRange::new(
-                                    adocweave::text::TextSize::ZERO,
-                                    adocweave::text::TextSize::ZERO,
-                                )
-                                .expect("zero range")
-                            }),
-                            code: failure.code,
-                            message: failure.message,
-                        }
-                    ),
-                    Adoption::Adopted
-                );
-            }
-        }
-        Err(problem) => {
-            assert_eq!(
-                service.adopt_workspace_problem(&job, problem),
-                Adoption::Adopted
-            );
-        }
-    }
+    let project = job.prepared_request.take().expect("project request");
+    let result = adocweave_project::process(project.request, job.cancellation.as_ref())
+        .expect("project analysis");
+    assert!(
+        !service
+            .adopt_project_result(&job, result, project.source_index)
+            .is_empty()
+    );
 }
 
 pub(super) fn apply_edits(source: &str, edits: &[lsp::TextEdit]) -> String {

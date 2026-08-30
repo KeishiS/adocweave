@@ -329,6 +329,8 @@ pub enum ConfigSelection {
     Discover,
     /// Uses one explicitly selected project file.
     Explicit(PathBuf),
+    /// Uses one caller-provided effective configuration without filesystem discovery.
+    Resolved(Arc<ResolvedProjectConfig>),
     /// Uses built-in defaults without loading a project file.
     Disabled,
 }
@@ -547,6 +549,14 @@ pub enum ProjectResourceKind {
     LocalTarget,
 }
 
+/// Source location which requested one project resource.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct ProjectSourceLocation {
+    pub source_id: SourceId,
+    /// Source range of the request when the resource came from authored text.
+    pub range: Option<adocweave::text::TextRange>,
+}
+
 /// One fixed filesystem observation made during a request.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProjectResourceResult {
@@ -556,8 +566,8 @@ pub struct ProjectResourceResult {
     pub requested_path: PathBuf,
     pub kind: ProjectResourceKind,
     pub origin: ProjectResourceOrigin,
-    /// Source which requested this resource, including each include edge.
-    pub requested_by: Option<SourceId>,
+    /// Source location which requested this resource, including each include edge.
+    pub requested_at: Option<ProjectSourceLocation>,
     /// Safely repeatable observation made during this request.
     ///
     /// The path, observation method and acquired state are kept together so a

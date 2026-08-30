@@ -169,7 +169,7 @@ fn close_clears_diagnostics() {
     let mut service = Session::default();
     let document_uri = uri("file:///a.adoc");
     open(&mut service, document_uri.as_str(), 1, "bad ");
-    assert!(service.close(&document_uri).0);
+    assert!(service.close(&document_uri).closed);
     let diagnostics = service.diagnostics(&document_uri).expect("clear");
     assert!(diagnostics.diagnostics.is_empty());
     assert_eq!(diagnostics.version, None);
