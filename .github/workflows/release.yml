@@ -87,8 +87,8 @@ jobs:
           name: artifacts-plan-dist-manifest
           path: plan-dist-manifest.json
 
-  custom-release-contract:
-    uses: ./.github/workflows/release-contract.yml
+  custom-native-release-checks:
+    uses: ./.github/workflows/native-release-checks.yml
     secrets: inherit
 
   # Build and packages all the platform-specific things
@@ -97,7 +97,7 @@ jobs:
     # Let the initial task tell us to not run (currently very blunt)
     needs:
       - plan
-      - custom-release-contract
+      - custom-native-release-checks
     if: ${{ fromJson(needs.plan.outputs.val).ci.github.artifacts_matrix.include != null && (needs.plan.outputs.publishing == 'true' || fromJson(needs.plan.outputs.val).ci.github.pr_run_mode == 'upload') }}
     strategy:
       fail-fast: false
@@ -228,16 +228,16 @@ jobs:
     with:
       plan: ${{ needs.plan.outputs.val }}
     secrets: inherit
-  # Determines if we should publish/announce
+  # Publishes the verified native artifacts.
   host:
     needs:
       - plan
-      - custom-release-contract
+      - custom-native-release-checks
       - build-local-artifacts
       - build-global-artifacts
       - custom-native-artifact-smoke
     # Publish only after every build and smoke-test prerequisite succeeds.
-    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.publishing == 'true' && needs.custom-release-contract.result == 'success' && needs.build-global-artifacts.result == 'success' && needs.custom-native-artifact-smoke.result == 'success' && needs.build-local-artifacts.result == 'success' }}
+    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.publishing == 'true' && needs.custom-native-release-checks.result == 'success' && needs.build-global-artifacts.result == 'success' && needs.custom-native-artifact-smoke.result == 'success' && needs.build-local-artifacts.result == 'success' }}
     environment: github-release
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -307,31 +307,14 @@ jobs:
 
           gh release create "${{ needs.plan.outputs.tag }}" --target "$RELEASE_COMMIT" $PRERELEASE_FLAG --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
 
-  publish-binary-cache:
+  publish-cachix:
     needs:
       - plan
       - host
     if: ${{ always() && needs.host.result == 'success' }}
-    uses: ./.github/workflows/binary-cache-publish.yml
+    uses: ./.github/workflows/cachix-publish.yml
     with:
       tag: ${{ needs.plan.outputs.tag }}
       commit: ${{ github.sha }}
     permissions:
       "contents": "read"
-
-  announce:
-    needs:
-      - plan
-      - host
-      - publish-binary-cache
-    # A stable Release run is successful only after every external publication succeeds.
-    # Standard "Re-run failed jobs" retries only failed idempotent publication calls.
-    if: ${{ always() && needs.host.result == 'success' && needs.publish-binary-cache.result == 'success' }}
-    runs-on: "ubuntu-24.04"
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          persist-credentials: false
-          submodules: recursive

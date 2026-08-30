@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import process from "node:process";
 
-import { validateDistPlan } from "./release-contract.mjs";
+import { validateDistPlan } from "./native-release-checks.mjs";
 
 const [path, tag] = process.argv.slice(2);
 if (!path || !tag || process.argv.length !== 4) {
