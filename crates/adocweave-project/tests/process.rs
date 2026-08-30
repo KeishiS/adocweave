@@ -2,8 +2,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use adocweave::NeverCancel;
-use adocweave::preprocess::PreprocessErrorKind;
+use adocweave_core::NeverCancel;
+use adocweave_core::preprocess::PreprocessErrorKind;
 use adocweave_project::{
     ProjectAuthority, ProjectConfigOverrides, ProjectConfigSelection, ProjectError,
     ProjectExpansionError, ProjectLimit, ProjectLimits, ProjectRequest, ProjectResourceErrorCode,

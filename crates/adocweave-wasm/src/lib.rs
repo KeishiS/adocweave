@@ -1,10 +1,10 @@
 //! Allocation-owning WebAssembly boundary over the deterministic core.
 
-use adocweave::preprocess::{
+use adocweave_core::preprocess::{
     PreprocessErrorKind, PreprocessInputs, PreprocessedAnalysisError, ProjectionFailure,
     ProjectionLimits,
 };
-use adocweave::{CancellationCheck, NeverCancel, ParseError};
+use adocweave_core::{CancellationCheck, NeverCancel, ParseError};
 
 mod canonical;
 #[cfg(target_arch = "wasm32")]
@@ -88,7 +88,7 @@ fn execute_request(
     let render_inputs =
         render_input_conversion::convert(request.render_inputs, &analysis.analysis)?;
     let html = requested.html.as_ref().map(|_| {
-        adocweave::output::html::render_with_inputs(
+        adocweave_core::output::html::render_with_inputs(
             analysis.analysis.document(),
             &request.render_policy,
             &render_inputs,
@@ -116,7 +116,7 @@ fn execute_request(
             .map(|_| analysis.analysis.diagnostics().to_vec()),
         symbols: requested
             .symbols
-            .map(|()| adocweave::semantic::document_symbols(analysis.analysis.document())),
+            .map(|()| adocweave_core::semantic::document_symbols(analysis.analysis.document())),
         document: requested
             .document
             .map(|()| wasm_document_projection(&analysis.analysis, &render_inputs)),

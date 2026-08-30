@@ -4,10 +4,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 #[cfg(test)]
-use adocweave::AnalysisResult;
-use adocweave::preprocess::{AnalysisProjection, PreprocessedDocument};
-use adocweave::text::TextRange;
-use adocweave::{
+use adocweave_core::AnalysisResult;
+use adocweave_core::preprocess::{AnalysisProjection, PreprocessedDocument};
+use adocweave_core::text::TextRange;
+use adocweave_core::{
     Analysis, AnalysisOptions, CancellationCheck, CancellationToken, DocumentRevision, SourceId,
 };
 use adocweave_project::{ProjectLocalTargetDiagnostic, ProjectObservationAccess, ProjectRequest};
@@ -90,14 +90,14 @@ pub struct DocumentState {
 pub struct DocumentView {
     pub primary: Arc<Analysis>,
     pub expanded: Option<Arc<ExpandedDocumentAnalysis>>,
-    pub format: adocweave::output::formatter::FormatConfig,
+    pub format: adocweave_core::output::formatter::FormatConfig,
     pub sources: Arc<ProjectSourceIndex>,
 }
 
 pub struct AdoptedAnalysis {
     pub primary: Option<Analysis>,
     pub expanded: Option<ExpandedDocumentAnalysis>,
-    pub format: adocweave::output::formatter::FormatConfig,
+    pub format: adocweave_core::output::formatter::FormatConfig,
     pub sources: Arc<ProjectSourceIndex>,
     pub problem: Option<ProjectProblem>,
     pub published_diagnostic_uris: BTreeSet<String>,
@@ -149,7 +149,7 @@ pub struct DocumentSnapshot {
     pub uri: String,
     pub revision: DocumentRevision,
     pub analysis: Arc<Analysis>,
-    pub format: adocweave::output::formatter::FormatConfig,
+    pub format: adocweave_core::output::formatter::FormatConfig,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -365,7 +365,7 @@ impl DocumentStore {
         self.adopt_with_format(
             snapshot,
             result,
-            adocweave::output::formatter::FormatConfig::default(),
+            adocweave_core::output::formatter::FormatConfig::default(),
         )
     }
 
@@ -374,7 +374,7 @@ impl DocumentStore {
         &mut self,
         snapshot: &ProjectAnalysisSnapshot,
         result: AnalysisResult,
-        format: adocweave::output::formatter::FormatConfig,
+        format: adocweave_core::output::formatter::FormatConfig,
     ) -> Adoption {
         let Some(document) = self.documents.get(&snapshot.uri) else {
             return Adoption::Closed;
@@ -488,12 +488,12 @@ impl DocumentStore {
 
 #[cfg(test)]
 mod tests {
-    use adocweave::{CancellationCheck, NeverCancel};
+    use adocweave_core::{CancellationCheck, NeverCancel};
 
     use super::{Adoption, DocumentStore, ProjectAnalysisSnapshot};
 
-    fn analyze(snapshot: &ProjectAnalysisSnapshot) -> adocweave::AnalysisResult {
-        adocweave::AnalysisRequest {
+    fn analyze(snapshot: &ProjectAnalysisSnapshot) -> adocweave_core::AnalysisResult {
+        adocweave_core::AnalysisRequest {
             revision: snapshot.document_input.revision.clone(),
             source: snapshot.document_input.source.clone(),
             options: snapshot.document_input.options.clone(),

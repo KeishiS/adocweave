@@ -8,11 +8,11 @@ use std::error::Error;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use adocweave::output::diagnostics::{LintConfig, RuleSettings, Severity, lint_rule};
-use adocweave::output::formatter::{FormatConfig, NewlineStyle};
-use adocweave::output::html::{HtmlDocumentMode, RenderPolicy};
-use adocweave::preprocess::PreprocessOptions;
-use adocweave::{AnalysisOptions, SyntaxMode};
+use adocweave_core::output::diagnostics::{LintConfig, RuleSettings, Severity, lint_rule};
+use adocweave_core::output::formatter::{FormatConfig, NewlineStyle};
+use adocweave_core::output::html::{HtmlDocumentMode, RenderPolicy};
+use adocweave_core::preprocess::PreprocessOptions;
+use adocweave_core::{AnalysisOptions, SyntaxMode};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -602,7 +602,7 @@ impl HtmlWire {
         };
         policy.stylesheets.sources.clear();
         for (index, role) in self.roles.iter().enumerate() {
-            if !adocweave::output::html::is_role_name(role) {
+            if !adocweave_core::output::html::is_role_name(role) {
                 return Err(ConfigError::new(
                     ConfigErrorCode::InvalidRole,
                     "html.roles entries must use ASCII letters, digits, `-`, and `_`",
@@ -886,7 +886,7 @@ roles = ["definition", "theorem"]
 
     #[test]
     fn every_catalog_rule_is_accepted_by_project_configuration() {
-        for descriptor in adocweave::output::diagnostics::LINT_RULES {
+        for descriptor in adocweave_core::output::diagnostics::LINT_RULES {
             let source = format!(
                 "schema-version = 2\n[lint.rules.{}]\nenabled = false\nseverity = \"hint\"\n",
                 descriptor.id.as_str()

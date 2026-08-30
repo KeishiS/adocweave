@@ -27,7 +27,7 @@ targets = [
 hosting = "github"
 github-attestations = true
 github-attestations-phase = "host"
-packages = ["adocweave-cli"]
+packages = ["adocweave"]
 # Which actions to run on pull requests
 pr-run-mode = "plan"
 # Plan jobs to run in CI

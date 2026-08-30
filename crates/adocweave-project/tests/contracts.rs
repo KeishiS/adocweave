@@ -1,4 +1,4 @@
-use adocweave::{NeverCancel, SourceId};
+use adocweave_core::{NeverCancel, SourceId};
 use adocweave_project::{
     ProjectAuthority, ProjectConfigOverrides, ProjectConfigRequest, ProjectConfigSelection,
     ProjectError, ProjectLimit, ProjectLimits, ProjectRequest, ProjectResourceKind,
@@ -290,7 +290,7 @@ fn request_lint_overrides_apply_to_configuration_and_analysis() {
         "本文xref:target.adoc[参照先]\n",
     )
     .expect("document fixture");
-    let rule = adocweave::output::diagnostics::lint_rule("macro-boundary")
+    let rule = adocweave_core::output::diagnostics::lint_rule("macro-boundary")
         .expect("known opt-in rule")
         .id;
     let mut request = ProjectRequest {
@@ -1110,7 +1110,7 @@ struct CancelAfter {
     limit: usize,
 }
 
-impl adocweave::CancellationCheck for CancelAfter {
+impl adocweave_core::CancellationCheck for CancelAfter {
     fn is_cancelled(&self) -> bool {
         self.calls.fetch_add(1, Ordering::Relaxed) >= self.limit
     }

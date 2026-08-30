@@ -55,7 +55,7 @@ Pull RequestではVSIXを構築せず、source、manifestおよびtestを検査�
 +
 [source,console]
 ----
-cargo build -p adocweave-cli
+cargo build -p adocweave
 npm ci --ignore-scripts --prefix editors/vscode
 npm run build --prefix editors/vscode
 ----

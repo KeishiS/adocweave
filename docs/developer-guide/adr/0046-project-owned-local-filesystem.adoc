@@ -60,8 +60,8 @@ macOS、Windowsおよびその他のOSでは、操作中にパスが変更され
 == 帰結
 
 一回のプロジェクト処理における権限、取得結果、上限および使用量の正本が``adocweave-project``へまとまります。
-ネイティブ版のクレート構成は``adocweave``、``adocweave-project``、``adocweave-cli``、``adocweave-lsp``、
-``adocweave-wasm``および``adocweave-textlint``の6パッケージになります。
+Rustワークスペースは``adocweave-core``、``adocweave-project``、``adocweave``、``adocweave-lsp``、
+``adocweave-wasm``および``adocweave-textlint``の6つのcrateで構成します。
 
 Rust APIの利用者は``adocweave-host``と、そのセッション、変更候補、対応関係および処理単位のAPIを利用できません。
 ``ProjectRequest``と``ProjectAuthority``を使い、一回の処理に必要な権限と上限を明示します。

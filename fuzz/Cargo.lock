@@ -3,7 +3,7 @@
 version = 4
 
 [[package]]
-name = "adocweave"
+name = "adocweave-core"
 version = "0.56.0"
 dependencies = [
  "serde",
@@ -15,7 +15,7 @@ dependencies = [
 name = "adocweave-fuzz"
 version = "0.0.0"
 dependencies = [
- "adocweave",
+ "adocweave-core",
  "libfuzzer-sys",
 ]
 

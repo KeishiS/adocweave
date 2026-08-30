@@ -1,4 +1,4 @@
-use adocweave::{CancellationToken, NeverCancel};
+use adocweave_core::{CancellationToken, NeverCancel};
 use adocweave_wasm::{AdocWeaveError, AnalyzeRequest, analyze_json, analyze_request};
 use serde_json::{Value, json};
 

@@ -25,15 +25,15 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use adocweave::output::diagnostics::LintRuleId;
-use adocweave::output::formatter::FormatConfig;
-use adocweave::output::html::RenderPolicy;
-use adocweave::preprocess::PreprocessOptions;
-use adocweave::preprocess::{
+use adocweave_core::output::diagnostics::LintRuleId;
+use adocweave_core::output::formatter::FormatConfig;
+use adocweave_core::output::html::RenderPolicy;
+use adocweave_core::preprocess::PreprocessOptions;
+use adocweave_core::preprocess::{
     AnalysisProjection, PreprocessError, PreprocessedAnalysis, ProcessingOptionsError,
     ProjectionError,
 };
-use adocweave::{Analysis, AnalysisOptions, ParseError, SourceId};
+use adocweave_core::{Analysis, AnalysisOptions, ParseError, SourceId};
 use config::{ConfigError, ConfigErrorCode, LoadedProjectConfig};
 use filesystem::{FilesystemAuthority, FilesystemError, RootAuthority};
 
@@ -366,7 +366,7 @@ impl Default for ProjectLimits {
             },
             max_directory_entries: 100_000,
             max_processing_iterations: 100_000,
-            max_output_bytes: adocweave::OutputLimits::default().max_output_bytes,
+            max_output_bytes: adocweave_core::OutputLimits::default().max_output_bytes,
         }
     }
 }
@@ -503,7 +503,7 @@ pub struct ProjectExpandedAnalysis {
 /// One local-reference diagnostic ready for caller-specific presentation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProjectLocalTargetDiagnostic {
-    pub diagnostic: adocweave::output::diagnostics::Diagnostic,
+    pub diagnostic: adocweave_core::output::diagnostics::Diagnostic,
     pub source_id: SourceId,
     pub target: String,
 }
@@ -523,7 +523,7 @@ pub enum ProjectResourceKind {
 pub struct ProjectSourceLocation {
     pub source_id: SourceId,
     /// Source range of the request when the resource came from authored text.
-    pub range: Option<adocweave::text::TextRange>,
+    pub range: Option<adocweave_core::text::TextRange>,
 }
 
 /// One fixed filesystem observation made during a request.
@@ -885,7 +885,7 @@ pub enum ProjectParseError {
         limit: u32,
         actual: u64,
     },
-    Position(adocweave::text::PositionError),
+    Position(adocweave_core::text::PositionError),
     UnsupportedSyntax,
     InternalInvariant,
 }

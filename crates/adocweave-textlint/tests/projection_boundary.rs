@@ -1,5 +1,5 @@
-use adocweave::output::projection::{SearchTextKind, searchable_text};
-use adocweave::{AnalysisOptions, Engine};
+use adocweave_core::output::projection::{SearchTextKind, searchable_text};
+use adocweave_core::{AnalysisOptions, Engine};
 use adocweave_textlint::{TxtAstNode, Utf16Range};
 
 #[test]

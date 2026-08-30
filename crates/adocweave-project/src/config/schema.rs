@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use adocweave::output::diagnostics::{LINT_RULES, LintConfig};
+use adocweave_core::output::diagnostics::{LINT_RULES, LintConfig};
 use jsonschema::Draft;
 use schemars::generate::SchemaSettings;
 use serde_json::{Map, Value, json};

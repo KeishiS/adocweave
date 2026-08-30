@@ -13,8 +13,8 @@ fixtureは担当機能ごとに分類する。各機能ディレクトリには�
 `release/core.adoc`は機能横断のコアリリースfixtureである。期待HTMLを同じディレクトリへ
 置き、CLI、Lint、Formatterのテストで同じソースを使う。
 
-runtime横断fixtureのmanifestは、core crateが所有するruntime間の公開仕様として
-`../crates/adocweave/conformance/cases.json`に置きます。readerはこの固定pathを直接読み、
+runtime横断fixtureのmanifestは、``adocweave-core`` crateが所有するruntime間の公開仕様として
+`../crates/adocweave-core/conformance/cases.json`に置きます。readerはこの固定pathを直接読み、
 `sourceFile`と各`expected*File`をfixture rootである`fixtures/conformance/`を基準に解決します。
 readerのpathを再掲する台帳は置きません。
 

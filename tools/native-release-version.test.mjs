@@ -31,8 +31,8 @@ test("native版の更新後も四つの正本だけで整合性を検査でき�
   const [major, minor] = current.split(".").map(Number);
   const next = `${major}.${minor + 1}.0`;
   const packages = [
+    "adocweave-core",
     "adocweave",
-    "adocweave-cli",
     "adocweave-lsp",
     "adocweave-project",
     "adocweave-textlint",
@@ -50,7 +50,7 @@ test("native版の更新後も四つの正本だけで整合性を検査でき�
     `## [${current}]\n\n[${current}]: https://example.invalid/v${current}\n`,
   );
   writeFileSync(join(rootPath, "Cargo.lock"), lockfile(packages, current));
-  writeFileSync(join(rootPath, "fuzz/Cargo.lock"), lockfile(["adocweave"], current));
+  writeFileSync(join(rootPath, "fuzz/Cargo.lock"), lockfile(["adocweave-core"], current));
   const root = pathToFileURL(`${rootPath}/`);
   const calls = [];
   const result = updateNativeReleaseVersion(next, {

@@ -4,7 +4,7 @@ use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use adocweave::{CancellationCheck, CancellationToken};
+use adocweave_core::{CancellationCheck, CancellationToken};
 
 const CHECKPOINT_INTERVAL: usize = 256;
 

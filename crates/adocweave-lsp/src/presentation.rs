@@ -1,7 +1,7 @@
 //! Stateless completion presentation over selected document and expanded_analysis analyses.
 
-use adocweave::Analysis;
-use adocweave::semantic::{DocumentElement, document_element_at, source_language_candidates};
+use adocweave_core::Analysis;
+use adocweave_core::semantic::{DocumentElement, document_element_at, source_language_candidates};
 use async_lsp::lsp_types as lsp;
 
 use crate::position::{PositionEncoding, cursor_touches_range, request_offset};
@@ -27,9 +27,9 @@ pub(crate) fn completion(
                 })
             })
             .unwrap_or_else(|| {
-                analysis
-                    .attribute_environment()
-                    .values_at(adocweave::text::TextSize::new(offset as usize).expect("offset"))
+                analysis.attribute_environment().values_at(
+                    adocweave_core::text::TextSize::new(offset as usize).expect("offset"),
+                )
             });
         return Ok(items(values.into_iter().map(|(name, value)| {
             lsp::CompletionItem {
@@ -154,9 +154,9 @@ fn expanded_offset_for_origin(
     expanded: &ExpandedDocumentAnalysis,
     uri: &lsp::Url,
     offset: u32,
-) -> Option<adocweave::text::TextSize> {
+) -> Option<adocweave_core::text::TextSize> {
     expanded.document.source_map().iter().find_map(|segment| {
-        if segment.mapping != adocweave::preprocess::SourceMapping::Identity
+        if segment.mapping != adocweave_core::preprocess::SourceMapping::Identity
             || segment
                 .origin
                 .source_id
@@ -170,8 +170,10 @@ fn expanded_offset_for_origin(
             return None;
         }
         let relative = offset.checked_sub(origin.start().to_u32())?;
-        adocweave::text::TextSize::new(segment.output_range.start().to_usize() + relative as usize)
-            .ok()
+        adocweave_core::text::TextSize::new(
+            segment.output_range.start().to_usize() + relative as usize,
+        )
+        .ok()
     })
 }
 
@@ -204,7 +206,7 @@ fn attribute_completion_context(source: &str, offset: usize) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use adocweave::{Analysis, AnalysisOptions, AnalysisRequest, NeverCancel};
+    use adocweave_core::{Analysis, AnalysisOptions, AnalysisRequest, NeverCancel};
 
     use super::*;
 

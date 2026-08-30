@@ -1,7 +1,7 @@
 //! Stateless navigation conversion over selected document and expanded_analysis analyses.
 
-use adocweave::resolution::ReferenceKey;
-use adocweave::text::SourceDocument;
+use adocweave_core::resolution::ReferenceKey;
+use adocweave_core::text::SourceDocument;
 use async_lsp::lsp_types as lsp;
 
 use crate::cancellation::{QueryCancellation, QueryResult};
@@ -221,7 +221,7 @@ pub(crate) fn references(
                 .bindings()
                 .iter()
                 .find(|binding| range_contains_offset(binding.occurrence().name_range, offset))
-                .map(adocweave::semantic::AttributeBinding::id)
+                .map(adocweave_core::semantic::AttributeBinding::id)
         });
     if let Some(binding_id) = local_binding_id {
         let mut locations = Vec::new();
@@ -393,9 +393,9 @@ pub(crate) fn references(
 }
 
 fn reference_location_range(
-    reference: &adocweave::semantic::Reference,
+    reference: &adocweave_core::semantic::Reference,
     identity: &TargetIdentity,
-) -> adocweave::text::TextRange {
+) -> adocweave_core::text::TextRange {
     if identity.anchor.is_some() {
         reference
             .authored_anchor_range()
@@ -415,7 +415,7 @@ pub(crate) fn document_links(
     let mut links = Vec::new();
     for link in input.document.analysis.links() {
         cancellation.checkpoint()?;
-        if !adocweave::resolution::AuthoredUrlPolicy::default().allows(&link.target) {
+        if !adocweave_core::resolution::AuthoredUrlPolicy::default().allows(&link.target) {
             continue;
         }
         let Ok(target) = lsp::Url::parse(&link.target) else {
@@ -541,7 +541,7 @@ fn target_location(
 fn attribute_origin_location(
     input: &NavigationInput<'_>,
     expanded: &ExpandedDocumentAnalysis,
-    origin: &adocweave::preprocess::SourceOrigin,
+    origin: &adocweave_core::preprocess::SourceOrigin,
 ) -> Result<lsp::Location, String> {
     let source_id = origin
         .source_id
@@ -564,8 +564,8 @@ fn projected_attribute_reference_at<'a>(
     uri: &lsp::Url,
     offset: u32,
 ) -> Option<(
-    &'a adocweave::semantic::AttributeReference,
-    &'a adocweave::preprocess::SourceOrigin,
+    &'a adocweave_core::semantic::AttributeReference,
+    &'a adocweave_core::preprocess::SourceOrigin,
 )> {
     expanded
         .projection
@@ -588,7 +588,7 @@ fn projected_attribute_binding_at(
     expanded: &ExpandedDocumentAnalysis,
     uri: &lsp::Url,
     offset: u32,
-) -> Option<adocweave::semantic::AttributeBindingId> {
+) -> Option<adocweave_core::semantic::AttributeBindingId> {
     expanded
         .projection
         .attribute_bindings
@@ -652,7 +652,7 @@ fn sort_and_dedup_locations(locations: &mut Vec<lsp::Location>) {
 mod tests {
     use std::sync::Arc;
 
-    use adocweave::{AnalysisOptions, AnalysisRequest, NeverCancel, SourceId};
+    use adocweave_core::{AnalysisOptions, AnalysisRequest, NeverCancel, SourceId};
 
     use super::*;
 
@@ -669,7 +669,7 @@ mod tests {
             uri: uri.to_owned(),
             revision: result.revision,
             analysis: Arc::new(result.analysis),
-            format: adocweave::output::formatter::FormatConfig::default(),
+            format: adocweave_core::output::formatter::FormatConfig::default(),
         }
     }
 

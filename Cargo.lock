@@ -6,16 +6,7 @@ version = 4
 name = "adocweave"
 version = "0.56.0"
 dependencies = [
- "serde",
- "serde_json",
- "sha2",
-]
-
-[[package]]
-name = "adocweave-cli"
-version = "0.56.0"
-dependencies = [
- "adocweave",
+ "adocweave-core",
  "adocweave-lsp",
  "adocweave-project",
  "clap",
@@ -30,10 +21,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "adocweave-core"
+version = "0.56.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "adocweave-lsp"
 version = "0.56.0"
 dependencies = [
- "adocweave",
+ "adocweave-core",
  "adocweave-project",
  "async-lsp",
  "futures",
@@ -49,7 +49,7 @@ dependencies = [
 name = "adocweave-project"
 version = "0.56.0"
 dependencies = [
- "adocweave",
+ "adocweave-core",
  "glob",
  "jsonschema",
  "rustix",
@@ -65,7 +65,7 @@ dependencies = [
 name = "adocweave-textlint"
 version = "0.56.0"
 dependencies = [
- "adocweave",
+ "adocweave-core",
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
@@ -76,7 +76,7 @@ dependencies = [
 name = "adocweave-wasm"
 version = "0.56.0"
 dependencies = [
- "adocweave",
+ "adocweave-core",
  "js-sys",
  "serde",
  "serde-wasm-bindgen",

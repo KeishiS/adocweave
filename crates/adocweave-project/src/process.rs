@@ -3,12 +3,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::config::LoadedProjectConfig;
-use adocweave::preprocess::{
+use adocweave_core::preprocess::{
     EffectivePreprocessStep, EffectiveProcessingOptions, PreparedAnalysisError, PreprocessInputs,
     PreprocessedAnalysis, ProjectionFailure, ProjectionLimits, ResourceDocument, ResourceLookup,
     ResourceLookupResult,
 };
-use adocweave::{Analysis, AnalysisInputs, CancellationCheck, Engine, SourceId};
+use adocweave_core::{Analysis, AnalysisInputs, CancellationCheck, Engine, SourceId};
 
 use crate::filesystem::{FilesystemAuthority, FilesystemError, RootAuthority};
 use crate::selection::{
@@ -299,7 +299,7 @@ impl FixedResource {
         &self,
         kind: ProjectResourceKind,
         requested_by: Option<SourceId>,
-        request_range: Option<adocweave::text::TextRange>,
+        request_range: Option<adocweave_core::text::TextRange>,
     ) -> ProjectResourceResult {
         ProjectResourceResult {
             source_id: SourceId::new(self.source_id.as_str()),
@@ -1335,7 +1335,7 @@ impl<'request> Processor<'request> {
             let current = resolved.analysis.diagnostics.lint.rule(*rule);
             resolved.analysis.diagnostics.lint.set_rule(
                 *rule,
-                adocweave::output::diagnostics::RuleSettings {
+                adocweave_core::output::diagnostics::RuleSettings {
                     enabled: true,
                     ..current
                 },
@@ -1578,7 +1578,7 @@ impl<'request> Processor<'request> {
                             .expect("a resolved configuration creates its inspection budget")
                             .reserve(&include_id, authority.as_ref());
                     }
-                    let authored = adocweave::LocalTargetReference::from_include(
+                    let authored = adocweave_core::LocalTargetReference::from_include(
                         request.range(),
                         request.range(),
                         request.authored_target(),
@@ -1586,7 +1586,7 @@ impl<'request> Processor<'request> {
                     if self.resource_selection.local_targets
                         && config.local_targets.enabled
                         && authored.as_ref().is_some_and(|target| {
-                            target.syntax == adocweave::LocalTargetSyntax::Unverifiable
+                            target.syntax == adocweave_core::LocalTargetSyntax::Unverifiable
                         })
                     {
                         let authored = authored.expect("checked include target");
@@ -1747,7 +1747,7 @@ impl<'request> Processor<'request> {
             .iter()
             .flat_map(|diagnostic| &diagnostic.fixes)
             .filter(|fix| {
-                fix.applicability == adocweave::output::diagnostics::Applicability::Always
+                fix.applicability == adocweave_core::output::diagnostics::Applicability::Always
             })
             .flat_map(|fix| fix.edits().iter().cloned())
             .collect::<Vec<_>>();
@@ -1758,9 +1758,9 @@ impl<'request> Processor<'request> {
                 analysis,
             });
         }
-        let fix = adocweave::output::diagnostics::Fix::new(
+        let fix = adocweave_core::output::diagnostics::Fix::new(
             "apply safe fixes",
-            adocweave::output::diagnostics::Applicability::Always,
+            adocweave_core::output::diagnostics::Applicability::Always,
             edits,
         )
         .map_err(|error| ProjectTargetError::EditConflict(error.to_string()))?;
@@ -1788,7 +1788,7 @@ impl<'request> Processor<'request> {
         resources: &mut Vec<ProjectResourceResult>,
     ) {
         let source_limit =
-            usize::try_from(adocweave::output::html::StylesheetPolicy::default().max_sources)
+            usize::try_from(adocweave_core::output::html::StylesheetPolicy::default().max_sources)
                 .unwrap_or(usize::MAX);
         if config
             .html
@@ -1876,7 +1876,7 @@ impl<'request> Processor<'request> {
                 });
                 continue;
             };
-            let base_by_source = if target.value.kind == adocweave::LocalTargetKind::Include {
+            let base_by_source = if target.value.kind == adocweave_core::LocalTargetKind::Include {
                 include_bases
             } else {
                 bases
@@ -1975,7 +1975,7 @@ impl<'request> Processor<'request> {
                     continue;
                 }
             };
-            let result = if target.syntax == adocweave::LocalTargetSyntax::Unverifiable {
+            let result = if target.syntax == adocweave_core::LocalTargetSyntax::Unverifiable {
                 self.fix_failure(
                     source_id,
                     path,
@@ -2415,7 +2415,7 @@ impl<'request> Processor<'request> {
         &self,
         owner: &str,
         base: &Path,
-        kind: adocweave::LocalTargetKind,
+        kind: adocweave_core::LocalTargetKind,
         target: &str,
     ) -> Result<SourceId, FilesystemError> {
         self.source_id_for_value(&format!(
@@ -2427,7 +2427,7 @@ impl<'request> Processor<'request> {
     fn include_request_source_id(
         &self,
         owner: &SourceId,
-        range: adocweave::text::TextRange,
+        range: adocweave_core::text::TextRange,
     ) -> Result<SourceId, FilesystemError> {
         self.source_id_for_value(&format!(
             "include-request:{}:{}:{}",
@@ -2464,7 +2464,7 @@ fn derive_confined_authority(
 }
 
 fn local_target_diagnostics(
-    projection: &adocweave::preprocess::AnalysisProjection,
+    projection: &adocweave_core::preprocess::AnalysisProjection,
     preprocessed: &PreprocessedAnalysis,
     bases: &BTreeMap<String, PathBuf>,
     include_bases: &BTreeMap<String, PathBuf>,
@@ -2482,7 +2482,7 @@ fn local_target_diagnostics(
             else {
                 continue;
             };
-            let base_by_source = if target.value.kind == adocweave::LocalTargetKind::Include {
+            let base_by_source = if target.value.kind == adocweave_core::LocalTargetKind::Include {
                 include_bases
             } else {
                 bases
@@ -2507,9 +2507,9 @@ fn local_target_diagnostics(
                 continue;
             };
             let range = origin.range.text_range();
-            let optional = target.value.kind == adocweave::LocalTargetKind::Include
+            let optional = target.value.kind == adocweave_core::LocalTargetKind::Include
                 && projection.directives.iter().any(|directive| {
-                    directive.kind == adocweave::preprocess::DirectiveKind::Include
+                    directive.kind == adocweave_core::preprocess::DirectiveKind::Include
                         && directive.source_id.as_ref().map(SourceId::as_str) == Some(owner)
                         && directive.target_range == range
                         && directive.optional
@@ -2519,14 +2519,14 @@ fn local_target_diagnostics(
             }
             let code = error.diagnostic_code();
             diagnostics.push(crate::ProjectLocalTargetDiagnostic {
-                diagnostic: adocweave::output::diagnostics::Diagnostic {
-                    id: adocweave::output::diagnostics::DiagnosticId::new(format!(
+                diagnostic: adocweave_core::output::diagnostics::Diagnostic {
+                    id: adocweave_core::output::diagnostics::DiagnosticId::new(format!(
                         "{code}@{owner}:{}:{}",
                         range.start().to_u32(),
                         range.end().to_u32()
                     )),
-                    code: adocweave::output::diagnostics::DiagnosticCode::new(code),
-                    severity: adocweave::output::diagnostics::Severity::Error,
+                    code: adocweave_core::output::diagnostics::DiagnosticCode::new(code),
+                    severity: adocweave_core::output::diagnostics::Severity::Error,
                     range,
                     message: local_target_message(&error).to_owned(),
                     related: Vec::new(),
@@ -2538,7 +2538,7 @@ fn local_target_diagnostics(
         }
     }
     for directive in &projection.directives {
-        if directive.kind != adocweave::preprocess::DirectiveKind::Include {
+        if directive.kind != adocweave_core::preprocess::DirectiveKind::Include {
             continue;
         }
         let Some(target) = directive.local_target() else {
@@ -2577,14 +2577,14 @@ fn local_target_diagnostics(
         }
         let code = error.diagnostic_code();
         diagnostics.push(crate::ProjectLocalTargetDiagnostic {
-            diagnostic: adocweave::output::diagnostics::Diagnostic {
-                id: adocweave::output::diagnostics::DiagnosticId::new(format!(
+            diagnostic: adocweave_core::output::diagnostics::Diagnostic {
+                id: adocweave_core::output::diagnostics::DiagnosticId::new(format!(
                     "{code}@{owner}:{}:{}",
                     range.start().to_u32(),
                     range.end().to_u32()
                 )),
-                code: adocweave::output::diagnostics::DiagnosticCode::new(code),
-                severity: adocweave::output::diagnostics::Severity::Error,
+                code: adocweave_core::output::diagnostics::DiagnosticCode::new(code),
+                severity: adocweave_core::output::diagnostics::Severity::Error,
                 range,
                 message: local_target_message(&error).to_owned(),
                 related: Vec::new(),
@@ -3384,7 +3384,7 @@ fn map_prepared_error(error: PreparedAnalysisError) -> ExpandedAnalysisFailure {
                 "processing contract mismatch".to_owned(),
             )))
         }
-        PreparedAnalysisError::Parse(adocweave::ParseError::Cancelled)
+        PreparedAnalysisError::Parse(adocweave_core::ParseError::Cancelled)
         | PreparedAnalysisError::Cancelled => ExpandedAnalysisFailure::Cancelled,
         PreparedAnalysisError::Parse(error) => {
             ExpandedAnalysisFailure::Error(ProjectExpansionError::Parse(
@@ -3485,9 +3485,9 @@ mod tests {
     use std::sync::Arc;
 
     use crate::filesystem::{FilesystemAuthority, FilesystemError};
-    use adocweave::SourceId;
-    use adocweave::preprocess::{PreparedAnalysisError, ProjectionFailure};
-    use adocweave::{NeverCancel, ParseError};
+    use adocweave_core::SourceId;
+    use adocweave_core::preprocess::{PreparedAnalysisError, ProjectionFailure};
+    use adocweave_core::{NeverCancel, ParseError};
 
     use super::{
         ExpandedAnalysisFailure, FIXED_OBSERVER, FixedInspection, FixedResource,

@@ -5,8 +5,8 @@ import { fileURLToPath } from "node:url";
 const ROOT = new URL("../", import.meta.url);
 const STABLE_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const NATIVE_PACKAGES = [
+  "adocweave-core",
   "adocweave",
-  "adocweave-cli",
   "adocweave-lsp",
   "adocweave-project",
   "adocweave-textlint",
@@ -66,7 +66,7 @@ export function checkNativeReleaseVersion(root = ROOT) {
   validateCargoLock(
     readFileSync(new URL("fuzz/Cargo.lock", root), "utf8"),
     "fuzz/Cargo.lock",
-    ["adocweave"],
+    ["adocweave-core"],
     version,
   );
   return version;

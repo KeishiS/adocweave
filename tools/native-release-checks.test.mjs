@@ -19,7 +19,7 @@ test("repositoryは一つのworkspace版とtagを使う", () => {
   const version = workspaceVersion();
   assert.deepEqual(release, { tag: releaseTag(version), version });
   assert.deepEqual(validateReleaseTag(release.tag), release);
-  for (const tag of [version, `adocweave-cli/${release.tag}`, `adocweave-lsp/${release.tag}`, `${release.tag}-rc.1`]) {
+  for (const tag of [version, `adocweave-core/${release.tag}`, `adocweave-lsp/${release.tag}`, `${release.tag}-rc.1`]) {
     assert.throws(() => validateReleaseTag(tag), /exactly/);
   }
 });
@@ -41,7 +41,7 @@ test("native archiveはadocweaveだけを含む", () => {
 
 test("製品別または不完全なplanを拒否する", () => {
   assert.throws(
-    () => validateDistPlan({ ...plan, releases: [{ ...plan.releases[0], app_name: "adocweave-cli" }] }),
+    () => validateDistPlan({ ...plan, releases: [{ ...plan.releases[0], app_name: "adocweave-core" }] }),
     /native adocweave app/,
   );
   assert.throws(

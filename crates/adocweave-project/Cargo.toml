@@ -10,7 +10,7 @@ rust-version.workspace = true
 description = "Owned request and result contracts for one AdocWeave project run"
 
 [dependencies]
-adocweave = { path = "../adocweave" }
+adocweave-core = { path = "../adocweave-core" }
 glob = "0.3"
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.11"

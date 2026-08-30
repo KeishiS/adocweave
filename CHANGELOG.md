@@ -19,6 +19,7 @@
 - The unused `adocweave-workspace` crate is removed. One-shot project processing belongs to `adocweave-project`, while Language Server session state remains in `adocweave-lsp`.
 - CLI process exit codes now belong to the CLI. The Language Server reports protocol or runtime failures without depending directly on `adocweave-host`.
 - Local filesystem authority, bounded reads, inspection, explicit scans, and safe replacement now belong directly to `adocweave-project`. The separate `adocweave-host` crate and its session, draft, binding, job, and cache state machines are removed.
+- The environment-independent Rust library is renamed from `adocweave` to `adocweave-core`. The CLI package is renamed from `adocweave-cli` to `adocweave`; the installed executable remains `adocweave`.
 
 ### Rust API
 
@@ -30,7 +31,9 @@
 - `HostReferenceIndex`, `HostReferenceRequest`, `NoHostReferenceIndex`, and `run_with_host_index` are removed from `adocweave-lsp`.
 - `Workspace`, `WorkspaceSnapshot`, workspace analysis drafts, resource revisions, generations, dependency graphs, and retained-resource budgets from `adocweave-workspace` are removed without compatibility aliases.
 - `adocweave_host::ExitStatus` is removed. The CLI uses its private `CliExitCode`; `adocweave_lsp::StdioError::kind` returns `StdioErrorKind::Protocol` or `StdioErrorKind::Runtime`.
-- `ProjectObservationSession` is replaced by `ProjectObserver`, and `ProjectObservationAccess::session` is replaced by `observer`. Project source identifiers use `adocweave::SourceId`; the former `LogicalSourceId` and all `adocweave-host` APIs are removed without compatibility aliases.
+- `ProjectObservationSession` is replaced by `ProjectObserver`, and `ProjectObservationAccess::session` is replaced by `observer`. Project source identifiers use `adocweave_core::SourceId`; the former `LogicalSourceId` and all `adocweave-host` APIs are removed without compatibility aliases.
+- The `adocweave` library crate and its `adocweave::` Rust path are removed. Use the `adocweave-core` package and the `adocweave_core::` Rust path. No dependency alias or compatibility re-export is provided.
+- The former `adocweave-cli` package is removed. The `adocweave` package now owns the CLI and the `adocweave` executable.
 
 ### Migration
 
@@ -42,7 +45,8 @@
 - Move the `max_files`, `max_read_bytes`, and `max_resource_bytes` fields of `ProjectLimits` into `ProjectLimits::resources`, renaming `max_read_bytes` to `max_total_bytes`.
 - Replace `adocweave-workspace` usage with an owned `adocweave_project::ProjectRequest`. Language Server integrations should keep open-document revisions and adopted dependencies in their session instead of introducing a shared workspace state manager.
 - Replace `StdioError::exit_status` with `StdioError::kind` when embedding the Language Server. Process exit-code policy belongs to the embedding executable.
-- Replace `ProjectObservationSession` with `ProjectObserver` and call `ProjectObservationAccess::observer`. Replace `LogicalSourceId` with `adocweave::SourceId`. Remove direct `adocweave-host` dependencies; local filesystem access is performed as part of `ProjectRequest` processing.
+- Replace `ProjectObservationSession` with `ProjectObserver` and call `ProjectObservationAccess::observer`. Replace `LogicalSourceId` with `adocweave_core::SourceId`. Remove direct `adocweave-host` dependencies; local filesystem access is performed as part of `ProjectRequest` processing.
+- Replace Rust dependencies on the `adocweave` package with `adocweave-core`, and replace every `adocweave::` import with `adocweave_core::`. The core source moves from `crates/adocweave` to `crates/adocweave-core`, while the CLI source moves from `crates/adocweave-cli` to `crates/adocweave`. Replace workspace commands such as `cargo build -p adocweave-cli` with `cargo build -p adocweave`; the executable name and `adocweave lsp` command do not change.
 
 ## [0.52.0] - 2026-08-30
 

@@ -1,7 +1,7 @@
 //! Node.js-only WebAssembly request, resource-limit, and binding boundary.
 
 use crate::{PlanError, PlanLimits, TxtAstPlan, plan};
-use adocweave::{AnalysisInputs, AnalysisOptions, Engine, SourceId};
+use adocweave_core::{AnalysisInputs, AnalysisOptions, Engine, SourceId};
 use serde::{Deserialize, Serialize};
 
 /// Maximum accepted AsciiDoc input size.

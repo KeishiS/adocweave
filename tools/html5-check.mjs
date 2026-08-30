@@ -20,7 +20,7 @@ const conformanceNative = resolve(
 const conformanceDirectory = resolve(root, "fixtures/conformance");
 const validator = process.env.ADOCWEAVE_HTML_VALIDATOR;
 const conformanceManifest = JSON.parse(
-  readFileSync(resolve(root, "crates/adocweave/conformance/cases.json"), "utf8"),
+  readFileSync(resolve(root, "crates/adocweave-core/conformance/cases.json"), "utf8"),
 );
 
 function fail(message) {

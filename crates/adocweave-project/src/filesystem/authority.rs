@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 
-use adocweave::CancellationCheck;
+use adocweave_core::CancellationCheck;
 
 use super::{FilesystemError, FilesystemRead, RootAuthority};
 
@@ -272,7 +272,7 @@ fn scan(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use adocweave::NeverCancel;
+    use adocweave_core::NeverCancel;
     use std::fs;
 
     #[cfg(target_os = "macos")]
