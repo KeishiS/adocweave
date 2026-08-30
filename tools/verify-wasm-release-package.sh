@@ -47,5 +47,14 @@ node --input-type=module -e '
   if (publicApi.PROTOCOL_SCHEMA_VERSION !== protocol.PROTOCOL_SCHEMA_VERSION) {
     throw new Error("WebAssembly archive protocol schema version mismatch");
   }
-' "$root/$package/worker/index.mjs" "$root/$package/worker/worker-protocol.mjs"
+  const direct = await import(process.argv[3]);
+  const result = await direct.analyze({
+    source: { text: "= Node candidate\\n" },
+    products: { html: true },
+  });
+  if (!result.html.includes("Node candidate")) {
+    throw new Error("WebAssembly archive direct entry did not return HTML");
+  }
+' "$root/$package/worker/index.mjs" "$root/$package/worker/worker-protocol.mjs" \
+  "$root/$package/worker/direct.mjs"
 echo "WebAssembly release package verified: $second"

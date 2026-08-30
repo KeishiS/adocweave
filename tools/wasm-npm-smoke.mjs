@@ -87,7 +87,10 @@ async function assertInstalledPackage(root, expected) {
     "--input-type=module",
     "-e",
     `const { analyze } = await import(${JSON.stringify(`${expected.name}/direct`)});
-     const result = await analyze({ source: "= 題名\\n" });
+     const result = await analyze({
+       source: { text: "= 題名\\n" },
+       products: { html: true },
+     });
      process.stdout.write(String(result.html));`
   ], root);
   assert.match(html, /題名/u, "ビルド時の入口が解析結果を返しません");
