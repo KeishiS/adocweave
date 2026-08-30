@@ -204,6 +204,51 @@ fn symlinked_project_root_uses_the_opened_canonical_identity() {
     );
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn authored_var_path_is_processed_through_its_canonical_project_authority() {
+    let directory = tempfile::Builder::new()
+        .prefix("adocweave-project-")
+        .tempdir_in("/var/tmp")
+        .expect("temporary project root");
+    let canonical = directory
+        .path()
+        .canonicalize()
+        .expect("canonical project root");
+    let authored = std::path::Path::new("/var").join(
+        canonical
+            .strip_prefix("/private/var")
+            .expect("macOS /var resolves below /private/var"),
+    );
+    fs::write(authored.join("guide.adoc"), "authored project\n").expect("project source");
+    let authority = ProjectAuthority::open(authored.clone(), [authored.clone()])
+        .expect("authored spelling establishes the canonical authority");
+
+    let result = process(
+        ProjectRequest {
+            targets: vec![
+                ProjectTarget::Path(authored.join("guide.adoc")),
+                ProjectTarget::Path(canonical.join("guide.adoc")),
+            ],
+            sources: Vec::new(),
+            config: ProjectConfigSelection::Disabled,
+            overrides: ProjectConfigOverrides::default(),
+            apply_safe_fixes: false,
+            resource_selection: Default::default(),
+            authority,
+            limits: ProjectLimits::default(),
+        },
+        &NeverCancel,
+    )
+    .expect("authored source path is processed");
+    assert_eq!(result.targets.len(), 1);
+    assert_eq!(
+        result.targets[0].source.as_deref(),
+        Some("authored project\n")
+    );
+    assert_eq!(result.targets[0].source_id.as_str(), "project:guide.adoc");
+}
+
 #[test]
 fn configuration_can_be_resolved_without_processing_a_target() {
     let directory = tempfile::tempdir().expect("temporary directory");

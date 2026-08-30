@@ -23,17 +23,22 @@ pub(crate) struct ScanResult {
 
 impl FilesystemAuthority {
     pub(crate) fn open(roots: impl IntoIterator<Item = PathBuf>) -> Result<Self, FilesystemError> {
-        let mut unique = BTreeMap::new();
+        let mut unique = BTreeMap::<PathBuf, RootAuthority>::new();
         for root in roots {
             if !root.is_absolute() {
                 return Err(FilesystemError::PathNotAbsolute(root));
             }
             let authority = RootAuthority::new(&root).map_err(|error| root_error(root, error))?;
             let root = authority.root().to_owned();
-            if !unique.contains_key(&root) && unique.len() >= MAX_ROOTS {
+            if let Some(_existing) = unique.get_mut(&root) {
+                #[cfg(not(target_os = "linux"))]
+                _existing.merge_authored_roots(&authority);
+                continue;
+            }
+            if unique.len() >= MAX_ROOTS {
                 return Err(FilesystemError::LimitExceeded { limit: MAX_ROOTS });
             }
-            unique.entry(root).or_insert(authority);
+            unique.insert(root, authority);
         }
         if unique.is_empty() {
             return Err(FilesystemError::Unverifiable(
@@ -56,14 +61,25 @@ impl FilesystemAuthority {
     pub(crate) fn authority_for_path(&self, path: &Path) -> Option<&RootAuthority> {
         self.authorities
             .iter()
-            .filter(|authority| path.starts_with(authority.root()))
-            .max_by_key(|authority| authority.root().components().count())
+            .filter_map(|authority| {
+                authority
+                    .matching_prefix_depth(path)
+                    .map(|depth| (depth, authority))
+            })
+            .max_by_key(|(depth, _)| *depth)
+            .map(|(_, authority)| authority)
+    }
+
+    pub(crate) fn normalize_path(&self, path: &Path) -> Result<PathBuf, FilesystemError> {
+        self.authority_for_path(path)
+            .ok_or_else(|| FilesystemError::OutsideRoot(path.to_owned()))?
+            .normalize_path(path)
     }
 
     pub(crate) fn authority_for_root(&self, root: &Path) -> Option<&RootAuthority> {
         self.authorities
             .iter()
-            .find(|authority| authority.root() == root)
+            .find(|authority| authority.represents_root(root))
     }
 
     pub(crate) fn select(
@@ -258,6 +274,33 @@ mod tests {
     use super::*;
     use adocweave::NeverCancel;
     use std::fs;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_most_specific_authored_root_selects_its_own_authority() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir_in("/var/tmp").expect("temporary directory");
+        let broad = directory.path().join("deep/a/b/broad");
+        let narrow = directory.path().join("narrow");
+        fs::create_dir_all(&broad).expect("broad root");
+        fs::create_dir(&narrow).expect("narrow root");
+        fs::write(narrow.join("guide.adoc"), "narrow\n").expect("narrow source");
+        let alias = directory.path().join("alias");
+        symlink(&broad, &alias).expect("broad alias");
+        symlink(&narrow, broad.join("nested")).expect("nested narrow alias");
+        let nested_alias = alias.join("nested");
+        let authority = FilesystemAuthority::open([alias, nested_alias.clone()])
+            .expect("overlapping authored roots");
+
+        let selected = authority
+            .authority_for_path(&nested_alias.join("guide.adoc"))
+            .expect("narrow authority");
+        assert_eq!(
+            selected.root(),
+            narrow.canonicalize().expect("canonical narrow root")
+        );
+    }
 
     #[test]
     fn authority_accepts_128_unique_roots_and_rejects_the_next() {

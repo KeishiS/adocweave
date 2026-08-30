@@ -32,7 +32,8 @@ pub(crate) fn normalize_authored_candidate(
 }
 #[cfg(not(target_os = "linux"))]
 use path::{
-    ensure_existing_ancestor_is_inside, reject_dangling_symlink_escape, reject_symlink_components,
+    ensure_existing_ancestor_is_inside, normalize_absolute, reject_dangling_symlink_escape,
+    reject_symlink_components,
 };
 
 /// How many times a confined open may be retried after a concurrent-change race.
@@ -98,6 +99,8 @@ pub struct RootAuthority {
     root: PathBuf,
     #[cfg(target_os = "linux")]
     root_handle: Arc<fs::File>,
+    #[cfg(not(target_os = "linux"))]
+    authored_roots: Vec<PathBuf>,
 }
 
 impl fmt::Debug for RootAuthority {
@@ -155,18 +158,100 @@ impl RootAuthority {
         }
         #[cfg(not(target_os = "linux"))]
         {
+            let authored_root = normalize_absolute(root);
             let canonical = root
                 .canonicalize()
                 .map_err(|source| classify_io(root.to_owned(), source))?;
             if !canonical.is_dir() {
                 return Err(FilesystemError::NotDirectory(canonical));
             }
-            Ok(Self { root: canonical })
+            Ok(Self {
+                root: canonical,
+                authored_roots: vec![authored_root],
+            })
         }
     }
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    pub(crate) fn contains_path(&self, path: &Path) -> bool {
+        self.normalize_path(path).is_ok()
+    }
+
+    pub(crate) fn matching_prefix_depth(&self, path: &Path) -> Option<usize> {
+        #[cfg(target_os = "linux")]
+        {
+            path.starts_with(&self.root)
+                .then(|| self.root.components().count())
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            self.normalize_authored_path(path).ok()?;
+            std::iter::once(&self.root)
+                .chain(self.authored_roots.iter())
+                .filter(|root| path.starts_with(root))
+                .map(|root| root.components().count())
+                .max()
+        }
+    }
+
+    pub(crate) fn normalize_path(&self, path: &Path) -> Result<PathBuf, FilesystemError> {
+        #[cfg(target_os = "linux")]
+        {
+            path.starts_with(&self.root)
+                .then(|| path.to_owned())
+                .ok_or_else(|| FilesystemError::OutsideRoot(path.to_owned()))
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            self.normalize_authored_path(path)
+        }
+    }
+
+    pub(crate) fn represents_root(&self, path: &Path) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            path == self.root
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            self.normalize_authored_path(path)
+                .is_ok_and(|normalized| normalized == self.root)
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn merge_authored_roots(&mut self, other: &Self) {
+        debug_assert_eq!(self.root, other.root);
+        self.authored_roots
+            .extend(other.authored_roots.iter().cloned());
+        self.authored_roots.sort();
+        self.authored_roots.dedup();
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn normalize_authored_path(&self, path: &Path) -> Result<PathBuf, FilesystemError> {
+        let rebased = if path.starts_with(&self.root) {
+            path.to_owned()
+        } else {
+            let authored_root = self
+                .authored_roots
+                .iter()
+                .filter(|root| path.starts_with(root))
+                .max_by_key(|root| root.components().count())
+                .ok_or_else(|| FilesystemError::OutsideRoot(path.to_owned()))?;
+            self.root.join(
+                path.strip_prefix(authored_root)
+                    .expect("a selected authored root is a path prefix"),
+            )
+        };
+        let normalized = normalize_absolute(&rebased);
+        if !normalized.starts_with(&self.root) {
+            return Err(FilesystemError::OutsideRoot(path.to_owned()));
+        }
+        Ok(normalized)
     }
 
     /// Compares a regular file through its retained parent-directory handle.
@@ -433,10 +518,11 @@ impl RootAuthority {
         }
         #[cfg(not(target_os = "linux"))]
         {
+            let candidate = self.normalize_authored_path(candidate)?;
             candidate
                 .strip_prefix(&self.root)
                 .map_err(|_| FilesystemError::OutsideRoot(candidate.to_owned()))?;
-            reject_symlink_components(&self.root, candidate)?;
+            reject_symlink_components(&self.root, &candidate)?;
             let canonical = candidate
                 .canonicalize()
                 .map_err(|source| classify_io(candidate.to_owned(), source))?;
@@ -446,7 +532,21 @@ impl RootAuthority {
             if !canonical.is_dir() {
                 return Err(FilesystemError::NotDirectory(canonical));
             }
-            Ok(Self { root: canonical })
+            let relative = canonical
+                .strip_prefix(&self.root)
+                .expect("a confined canonical directory remains below its authority");
+            let mut authored_roots = self
+                .authored_roots
+                .iter()
+                .map(|root| root.join(relative))
+                .collect::<Vec<_>>();
+            authored_roots.push(canonical.clone());
+            authored_roots.sort();
+            authored_roots.dedup();
+            Ok(Self {
+                root: canonical,
+                authored_roots,
+            })
         }
     }
 
@@ -531,8 +631,9 @@ impl RootAuthority {
         }
         #[cfg(not(target_os = "linux"))]
         {
-            reject_symlink_components(&self.root, candidate)?;
-            self.inspect_candidate(candidate)
+            let candidate = self.normalize_authored_path(candidate)?;
+            reject_symlink_components(&self.root, &candidate)?;
+            self.inspect_candidate(&candidate)
         }
     }
 
@@ -597,7 +698,8 @@ impl RootAuthority {
         }
         #[cfg(not(target_os = "linux"))]
         {
-            reject_symlink_components(&self.root, candidate)?;
+            let candidate = self.normalize_authored_path(candidate)?;
+            reject_symlink_components(&self.root, &candidate)?;
             let canonical = candidate
                 .canonicalize()
                 .map_err(|source| classify_io(candidate.to_owned(), source))?;
@@ -613,14 +715,12 @@ impl RootAuthority {
 
     #[cfg(not(target_os = "linux"))]
     pub fn inspect_candidate(&self, candidate: &Path) -> Result<PathBuf, FilesystemError> {
-        if !candidate.starts_with(&self.root) {
-            return Err(FilesystemError::OutsideRoot(candidate.to_owned()));
-        }
+        let candidate = self.normalize_authored_path(candidate)?;
         let canonical = match candidate.canonicalize() {
             Ok(path) => path,
             Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
-                reject_dangling_symlink_escape(&self.root, candidate)?;
-                ensure_existing_ancestor_is_inside(&self.root, candidate)?;
+                reject_dangling_symlink_escape(&self.root, &candidate)?;
+                ensure_existing_ancestor_is_inside(&self.root, &candidate)?;
                 return Err(FilesystemError::Missing(candidate.to_owned()));
             }
             Err(source) => return Err(classify_io(candidate.to_owned(), source)),
@@ -1052,6 +1152,51 @@ mod tests {
         fs::create_dir(root.path().join("docs")).expect("docs directory");
         fs::write(root.path().join("docs/guide.adoc"), "= Guide").expect("guide fixture");
         root
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn authored_var_alias_uses_the_canonical_root_without_widening_authority() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::Builder::new()
+            .prefix("adocweave-authority-")
+            .tempdir_in("/var/tmp")
+            .expect("temporary authority root");
+        let canonical = root
+            .path()
+            .canonicalize()
+            .expect("canonical authority root");
+        let authored = Path::new("/var").join(
+            canonical
+                .strip_prefix("/private/var")
+                .expect("macOS /var resolves below /private/var"),
+        );
+        fs::write(authored.join("guide.adoc"), "authored\n").expect("authored source");
+        let authority = RootAuthority::new(&authored).expect("authority from authored spelling");
+
+        assert!(matches!(
+            authority
+                .read_utf8(&authored.join("guide.adoc"), 1024, false)
+                .outcome,
+            Ok(ref source) if source.source() == "authored\n"
+        ));
+
+        let outside = tempfile::tempdir_in("/var/tmp").expect("outside directory");
+        fs::write(outside.path().join("secret.adoc"), "secret\n").expect("outside source");
+        symlink(
+            outside.path().join("secret.adoc"),
+            authored.join("linked.adoc"),
+        )
+        .expect("outside symlink");
+        assert!(matches!(
+            authority.inspect_candidate(&authored.join("linked.adoc")),
+            Err(FilesystemError::OutsideRoot(_))
+        ));
+        assert!(matches!(
+            authority.inspect_candidate(&outside.path().join("secret.adoc")),
+            Err(FilesystemError::OutsideRoot(_))
+        ));
     }
 
     #[test]

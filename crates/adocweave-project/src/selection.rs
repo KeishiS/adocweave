@@ -35,6 +35,7 @@ struct ScanState<'request> {
 
 pub(crate) fn normalize_selectors(
     project_root: &Path,
+    authority: &FilesystemAuthority,
     selectors: &[ProjectTarget],
 ) -> Result<Vec<NormalizedSelector>, ProjectError> {
     let distinct_globs = selectors
@@ -73,7 +74,7 @@ pub(crate) fn normalize_selectors(
     authored.sort_by_key(|selector| selector_sort_key(selector));
     let mut normalized = authored
         .into_iter()
-        .map(|selector| normalize_selector(project_root, selector))
+        .map(|selector| normalize_selector(project_root, authority, selector))
         .collect::<Result<Vec<_>, _>>()?;
     normalized.sort();
     normalized.dedup();
@@ -92,6 +93,7 @@ fn selector_sort_key(selector: &ProjectTarget) -> (u8, String) {
 
 fn normalize_selector(
     project_root: &Path,
+    authority: &FilesystemAuthority,
     selector: &ProjectTarget,
 ) -> Result<NormalizedSelector, ProjectError> {
     match selector {
@@ -99,17 +101,21 @@ fn normalize_selector(
             unreachable!("source targets are resolved before selector normalization")
         }
         ProjectTarget::Path(path) => absolute_lexical(project_root, path)
+            .and_then(|path| authority.normalize_path(&path))
             .map(NormalizedSelector::Path)
             .map_err(project_authority_error),
         ProjectTarget::PathNoSymlinks(path) => absolute_lexical(project_root, path)
+            .and_then(|path| authority.normalize_path(&path))
             .map(NormalizedSelector::Path)
             .map_err(project_authority_error),
         ProjectTarget::Directory(path) => absolute_lexical(project_root, path)
+            .and_then(|path| authority.normalize_path(&path))
             .map(NormalizedSelector::Directory)
             .map_err(project_authority_error),
         ProjectTarget::Glob(authored) => {
             glob::Pattern::new(authored).map_err(|_| invalid_glob(authored))?;
             let absolute_pattern = absolute_lexical(project_root, Path::new(authored))
+                .and_then(|path| authority.normalize_path(&path))
                 .map_err(project_authority_error)?;
             let pattern = absolute_pattern
                 .to_str()
@@ -117,6 +123,7 @@ fn normalize_selector(
                 .to_owned();
             glob::Pattern::new(&pattern).map_err(|_| invalid_glob(authored))?;
             let scan_root = absolute_lexical(project_root, &glob_scan_root(authored))
+                .and_then(|path| authority.normalize_path(&path))
                 .map_err(project_authority_error)?;
             Ok(NormalizedSelector::Glob { pattern, scan_root })
         }

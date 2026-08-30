@@ -337,7 +337,7 @@ impl<'request> Processor<'request> {
         let ProjectRequest {
             targets,
             sources,
-            config,
+            mut config,
             mut overrides,
             apply_safe_fixes,
             resource_selection,
@@ -345,33 +345,34 @@ impl<'request> Processor<'request> {
             limits,
         } = request;
         let (project_root, mut authority) = authority.into_parts();
+        if let ProjectConfigSelection::Explicit(path) = &mut config {
+            *path = authority
+                .normalize_path(
+                    &absolute_lexical(&project_root, path).map_err(project_authority_error)?,
+                )
+                .map_err(project_authority_error)?;
+        }
         if let Some(roots) = &mut overrides.resource_roots {
             for path in roots.iter_mut() {
                 *path = absolute_lexical(&project_root, path).map_err(project_authority_error)?;
-                if authority.authority_for_path(path).is_none() {
-                    return Err(project_authority_error(FilesystemError::OutsideRoot(
-                        path.clone(),
-                    )));
-                }
+                *path = authority
+                    .normalize_path(path)
+                    .map_err(project_authority_error)?;
             }
             roots.sort();
             roots.dedup();
         }
         if let Some(path) = &mut overrides.local_target_project_root {
             *path = absolute_lexical(&project_root, path).map_err(project_authority_error)?;
-            if authority.authority_for_path(path).is_none() {
-                return Err(project_authority_error(FilesystemError::OutsideRoot(
-                    path.clone(),
-                )));
-            }
+            *path = authority
+                .normalize_path(path)
+                .map_err(project_authority_error)?;
         }
         for path in &mut overrides.stylesheet_files {
             *path = absolute_lexical(&project_root, path).map_err(project_authority_error)?;
-            if authority.authority_for_path(path).is_none() {
-                return Err(project_authority_error(FilesystemError::OutsideRoot(
-                    path.clone(),
-                )));
-            }
+            *path = authority
+                .normalize_path(path)
+                .map_err(project_authority_error)?;
         }
         let mut source_ids_by_path = BTreeMap::new();
         let mut memory_sources = BTreeMap::new();
@@ -385,9 +386,13 @@ impl<'request> Processor<'request> {
                 .as_ref()
                 .map(|path| absolute_lexical(&project_root, path))
                 .transpose()
+                .map_err(project_authority_error)?
+                .map(|path| authority.normalize_path(&path))
+                .transpose()
                 .map_err(project_authority_error)?;
-            let base =
-                absolute_lexical(&project_root, &source.base).map_err(project_authority_error)?;
+            let base = absolute_lexical(&project_root, &source.base)
+                .and_then(|path| authority.normalize_path(&path))
+                .map_err(project_authority_error)?;
             let authority_path = exposed_path.as_ref().unwrap_or(&base);
             authority
                 .authority_for_path(authority_path)
@@ -516,13 +521,20 @@ impl<'request> Processor<'request> {
                 _ => None,
             })
             .map(|path| absolute_lexical(&project_root, path).map_err(project_authority_error))
+            .map(|path| {
+                path.and_then(|path| {
+                    authority
+                        .normalize_path(&path)
+                        .map_err(project_authority_error)
+                })
+            })
             .collect::<Result<BTreeSet<_>, _>>()?;
         let retained_roots = authority.roots().to_vec();
         let identity_roots = retained_roots.clone();
         authority = authority
             .select(retained_roots)
             .map_err(project_authority_error)?;
-        let selectors = normalize_selectors(&project_root, &targets)?;
+        let selectors = normalize_selectors(&project_root, &authority, &targets)?;
         let filesystem = authority.clone();
         Ok(Self {
             project_root,
@@ -2359,8 +2371,12 @@ impl<'request> Processor<'request> {
     }
 
     fn filesystem_source_id_for_path(&self, path: &Path) -> Result<SourceId, ProjectError> {
+        let path = self
+            .filesystem
+            .normalize_path(path)
+            .map_err(project_authority_error)?;
         let value = if path.starts_with(&self.project_root) {
-            format!("project:{}", identity_path(&self.project_root, path))
+            format!("project:{}", identity_path(&self.project_root, &path))
         } else {
             let (index, root) = self
                 .identity_roots
@@ -2371,13 +2387,13 @@ impl<'request> Processor<'request> {
                 .ok_or_else(|| {
                     project_authority_error(FilesystemError::OutsideRoot(path.to_owned()))
                 })?;
-            format!("authority:{index}:{}", identity_path(root, path))
+            format!("authority:{index}:{}", identity_path(root, &path))
         };
         let source_id = self
             .source_id_for_value(&value)
             .map_err(project_authority_error)?;
         if let Some(reserved_path) = self.reserved_source_ids.get(&source_id)
-            && reserved_path.as_deref() != Some(path)
+            && reserved_path.as_deref() != Some(path.as_path())
         {
             return Err(ProjectError::InvalidInput(crate::ProjectInputError::new(
                 "source-id-collision",
@@ -2947,8 +2963,8 @@ fn validate_cached_authority(
         .zip(acquired_authority)
         .is_some_and(|(requested, acquired)| requested.has_same_authority(acquired));
     let acquired_paths_are_valid = acquired_authority.is_some_and(|authority| {
-        acquired_requested_path.starts_with(authority.root())
-            && (!acquired_path_is_verified || acquired_path.starts_with(authority.root()))
+        authority.contains_path(acquired_requested_path)
+            && (!acquired_path_is_verified || authority.contains_path(acquired_path))
     });
     if !same_authority || !acquired_paths_are_valid {
         return Err(FilesystemError::OutsideRoot(requested_path.to_owned()));

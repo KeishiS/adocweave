@@ -217,7 +217,8 @@ fn removing_toml_null_keeps_json_schema_keyword_shapes() {
 fn project_config_schema_is_current_and_valid() {
     let generated = generated_schema_text();
     let checked_in = fs::read_to_string(repository_root().join(SCHEMA_PATH))
-        .expect("checked-in project configuration schema");
+        .expect("checked-in project configuration schema")
+        .replace("\r\n", "\n");
     assert_eq!(
         checked_in, generated,
         "run `cargo test -p adocweave-project regenerate_project_config_schema -- --ignored`"
