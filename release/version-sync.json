@@ -2,16 +2,6 @@
   "schemaVersion": 1,
   "literals": [
     {
-      "path": "web-worker/package.json",
-      "template": "\"version\": \"{version}\"",
-      "count": 1
-    },
-    {
-      "path": "web-worker/contracts.mjs",
-      "template": "export const WASM_PACKAGE_VERSION = \"{version}\";",
-      "count": 1
-    },
-    {
       "path": "packages/textlint-plugin-asciidoc/package.json",
       "template": "\"version\": \"{version}\"",
       "count": 1
@@ -44,7 +34,7 @@
     {
       "path": "dist-workspace.toml",
       "template": "-{version}",
-      "count": 4
+      "count": 3
     }
   ],
   "cargoLocks": [

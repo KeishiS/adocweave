@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-version="$(node --input-type=module -e "import manifest from './web-worker/package.json' with { type: 'json' }; process.stdout.write(manifest.version)")"
+version="$(node --input-type=module -e "import manifest from './packages/wasm/package.json' with { type: 'json' }; process.stdout.write(manifest.version)")"
 # npm packが作るtarballのrootは、versionを含まない``package``に正規化される。
 package="package"
 archive="target/distrib/adocweave-wasm-$version.tgz"
@@ -21,6 +21,7 @@ tar -tzf "$archive" | LC_ALL=C sort > "$actual"
 printf '%s\n' \
   "$package/LICENSE-APACHE" \
   "$package/LICENSE-MIT" \
+  "$package/CHANGELOG.md" \
   "$package/README.md" \
   "$package/THIRD_PARTY_NOTICES.adoc" \
   "$package/package.json" \
@@ -31,7 +32,6 @@ printf '%s\n' \
   "$package/wasm/adocweave_wasm_bg.wasm" \
   "$package/worker/analysis.mjs" \
   "$package/worker/client.mjs" \
-  "$package/worker/contracts.mjs" \
   "$package/worker/direct.d.mts" \
   "$package/worker/direct.mjs" \
   "$package/worker/index.d.mts" \

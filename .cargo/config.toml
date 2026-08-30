@@ -1,4 +1,4 @@
 # TypeScript宣言の書き出し先。ts-rsは``ts-rs`` featureを有効にしたtestで
-# ``web-worker/protocol.d.mts``を生成します。相対pathはこのworkspaceのrootを基準にします。
+# ``packages/wasm/protocol.d.mts``を生成します。相対pathはこのworkspaceのrootを基準にします。
 [env]
-TS_RS_EXPORT_DIR = { value = "web-worker", relative = true }
+TS_RS_EXPORT_DIR = { value = "packages/wasm", relative = true }

@@ -1,19 +1,15 @@
 name: npm publication
 
-# 公開済みGitHub Releaseのpackage archiveをnpm Registryへ公開する。成果物は作り直さず、
+# 公開済みGitHub Releaseのtextlint package archiveをnpm Registryへ公開する。成果物は作り直さず、
 # Releaseのassetをdownloadしてchecksumとattestationを検証してから送信する。
 #
 # 認証はnpmのTrusted Publishingを使う。長期tokenを持たず、GitHub ActionsのOIDCで公開元を
 # 確認する。provenanceはTrusted Publishing経由の公開へ自動で付くため、明示の指定はしない。
 # Trusted Publisherには呼出し先のnpm-publish.ymlではなく、OIDC上のworkflow identityになる
 # 呼出し元のrelease.ymlとnpm-publish environmentを登録する。
-# Trusted Publisherはpackage単位の設定で、packageが実在しないと登録できない。したがって
-# 初回公開だけは、公開済みReleaseのarchiveを手元からnpmへ送る。手順はコントリビューション
-# ガイドを参照する。
-#
 # Release workflowからstable tagとcommitを受け取る再利用workflowとして実行する。
-# 二つのpackageは固定したmatrixで処理する。npmへの送信だけが失敗した場合は、Release workflowの
-# 失敗jobを再実行して回復する。同じversionが既に存在する場合はRegistryのintegrityを確認し、
+# npmへの送信だけが失敗した場合は、Release workflowの失敗jobを再実行して回復する。
+# 同じversionが既に存在する場合はRegistryのintegrityを確認し、
 # Releaseのarchiveと同じであれば送信せずに完了する。
 
 on:
@@ -37,12 +33,6 @@ concurrency:
 
 jobs:
   publish:
-    strategy:
-      fail-fast: false
-      matrix:
-        package:
-          - textlint
-          - wasm
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: npm-publish
@@ -70,10 +60,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
           RELEASE_COMMIT: ${{ inputs.commit }}
-          RELEASE_PACKAGE: ${{ matrix.package }}
         run: |
           test -n "$RELEASE_TAG"
-          test -n "$RELEASE_PACKAGE"
           release="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")"
           test "$(jq -r .tag_name <<<"$release")" = "$RELEASE_TAG"
           test "$(jq -r .draft <<<"$release")" = false
@@ -84,20 +72,8 @@ jobs:
           workspace_version="$(sed -n '/^\[workspace\.package\]/,/^\[/ s/^version = "\([^"]*\)"/\1/p' Cargo.toml)"
           [[ "$workspace_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
           test "$RELEASE_TAG" = "v$workspace_version"
-          case "$RELEASE_PACKAGE" in
-            textlint)
-              package_manifest=packages/textlint-plugin-asciidoc/package.json
-              asset="adocweave-textlint-plugin-asciidoc-$workspace_version.tgz"
-              ;;
-            wasm)
-              package_manifest=web-worker/package.json
-              asset="adocweave-wasm-$workspace_version.tgz"
-              ;;
-            *)
-              echo "$RELEASE_PACKAGEの公開には対応していません" >&2
-              exit 1
-              ;;
-          esac
+          package_manifest=packages/textlint-plugin-asciidoc/package.json
+          asset="adocweave-textlint-plugin-asciidoc-$workspace_version.tgz"
           test "$(jq -er .version "$package_manifest")" = "$workspace_version"
 
           mkdir -p npm-candidate
@@ -163,14 +139,4 @@ jobs:
       # 公開そのものは終わっているため、ここから先の失敗はRelease、tagおよびnpm上の
       # packageを変えない。公開後の観測は、そのversionを定義したtag時点のtoolで行う。
       - name: Published package smoke from the npm Registry
-        env:
-          RELEASE_PACKAGE: ${{ matrix.package }}
-        run: |
-          case "$RELEASE_PACKAGE" in
-            textlint) node tools/textlint-plugin-npm-smoke.mjs ;;
-            wasm) node tools/wasm-npm-smoke.mjs ;;
-            *)
-              echo "$RELEASE_PACKAGEの公開後smokeがありません" >&2
-              exit 1
-              ;;
-          esac
+        run: node tools/textlint-plugin-npm-smoke.mjs
