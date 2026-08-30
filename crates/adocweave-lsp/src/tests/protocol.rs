@@ -1,5 +1,100 @@
 use super::*;
 
+#[test]
+fn stdio_errors_separate_protocol_and_runtime_failures() {
+    let protocol = StdioError::new(async_lsp::Error::Protocol("initialize rejected".to_owned()));
+    assert_eq!(protocol.kind(), StdioErrorKind::Protocol);
+
+    let runtime = StdioError::new(async_lsp::Error::Io(std::io::Error::new(
+        std::io::ErrorKind::BrokenPipe,
+        "closed output",
+    )));
+    assert_eq!(runtime.kind(), StdioErrorKind::Runtime);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn request_handler_panic_returns_an_internal_error_and_allows_clean_shutdown() {
+    // Test builds unwind, so this verifies the existing request middleware only.
+    // Uncaught panics in a distribution build remain subject to its panic profile.
+    use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+
+    let (server_stream, client_stream) = tokio::io::duplex(64 * 1024);
+    let (server_read, server_write) = tokio::io::split(server_stream);
+    let server = run(server_read.compat(), server_write.compat_write());
+    let (client_read, mut client_write) = tokio::io::split(client_stream);
+    let mut client_read = BufReader::new(client_read);
+
+    let client = async {
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc":"2.0",
+                "id":1,
+                "method":"initialize",
+                "params":{
+                    "processId":null,
+                    "rootUri":null,
+                    "capabilities":full_capabilities(&["utf-16"])
+                }
+            }),
+        )
+        .await;
+        assert_eq!(read_message(&mut client_read).await["id"], 1);
+        write_message(
+            &mut client_write,
+            &json!({"jsonrpc":"2.0","method":"initialized","params":{}}),
+        )
+        .await;
+        let registration = read_message(&mut client_read).await;
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc":"2.0",
+                "id":registration["id"].clone(),
+                "result":null
+            }),
+        )
+        .await;
+
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc":"2.0",
+                "id":2,
+                "method":"adocweave/testRequestHandlerPanic",
+                "params":null
+            }),
+        )
+        .await;
+        let panic_response = read_message(&mut client_read).await;
+        assert_eq!(panic_response["id"], 2);
+        assert_eq!(panic_response["error"]["code"], -32603);
+        assert!(
+            panic_response["error"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("intentional request handler panic"))
+        );
+
+        write_message(
+            &mut client_write,
+            &json!({"jsonrpc":"2.0","id":3,"method":"shutdown","params":null}),
+        )
+        .await;
+        assert_eq!(read_message(&mut client_read).await["id"], 3);
+        write_message(
+            &mut client_write,
+            &json!({"jsonrpc":"2.0","method":"exit","params":null}),
+        )
+        .await;
+    };
+
+    let (server_result, ()) = tokio::join!(server, client);
+    assert!(
+        server_result.is_ok(),
+        "recovered request panic: {server_result:?}"
+    );
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn protocol_async_lsp_transport_runs_typed_lifecycle_and_features() {
     use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};

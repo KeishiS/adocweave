@@ -13,8 +13,8 @@ VS Code・Zed ──LSP──> adocweave lsp
 ブラウザークライアント ──> Web Worker ──> adocweave-wasm ──> adocweave
 textlint ──> adocweave-textlint ──> adocweave
 
-adocweave-cli ──> adocweave-lsp, adocweave-project, adocweave-host, adocweave
-adocweave-lsp ──> adocweave-project, adocweave-host, adocweave
+adocweave-cli ──> adocweave-lsp, adocweave-project, adocweave
+adocweave-lsp ──> adocweave-project, adocweave
 adocweave-project ──> adocweave-host, adocweave
 ----
 

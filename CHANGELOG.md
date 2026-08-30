@@ -17,6 +17,7 @@
 - The former workspace scan, recovery coordinator, scan generations, pending-change journal, and duplicate workspace resource state are removed.
 - Project configuration types, TOML validation, defaults, relative-path resolution, and schema generation now belong to `adocweave-project`. The separate `adocweave-config` crate is removed.
 - The unused `adocweave-workspace` crate is removed. One-shot project processing belongs to `adocweave-project`, while Language Server session state remains in `adocweave-lsp`.
+- CLI process exit codes now belong to the CLI. The Language Server reports protocol or runtime failures without depending directly on `adocweave-host`.
 
 ### Rust API
 
@@ -27,6 +28,7 @@
 - `ProjectResourceResult.requested_at` identifies the source and optional source range that requested a related resource.
 - `HostReferenceIndex`, `HostReferenceRequest`, `NoHostReferenceIndex`, and `run_with_host_index` are removed from `adocweave-lsp`.
 - `Workspace`, `WorkspaceSnapshot`, workspace analysis drafts, resource revisions, generations, dependency graphs, and retained-resource budgets from `adocweave-workspace` are removed without compatibility aliases.
+- `adocweave_host::ExitStatus` is removed. The CLI uses its private `CliExitCode`; `adocweave_lsp::StdioError::kind` returns `StdioErrorKind::Protocol` or `StdioErrorKind::Runtime`.
 
 ### Migration
 
@@ -37,6 +39,7 @@
 - Replace `ConfigSelection` with `ProjectConfigSelection` and `ProjectOverrides` with `ProjectConfigOverrides`. Remove callers which construct or inject `ResolvedProjectConfig`; project processing now obtains configuration through `ProjectConfigSelection` and `ProjectAuthority`.
 - Move the `max_files`, `max_read_bytes`, and `max_resource_bytes` fields of `ProjectLimits` into `ProjectLimits::resources`, renaming `max_read_bytes` to `max_total_bytes`.
 - Replace `adocweave-workspace` usage with an owned `adocweave_project::ProjectRequest`. Language Server integrations should keep open-document revisions and adopted dependencies in their session instead of introducing a shared workspace state manager.
+- Replace `StdioError::exit_status` with `StdioError::kind` when embedding the Language Server. Process exit-code policy belongs to the embedding executable.
 
 ## [0.52.0] - 2026-08-30
 

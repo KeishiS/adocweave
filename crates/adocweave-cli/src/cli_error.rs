@@ -5,12 +5,12 @@ use std::fmt;
 use std::io;
 
 use adocweave::preprocess::PreprocessErrorKind;
-use adocweave_host::ExitStatus;
 use adocweave_project::{
     ProjectExpansionError, ProjectLimit, ProjectParseError, ProjectResourceErrorCode,
     ProjectTargetError,
 };
 
+use crate::exit_code::CliExitCode;
 use crate::{commands, preview};
 
 #[derive(Debug)]
@@ -209,27 +209,27 @@ impl Error for CliError {
 
 impl CliError {
     /// Names the category a caller sees as the exit status.
-    pub(crate) fn exit_status(&self) -> ExitStatus {
+    pub(crate) fn exit_code(&self) -> CliExitCode {
         match self {
             // What the caller asked for cannot be acted on as written.
             Self::Arguments(_) | Self::Usage(_) | Self::Path(_) | Self::Stylesheet(_) => {
-                ExitStatus::Usage
+                CliExitCode::Usage
             }
             // A file, stream or resource could not be read or written. The input
             // may be fine; the surroundings were not.
             Self::Read { .. } | Self::Write(_) | Self::PartialWrite { .. } | Self::Preview(_) => {
-                ExitStatus::InputOutput
+                CliExitCode::InputOutput
             }
-            Self::LanguageServer(source) => source.exit_status(),
+            Self::LanguageServer(source) => language_server_exit_code(source.kind()),
             Self::Project(adocweave_project::ProjectError::Config(_))
             | Self::Project(adocweave_project::ProjectError::Authority(_))
             | Self::ProjectPrimary(adocweave_project::ProjectTargetError::Read(_))
             | Self::ProjectTarget(adocweave_project::ProjectTargetError::Read(_))
             | Self::ProjectExpansion(adocweave_project::ProjectExpansionError::Resource(_)) => {
-                ExitStatus::InputOutput
+                CliExitCode::InputOutput
             }
             Self::Project(adocweave_project::ProjectError::TargetSelection(_))
-            | Self::Project(adocweave_project::ProjectError::InvalidInput(_)) => ExitStatus::Usage,
+            | Self::Project(adocweave_project::ProjectError::InvalidInput(_)) => CliExitCode::Usage,
             // A configured bound was reached, so the work stopped rather than
             // grew without limit.
             Self::OutputLimit { .. }
@@ -247,11 +247,11 @@ impl CliError {
             }))
             | Self::ProjectExpansion(ProjectExpansionError::Parse(
                 ProjectParseError::LimitExceeded { .. },
-            )) => ExitStatus::LimitExceeded,
+            )) => CliExitCode::LimitExceeded,
             Self::ProjectExpansion(ProjectExpansionError::Preprocess(error))
                 if is_preprocess_limit(error.kind) =>
             {
-                ExitStatus::LimitExceeded
+                CliExitCode::LimitExceeded
             }
             // The document itself is the problem, which is what a diagnostic
             // reports. Everything left describes the document or the analysis of
@@ -268,9 +268,16 @@ impl CliError {
             | Self::ProjectExpansion(adocweave_project::ProjectExpansionError::Options(_))
             | Self::ProjectExpansion(adocweave_project::ProjectExpansionError::Preprocess(_))
             | Self::ProjectExpansion(adocweave_project::ProjectExpansionError::Parse(_)) => {
-                ExitStatus::Diagnostics
+                CliExitCode::Diagnostics
             }
         }
+    }
+}
+
+fn language_server_exit_code(kind: adocweave_lsp::StdioErrorKind) -> CliExitCode {
+    match kind {
+        adocweave_lsp::StdioErrorKind::Protocol => CliExitCode::Diagnostics,
+        adocweave_lsp::StdioErrorKind::Runtime => CliExitCode::InputOutput,
     }
 }
 
@@ -343,7 +350,7 @@ mod tests {
             failed: 1,
         };
 
-        assert_eq!(error.exit_status(), ExitStatus::InputOutput);
+        assert_eq!(error.exit_code(), CliExitCode::InputOutput);
         assert_eq!(
             error.to_string(),
             "file updates completed with failures: files=3, changed=2, updated=1, unchanged=1, failed=1"
@@ -363,5 +370,17 @@ mod tests {
         }
         assert!(!is_preprocess_limit(PreprocessErrorKind::MissingResource));
         assert!(!is_preprocess_limit(PreprocessErrorKind::InvalidDirective));
+    }
+
+    #[test]
+    fn language_server_failures_map_to_existing_cli_exit_codes() {
+        assert_eq!(
+            language_server_exit_code(adocweave_lsp::StdioErrorKind::Protocol),
+            CliExitCode::Diagnostics
+        );
+        assert_eq!(
+            language_server_exit_code(adocweave_lsp::StdioErrorKind::Runtime),
+            CliExitCode::InputOutput
+        );
     }
 }

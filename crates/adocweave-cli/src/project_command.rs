@@ -3,7 +3,6 @@ use std::env;
 use std::fs;
 use std::io::{self, Read as _};
 use std::path::{Component, Path, PathBuf};
-use std::process::ExitCode;
 
 use adocweave::NeverCancel;
 use adocweave_project::{
@@ -17,10 +16,11 @@ use crate::arguments::{Arguments, CommandOptions};
 use crate::check_output::{DiagnosticCounts, DiagnosticFormat, sarif_log, sarif_results};
 use crate::cli_error::{CliError, check_error, convert_error, format_error};
 use crate::commands;
+use crate::exit_code::CliExitCode;
 use crate::file_workflow::{PendingWrite, WriteOutcome, apply_file_writes, colorize_lines};
 use crate::finish_output;
 
-pub(crate) fn run(arguments: &Arguments) -> Result<ExitCode, CliError> {
+pub(crate) fn run(arguments: &Arguments) -> Result<CliExitCode, CliError> {
     let current = env::current_dir().map_err(|source| CliError::Read {
         source_name: "current directory".to_owned(),
         source,
@@ -64,14 +64,14 @@ pub(crate) fn run(arguments: &Arguments) -> Result<ExitCode, CliError> {
                 commands::convert::render_analysis(&analysis.preprocessed.analysis, &policy)
                     .map_err(convert_error)?;
             print_output(finish_output(output)?)?;
-            Ok(ExitCode::SUCCESS)
+            Ok(CliExitCode::Success)
         }
         CommandOptions::Symbols => {
             let target = only_target(&result.targets)?;
             let analysis = expanded_analysis(target)?;
             let output = commands::symbols::render_analysis(&analysis.preprocessed.analysis);
             print_output(finish_output(output)?)?;
-            Ok(ExitCode::SUCCESS)
+            Ok(CliExitCode::Success)
         }
         CommandOptions::Format(options) => run_format(arguments, &mut result.targets, *options),
         CommandOptions::Check(options) => {
@@ -83,7 +83,7 @@ pub(crate) fn run(arguments: &Arguments) -> Result<ExitCode, CliError> {
     }
 }
 
-fn show_config(arguments: &Arguments, current: &Path) -> Result<ExitCode, CliError> {
+fn show_config(arguments: &Arguments, current: &Path) -> Result<CliExitCode, CliError> {
     let authority = project_authority(arguments, current)?;
     let result = resolve_config(
         ProjectConfigRequest {
@@ -98,7 +98,7 @@ fn show_config(arguments: &Arguments, current: &Path) -> Result<ExitCode, CliErr
     )
     .map_err(CliError::Project)?;
     println!("{}", commands::config::run_project(&result.config).output);
-    Ok(ExitCode::SUCCESS)
+    Ok(CliExitCode::Success)
 }
 
 fn request(arguments: &Arguments, current: &Path) -> Result<ProjectRequest, CliError> {
@@ -224,7 +224,7 @@ fn run_format(
     arguments: &Arguments,
     targets: &mut [ProjectTargetResult],
     options: commands::format::Options,
-) -> Result<ExitCode, CliError> {
+) -> Result<CliExitCode, CliError> {
     if options.write && targets.iter().any(|target| target.path.is_none()) {
         return Err(CliError::Usage(
             "format --write requires file inputs".to_owned(),
@@ -258,7 +258,7 @@ fn run_format(
         if !options.check {
             print_output(finish_output(formatted)?)?;
         }
-        return Ok(ExitCode::SUCCESS);
+        return Ok(CliExitCode::Success);
     }
     let mut workflow = commands::format::BatchWorkflow::new(options, targets.len());
     for target in targets.iter_mut() {
@@ -339,9 +339,9 @@ fn run_format(
         ));
     }
     Ok(if outcome.formatting_required {
-        adocweave_host::ExitStatus::Diagnostics.into()
+        CliExitCode::Diagnostics
     } else {
-        ExitCode::SUCCESS
+        CliExitCode::Success
     })
 }
 
@@ -350,7 +350,7 @@ fn run_check(
     current: &Path,
     targets: &mut [ProjectTargetResult],
     options: &commands::check::Options,
-) -> Result<ExitCode, CliError> {
+) -> Result<CliExitCode, CliError> {
     if options.fix && !options.diff && targets.iter().any(|target| target.path.is_none()) {
         return Err(CliError::Usage(
             "check --fix requires file inputs".to_owned(),
@@ -441,9 +441,9 @@ fn run_check(
         ));
     }
     Ok(if counts.fails(options.fail_on) {
-        adocweave_host::ExitStatus::Diagnostics.into()
+        CliExitCode::Diagnostics
     } else {
-        ExitCode::SUCCESS
+        CliExitCode::Success
     })
 }
 
