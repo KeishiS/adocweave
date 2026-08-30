@@ -13,7 +13,6 @@
       "packages": [
         "adocweave",
         "adocweave-cli",
-        "adocweave-config",
         "adocweave-host",
         "adocweave-lsp",
         "adocweave-project",

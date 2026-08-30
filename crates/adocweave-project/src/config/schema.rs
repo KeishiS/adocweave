@@ -7,9 +7,9 @@ use schemars::generate::SchemaSettings;
 use serde_json::{Map, Value, json};
 
 use super::{
-    ProjectConfigWire, ResolvedProjectConfig, ResolvedResourceLimitPlan, SCHEMA_VERSION,
-    SyntaxModeWire, default_blank_lines,
+    ProjectConfig, ProjectConfigWire, SCHEMA_VERSION, SyntaxModeWire, default_blank_lines,
 };
+use crate::ProjectResourceLimits;
 
 const SCHEMA_PATH: &str = "config/adocweave.schema.json";
 const SCHEMA_ID: &str = "https://github.com/KeishiS/adocweave/config/adocweave.schema.json";
@@ -140,7 +140,7 @@ fn generated_schema() -> Value {
         "/properties/lint/properties/rules/additionalProperties/properties/enabled",
         json!({ "type": "boolean" }),
     );
-    let resource_defaults = ResolvedResourceLimitPlan::default().filesystem_reads;
+    let resource_defaults = ProjectResourceLimits::default();
     for (name, maximum) in [
         ("max-files", resource_defaults.max_files as u64),
         ("max-total-bytes", resource_defaults.max_total_bytes),
@@ -220,7 +220,7 @@ fn project_config_schema_is_current_and_valid() {
         .expect("checked-in project configuration schema");
     assert_eq!(
         checked_in, generated,
-        "run `cargo test -p adocweave-config regenerate_project_config_schema -- --ignored`"
+        "run `cargo test -p adocweave-project regenerate_project_config_schema -- --ignored`"
     );
     assert!(jsonschema::meta::is_valid(&generated_schema()));
 }
@@ -340,7 +340,7 @@ fn generated_schema_covers_the_configuration_contract() {
         assert_eq!(validator.is_valid(&config), accepted, "schema: {name}");
         let source = toml::to_string(&config).expect("convert test configuration to TOML");
         assert_eq!(
-            ResolvedProjectConfig::parse(&source, Path::new("/workspace")).is_ok(),
+            ProjectConfig::parse(&source, Path::new("/workspace")).is_ok(),
             accepted,
             "runtime: {name}"
         );
@@ -353,7 +353,7 @@ fn generated_schema_covers_the_configuration_contract() {
     assert!(validator.is_valid(&config), "schema: {name}");
     let source = toml::to_string(&config).expect("convert test configuration to TOML");
     assert!(
-        ResolvedProjectConfig::parse(&source, Path::new("/workspace")).is_err(),
+        ProjectConfig::parse(&source, Path::new("/workspace")).is_err(),
         "runtime: {name}"
     );
 }
@@ -365,7 +365,7 @@ fn generated_schema_enforces_types_enums_and_single_field_limits() {
         .with_draft(Draft::Draft202012)
         .build(&schema)
         .expect("compile generated schema");
-    let resource_limits = ResolvedResourceLimitPlan::default().filesystem_reads;
+    let resource_limits = ProjectResourceLimits::default();
     let invalid = vec![
         ("missing schema version", json!({})),
         ("schema version type", json!({ "schema-version": "2" })),

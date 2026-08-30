@@ -2,7 +2,6 @@
 members = [
   "crates/adocweave",
   "crates/adocweave-cli",
-  "crates/adocweave-config",
   "crates/adocweave-host",
   "crates/adocweave-lsp",
   "crates/adocweave-project",
@@ -20,7 +19,7 @@ license = "MIT OR Apache-2.0"
 publish = false
 repository = "https://github.com/KeishiS/adocweave"
 rust-version = "1.97.1"
-version = "0.55.0"
+version = "0.56.0"
 
 # The profile used by cargo-dist for release artifacts.
 [profile.dist]

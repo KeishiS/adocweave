@@ -103,8 +103,8 @@ mod tests {
 
     use adocweave::NeverCancel;
     use adocweave_project::{
-        ConfigSelection, ProjectAuthority, ProjectLimits, ProjectOverrides, ProjectRequest,
-        ProjectTarget, process,
+        ProjectAuthority, ProjectConfigOverrides, ProjectConfigSelection, ProjectLimits,
+        ProjectRequest, ProjectTarget, process,
     };
 
     use super::*;
@@ -129,8 +129,8 @@ mod tests {
             ProjectRequest {
                 targets: vec![ProjectTarget::Path(PathBuf::from(file_name))],
                 sources: Vec::new(),
-                config: ConfigSelection::Disabled,
-                overrides: ProjectOverrides::default(),
+                config: ProjectConfigSelection::Disabled,
+                overrides: ProjectConfigOverrides::default(),
                 apply_safe_fixes: false,
                 resource_selection: Default::default(),
                 authority,

@@ -6,10 +6,11 @@ use adocweave::NeverCancel;
 use adocweave::preprocess::PreprocessErrorKind;
 use adocweave_host::FilesystemReadLimits;
 use adocweave_project::{
-    ConfigSelection, ProjectAuthority, ProjectError, ProjectExpansionError, ProjectLimit,
-    ProjectLimits, ProjectOverrides, ProjectRequest, ProjectResourceErrorCode,
-    ProjectResourceFailure, ProjectResourceKind, ProjectResourceOutcome, ProjectResourceSelection,
-    ProjectTarget, ProjectTargetError, TargetSelectionError, process as process_project,
+    ProjectAuthority, ProjectConfigOverrides, ProjectConfigSelection, ProjectError,
+    ProjectExpansionError, ProjectLimit, ProjectLimits, ProjectRequest, ProjectResourceErrorCode,
+    ProjectResourceFailure, ProjectResourceKind, ProjectResourceLimits, ProjectResourceOutcome,
+    ProjectResourceSelection, ProjectTarget, ProjectTargetError, TargetSelectionError,
+    process as process_project,
 };
 
 fn process(request: ProjectRequest) -> adocweave_project::ProjectOutcome {
@@ -21,8 +22,8 @@ fn request(root: &Path, targets: Vec<ProjectTarget>) -> ProjectRequest {
     ProjectRequest {
         targets,
         sources: Vec::new(),
-        config: ConfigSelection::Discover,
-        overrides: ProjectOverrides::default(),
+        config: ProjectConfigSelection::Discover,
+        overrides: ProjectConfigOverrides::default(),
         apply_safe_fixes: false,
         resource_selection: ProjectResourceSelection {
             local_targets: true,
@@ -31,9 +32,11 @@ fn request(root: &Path, targets: Vec<ProjectTarget>) -> ProjectRequest {
         authority: ProjectAuthority::open(root.to_owned(), [root.to_owned()])
             .expect("temporary project is valid authority"),
         limits: ProjectLimits {
-            max_files: filesystem_reads.max_files,
-            max_resource_bytes: filesystem_reads.max_resource_bytes,
-            max_read_bytes: filesystem_reads.max_total_bytes,
+            resources: ProjectResourceLimits {
+                max_files: filesystem_reads.max_files,
+                max_total_bytes: filesystem_reads.max_total_bytes,
+                max_resource_bytes: filesystem_reads.max_resource_bytes,
+            },
             max_directory_entries: 10_000,
             max_processing_iterations: 100,
             max_output_bytes: u32::MAX,
@@ -335,7 +338,7 @@ fn processing_iteration_limit_returns_incomplete_target() {
         directory.path(),
         vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
     );
-    request.config = ConfigSelection::Disabled;
+    request.config = ProjectConfigSelection::Disabled;
     request.overrides.include = Some(true);
     request.limits.max_processing_iterations = 1;
 
@@ -358,27 +361,6 @@ fn processing_iteration_limit_returns_incomplete_target() {
 }
 
 #[test]
-fn fixed_configuration_is_used_without_reading_a_project_file() {
-    let directory = tempfile::tempdir().expect("temporary directory");
-    write(
-        directory.path().join(adocweave_config::FILE_NAME),
-        "schema-version = 999\n",
-    );
-    write(directory.path().join("guide.adoc"), "= Guide\n");
-    let mut request = request(
-        directory.path(),
-        vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
-    );
-    request.config =
-        ConfigSelection::Resolved(Arc::new(adocweave_config::ResolvedProjectConfig::default()));
-
-    let result = process(request).expect("fixed configuration avoids filesystem discovery");
-    assert!(result.resources.is_empty());
-    assert_eq!(result.targets[0].config.path, None);
-    assert!(result.targets[0].analysis.is_ok());
-}
-
-#[test]
 fn missing_include_keeps_the_primary_analysis() {
     let directory = tempfile::tempdir().expect("temporary directory");
     write(
@@ -389,7 +371,7 @@ fn missing_include_keeps_the_primary_analysis() {
         directory.path(),
         vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
     );
-    request.config = ConfigSelection::Disabled;
+    request.config = ProjectConfigSelection::Disabled;
     request.overrides.include = Some(true);
 
     let result = process(request).expect("missing include remains target-local");
@@ -481,7 +463,7 @@ fn nested_include_outside_authority_keeps_its_request_location() {
         &project,
         vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
     );
-    request.config = ConfigSelection::Disabled;
+    request.config = ProjectConfigSelection::Disabled;
     request.overrides.include = Some(true);
 
     let result = process(request).expect("rejected include remains target-local");
@@ -545,7 +527,7 @@ fn symlinked_include_is_rejected() {
         directory.path(),
         vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
     );
-    request.config = ConfigSelection::Disabled;
+    request.config = ProjectConfigSelection::Disabled;
     request.overrides.include = Some(true);
 
     let result = process(request).expect("request remains coherent");
@@ -580,8 +562,8 @@ fn request_read_budget_is_shared_between_targets() {
         directory.path(),
         vec![ProjectTarget::Directory(PathBuf::from("."))],
     );
-    request.config = ConfigSelection::Disabled;
-    request.limits.max_files = 1;
+    request.config = ProjectConfigSelection::Disabled;
+    request.limits.resources.max_files = 1;
 
     assert!(matches!(
         process(request),
@@ -715,7 +697,7 @@ fn directory_selectors_under_independent_roots_keep_stable_authority() {
     write(external.path().join("b.adoc"), "external\n");
     let run = |mut targets: Vec<ProjectTarget>| {
         let mut first_request = request(project.path(), targets.clone());
-        first_request.config = ConfigSelection::Disabled;
+        first_request.config = ProjectConfigSelection::Disabled;
         first_request.authority = ProjectAuthority::open(
             project.path().to_owned(),
             [project.path().to_owned(), external.path().to_owned()],
@@ -724,7 +706,7 @@ fn directory_selectors_under_independent_roots_keep_stable_authority() {
         let first = process(first_request).expect("independent scans succeed");
         targets.reverse();
         let mut second_request = request(project.path(), targets);
-        second_request.config = ConfigSelection::Disabled;
+        second_request.config = ProjectConfigSelection::Disabled;
         second_request.authority = ProjectAuthority::open(
             project.path().to_owned(),
             [project.path().to_owned(), external.path().to_owned()],
@@ -756,7 +738,7 @@ fn bounded_directory_scan_reports_partial_results() {
         directory.path(),
         vec![ProjectTarget::Directory(PathBuf::from("."))],
     );
-    request.config = ConfigSelection::Disabled;
+    request.config = ProjectConfigSelection::Disabled;
     request.limits.max_directory_entries = 2;
 
     let result = process(request).expect("safe partial scan is returned");
@@ -779,7 +761,7 @@ fn scan_limits_zero_and_one_are_stable_for_duplicate_selectors() {
                 ProjectTarget::Directory(PathBuf::from("./")),
             ],
         );
-        project.config = ConfigSelection::Disabled;
+        project.config = ProjectConfigSelection::Disabled;
         project.limits.max_directory_entries = limit;
         let result = process(project).expect("bounded scan returns a stable partial result");
         if limit == 0 {
@@ -805,7 +787,7 @@ fn external_primary_resolves_relative_include_from_its_own_authority() {
         [project.path().to_owned(), external.path().to_owned()],
         vec![ProjectTarget::Path(external.path().join("guide.adoc"))],
     );
-    request.config = ConfigSelection::Disabled;
+    request.config = ProjectConfigSelection::Disabled;
     request.overrides.include = Some(true);
     let result = process(request).expect("external primary is processed");
     assert!(
@@ -844,7 +826,7 @@ fn non_utf8_parent_resolves_relative_include_without_lossy_paths() {
         directory.path(),
         vec![ProjectTarget::Path(parent.join("guide.adoc"))],
     );
-    request.config = ConfigSelection::Disabled;
+    request.config = ProjectConfigSelection::Disabled;
     request.overrides.include = Some(true);
     let result = process(request).expect("processing succeeds");
     assert!(
@@ -997,8 +979,8 @@ fn per_resource_scope_limit_bounds_io_and_reports_its_own_ceiling() {
     write(root.join(".adocweave.toml"), config);
     write(root.join("large.adoc"), &"x".repeat(64 * 1024));
     let mut request = request(root, vec![ProjectTarget::Path(PathBuf::from("large.adoc"))]);
-    request.config = ConfigSelection::Explicit(PathBuf::from(".adocweave.toml"));
-    request.limits.max_files = 2;
+    request.config = ProjectConfigSelection::Explicit(PathBuf::from(".adocweave.toml"));
+    request.limits.resources.max_files = 2;
 
     let result = process(request).expect("configured limit remains target-local");
     assert!(matches!(
@@ -1034,7 +1016,7 @@ fn scope_limit_is_fixed_without_rereading_one_resource_for_later_targets() {
             ProjectTarget::Path(PathBuf::from("b.adoc")),
         ],
     );
-    request.config = ConfigSelection::Explicit(PathBuf::from(".adocweave.toml"));
+    request.config = ProjectConfigSelection::Explicit(PathBuf::from(".adocweave.toml"));
 
     let result = process(request).expect("scope limit remains target-local");
     assert!(
@@ -1076,8 +1058,8 @@ fn simultaneous_request_resource_limit_is_cached_without_fixing_the_scope() {
             ProjectTarget::Path(PathBuf::from("b.adoc")),
         ],
     );
-    request.config = ConfigSelection::Explicit(PathBuf::from(".adocweave.toml"));
-    request.limits.max_resource_bytes = 1000;
+    request.config = ProjectConfigSelection::Explicit(PathBuf::from(".adocweave.toml"));
+    request.limits.resources.max_resource_bytes = 1000;
 
     let result = process(request).expect("resource limit remains target-local");
     assert!(
@@ -1155,9 +1137,9 @@ fn request_total_limit_is_reported_when_it_has_less_read_capacity() {
     write(root.join(".adocweave.toml"), config);
     write(root.join("large.adoc"), &"x".repeat(64 * 1024));
     let mut request = request(root, vec![ProjectTarget::Path(PathBuf::from("large.adoc"))]);
-    request.config = ConfigSelection::Explicit(PathBuf::from(".adocweave.toml"));
+    request.config = ProjectConfigSelection::Explicit(PathBuf::from(".adocweave.toml"));
     let request_limit = config.len() as u64 + 4;
-    request.limits.max_read_bytes = request_limit;
+    request.limits.resources.max_total_bytes = request_limit;
 
     assert!(matches!(
         process(request),
@@ -1172,8 +1154,8 @@ fn request_resource_limit_reports_its_resource_ceiling() {
     let root = directory.path();
     write(root.join("large.adoc"), &"x".repeat(64 * 1024));
     let mut request = request(root, vec![ProjectTarget::Path(PathBuf::from("large.adoc"))]);
-    request.limits.max_read_bytes = 1024;
-    request.limits.max_resource_bytes = 4;
+    request.limits.resources.max_total_bytes = 1024;
+    request.limits.resources.max_resource_bytes = 4;
 
     let result = process(request).expect("resource limit remains target-local");
     assert!(matches!(
@@ -1192,10 +1174,10 @@ fn config_total_limit_wins_when_its_read_also_reaches_the_file_count() {
     write(root.join(".adocweave.toml"), "schema-version = 2\n");
     write(root.join("guide.adoc"), "text\n");
     let mut request = request(root, vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))]);
-    request.config = ConfigSelection::Explicit(PathBuf::from(".adocweave.toml"));
-    request.limits.max_files = 1;
-    request.limits.max_read_bytes = 4;
-    request.limits.max_resource_bytes = 1024;
+    request.config = ProjectConfigSelection::Explicit(PathBuf::from(".adocweave.toml"));
+    request.limits.resources.max_files = 1;
+    request.limits.resources.max_total_bytes = 4;
+    request.limits.resources.max_resource_bytes = 1024;
 
     assert!(matches!(
         process(request),
@@ -1210,10 +1192,10 @@ fn config_resource_limit_wins_when_its_read_also_reaches_the_file_count() {
     write(root.join(".adocweave.toml"), "schema-version = 2\n");
     write(root.join("guide.adoc"), "text\n");
     let mut request = request(root, vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))]);
-    request.config = ConfigSelection::Explicit(PathBuf::from(".adocweave.toml"));
-    request.limits.max_files = 1;
-    request.limits.max_read_bytes = 1024;
-    request.limits.max_resource_bytes = 4;
+    request.config = ProjectConfigSelection::Explicit(PathBuf::from(".adocweave.toml"));
+    request.limits.resources.max_files = 1;
+    request.limits.resources.max_total_bytes = 1024;
+    request.limits.resources.max_resource_bytes = 4;
 
     assert!(matches!(
         process(request),
@@ -1230,8 +1212,8 @@ fn config_file_limit_keeps_its_file_ceiling() {
     write(root.join(".adocweave.toml"), "schema-version = 2\n");
     write(root.join("guide.adoc"), "text\n");
     let mut request = request(root, vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))]);
-    request.config = ConfigSelection::Explicit(PathBuf::from(".adocweave.toml"));
-    request.limits.max_files = 0;
+    request.config = ProjectConfigSelection::Explicit(PathBuf::from(".adocweave.toml"));
+    request.limits.resources.max_files = 0;
 
     assert!(matches!(
         process(request),
@@ -1259,7 +1241,7 @@ fn one_large_config_is_shared_by_one_thousand_target_results() {
         })
         .collect();
     let mut request = request(root, targets);
-    request.config = ConfigSelection::Explicit(PathBuf::from(".adocweave.toml"));
+    request.config = ProjectConfigSelection::Explicit(PathBuf::from(".adocweave.toml"));
     request.limits.max_output_bytes = 128 * 1024 * 1024;
 
     let result = process(request).expect("large shared configuration remains bounded");
@@ -1536,7 +1518,7 @@ fn include_output_limit_keeps_only_the_primary_analysis() {
         directory.path(),
         vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
     );
-    request.config = ConfigSelection::Disabled;
+    request.config = ProjectConfigSelection::Disabled;
     request.overrides.include = Some(true);
     request.limits.max_output_bytes = u32::try_from(primary.len() + 32).expect("small fixture");
 
@@ -1569,7 +1551,7 @@ fn primary_output_limit_prevents_primary_analysis() {
         directory.path(),
         vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
     );
-    request.config = ConfigSelection::Disabled;
+    request.config = ProjectConfigSelection::Disabled;
     request.limits.max_output_bytes = 4;
 
     let result = process(request).expect("request remains coherent");
@@ -1653,7 +1635,7 @@ fn invalid_utf8_include_is_reported_as_watchable_unreadable_input() {
         directory.path(),
         vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
     );
-    request.config = ConfigSelection::Disabled;
+    request.config = ProjectConfigSelection::Disabled;
     request.overrides.include = Some(true);
 
     let result = process(request).expect("unreadable include remains target-local");
@@ -1733,7 +1715,7 @@ fn multiple_authority_roots_receive_distinct_source_ids() {
             ProjectTarget::Path(external.path().join("same.adoc")),
         ],
     );
-    request.config = ConfigSelection::Disabled;
+    request.config = ProjectConfigSelection::Disabled;
     let result = process(request).expect("both roots are processed");
     assert_eq!(result.targets.len(), 2);
     assert_ne!(result.targets[0].source_id, result.targets[1].source_id);
@@ -1765,7 +1747,7 @@ fn external_config_authority_does_not_grant_its_include_stylesheet_or_local_path
             [project.path().to_owned(), external.path().to_owned()],
             vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
         );
-        request.config = ConfigSelection::Explicit(config.clone());
+        request.config = ProjectConfigSelection::Explicit(config.clone());
         let result = process(request);
         assert!(
             matches!(&result, Err(adocweave_project::ProjectError::Authority(_))),
@@ -1794,7 +1776,7 @@ fn external_config_authority_can_read_only_the_config_body() {
         [project.path().to_owned(), external.path().to_owned()],
         vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
     );
-    request.config = ConfigSelection::Explicit(config);
+    request.config = ProjectConfigSelection::Explicit(config);
     let result = process(request).expect("external configuration body is readable");
     assert!(result.targets[0].analysis.is_ok());
 }
@@ -1837,7 +1819,7 @@ fn explicit_symlinked_config_is_rejected() {
         directory.path(),
         vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
     );
-    request.config = ConfigSelection::Explicit(PathBuf::from("linked.toml"));
+    request.config = ProjectConfigSelection::Explicit(PathBuf::from("linked.toml"));
     assert!(process(request).is_err());
 }
 

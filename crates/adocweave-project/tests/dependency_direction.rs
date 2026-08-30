@@ -17,7 +17,14 @@ fn direct_dependencies(manifest: &str) -> BTreeSet<&str> {
 #[test]
 fn project_has_only_lower_level_crates_and_standard_glob_dependency() {
     let actual = direct_dependencies(include_str!("../Cargo.toml"));
-    let expected = BTreeSet::from(["adocweave", "adocweave-config", "adocweave-host", "glob"]);
+    let expected = BTreeSet::from([
+        "adocweave",
+        "adocweave-host",
+        "glob",
+        "serde",
+        "sha2",
+        "toml",
+    ]);
     assert_eq!(actual, expected);
 }
 
@@ -25,10 +32,6 @@ fn project_has_only_lower_level_crates_and_standard_glob_dependency() {
 fn lower_level_crates_do_not_depend_on_project() {
     for (name, manifest) in [
         ("adocweave", include_str!("../../adocweave/Cargo.toml")),
-        (
-            "adocweave-config",
-            include_str!("../../adocweave-config/Cargo.toml"),
-        ),
         (
             "adocweave-host",
             include_str!("../../adocweave-host/Cargo.toml"),
@@ -76,8 +79,6 @@ fn public_contract_does_not_name_lower_layer_types() {
             .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
             .collect::<BTreeSet<_>>();
         for forbidden in [
-            "ConfigSnapshot",
-            "ResolvedProjectConfig",
             "ResourceError",
             "FilesystemReadLimits",
             "LocalFilesystemPolicy",

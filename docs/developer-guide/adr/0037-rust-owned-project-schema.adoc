@@ -1,6 +1,6 @@
 = ADR 0037: プロジェクト設定Schemaの正本をRustへ集約
 
-:status: accepted
+:status: accepted; schema source location amended by ADR 0045
 
 == 文脈
 
