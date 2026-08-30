@@ -4,7 +4,7 @@
   "publishConfig": {
     "access": "public"
   },
-  "description": "AsciiDoc analysis and HTML rendering for browsers, powered by AdocWeave WebAssembly",
+  "description": "AsciiDoc analysis and HTML rendering for browsers and Node.js, powered by AdocWeave WebAssembly",
   "type": "module",
   "exports": {
     ".": {
@@ -20,6 +20,7 @@
   "files": [
     "LICENSE-APACHE",
     "LICENSE-MIT",
+    "CHANGELOG.md",
     "README.md",
     "THIRD_PARTY_NOTICES.adoc",
     "example",
@@ -38,10 +39,10 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/KeishiS/adocweave.git",
-    "directory": "web-worker"
+    "directory": "packages/wasm"
   },
   "scripts": {
-    "test": "node --test worker.test.mjs release-manifest.test.mjs package-api.test.mjs direct.test.mjs",
+    "test": "node --test worker.test.mjs package-manifest.test.mjs package-api.test.mjs direct.test.mjs",
     "test:cross-runtime": "node --test cross-runtime.test.mjs"
   }
 }

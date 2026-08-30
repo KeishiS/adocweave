@@ -12,7 +12,7 @@ import { workspaceVersion } from "./release-version.mjs";
 const ROOT = new URL("../", import.meta.url);
 const registry = JSON.parse(readFileSync(new URL("release/version-sync.json", ROOT), "utf8"));
 
-test("一つのworkspace版を全manifestとlockfileで使用する", () => {
+test("一つのworkspace版をnative releaseのmanifestとlockfileで使用する", () => {
   assert.equal(checkReleaseVersion({ registry }), workspaceVersion());
   assert.equal(workspaceVersion(), "0.54.0");
 });
@@ -25,6 +25,10 @@ test("同期設定は製品別の正本を持たない", () => {
   ]);
   assert.equal("products" in registry, false);
   assert.equal("authority" in registry, false);
+  assert.equal(
+    registry.literals.some(({ path }) => path === "packages/wasm/package.json"),
+    false,
+  );
 });
 
 test("CLI引数は一括検査と一括更新だけを受理する", () => {

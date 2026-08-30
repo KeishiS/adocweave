@@ -3,7 +3,6 @@ export {
   AdocWeaveError,
   isAdocWeaveLifecycleError,
 } from "./client.mjs";
-export { WASM_PACKAGE_VERSION } from "./contracts.mjs";
 export { PROTOCOL_SCHEMA_VERSION } from "./worker-protocol.mjs";
 
 export function defaultAssetUrls(baseUrl) {

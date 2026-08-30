@@ -5,7 +5,6 @@ import { readFile } from "node:fs/promises";
 import {
   AdocWeaveClient,
   AdocWeaveError,
-  WASM_PACKAGE_VERSION,
   PROTOCOL_SCHEMA_VERSION,
   defaultAssetUrls,
   isAdocWeaveLifecycleError,
@@ -89,7 +88,6 @@ test("public entry resolves assets without eager work", () => {
     assert.equal(urls.wasmUrl.href, new URL("wasm/adocweave_wasm_bg.wasm", root).href);
   }
   assert.equal(FakeWorker.created.length, 0);
-  assert.match(WASM_PACKAGE_VERSION, /^\d+\.\d+\.\d+(?:-rc\.[1-9]\d*)?$/);
   assert.ok(Number.isSafeInteger(PROTOCOL_SCHEMA_VERSION));
 });
 
@@ -100,7 +98,7 @@ test("client exposes only analyze and dispose operations", async () => {
   const exports = await import("./index.mjs");
   for (const removed of [
     "AdocWeaveClientError", "AdocWeaveResult", "AdocWeaveWorkerClient", "analyzeOnce",
-    "PACKAGE_VERSION",
+    "PACKAGE_VERSION", "WASM_PACKAGE_VERSION",
   ]) {
     assert.equal(Object.hasOwn(exports, removed), false, removed);
   }

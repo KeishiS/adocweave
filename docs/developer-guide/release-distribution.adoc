@@ -1,6 +1,6 @@
 = 配布仕様
 
-この文書は、GitHub Releaseへ公開する成果物と安全上の保証の正本です。利用者の導入、更新、checksumおよび
+この文書は、配布物と安全上の保証の正本です。利用者の導入、更新、checksumおよび
 attestationの確認はxref:../user-guide/release-installation.adoc[インストールと更新]、開発者がReleaseを
 準備する手順はxref:../../CONTRIBUTING.adoc[コントリビューションガイド]を参照してください。
 
@@ -11,8 +11,12 @@ attestationの確認はxref:../user-guide/release-installation.adoc[インスト
 |===
 |対象 |正本
 
-|製品のバージョン
+|ネイティブ版
 |リポジトリ直下のlink:../../Cargo.toml[Cargo workspaceの``package.version``]
+
+|WebAssemblyパッケージの版
+|link:../../packages/wasm/package.json[``packages/wasm/package.json``]。変更内容は
+link:../../packages/wasm/CHANGELOG.md[パッケージのChangelog]に記録します。
 
 |native成果物、対象環境、追加成果物および公開方法
 |link:../../dist-workspace.toml[cargo-distのworkspace設定]と各配布packageの``dist.toml``
@@ -35,18 +39,20 @@ attestationの確認はxref:../user-guide/release-installation.adoc[インスト
 実際のファイルを照合します。
 
 [#distribution-boundary]
-== 一つのバージョンとGitHub Release
+== 配布単位
 
-すべての製品はCargo workspaceの一つのバージョンを使用します。一つのcommit、一つの``vX.Y.Z``タグおよび
-一つのGitHub Releaseを公開単位とし、同じバージョン番号を別の内容へ再利用しません。
+ネイティブ実行ファイルは、一つのcommit、一つの``vX.Y.Z``タグおよび一つのGitHub Releaseを公開単位とします。
+WebAssemblyパッケージは独立した版を持ち、``wasm/vX.Y.Z``タグからnpm Registryへ直接公開します。
+どちらも同じバージョン番号を別の内容へ再利用しません。
 
 cargo-distは、OSとCPU architectureごとの``adocweave-<target>.zip``をnative成果物として構築します。
-WebAssembly package、textlint用Processor、VS Code拡張およびZed拡張は追加成果物として同じplanと
+textlint用Processor、VS Code拡張およびZed拡張は追加成果物として同じplanと
 GitHub Releaseへ含めます。GitHubが自動生成するsource archiveは検証対象の成果物に含めません。
 
-registryへも公開する成果物は、GitHub Releaseへ添付して検証したものと同じbyte列を送ります。VS Code拡張は
-Open VSX RegistryとVisual Studio Marketplaceへ、WebAssembly packageとtextlint用Processorはnpm Registryへ
-公開します。registry向けに構築し直しません。Zed拡張はGitHub Releaseへの添付だけを対象とします。
+registryへも公開する追加成果物は、GitHub Releaseへ添付して検証したものと同じ内容を送ります。VS Code拡張は
+Open VSX RegistryとVisual Studio Marketplaceへ、textlint用Processorはnpm Registryへ公開します。
+registry向けに構築し直しません。Zed拡張はGitHub Releaseへの添付だけを対象とします。
+WebAssemblyパッケージは専用workflowで一度だけ構築して検査し、その成果物をnpm Registryへ送ります。
 Rust crateはcrates.ioへ公開しません。
 
 Visual Studio Marketplaceは公開後のVSIXへ署名情報を追加するため、取得したVSIX archive全体のbyte列は送信元と
@@ -57,7 +63,7 @@ Marketplaceが追加したZIP内の標準署名領域（``_xmlsignatures/``と�
 4つのworkflowへ同じstable tagと完全なcommit SHAを渡し、直接かつ並列に呼び出します。独自eventと手動起動用の
 入口は使用しません。一つの送信が失敗しても別の公開先を差し戻さず、Release workflowの``Re-run failed jobs``で
 失敗した送信だけを同じtagとcommitに対して再実行します。
-この公開単位を選んだ理由はxref:adr/0040-unified-release-and-native-executable.adoc[ADR 0040]、公開先と
+この公開単位を選んだ理由はxref:adr/0043-independent-distribution-units.adoc[ADR 0043]、公開先と
 権限の分離はxref:adr/0023-publication-boundary.adoc[ADR 0023]を参照してください。
 
 [#artifact-contracts]
@@ -97,7 +103,7 @@ xref:adr/0036-no-unconsumed-sbom.adoc[ADR 0036]を参照してください。
 [#distribution-integrity]
 == 完全性と来歴
 
-cargo-distのplanは、workspaceのバージョン、``vX.Y.Z``タグ、native成果物、追加成果物および実行jobを確定します。
+cargo-distのplanは、workspaceのバージョン、``vX.Y.Z``タグ、native成果物、ネイティブ版の追加成果物および実行jobを確定します。
 各構築jobが出力する標準dist-manifestを集約し、公開時に最終的な標準dist-manifestを生成します。planまたは
 dist-manifestにないfile、欠落したfile、異なるバージョンおよび異なるsource commitを受理しません。
 
@@ -124,10 +130,17 @@ Open VSX Registryへの公開workflowの``publish`` jobだけが専用tokenを�
 再利用workflowの``marketplace-publish.yml``ではなく``release.yml``です。両workflowともGitHub Releaseから取得した
 VSIXのchecksumとattestationを確認し、別の成果物を公開しません。
 
-npmの公開workflowも``id-token``の書込みを受け取り、Trusted Publishingで長期tokenの代わりにOIDCで公開元を
-確認します。npmのTrusted Publisherにも``release.yml``と``npm-publish`` environmentを登録します。workflowは
-GitHub Releaseから取得したarchiveのchecksumとattestationを確認してから送信し、送信後はregistryが記録した
-integrityとReleaseの成果物を照合します。
+textlint packageを送る再利用workflowは``npm-publish.yml``です。その公開jobはGitHub environment
+``npm-publish``で``id-token``の書込みを受け取ります。Trusted Publisherへ登録するworkflow identityは呼出し元の
+``release.yml``、Environment名は``npm-publish``です。GitHub Releaseから取得したarchiveのchecksumと
+attestationを確認してから送信し、送信後はregistryが記録したintegrityとReleaseの成果物を照合します。
+
+WebAssemblyパッケージでは、``wasm-publish.yml``の公開jobだけがGitHub environment``npm-publish``で
+``id-token``の書込みを持ちます。Trusted Publisherへ登録するworkflow identityは``wasm-publish.yml``、
+Environment名は``npm-publish``です。workflowは
+``wasm/vX.Y.Z``タグ、``packages/wasm/package.json``の版、commitおよび``main``への統合を照合してから
+構築済みの成果物を送信します。公開後はnpmから導入し直し、``npm audit signatures``で署名とprovenanceを検証して、
+Node.jsと実ブラウザーで同じパッケージを確認します。
 
 stable Releaseの公開後に、Cachix用workflowの公開jobだけが``CACHIX_AUTH_TOKEN``を使用します。公開jobは
 公開済みのtag、commitおよびworkspace版を照合し、同じcommitから``x86_64-linux``と``aarch64-linux``向けに
@@ -138,9 +151,10 @@ stable Releaseの公開後に、Cachix用workflowの公開jobだけが``CACHIX_A
 同じtagでworkflowを再実行しても既存の内容は変わりません。
 
 最初の自動公開より前に、``github-release``、``binary-cache-publish``、``marketplace-publish``、``npm-publish``および
-``open-vsx-publish``の各environmentを作成します。5つすべてのdeployment branch policyは、Release workflowを起動する
-stable tagのpattern ``v*``だけを許可します。CachixとOpen VSXのtokenはrepository全体ではなく対応するenvironmentへ置き、
-MarketplaceとnpmのTrusted Publisherには``release.yml``と対応するenvironmentを登録します。
+``open-vsx-publish``の各environmentを作成します。``npm-publish``は``v*``と``wasm/v*``を許可し、ほかの
+environmentはRelease workflowを起動する``v*``だけを許可します。CachixとOpen VSXのtokenはrepository全体ではなく対応するenvironmentへ置き、
+Marketplaceとtextlint packageのTrusted Publisherには``release.yml``、WebAssemblyパッケージのTrusted Publisherには
+``wasm-publish.yml``を登録し、それぞれ前述のEnvironment名と対応させます。
 
 repositoryへの書込み権限がある利用者による手元からのtag作成を、workflowだけで機械的に禁止することはできません。
 tag rulesetを追加せず、公開前検査によって権限を制限する理由は
@@ -157,7 +171,13 @@ tagのcommitが``main``に含まれることを``host``より前に一度だけ�
 公開先ごとの``workflow_call``専用workflowを直接かつ並列に呼び出します。呼出し先へはplanで確定したtagと
 Releaseを作成した完全なcommit SHAだけを渡します。各公開jobはstableなRelease、tagのcommit、checkoutしたcommit、
 workspace版、checksumおよびattestationを照合します。``main``との関係は共通のrelease contractを正本とし、公開先ごとの
-workflowでは重ねて検査しません。
+workflowでは重ねて検査しません。WebAssemblyパッケージはこのRelease workflowへ含めません。
+
+``main``の検査に成功したcommitへ``wasm/vX.Y.Z``タグを作成すると、``wasm-publish.yml``が起動します。
+workflowはタグ、パッケージの版、commitおよび``main``への統合を確認し、候補を構築してブラウザーとNode.jsで検査します。
+検査した同じ成果物をnpmへ公開し、npm上の内容とprovenanceを確認します。
+失敗した場合は同じworkflow runの失敗jobだけを再実行します。公開済みの同じ版は内容を確認して送信を省略し、
+成果物の修正が必要な場合は新しい版とタグを使用します。
 
 外部公開jobはRelease workflowの一部であり、いずれかが失敗するとRelease workflow全体も失敗します。外部サービスへの
 送信だけが失敗した場合は、GitHub Actionsの標準操作``Re-run failed jobs``を使用します。成功済みのRelease作成jobと
@@ -181,8 +201,8 @@ xref:adr/0032-same-run-release-publication.adoc[ADR 0032]を参照してくだ�
 Pull Requestではsource、試験、生成fileおよび文書を標準の``verify``で検査します。cargo-distは``dist plan``を
 実行して、workspace版、成果物およびjobの構成を検査しますが、配布成果物は構築しません。
 
-``main``ではcross target、fuzz、Nix packageなどの統合検査を行います。Release workflowでは固定したtagとcommitに
-対してplanを再生成し、対象OSでnative成果物を構築します。追加成果物は専用の構築処理で作成し、cargo-distの
+``main``ではcross target、fuzz、Nix packageなどの統合検査を行います。ネイティブ版のRelease workflowでは固定したtagとcommitに
+対してplanを再生成し、対象OSでnative成果物を構築します。ネイティブ版の追加成果物は専用の構築処理で作成し、cargo-distの
 標準dist-manifestへ統合します。完成成果物は対象OS、ブラウザー、エディタまたは固定consumerで検査します。
 
 taskの現在の入口とReleaseの操作手順はxref:../../CONTRIBUTING.adoc[コントリビューションガイド]を基準とします。
@@ -190,6 +210,7 @@ taskの現在の入口とReleaseの操作手順はxref:../../CONTRIBUTING.adoc[�
 xref:adr/0033-make-task-boundary.adoc[ADR 0033]を参照してください。
 
 GitHub Releaseの公開後は、成果物を実際のRelease URLから取得してchecksumとattestationを確認します。
+WebAssemblyパッケージはnpm Registryから取得して確認します。
 外部registryへ公開したpackageと拡張はregistryから導入し直し、署名などregistry固有のmetadataを除く内容、
 基本操作および固定consumerでの動作を確認します。これらの確認は公開済みの成果物に対して行い、公開前の検査と
 役割を分けます。

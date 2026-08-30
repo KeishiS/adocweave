@@ -31,6 +31,7 @@ const EXTERNAL_PUBLICATION_WORKFLOWS = new Set([
 const OIDC_PUBLICATION_WORKFLOWS = new Set([
   "marketplace-publish.yml",
   "npm-publish.yml",
+  "wasm-publish.yml",
 ]);
 const RELEASE_PUBLICATION_JOBS = new Map([
   ["publish-binary-cache", "binary-cache-publish.yml"],
@@ -522,17 +523,87 @@ export function validateNpmPublication(workflows) {
     fail("npm-publish.yml workflow_call must accept only the release tag and commit");
   }
   const job = workflow.jobs?.publish;
-  if (job?.strategy?.["fail-fast"] !== false ||
-      canonical(job?.strategy?.matrix?.package) !== canonical(["textlint", "wasm"])) {
-    fail("npm-publish.yml must process both fixed packages independently");
+  if (job?.strategy !== undefined) {
+    fail("npm-publish.yml must publish only the fixed textlint package");
   }
   if (job.environment !== "npm-publish") {
     fail("npm-publish.yml must use the npm-publish environment");
   }
   const source = jobRuns(job);
   if (!source.includes("tools/npm-publication.mjs") ||
-      !JSON.stringify(job).includes("matrix.package")) {
-    fail("npm-publish.yml must verify each fixed package before and after publication");
+      !source.includes("packages/textlint-plugin-asciidoc/package.json") ||
+      !source.includes("tools/textlint-plugin-npm-smoke.mjs") ||
+      JSON.stringify(job).includes("packages/wasm")) {
+    fail("npm-publish.yml must verify only the fixed textlint package before and after publication");
+  }
+}
+
+export function validateWasmPublication(workflows, npmSmokeSource) {
+  const workflow = workflows["wasm-publish.yml"];
+  if (!workflow) fail("wasm-publish.yml is required");
+  if (canonical(Object.keys(workflow.on ?? {})) !== canonical(["push"]) ||
+      canonical(workflow.on?.push?.tags) !== canonical(["wasm/v[0-9]+.[0-9]+.[0-9]+"])) {
+    fail("wasm-publish.yml must run only for stable wasm/vX.Y.Z tags");
+  }
+  if (workflow.concurrency?.["cancel-in-progress"] !== false ||
+      !String(workflow.concurrency?.group ?? "").includes("${{ github.ref_name }}")) {
+    fail("wasm-publish.yml must serialize idempotent publication attempts by package tag");
+  }
+  if (canonical(Object.keys(workflow.jobs ?? {}).sort()) !== canonical(["candidate", "publish"])) {
+    fail("wasm-publish.yml must contain only candidate and publish jobs");
+  }
+  const candidate = workflow.jobs.candidate;
+  const publish = workflow.jobs.publish;
+  if (needs(candidate).length !== 0 || canonical(needs(publish)) !== canonical(["candidate"])) {
+    fail("wasm-publish.yml must verify one candidate before publication");
+  }
+  if (publish.environment !== "npm-publish") {
+    fail("wasm-publish.yml must keep Trusted Publishing in the npm-publish environment");
+  }
+  const checkout = (candidate.steps ?? []).find((step) =>
+    typeof step.uses === "string" && step.uses.startsWith("actions/checkout@")
+  );
+  if (checkout?.with?.["fetch-depth"] !== 0 || checkout?.with?.["fetch-tags"] !== true ||
+      checkout?.with?.["persist-credentials"] !== false) {
+    fail("wasm-publish.yml must fetch tag and main history without checkout credentials");
+  }
+  const candidateSource = jobRuns(candidate);
+  for (const required of [
+    "packages/wasm/package.json",
+    'test "$PACKAGE_TAG" = "wasm/v$version"',
+    'git rev-parse "refs/tags/$PACKAGE_TAG^{commit}"',
+    "git rev-parse HEAD",
+    'git merge-base --is-ancestor "$PACKAGE_COMMIT" refs/remotes/origin/main',
+    "cargo make test-wasm-release-candidate",
+  ]) {
+    if (!candidateSource.includes(required)) {
+      fail(`wasm-publish.yml must bind the package tag, version, source, and candidate: ${required}`);
+    }
+  }
+  const publishSource = jobRuns(publish);
+  for (const required of [
+    "tools/npm-publication.mjs",
+    'npm publish "$tarball"',
+    "https://slsa.dev/provenance/v1",
+    "nix develop .#ci-browser -c node tools/wasm-npm-smoke.mjs",
+  ]) {
+    if (!publishSource.includes(required)) {
+      fail(`wasm-publish.yml must publish and verify the candidate directly on npm: ${required}`);
+    }
+  }
+  const configuration = JSON.stringify(workflow);
+  if (/gh release|releases\/tags|workspace_version|WASM_PACKAGE_VERSION/iu.test(configuration)) {
+    fail("wasm-publish.yml must not depend on a native Release or workspace version");
+  }
+  for (const required of [
+    '"audit"',
+    '"signatures"',
+    '"--include-attestations"',
+    "runWasmPackageBrowserSmoke",
+  ]) {
+    if (!npmSmokeSource?.includes(required)) {
+      fail(`wasm npm smoke must verify signatures, provenance, and the browser package: ${required}`);
+    }
   }
 }
 
@@ -555,13 +626,19 @@ export function loadWorkflowPolicyInputs() {
   return {
     distConfiguration: read("dist-workspace.toml"),
     releaseGuide: read("CONTRIBUTING.adoc"),
+    wasmNpmSmoke: read("tools/wasm-npm-smoke.mjs"),
     workflows: Object.fromEntries(
       Object.entries(sources).map(([name, source]) => [name, parseWorkflow(name, source)]),
     ),
   };
 }
 
-export function validateReleaseWorkflowPolicy({ workflows, distConfiguration, releaseGuide }) {
+export function validateReleaseWorkflowPolicy({
+  workflows,
+  distConfiguration,
+  releaseGuide,
+  wasmNpmSmoke,
+}) {
   validatePinnedActions(workflows);
   validatePermissions(workflows);
   validateReleaseFlow(workflows, distConfiguration);
@@ -569,6 +646,7 @@ export function validateReleaseWorkflowPolicy({ workflows, distConfiguration, re
   validateExternalPublicationIsolation(workflows);
   validateBinaryCachePublication(workflows);
   validateNpmPublication(workflows);
+  validateWasmPublication(workflows, wasmNpmSmoke);
   validateReleaseVersionCommands(releaseGuide);
 }
 

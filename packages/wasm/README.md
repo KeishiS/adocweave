@@ -8,7 +8,7 @@
 npm install @adocweave/wasm@X.Y.Z
 ```
 
-GitHub Releaseへ添付したarchiveと同じbyte列をnpmへ公開します。checksumとattestationを自分で検証してから導入する場合は、AdocWeaveのGitHub Releaseに添付した `.tgz` を指定することもできます。
+npm Trusted Publishingでnpm Registryへ直接公開します。パッケージの版と変更内容は、このディレクトリの `package.json` と `CHANGELOG.md` を基準とします。
 
 ## 入口の選び方
 
@@ -68,7 +68,6 @@ WASMがtrapした場合、`direct` は同じNode.jsプロセスで実行して�
 - `wasm/adocweave_wasm.d.ts` — 生成された場合のTypeScript declaration
 - `worker/index.mjs` と `worker/index.d.mts` — frontend向けの公開ES module入口と型定義
 - `worker/client.mjs` と `worker/worker.mjs` — 一つの要求をWeb Workerで実行する内部実装
-- `worker/contracts.mjs` — packageの版情報
 - `worker/protocol.d.mts` — WebAssemblyとやり取りするJSONの型。Rustのwire定義から生成します
 - `worker/worker-protocol.mjs` — clientとWorkerが交換する内部封筒
 - `THIRD_PARTY_NOTICES.adoc` — rootとZedのlockfileから生成したthird-party package一覧
@@ -105,7 +104,7 @@ ViteまたはWebpackではpackageの `worker` と `wasm` を同じ公開ディ�
 
 静的serverは `.mjs` と `.js` を `text/javascript`、`.wasm` を `application/wasm` として返します。main document、公開entry、WorkerおよびWASMを同一originから配信します。CSPは少なくとも `script-src 'self' 'wasm-unsafe-eval'`、`worker-src 'self'` および `connect-src 'self'` を許可します。inline scriptと `unsafe-eval` は不要です。
 
-動作する例は `example/index.html` に含まれます。Release gateでは実パッケージをesbuildでbundleしたbrowser smoke、CSP、WASM sizeおよびURL解決を検証します。
+動作する例は `example/index.html` に含まれます。公開前には実パッケージをesbuildでbundleしたbrowser smoke、CSP、WASM sizeおよびURL解決を検証します。
 
 ## ライセンス
 
