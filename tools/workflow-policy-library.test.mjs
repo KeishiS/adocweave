@@ -123,7 +123,7 @@ gh release create v1.2.3 artifacts/*
           },
         ],
       },
-      "publish-cachix": releasePublicationJob("cachix-publish.yml"),
+      ...cachixReleaseJobs(),
     },
   };
 }
@@ -288,7 +288,7 @@ nix develop .#ci-browser -c node tools/wasm-npm-smoke.mjs
   };
 }
 
-function cachixPublicationWorkflow() {
+function cachixReleaseJobs() {
   const matrix = {
     "fail-fast": false,
     matrix: {
@@ -299,52 +299,61 @@ function cachixPublicationWorkflow() {
     },
   };
   return {
-    on: {
-      workflow_call: {
-        inputs: {
-          tag: { required: true, type: "string" },
-          commit: { required: true, type: "string" },
+    "publish-cachix": {
+      needs: ["plan", "host"],
+      if: "${{ always() && needs.host.result == 'success' }}",
+      environment: "cachix-publish",
+      concurrency: {
+        group: "cachix-publish-${{ needs.plan.outputs.tag }}-${{ matrix.nixSystem }}",
+        "cancel-in-progress": false,
+      },
+      permissions: { contents: "read" },
+      strategy: matrix,
+      "runs-on": "${{ matrix.runner }}",
+      steps: [
+        {
+          uses: pin,
+          with: { ref: "${{ github.sha }}" },
         },
-      },
+        {
+          run: stableReleaseVerification,
+        },
+        {
+          env: { CACHIX_AUTH_TOKEN: "${{ secrets.CACHIX_AUTH_TOKEN }}" },
+          run: `if [[ -z "$CACHIX_AUTH_TOKEN" ]]; then
+  echo "::error::CACHIX_AUTH_TOKEN is unavailable in the cachix-publish environment."
+  exit 1
+fi`,
+        },
+        { uses: "DeterminateSystems/determinate-nix-action@0000000000000000000000000000000000000000" },
+        {
+          uses: "cachix/cachix-action@0000000000000000000000000000000000000000",
+          with: {
+            name: "keishis",
+            authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}",
+            skipPush: true,
+          },
+        },
+        {
+          env: { NIX_SYSTEM: "${{ matrix.nixSystem }}" },
+          run: 'nix build ".#checks.${NIX_SYSTEM}.default"\ncachix push keishis "$package"',
+        },
+      ],
     },
-    permissions: { contents: "read" },
-    concurrency: { group: `cachix-publish-${publicationTag}`, "cancel-in-progress": false },
-    jobs: {
-      publish: {
-        environment: "cachix-publish",
-        env: { RELEASE_TAG: publicationTag, RELEASE_COMMIT: publicationCommit },
-        strategy: matrix,
-        steps: [
-          {
-            uses: pin,
-            with: { ref: publicationCommit },
-          },
-          {
-            run: `${stableReleaseVerification}
-cachix push keishis "$package"
-`,
-          },
-          {
-            uses: "cachix/cachix-action@0000000000000000000000000000000000000000",
-            with: {
-              name: "keishis",
-              authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}",
-              skipPush: true,
-            },
-          },
-        ],
-      },
-      verify: {
-        needs: "publish",
-        strategy: structuredClone(matrix),
-        steps: [
-          { uses: pin, with: { ref: publicationCommit } },
-          {
-            uses: "cachix/cachix-action@0000000000000000000000000000000000000000",
-            with: { name: "keishis", skipPush: true },
-          },
-          {
-            run: `
+    "verify-cachix": {
+      needs: "publish-cachix",
+      permissions: { contents: "read" },
+      strategy: structuredClone(matrix),
+      "runs-on": "${{ matrix.runner }}",
+      steps: [
+        { uses: pin, with: { ref: "${{ github.sha }}" } },
+        {
+          uses: "cachix/cachix-action@0000000000000000000000000000000000000000",
+          with: { name: "keishis", skipPush: true },
+        },
+        {
+          env: { NIX_SYSTEM: "${{ matrix.nixSystem }}" },
+          run: `
 nix build ".#packages.\${NIX_SYSTEM}.default" \\
   --option builders '' \\
   --option fallback false \\
@@ -352,9 +361,8 @@ nix build ".#packages.\${NIX_SYSTEM}.default" \\
   --option substituters https://keishis.cachix.org
 node tools/cachix-smoke.mjs "$package/bin/adocweave"
 `,
-          },
-        ],
-      },
+        },
+      ],
     },
   };
 }
@@ -416,7 +424,6 @@ function workflows() {
       permissions: { contents: "read" },
       jobs: { smoke: { steps: [] } },
     },
-    "cachix-publish.yml": cachixPublicationWorkflow(),
     "textlint-plugin-publish.yml": textlintPluginPublicationWorkflow(),
     "wasm-publish.yml": wasmPublicationWorkflow(),
     "vscode-publish.yml": vscodePublicationWorkflow(),
@@ -597,14 +604,14 @@ test("hostはcargo-distの最終manifestを含む成果物だけを公開する"
   );
 });
 
-test("native Release成功後はCachix公開workflowだけを呼び出す", () => {
+test("native Release成功後はCachix公開jobを保護されたenvironmentで直接実行する", () => {
   const release = releaseWorkflow();
   validateReleaseFlow(releaseFlowWorkflows(release), 'pr-run-mode = "plan"');
 
-  release.jobs["publish-cachix"].uses = "./.github/workflows/wasm-publish.yml";
+  release.jobs["publish-cachix"].environment = "other-environment";
   assert.throws(
     () => validateReleaseFlow(releaseFlowWorkflows(release), 'pr-run-mode = "plan"'),
-    /publish-cachix must call cachix-publish\.yml/u,
+    /publish-cachix must select its protected environment directly/u,
   );
 
   const announced = releaseWorkflow();
@@ -618,7 +625,7 @@ test("native Release成功後はCachix公開workflowだけを呼び出す", () =
   npm.jobs["publish-wasm"] = releasePublicationJob("wasm-publish.yml", true);
   assert.throws(
     () => validateReleaseFlow(releaseFlowWorkflows(npm), 'pr-run-mode = "plan"'),
-    /must call only native checks, native smoke, and Cachix publication/u,
+    /must call only native checks and native smoke workflows/u,
   );
 });
 
@@ -650,40 +657,22 @@ test("CIはPRのsource gateとmain専用gateを分離する", () => {
   );
 });
 
-test("外部公開workflowはReleaseからの再利用呼出しだけを受け付ける", () => {
+test("Cachix公開は再利用workflowやdispatchを経由しない", () => {
   const fixtures = workflows();
   validateExternalPublicationIsolation(fixtures);
-  fixtures["cachix-publish.yml"].on.workflow_dispatch = {};
+
+  fixtures["cachix-publish.yml"] = {
+    on: { workflow_call: {} },
+    permissions: { contents: "read" },
+    jobs: {},
+  };
   assert.throws(
     () => validateExternalPublicationIsolation(fixtures),
-    /cachix-publish.*callable only/u,
-  );
-
-  const called = workflows();
-  called["cachix-publish.yml"].on.workflow_call.inputs.commit.required = false;
-  assert.throws(
-    () => validateExternalPublicationIsolation(called),
-    /cachix-publish.*stable tag and complete commit/u,
-  );
-
-  const duplicateValidation = workflows();
-  duplicateValidation["cachix-publish.yml"].jobs.validate = { steps: [] };
-  assert.throws(
-    () => validateExternalPublicationIsolation(duplicateValidation),
-    /cachix-publish.*isolated publication jobs/u,
-  );
-
-  const duplicateAncestry = workflows();
-  duplicateAncestry["cachix-publish.yml"].jobs.publish.steps.push({
-    run: "git merge-base --is-ancestor HEAD refs/remotes/origin/main",
-  });
-  assert.throws(
-    () => validateExternalPublicationIsolation(duplicateAncestry),
-    /cachix-publish.*leave main ancestry verification.*native release checks/u,
+    /must not cross a reusable workflow secrets boundary/u,
   );
 
   const extraSender = workflows();
-  extraSender["cachix-publish.yml"].jobs.publish.steps.push({
+  extraSender["release.yml"].jobs["publish-cachix"].steps.push({
     run: 'gh api "repos/$GITHUB_REPOSITORY/dispatches"',
   });
   assert.throws(
@@ -696,7 +685,7 @@ test("Open VSXのtokenを専用workflowの公開job以外へ渡さない", () =>
   const fixtures = workflows();
   validateVscodePublication(fixtures);
 
-  fixtures["cachix-publish.yml"].jobs.verify.steps.push({
+  fixtures["release.yml"].jobs["verify-cachix"].steps.push({
     env: { TOKEN: "${{ secrets.OPEN_VSX_TOKEN }}" },
     run: "true",
   });
@@ -741,8 +730,9 @@ test("Cachix公開は二つのLinux closureを送り別のtokenなしrunnerで�
   const fixtures = workflows();
   validateCachixPublication(fixtures);
 
-  fixtures["cachix-publish.yml"].jobs.verify.steps[2].run =
-    fixtures["cachix-publish.yml"].jobs.verify.steps[2].run.replace(
+  const verify = fixtures["release.yml"].jobs["verify-cachix"];
+  const smoke = verify.steps.find((step) => String(step.run ?? "").includes("max-jobs"));
+  smoke.run = smoke.run.replace(
       "--option max-jobs 0",
       "--option max-jobs 1",
     );
@@ -750,15 +740,63 @@ test("Cachix公開は二つのLinux closureを送り別のtokenなしrunnerで�
     () => validateCachixPublication(fixtures),
     /acquire and smoke.*max-jobs/u,
   );
+
+  const wrongRunner = workflows();
+  wrongRunner["release.yml"].jobs["publish-cachix"]["runs-on"] = "ubuntu-24.04";
+  assert.throws(
+    () => validateCachixPublication(wrongRunner),
+    /fixed x86_64-linux and aarch64-linux targets/u,
+  );
+
+  const wrongBuildSystem = workflows();
+  const build = wrongBuildSystem["release.yml"].jobs["publish-cachix"].steps.find((step) =>
+    String(step.run ?? "").includes("cachix push")
+  );
+  build.env.NIX_SYSTEM = "x86_64-linux";
+  assert.throws(
+    () => validateCachixPublication(wrongBuildSystem),
+    /build the Nix system selected by its matrix entry/u,
+  );
+
+  const wrongVerifySystem = workflows();
+  const verifySmoke = wrongVerifySystem["release.yml"].jobs["verify-cachix"].steps.find((step) =>
+    String(step.run ?? "").includes("cachix-smoke")
+  );
+  verifySmoke.env.NIX_SYSTEM = "x86_64-linux";
+  assert.throws(
+    () => validateCachixPublication(wrongVerifySystem),
+    /acquire the Nix system selected by its matrix entry/u,
+  );
+
+  const duplicateAncestry = workflows();
+  duplicateAncestry["release.yml"].jobs["publish-cachix"].steps.push({
+    run: "git merge-base --is-ancestor HEAD refs/remotes/origin/main",
+  });
+  assert.throws(
+    () => validateCachixPublication(duplicateAncestry),
+    /leave main ancestry verification in native checks/u,
+  );
 });
 
 test("Cachixの書込みtokenを公開job以外へ渡さない", () => {
   const fixtures = workflows();
-  fixtures["cachix-publish.yml"].jobs.verify.steps[1].with.authToken =
+  const verifyAction = fixtures["release.yml"].jobs["verify-cachix"].steps.find((step) =>
+    String(step.uses ?? "").startsWith("cachix/cachix-action@")
+  );
+  verifyAction.with.authToken =
     "${{ secrets.CACHIX_AUTH_TOKEN }}";
   assert.throws(
     () => validateCachixPublication(fixtures),
     /without a write token/u,
+  );
+
+  const jobWide = workflows();
+  jobWide["release.yml"].jobs["publish-cachix"].env = {
+    CACHIX_AUTH_TOKEN: "${{ secrets.CACHIX_AUTH_TOKEN }}",
+  };
+  assert.throws(
+    () => validateCachixPublication(jobWide),
+    /use only the dedicated Cachix token/u,
   );
 
   const separateFixtures = workflows();
@@ -768,7 +806,40 @@ test("Cachixの書込みtokenを公開job以外へ渡さない", () => {
   });
   assert.throws(
     () => validateCachixPublication(separateFixtures),
-    /used only by cachix-publish/u,
+    /used only by release\.yml publish-cachix/u,
+  );
+});
+
+test("Cachix認証情報がなければpackage構築前に停止する", () => {
+  const fixtures = workflows();
+  const publish = fixtures["release.yml"].jobs["publish-cachix"];
+  publish.steps = publish.steps.filter((step) =>
+    !String(step.run ?? "").includes("CACHIX_AUTH_TOKEN is unavailable")
+  );
+  assert.throws(
+    () => validateCachixPublication(fixtures),
+    /fail before building when authentication is unavailable/u,
+  );
+
+  const late = workflows();
+  const lateSteps = late["release.yml"].jobs["publish-cachix"].steps;
+  const authenticationIndex = lateSteps.findIndex((step) =>
+    String(step.run ?? "").includes("CACHIX_AUTH_TOKEN is unavailable")
+  );
+  lateSteps.push(...lateSteps.splice(authenticationIndex, 1));
+  assert.throws(
+    () => validateCachixPublication(late),
+    /fail before building when authentication is unavailable/u,
+  );
+
+  const ignored = workflows();
+  const authentication = ignored["release.yml"].jobs["publish-cachix"].steps.find((step) =>
+    String(step.run ?? "").includes("CACHIX_AUTH_TOKEN is unavailable")
+  );
+  authentication["continue-on-error"] = true;
+  assert.throws(
+    () => validateCachixPublication(ignored),
+    /fail before building when authentication is unavailable/u,
   );
 });
 

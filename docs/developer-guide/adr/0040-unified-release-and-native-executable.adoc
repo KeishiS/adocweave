@@ -60,6 +60,13 @@ VS Code拡張とZed拡張は、設定で指定した絶対パス、``PATH``、�
 
 === 公開と失敗時の再実行
 
+[NOTE]
+====
+この節の配布物を一括公開する判断はxref:0043-independent-distribution-units.adoc[ADR 0043]で置き換えました。
+現在の公開単位とworkflowの分離はxref:../release-distribution.adoc[配布仕様]、資格情報の境界は
+xref:0023-publication-boundary.adoc[ADR 0023]を参照してください。以下は置き換え前の判断です。
+====
+
 一つのGitHub Releaseへ、その版のnative実行ファイルの圧縮ファイル、npmパッケージ、VSIXおよびZed拡張の
 配布用圧縮ファイルを添付します。
 Open VSX、Visual Studio Marketplace、npmの二つのパッケージおよびCachixには、機能変更のない配布物も含めて

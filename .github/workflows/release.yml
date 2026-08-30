@@ -318,9 +318,106 @@ jobs:
       - plan
       - host
     if: ${{ always() && needs.host.result == 'success' }}
-    uses: ./.github/workflows/cachix-publish.yml
-    with:
-      tag: ${{ needs.plan.outputs.tag }}
-      commit: ${{ github.sha }}
+    environment: cachix-publish
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            nixSystem: x86_64-linux
+          - runner: ubuntu-24.04-arm
+            nixSystem: aarch64-linux
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    concurrency:
+      group: cachix-publish-${{ needs.plan.outputs.tag }}-${{ matrix.nixSystem }}
+      cancel-in-progress: false
     permissions:
       "contents": "read"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - name: Published release verification
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: |
+          release="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")"
+          test "$(jq -r .tag_name <<<"$release")" = "$RELEASE_TAG"
+          test "$(jq -r .draft <<<"$release")" = false
+          test "$(jq -r .prerelease <<<"$release")" = false
+          test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$RELEASE_COMMIT"
+          test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
+
+          workspace_version="$(sed -n '/^\[workspace\.package\]/,/^\[/ s/^version = "\([^"]*\)"/\1/p' Cargo.toml)"
+          [[ "$workspace_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          test "$RELEASE_TAG" = "v$workspace_version"
+      - name: Cachix authentication verification
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        run: |
+          if [[ -z "$CACHIX_AUTH_TOKEN" ]]; then
+            echo "::error::CACHIX_AUTH_TOKEN is unavailable in the cachix-publish environment."
+            exit 1
+          fi
+      - uses: DeterminateSystems/determinate-nix-action@527f17dd63d2d60d3e5552934bc84b9a33a14d11 # v3.22.2
+      - uses: cachix/cachix-action@5f2d7c5294214f71b873db4b969586b980625e71 # v17
+        with:
+          name: keishis
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          skipPush: true
+      - name: Release package closure build and push
+        env:
+          NIX_SYSTEM: ${{ matrix.nixSystem }}
+        run: |
+          check="$(nix build ".#checks.${NIX_SYSTEM}.default" --no-link --print-out-paths)"
+          package="$(readlink -f "$check/package")"
+          test -n "$package"
+          cachix push keishis "$package"
+
+  verify-cachix:
+    needs:
+      - publish-cachix
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            nixSystem: x86_64-linux
+          - runner: ubuntu-24.04-arm
+            nixSystem: aarch64-linux
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      "contents": "read"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verified commit check
+        env:
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
+      - uses: DeterminateSystems/determinate-nix-action@527f17dd63d2d60d3e5552934bc84b9a33a14d11 # v3.22.2
+      - uses: cachix/cachix-action@5f2d7c5294214f71b873db4b969586b980625e71 # v17
+        with:
+          name: keishis
+          skipPush: true
+      - name: Cache-only package acquisition and smoke
+        env:
+          NIX_SYSTEM: ${{ matrix.nixSystem }}
+        run: |
+          package="$(nix build ".#packages.${NIX_SYSTEM}.default" \
+            --no-link --print-out-paths \
+            --option builders '' \
+            --option fallback false \
+            --option max-jobs 0 \
+            --option substituters https://keishis.cachix.org)"
+          test -n "$package"
+          node tools/cachix-smoke.mjs "$package/bin/adocweave"

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.56.4] - 2026-08-30
+
+### Fixed
+
+- Cachix publication now runs directly in the Release workflow, so the protected `cachix-publish` environment supplies its token only to the publishing job. Missing authentication is reported before the Nix package is built.
+
 ## [0.56.3] - 2026-08-30
 
 ### Main changes
@@ -72,4 +78,5 @@ if let Ok(expanded) = analysis.expanded {
 }
 ```
 
+[0.56.4]: https://github.com/KeishiS/adocweave/compare/v0.56.3...v0.56.4
 [0.56.3]: https://github.com/KeishiS/adocweave/releases/tag/v0.56.3

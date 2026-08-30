@@ -18,20 +18,13 @@ const RELEASE_HOST = {
   contents: "write",
   "id-token": "write",
 };
-const PUBLICATION_TAG_EXPRESSION = "${{ inputs.tag }}";
-const PUBLICATION_COMMIT_EXPRESSION = "${{ inputs.commit }}";
 const OIDC_PUBLICATION = { contents: "read", "id-token": "write" };
 const MARKETPLACE_OIDC_PUBLICATION = { contents: "read", "id-token": "write" };
-const EXTERNAL_PUBLICATION_WORKFLOWS = new Set([
-  "cachix-publish.yml",
-]);
 const OIDC_PUBLICATION_WORKFLOWS = new Set([
   "textlint-plugin-publish.yml",
   "wasm-publish.yml",
 ]);
-const RELEASE_PUBLICATION_JOBS = new Map([
-  ["publish-cachix", "cachix-publish.yml"],
-]);
+const CACHIX_RELEASE_JOBS = new Set(["publish-cachix", "verify-cachix"]);
 const CACHIX_TARGETS = [
   { runner: "ubuntu-24.04", nixSystem: "x86_64-linux" },
   { runner: "ubuntu-24.04-arm", nixSystem: "aarch64-linux" },
@@ -118,13 +111,8 @@ export function validatePermissions(workflows) {
         expectPermissions(job.permissions, RELEASE_HOST, `${name} host permissions`);
         continue;
       }
-      if (name === "release.yml" && RELEASE_PUBLICATION_JOBS.has(jobName)) {
-        const calledWorkflow = RELEASE_PUBLICATION_JOBS.get(jobName);
-        expectPermissions(
-          job.permissions,
-          OIDC_PUBLICATION_WORKFLOWS.has(calledWorkflow) ? OIDC_PUBLICATION : READ_ONLY,
-          `${name} ${jobName} permissions`,
-        );
+      if (name === "release.yml" && CACHIX_RELEASE_JOBS.has(jobName)) {
+        expectPermissions(job.permissions, READ_ONLY, `${name} ${jobName} permissions`);
         continue;
       }
       if (OIDC_PUBLICATION_WORKFLOWS.has(name) && jobName === "publish") {
@@ -314,27 +302,19 @@ export function validateReleaseFlow(workflows, distConfiguration) {
     fail("release host must not remove the final cargo-dist manifest");
   }
 
-  for (const [jobName, workflowName] of RELEASE_PUBLICATION_JOBS) {
-    const publication = jobs[jobName];
-    if (!publication ||
-        canonical(needs(publication).sort()) !== canonical(["host", "plan"])) {
-      fail(`release ${jobName} must run directly after plan and host`);
-    }
-    if (publication.uses !== `./.github/workflows/${workflowName}`) {
-      fail(`release ${jobName} must call ${workflowName} directly`);
-    }
-    if (!condition(publication).includes("needs.host.result == 'success'")) {
-      fail(`release ${jobName} must require successful GitHub Release creation`);
-    }
-    if (canonical(publication.with) !== canonical({
-      tag: "${{ needs.plan.outputs.tag }}",
-      commit: "${{ github.sha }}",
-    })) {
-      fail(`release ${jobName} must pass only the planned tag and complete commit SHA`);
-    }
-    if (publication.secrets !== undefined) {
-      fail(`release ${jobName} must leave publication secrets in the called environment`);
-    }
+  const cachixPublication = jobs["publish-cachix"];
+  if (!cachixPublication ||
+      canonical(needs(cachixPublication).sort()) !== canonical(["host", "plan"]) ||
+      !condition(cachixPublication).includes("needs.host.result == 'success'")) {
+    fail("release publish-cachix must run directly after a successful GitHub Release");
+  }
+  if (cachixPublication.uses !== undefined || cachixPublication.environment !== "cachix-publish") {
+    fail("release publish-cachix must select its protected environment directly");
+  }
+  const cachixVerification = jobs["verify-cachix"];
+  if (!cachixVerification || canonical(needs(cachixVerification)) !==
+      canonical(["publish-cachix"])) {
+    fail("release verify-cachix must run after every published closure");
   }
 
   const calledWorkflows = Object.values(jobs)
@@ -343,12 +323,11 @@ export function validateReleaseFlow(workflows, distConfiguration) {
     .map((uses) => uses.slice("./.github/workflows/".length))
     .sort();
   const expectedWorkflows = [
-    "cachix-publish.yml",
     "native-artifact-smoke.yml",
     "native-release-checks.yml",
   ];
   if (canonical(calledWorkflows) !== canonical(expectedWorkflows)) {
-    fail("native Release must call only native checks, native smoke, and Cachix publication");
+    fail("native Release must call only native checks and native smoke workflows");
   }
 
   if (jobs.announce !== undefined) {
@@ -409,68 +388,14 @@ export function validateCiGates(workflows) {
 }
 
 export function validateExternalPublicationIsolation(workflows) {
-  for (const name of EXTERNAL_PUBLICATION_WORKFLOWS) {
-    const workflow = workflows[name];
-    if (!workflow) fail(`${name} is required`);
-    const triggerNames = Object.keys(workflow.on ?? {}).sort();
-    if (canonical(triggerNames) !== canonical(["workflow_call"])) {
-      fail(`${name} must be callable only from the Release workflow`);
-    }
-    const inputs = workflow.on?.workflow_call?.inputs ?? {};
-    if (canonical(Object.keys(inputs).sort()) !== canonical(["commit", "tag"]) ||
-        inputs.tag?.required !== true || inputs.tag?.type !== "string" ||
-        inputs.commit?.required !== true || inputs.commit?.type !== "string") {
-      fail(`${name} must require only the stable tag and complete commit SHA`);
-    }
-    const configuration = JSON.stringify(workflow);
-    if (!configuration.includes(PUBLICATION_TAG_EXPRESSION) ||
-        !configuration.includes(PUBLICATION_COMMIT_EXPRESSION)) {
-      fail(`${name} must consume the Release workflow tag and commit`);
-    }
-    if (workflow.concurrency?.["cancel-in-progress"] !== false ||
-        !String(workflow.concurrency?.group ?? "").includes(PUBLICATION_TAG_EXPRESSION)) {
-      fail(`${name} must serialize idempotent publication attempts by release tag`);
-    }
-    const expectedJobs = name === "cachix-publish.yml"
-      ? ["publish", "verify"]
-      : ["publish"];
-    if (canonical(Object.keys(workflow.jobs ?? {}).sort()) !== canonical(expectedJobs.sort())) {
-      fail(`${name} must contain only its isolated publication jobs`);
-    }
-    const publication = workflow.jobs.publish;
-    if (needs(publication).length !== 0 ||
-        !JSON.stringify(publication).includes('ref":"${{ inputs.commit }}"')) {
-      fail(`${name} publication must start from the Release workflow commit`);
-    }
-    const expectedEnvironment = name.replace(/\.yml$/u, "");
-    if (publication.environment !== expectedEnvironment) {
-      fail(`${name} publication credentials must stay in the ${expectedEnvironment} environment`);
-    }
-    const publicationSource = jobRuns(publication);
-    if (/merge-base\s+--is-ancestor|refs\/remotes\/origin\/main/u.test(publicationSource)) {
-      fail(`${name} must leave main ancestry verification in the native release checks`);
-    }
-    for (const required of [
-      'releases/tags/$RELEASE_TAG',
-      ".draft",
-      ".prerelease",
-      'git rev-parse "refs/tags/$RELEASE_TAG^{commit}"',
-      "git rev-parse HEAD",
-      "workspace_version",
-      'test "$RELEASE_TAG" = "v$workspace_version"',
-    ]) {
-      if (!publicationSource.includes(required)) {
-        fail(`${name} publication must verify the stable Release candidate: ${required}`);
-      }
-    }
+  if (workflows["cachix-publish.yml"] !== undefined) {
+    fail("Cachix publication must not cross a reusable workflow secrets boundary");
   }
-
   if (/repository_dispatch|workflow_dispatch|repos\/\$GITHUB_REPOSITORY\/dispatches/u.test(
     JSON.stringify(workflows),
   )) {
     fail("external publication must not use dispatch events or custom event delivery");
   }
-
 }
 
 function cachixAction(job) {
@@ -480,21 +405,35 @@ function cachixAction(job) {
 }
 
 function validateCachixMatrix(job, location) {
-  if (job?.strategy?.["fail-fast"] !== false ||
+  if (job?.["runs-on"] !== "${{ matrix.runner }}" ||
+      job?.strategy?.["fail-fast"] !== false ||
       canonical(job?.strategy?.matrix?.include) !== canonical(CACHIX_TARGETS)) {
     fail(`${location} must process the fixed x86_64-linux and aarch64-linux targets`);
   }
 }
 
 export function validateCachixPublication(workflows) {
-  const workflow = workflows["cachix-publish.yml"];
-  if (!workflow) fail("cachix-publish.yml is required");
-  const publish = workflow.jobs?.publish;
-  const verify = workflow.jobs?.verify;
-  validateCachixMatrix(publish, "cachix-publish.yml publish");
-  validateCachixMatrix(verify, "cachix-publish.yml verify");
-  if (!needs(verify).includes("publish")) {
-    fail("cachix-publish.yml verify must run after every published closure");
+  const release = workflows["release.yml"];
+  if (!release) fail("release.yml is required");
+  const publish = release.jobs?.["publish-cachix"];
+  const verify = release.jobs?.["verify-cachix"];
+  validateCachixMatrix(publish, "release.yml publish-cachix");
+  validateCachixMatrix(verify, "release.yml verify-cachix");
+  if (!needs(verify).includes("publish-cachix")) {
+    fail("release.yml verify-cachix must run after every published closure");
+  }
+  if (publish?.environment !== "cachix-publish" || verify?.environment !== undefined) {
+    fail("only release.yml publish-cachix may select the Cachix credentials environment");
+  }
+  const concurrency = publish?.concurrency;
+  if (concurrency?.["cancel-in-progress"] !== false ||
+      !String(concurrency?.group ?? "").includes("${{ needs.plan.outputs.tag }}") ||
+      !String(concurrency?.group ?? "").includes("${{ matrix.nixSystem }}")) {
+    fail("release.yml publish-cachix must serialize each target by stable tag");
+  }
+  if (!JSON.stringify(publish).includes('ref":"${{ github.sha }}"') ||
+      !JSON.stringify(verify).includes('ref":"${{ github.sha }}"')) {
+    fail("Cachix publication and verification must use the Release commit");
   }
 
   const publishSource = jobRuns(publish);
@@ -509,13 +448,44 @@ export function validateCachixPublication(workflows) {
     'cachix push keishis "$package"',
   ]) {
     if (!publishSource.includes(required)) {
-      fail(`cachix-publish.yml publish must verify and send the stable release: ${required}`);
+      fail(`release.yml publish-cachix must verify and send the stable release: ${required}`);
     }
+  }
+  if (/merge-base\s+--is-ancestor|refs\/remotes\/origin\/main/u.test(publishSource)) {
+    fail("release.yml publish-cachix must leave main ancestry verification in native checks");
   }
   const publishCachix = cachixAction(publish);
   if (publishCachix?.with?.name !== "keishis" || publishCachix?.with?.skipPush !== true ||
-      publishCachix?.with?.authToken !== "${{ secrets.CACHIX_AUTH_TOKEN }}") {
-    fail("cachix-publish.yml publish must use only the dedicated Cachix token");
+      publishCachix?.with?.authToken !== "${{ secrets.CACHIX_AUTH_TOKEN }}" ||
+      publish?.env?.CACHIX_AUTH_TOKEN !== undefined) {
+    fail("release.yml publish-cachix must use only the dedicated Cachix token");
+  }
+  const publishSteps = publish?.steps ?? [];
+  const authenticationIndices = publishSteps
+    .map((step, index) => ({ index, step }))
+    .filter(({ step }) => String(step.run ?? "").includes("CACHIX_AUTH_TOKEN is unavailable"));
+  const [{ index: authenticationIndex, step: authenticationStep } = {}] = authenticationIndices;
+  const cachixIndex = publishSteps.indexOf(publishCachix);
+  const nixIndex = publishSteps.findIndex((step) =>
+    String(step.uses ?? "").startsWith("DeterminateSystems/determinate-nix-action@")
+  );
+  const buildIndex = publishSteps.findIndex((step) =>
+    String(step.run ?? "").includes('nix build ".#checks.${NIX_SYSTEM}.default"')
+  );
+  const publishBuild = publishSteps[buildIndex];
+  if (authenticationStep?.env?.CACHIX_AUTH_TOKEN !==
+        "${{ secrets.CACHIX_AUTH_TOKEN }}" ||
+      authenticationIndices.length !== 1 ||
+      !String(authenticationStep?.run ?? "").includes('[[ -z "$CACHIX_AUTH_TOKEN" ]]') ||
+      !String(authenticationStep?.run ?? "").includes("exit 1") ||
+      authenticationStep?.if !== undefined ||
+      authenticationStep?.["continue-on-error"] !== undefined ||
+      authenticationIndex < 0 || cachixIndex < 0 || nixIndex < 0 || buildIndex < 0 ||
+      authenticationIndex >= Math.min(cachixIndex, nixIndex, buildIndex)) {
+    fail("release.yml publish-cachix must fail before building when authentication is unavailable");
+  }
+  if (publishBuild?.env?.NIX_SYSTEM !== "${{ matrix.nixSystem }}") {
+    fail("release.yml publish-cachix must build the Nix system selected by its matrix entry");
   }
 
   const verifySource = jobRuns(verify);
@@ -528,21 +498,32 @@ export function validateCachixPublication(workflows) {
     "node tools/cachix-smoke.mjs",
   ]) {
     if (!verifySource.includes(required)) {
-      fail(`cachix-publish.yml verify must acquire and smoke the public closure: ${required}`);
+      fail(`release.yml verify-cachix must acquire and smoke the public closure: ${required}`);
     }
   }
   const verifyCachix = cachixAction(verify);
+  const verifySmoke = (verify?.steps ?? []).find((step) =>
+    String(step.run ?? "").includes("node tools/cachix-smoke.mjs")
+  );
   if (verifyCachix?.with?.name !== "keishis" || verifyCachix?.with?.skipPush !== true ||
       verifyCachix?.with?.authToken !== undefined ||
       JSON.stringify(verify).includes("CACHIX_AUTH_TOKEN")) {
-    fail("cachix-publish.yml verify must configure Cachix without a write token");
+    fail("release.yml verify-cachix must configure Cachix without a write token");
+  }
+  if (verifySmoke?.env?.NIX_SYSTEM !== "${{ matrix.nixSystem }}") {
+    fail("release.yml verify-cachix must acquire the Nix system selected by its matrix entry");
   }
 
-  const tokenUsers = Object.entries(workflows)
-    .filter(([, candidate]) => JSON.stringify(candidate).includes("CACHIX_AUTH_TOKEN"))
-    .map(([name]) => name);
-  if (canonical(tokenUsers) !== canonical(["cachix-publish.yml"])) {
-    fail("CACHIX_AUTH_TOKEN must be used only by cachix-publish.yml");
+  const tokenUsers = [];
+  for (const [workflowName, workflow] of Object.entries(workflows)) {
+    for (const [jobName, job] of Object.entries(workflow.jobs ?? {})) {
+      if (JSON.stringify(job).includes("CACHIX_AUTH_TOKEN")) {
+        tokenUsers.push(`${workflowName}:${jobName}`);
+      }
+    }
+  }
+  if (canonical(tokenUsers) !== canonical(["release.yml:publish-cachix"])) {
+    fail("CACHIX_AUTH_TOKEN must be used only by release.yml publish-cachix");
   }
 }
 

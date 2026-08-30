@@ -50,7 +50,7 @@ link:../../editors/vscode/CHANGELOG.md[拡張のChangelog]に記録します。
 別の正本として保守しません。公開処理はplanにない成果物や処理を追加せず、構築後は標準dist-manifestと
 実際のファイルを照合します。
 
-公開処理の正本は、native版が``release.yml``と``cachix-publish.yml``、WebAssemblyパッケージが
+公開処理の正本は、native版が``release.yml``、WebAssemblyパッケージが
 ``wasm-publish.yml``、textlint用Processorが``textlint-plugin-publish.yml``、VS Code拡張が
 ``vscode-publish.yml``です。Zed拡張は公式レジストリへ``editors/zed``を提出します。各workflowは自身のtag、
 manifest、候補の検査、公開および公開後確認だけを扱います。
@@ -77,7 +77,7 @@ Visual Studio Marketplaceは公開後のVSIXへ署名情報を追加するため
 異なる場合があります。公開後の検査では拡張ID、version、target、署名以外のfile一覧および各fileの内容を照合し、
 Marketplaceが追加したZIP内の標準署名領域（``_xmlsignatures/``と対応するmetadata）だけを比較から除きます。
 
-ネイティブ版に付随するCachixへの送信は、GitHub Releaseの公開後に再利用workflowで行います。
+ネイティブ版に付随するCachixへの送信と送信後の確認は、GitHub Releaseの公開後に``release.yml``内のjobで行います。
 WebAssemblyパッケージとtextlint用Processorは、それぞれの専用タグで専用workflowを直接起動します。
 VS Code拡張は``vscode/vX.Y.Z``タグで``vscode-publish.yml``を直接起動します。候補を構築するjobと二つの
 公開jobを一つのworkflow runへ置き、公開済みの内容が候補と一致する場合は送信を省略します。一方の公開jobが
@@ -145,9 +145,9 @@ GitHub Releaseへ添付しません。
 planの生成、構築および成果物検査はrepositoryの読取り権限だけで実行し、公開先のsecretを参照しません。
 GitHub Releaseへ添付する``host`` jobだけが、``github-release`` environmentでReleaseへの書込みとArtifact Attestationに
 必要なOIDC権限を持ちます。
-Release作成後は、公開先ごとの再利用workflowを最小権限で直接呼び出します。公開先の資格情報は各workflowの
-公開jobへ設定したGitHub environmentだけから取得し、呼出し元のjobへ渡しません。外部actionは完全なcommit SHAへ
-固定します。
+Release作成後は、``release.yml``のCachix公開jobをrepositoryの読取り権限だけで実行します。このjobへ
+``cachix-publish`` environmentを直接設定し、``CACHIX_AUTH_TOKEN``はこのenvironmentからだけ取得します。
+取得確認jobはenvironmentも書込みtokenも使用しません。外部actionは完全なcommit SHAへ固定します。
 
 VS Code拡張では、``vscode-publish.yml``の``open-vsx`` jobだけが``open-vsx-publish`` environmentの専用tokenを
 使用します。``marketplace`` jobは``marketplace-publish`` environmentと``vsce publish --oidc``を使用し、長期tokenを
@@ -168,7 +168,7 @@ Environment名は``npm-publish``です。workflowは
 構築済みの成果物を送信します。公開後はnpmから導入し直し、``npm audit signatures``で署名とprovenanceを検証して、
 Node.jsと実ブラウザーで同じパッケージを確認します。
 
-stable Releaseの公開後に、Cachix用workflowの公開jobだけが``CACHIX_AUTH_TOKEN``を使用します。公開jobは
+stable Releaseの公開後に、``release.yml``の``publish-cachix`` jobだけが``CACHIX_AUTH_TOKEN``を使用します。公開jobは
 公開済みのtag、commitおよびworkspace版を照合し、同じcommitから``x86_64-linux``と``aarch64-linux``向けに
 構築したNix packageと依存物一式をCachixへ送信します。
 
@@ -196,10 +196,10 @@ xref:adr/0023-publication-boundary.adoc#publication-authority[ADR 0023]を参照
 native Releaseの検査は、checkout時に``origin/main``を含む履歴を取得し、tag、commitおよびworkspace版の対応と、
 tagのcommitが``main``に含まれることを``host``より前に一度だけ検査します。workflowはplanを生成し、native成果物を
 構築して検査した後、一つのGitHub Releaseへ公開します。
-異なるworkflow runや手元の成果物を途中で混在させません。Release作成に成功すると、Release workflow内の公開jobが
-Cachix用の``workflow_call``専用workflowを呼び出します。呼出し先へはplanで確定したtagと
-Releaseを作成した完全なcommit SHAだけを渡します。各公開jobはstableなRelease、tagのcommit、checkoutしたcommit、
-workspace版を照合します。``main``との関係はnative Releaseの検査を正本とし、Cachix用workflowでは重ねて
+異なるworkflow runや手元の成果物を途中で混在させません。Release作成に成功すると、Release workflow内の
+``publish-cachix`` jobがplanで確定したtagとReleaseを作成した完全なcommit SHAを使ってNixパッケージを構築し、
+Cachixへ送信します。このjobはstableなRelease、tagのcommit、checkoutしたcommitおよびworkspace版を照合します。
+``main``との関係はnative Releaseの検査を正本とし、Cachix公開jobでは重ねて
 検査しません。npmパッケージとエディタ拡張はこのRelease workflowへ含めません。
 
 ``main``の検査に成功したcommitへ``wasm/vX.Y.Z``または``textlint-plugin-asciidoc/vX.Y.Z``タグを作成すると、
@@ -217,8 +217,8 @@ VSIXを実際のExtension Hostで起動し、``adocweave lsp``との接続を確
 
 ネイティブ版の外部公開jobはRelease workflowの一部であり、いずれかが失敗するとRelease workflow全体も失敗します。外部サービスへの
 送信だけが失敗した場合は、GitHub Actionsの標準操作``Re-run failed jobs``を使用します。成功済みのRelease作成jobと
-公開jobはそのままにし、失敗した再利用workflowと後続jobだけを再実行します。公開workflowはtag単位のconcurrencyと、
-公開済み内容を検証して送信を省略する処理を持つため、同じtagとcommitで繰り返しても公開済みの内容を変更しません。
+Cachix公開jobはそのままにし、失敗したCachix公開jobと後続の取得確認jobだけを再実行します。公開jobはtagと対象環境ごとの
+concurrencyを持ち、Nix store pathは内容から決まるため、同じtagとcommitで繰り返しても公開済みの内容を変更しません。
 
 一度作成したstable tagとReleaseは削除、置換または自動的な差戻しを行いません。GitHub Releaseの公開前に
 一時的な原因でworkflowが失敗した場合は、同じtagとcommitに対して再実行します。sourceの修正が必要な場合と、

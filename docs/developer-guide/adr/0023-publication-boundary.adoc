@@ -27,15 +27,20 @@ xref:../../../CONTRIBUTING.adoc[コントリビューションガイド]を基�
 
 計画、構築、検査およびcandidate集約はread-onlyで実行します。GitHub Releaseへの書込みと、attestationへ
 署名するためのOIDCは、保護した``github-release`` Environmentを使う公開jobだけへ与えます。外部actionは
-完全なcommit SHAへ固定します。``github-release``と外部公開用Environmentのdeployment branch policyは、
-Release workflowを起動するstable tagのpattern ``v*``だけを許可します。
+完全なcommit SHAへ固定します。各Environmentのdeployment branch policyは、その配布物の公開workflowを起動する
+stable tagのpatternだけを許可します。
 
 Release workflowは書込み権限を持つ``host``より前にnative Releaseの検査を一度実行し、stable tagのcommitが
-``main``に含まれることを検査します。この検査に必要な``origin/main``の履歴は検査job内で取得します。公開先ごとの
-workflowは検査済みのtagとcommitを受け取り、``main``との関係を個別に検査しません。
+``main``に含まれることを検査します。この検査に必要な``origin/main``の履歴は検査job内で取得します。後続の
+Cachix公開jobは検査済みのtagとcommitを使い、``main``との関係を重ねて検査しません。
 
-registryへ公開するjobは、GitHub Releaseの公開後に別のworkflowとして動きます。repositoryへの書込みは持たず、
-公開先ごとに必要な資格情報だけを受け取ります。tokenによる認証しかない公開先ではそのtokenだけを、公開元を
+ネイティブ版のCachix公開jobは``release.yml``へ直接置き、GitHub Releaseの公開後に動かします。このjob自身へ
+``cachix-publish`` Environmentを設定し、Environment Secretの``CACHIX_AUTH_TOKEN``をこのjobだけで参照します。
+再利用workflowへSecretを渡す構成や``secrets: inherit``は使用しません。送信後の取得確認jobはEnvironmentも
+書込みtokenも使用しません。
+
+独立したregistryへ公開するjobは、配布物ごとのstable tagから専用workflowとして動きます。repositoryへの書込みは持たず、
+公開先ごとに必要な資格情報だけを使用します。tokenによる認証しかない公開先ではそのtokenだけを、公開元を
 OIDCで確認できる公開先ではtokenを持たず``id-token``の書込みだけを与えます。後者ではCIに長期の資格情報が
 残らないため、公開先が対応している場合はこちらを選びます。
 
