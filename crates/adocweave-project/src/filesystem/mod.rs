@@ -1207,7 +1207,7 @@ mod tests {
             authority
                 .candidate(&root.path().join("docs"), "%67uide.adoc")
                 .expect("decoded target"),
-            root.path().join("docs/guide.adoc")
+            authority.root().join("docs/guide.adoc")
         );
         assert!(matches!(
             authority.candidate(&root.path().join("docs"), "../../outside.adoc"),
