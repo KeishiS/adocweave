@@ -79,7 +79,8 @@ Open VSX、Visual Studio Marketplace、npmの二つのパッケージおよびCa
 
 GitHub Releaseを一次公開先とするADR 0023の方針を維持します。npmパッケージとVSIXは、GitHub Releaseへ添付して
 検証したものと同じバイト列を配布サービスへ送ります。配布サービス向けには構築し直しません。Cachixには、同じタグの
-コミットから構築して検証したNixパッケージと、その依存物一式（closure）を送ります。
+コミットから構築して検証したNixパッケージを送ります。依存物は、``cache.nixos.org``に存在しないものだけをCachixへ
+送ります。
 
 GitHub Releaseを作成したRelease workflowから、公開先ごとの再利用workflowを直接かつ並列に呼び出します。
 Release workflow全体の成功には、各外部サービスへの公開と公開後検査の成功も必要です。ただし、GitHub Releaseの公開と、

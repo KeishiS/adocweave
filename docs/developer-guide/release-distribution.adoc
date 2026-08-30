@@ -170,7 +170,7 @@ Node.jsと実ブラウザーで同じパッケージを確認します。
 
 stable Releaseの公開後に、``release.yml``の``publish-cachix`` jobだけが``CACHIX_AUTH_TOKEN``を使用します。公開jobは
 公開済みのtag、commitおよびworkspace版を照合し、同じcommitから``x86_64-linux``と``aarch64-linux``向けに
-構築したNix packageと依存物一式をCachixへ送信します。
+構築したNix packageをCachixへ送信します。依存物は、``cache.nixos.org``に存在しないものだけを送信します。
 
 送信後は、書込みtokenを持たない別のrunnerが対象packageのCachix上での存在を確認します。ローカルでの構築を禁止したまま、
 Cachixと``cache.nixos.org``から必要な内容を取得します。Cachixの公開鍵は秘密情報ではないため、GitHubのenvironmentに
