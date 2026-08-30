@@ -389,7 +389,12 @@ fn request_path_overrides_replace_resource_and_local_target_roots() {
 #[test]
 fn pathless_input_keeps_include_and_local_target_bases_separate() {
     let directory = tempfile::tempdir().expect("temporary directory");
+    let canonical_directory = directory
+        .path()
+        .canonicalize()
+        .expect("canonical temporary directory");
     let include_base = directory.path().join("includes");
+    let canonical_include_base = canonical_directory.join("includes");
     fs::create_dir(&include_base).expect("include directory");
     fs::write(include_base.join("part.adoc"), "included\n").expect("include fixture");
     fs::write(directory.path().join("asset.png"), "asset\n").expect("local target fixture");
@@ -429,7 +434,7 @@ fn pathless_input_keeps_include_and_local_target_bases_separate() {
         .iter()
         .find(|resource| {
             resource.kind == ProjectResourceKind::Include
-                && resource.path == include_base.join("part.adoc")
+                && resource.path == canonical_include_base.join("part.adoc")
         })
         .expect("include observation");
     assert_eq!(
@@ -448,7 +453,7 @@ fn pathless_input_keeps_include_and_local_target_bases_separate() {
         .iter()
         .find(|resource| {
             resource.kind == ProjectResourceKind::LocalTarget
-                && resource.path == directory.path().join("asset.png")
+                && resource.path == canonical_directory.join("asset.png")
         })
         .expect("local-target observation");
     assert_eq!(
@@ -464,7 +469,7 @@ fn pathless_input_keeps_include_and_local_target_bases_separate() {
     );
     assert!(target.resources.iter().any(|resource| {
         resource.kind == ProjectResourceKind::LocalTarget
-            && resource.path == include_base.join("part.adoc")
+            && resource.path == canonical_include_base.join("part.adoc")
             && resource.outcome == adocweave_project::ProjectResourceOutcome::Present
     }));
     assert!(target.resources.iter().all(|resource| {
@@ -476,7 +481,12 @@ fn pathless_input_keeps_include_and_local_target_bases_separate() {
 #[test]
 fn pathless_input_checks_same_relative_target_against_each_base() {
     let directory = tempfile::tempdir().expect("temporary directory");
+    let canonical_directory = directory
+        .path()
+        .canonicalize()
+        .expect("canonical temporary directory");
     let include_base = directory.path().join("includes");
+    let canonical_include_base = canonical_directory.join("includes");
     fs::create_dir(&include_base).expect("include directory");
     fs::write(include_base.join("same.adoc"), "included\n").expect("include fixture");
 
@@ -515,7 +525,7 @@ fn pathless_input_checks_same_relative_target_against_each_base() {
             .filter(|resource| resource.kind == ProjectResourceKind::LocalTarget)
             .collect::<Vec<_>>();
         assert!(local_targets.iter().any(|resource| {
-            resource.path == include_base.join("same.adoc")
+            resource.path == canonical_include_base.join("same.adoc")
                 && resource.outcome == adocweave_project::ProjectResourceOutcome::Present
                 && resource
                     .requested_at
@@ -524,7 +534,7 @@ fn pathless_input_checks_same_relative_target_against_each_base() {
                     == Some(&SourceId::new("stdin"))
         }));
         assert!(local_targets.iter().any(|resource| {
-            resource.path == directory.path().join("same.adoc")
+            resource.path == canonical_directory.join("same.adoc")
                 && matches!(
                     resource.outcome,
                     adocweave_project::ProjectResourceOutcome::Missing

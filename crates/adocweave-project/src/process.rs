@@ -53,8 +53,9 @@ pub fn resolve_config(
         },
         cancellation,
     )?;
-    let search_from =
-        absolute_lexical(&processor.project_root, &search_from).map_err(project_authority_error)?;
+    let search_from = absolute_lexical(&processor.project_root, &search_from)
+        .and_then(|path| processor.filesystem.normalize_path(&path))
+        .map_err(project_authority_error)?;
     let resolved = processor.resolve_config_at(&search_from, search_from_is_directory)?;
     if cancellation.is_cancelled() {
         return Err(ProjectError::Cancelled);
