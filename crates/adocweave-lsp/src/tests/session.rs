@@ -56,7 +56,7 @@ fn one_project_request_captures_primary_and_open_include_overlays() {
         }
     })));
 
-    assert_eq!(jobs.len(), 2);
+    assert_eq!(jobs.len(), 1);
     let project = jobs
         .iter()
         .find(|job| job.uri == "file:///book/root.adoc")
@@ -143,7 +143,7 @@ fn closing_document_discards_project_worker_completion() {
 }
 
 #[test]
-fn session_tracks_multiple_project_roots_with_one_workspace_epoch() {
+fn session_tracks_multiple_workspace_roots() {
     let mut session = Session::default();
     session.initialize(&initialize_params(&[
         "file:///workspace/first/",
@@ -157,8 +157,6 @@ fn session_tracks_multiple_project_roots_with_one_workspace_epoch() {
             uri("file:///workspace/second/")
         ]
     );
-    let initialized_epoch = session.workspace_input_epoch();
-
     let _jobs = session.workspace_folders_changed(typed(json!({
         "event": {
             "removed": [{
@@ -171,7 +169,6 @@ fn session_tracks_multiple_project_roots_with_one_workspace_epoch() {
             }]
         }
     })));
-    assert_eq!(session.workspace_input_epoch(), initialized_epoch + 1);
     assert_eq!(
         session.workspace_roots(),
         vec![
@@ -295,15 +292,4 @@ fn effective_server_setting_changes_reanalyze_open_documents() {
         }))
         .expect("analysis setting");
     assert!(jobs.is_empty());
-}
-
-#[test]
-#[should_panic(expected = "Language Server workspace input epoch exhausted")]
-fn workspace_input_epoch_is_never_reused_after_exhaustion() {
-    let mut session = Session::default();
-    initialize(&mut session, &["utf-16"]);
-    session.set_workspace_input_epoch_for_test(u64::MAX);
-    let _ = session.handle_workspace_files_changed(typed(json!({
-        "changes": [{"uri": "file:///.adocweave.toml", "type": 2}]
-    })));
 }

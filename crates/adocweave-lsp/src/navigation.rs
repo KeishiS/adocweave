@@ -18,23 +18,16 @@ pub(crate) struct NavigationInput<'a> {
 
 pub(crate) enum Definition {
     Resolved(Option<lsp::GotoDefinitionResponse>),
-    Host(ReferenceKey),
+    Unresolved,
 }
 
 pub(crate) struct References {
     pub fallback: Vec<lsp::Location>,
-    pub host_target: Option<ReferenceKey>,
     pub anchor_occurrences_are_authored: bool,
 }
 
 pub(crate) struct DocumentLinks {
     links: Vec<lsp::DocumentLink>,
-    pub unresolved: Vec<UnresolvedDocumentLink>,
-}
-
-pub(crate) struct UnresolvedDocumentLink {
-    pub target: ReferenceKey,
-    range: lsp::Range,
 }
 
 pub(crate) fn definition(
@@ -136,7 +129,8 @@ pub(crate) fn definition(
             lsp::GotoDefinitionResponse::Scalar(location),
         )));
     }
-    Ok(Definition::Host(key))
+    let _ = key;
+    Ok(Definition::Unresolved)
 }
 
 pub(crate) fn references(
@@ -209,7 +203,6 @@ pub(crate) fn references(
         sort_and_dedup_locations(&mut locations);
         return Ok(References {
             fallback: locations,
-            host_target: None,
             anchor_occurrences_are_authored: true,
         });
     }
@@ -263,7 +256,6 @@ pub(crate) fn references(
         }
         return Ok(References {
             fallback: locations,
-            host_target: None,
             anchor_occurrences_are_authored: true,
         });
     }
@@ -289,7 +281,6 @@ pub(crate) fn references(
     let Some(key) = key else {
         return Ok(References {
             fallback: Vec::new(),
-            host_target: None,
             anchor_occurrences_are_authored: true,
         });
     };
@@ -311,7 +302,6 @@ pub(crate) fn references(
     let Some(identity) = identity else {
         return Ok(References {
             fallback: Vec::new(),
-            host_target: Some(key),
             anchor_occurrences_are_authored: true,
         });
     };
@@ -398,7 +388,6 @@ pub(crate) fn references(
     sort_and_dedup_locations(&mut locations);
     Ok(References {
         fallback: locations,
-        host_target: Some(key),
         anchor_occurrences_are_authored,
     })
 }
@@ -424,7 +413,6 @@ pub(crate) fn document_links(
 ) -> QueryResult<DocumentLinks> {
     cancellation.check_now()?;
     let mut links = Vec::new();
-    let mut unresolved = Vec::new();
     for link in input.document.analysis.links() {
         cancellation.checkpoint()?;
         if !adocweave::resolution::AuthoredUrlPolicy::default().allows(&link.target) {
@@ -460,8 +448,6 @@ pub(crate) fn document_links(
                 tooltip: tooltips.then(|| "参照先を開く".to_owned()),
                 data: None,
             });
-        } else if let Some(target) = reference.target.clone() {
-            unresolved.push(UnresolvedDocumentLink { target, range });
         }
     }
     for expanded_analysis in input.expanded_analyses {
@@ -494,26 +480,10 @@ pub(crate) fn document_links(
             });
         }
     }
-    Ok(DocumentLinks { links, unresolved })
+    Ok(DocumentLinks { links })
 }
 
 impl DocumentLinks {
-    pub(crate) fn resolve(
-        &mut self,
-        unresolved: UnresolvedDocumentLink,
-        location: Option<lsp::Location>,
-        tooltips: bool,
-    ) {
-        if let Some(location) = location {
-            self.links.push(lsp::DocumentLink {
-                range: unresolved.range,
-                target: Some(location.uri),
-                tooltip: tooltips.then(|| "参照先を開く".to_owned()),
-                data: None,
-            });
-        }
-    }
-
     pub(crate) fn finish(
         mut self,
         cancellation: &QueryCancellation,
@@ -825,24 +795,16 @@ mod tests {
     }
 
     #[test]
-    fn document_links_keep_deterministic_order_when_host_resolution_fails() {
+    fn document_links_keep_deterministic_order() {
         let direct = lsp::DocumentLink {
             range: lsp::Range::new(lsp::Position::new(2, 0), lsp::Position::new(2, 3)),
             target: Some(lsp::Url::parse("file:///direct.adoc").expect("URI")),
             tooltip: None,
             data: None,
         };
-        let unresolved = UnresolvedDocumentLink {
-            target: ReferenceKey::Local {
-                anchor: "unused".to_owned(),
-            },
-            range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 3)),
-        };
-        let mut links = DocumentLinks {
+        let links = DocumentLinks {
             links: vec![direct.clone(), direct.clone()],
-            unresolved: Vec::new(),
         };
-        links.resolve(unresolved, None, false);
         assert_eq!(
             links
                 .finish(&crate::cancellation::test_cancellation())

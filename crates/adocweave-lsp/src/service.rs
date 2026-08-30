@@ -2,14 +2,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::sync::{Arc, Mutex};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use adocweave::CancellationCheck;
 use adocweave::SourceId;
 use adocweave::output::diagnostics::{RuleSettings, lint_rule};
-#[cfg(test)]
-use adocweave::output::formatter;
-use adocweave::resolution::ReferenceKey;
 use adocweave::text::SourceDocument;
 use adocweave_project::{
     ConfigSelection, ProjectAuthority, ProjectError, ProjectExpansionError, ProjectLimits,
@@ -17,7 +15,6 @@ use adocweave_project::{
     ProjectResourceKind, ProjectResourceOutcome, ProjectResourceResult, ProjectResourceSelection,
     ProjectResult, ProjectSource, ProjectTarget, ProjectTargetError,
 };
-use adocweave_workspace::{ResourceId, ResourceLayer};
 use async_lsp::lsp_types as lsp;
 use serde::Deserialize;
 
@@ -34,16 +31,9 @@ use crate::state::{
     AdoptedAnalysis, Adoption, DocumentSnapshot, ExpandedDocumentAnalysis, PreparedProjectRequest,
     ProjectAnalysisSnapshot, ProjectProblem, ProjectSourceIndex, ProjectSourceState,
 };
-use crate::workspace::{WatchedFileKind, WorkspaceResources, WorkspaceScanNotice};
-use crate::workspace_scan::{
-    WorkspaceScanCoordinator, WorkspaceScanRecovery, WorkspaceScanStart, WorkspaceScanTransition,
-    WorkspaceScanned,
-};
 use crate::{SERVER_NAME, VERSION};
 
-const MAX_WORKSPACE_WATCH_ERRORS: usize = 128;
-const MAX_WORKSPACE_WATCH_ERROR_BYTES: usize = 64 * 1024;
-const MAX_WORKSPACE_WATCH_CHANGES: usize = 10_000;
+pub(crate) const MAX_WORKSPACE_WATCH_CHANGES: usize = 10_000;
 const MAX_WORKSPACE_WATCH_URI_BYTES: usize = 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -161,63 +151,6 @@ impl ClientProfile {
     }
 }
 
-/// A completed read of the workspace roots, waiting to be installed.
-///
-/// Carries no borrow of the service, so it can be produced on a worker and
-/// handed back to the event loop.
-#[allow(dead_code)]
-#[derive(Clone, Debug)]
-pub struct WorkspaceScan {
-    loaded: crate::workspace::LoadedRoots,
-}
-
-pub trait HostReferenceIndex: Send + Sync {
-    fn definition(&self, request: &HostReferenceRequest) -> Result<Option<lsp::Location>, String>;
-
-    /// Returns reference occurrences using ranges that can replace the referenced symbol.
-    ///
-    /// For an anchor, each non-declaration occurrence is only the authored
-    /// identifier, excluding a document locator and `#`. When
-    /// `include_declaration` is false, the result must not contain the declaration.
-    fn references(
-        &self,
-        request: &HostReferenceRequest,
-        include_declaration: bool,
-    ) -> Result<Option<Vec<lsp::Location>>, String>;
-
-    fn is_complete(&self) -> bool;
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HostReferenceRequest {
-    pub source: lsp::Url,
-    pub source_version: i32,
-    pub source_generation: u64,
-    pub target: ReferenceKey,
-    pub encoding: PositionEncoding,
-}
-
-#[derive(Debug, Default)]
-pub struct NoHostReferenceIndex;
-
-impl HostReferenceIndex for NoHostReferenceIndex {
-    fn definition(&self, _request: &HostReferenceRequest) -> Result<Option<lsp::Location>, String> {
-        Ok(None)
-    }
-
-    fn references(
-        &self,
-        _request: &HostReferenceRequest,
-        _include_declaration: bool,
-    ) -> Result<Option<Vec<lsp::Location>>, String> {
-        Ok(None)
-    }
-
-    fn is_complete(&self) -> bool {
-        false
-    }
-}
-
 /// Long-lived semantic state for one Language Server connection.
 ///
 /// Runtime resources such as task handles stay in the protocol backend. The
@@ -230,26 +163,16 @@ pub(crate) struct Session {
     #[cfg(test)]
     pub(crate) documents: DocumentStore,
     pub position_encoding: PositionEncoding,
-    workspace_input_epoch: u64,
     client: ClientProfile,
     settings: ServerSettings,
-    host_index: Arc<dyn HostReferenceIndex>,
-    workspace: WorkspaceResources,
     workspace_roots: std::collections::BTreeMap<String, lsp::Url>,
-    workspace_error: Option<WorkspaceEpochError>,
-    /// Incomplete-scan reasons whose notification period is still active.
-    ///
-    /// A failed scan does not end a period because it establishes neither a
-    /// complete result nor a new set of incomplete reasons.
-    active_scan_notices: std::collections::BTreeSet<WorkspaceScanNotice>,
-    workspace_watch_errors: std::collections::BTreeMap<String, String>,
-    workspace_watch_error_bytes: usize,
-    workspace_watch_errors_overflowed: bool,
-    workspace_watch_recovery_required: bool,
-    workspace_watch_error_epoch: u64,
-    workspace_scans: Arc<Mutex<WorkspaceScanCoordinator>>,
-    workspace_input_status: WorkspaceInputStatus,
+    project_observations: BTreeMap<String, ProjectObservations>,
     pending_project_observations: BTreeMap<String, PendingProjectObservations>,
+}
+
+#[derive(Clone)]
+struct ProjectObservations {
+    uris: BTreeSet<String>,
 }
 
 #[derive(Clone)]
@@ -287,54 +210,15 @@ pub(crate) struct SessionCloseOutcome {
     pub diagnostic_uris: std::collections::BTreeSet<String>,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-enum WorkspaceInputStatus {
-    #[default]
-    Ready,
-    Rebuilding,
-}
-
-#[derive(Clone, Debug)]
-struct WorkspaceEpochError {
-    epoch: u64,
-    message: String,
-}
-
-pub(crate) struct WorkspaceFileChanges {
-    pub(crate) jobs: Vec<ProjectAnalysisSnapshot>,
-    pub(crate) journal: Vec<lsp::FileEvent>,
-    /// Whether `journal` can reproduce every change from this notification
-    /// after an in-flight workspace snapshot is installed.
-    pub(crate) replay_complete: bool,
-    pub(crate) recovery_required: bool,
-}
-
-pub(crate) struct WorkspaceFileEventOutcome {
-    pub(crate) jobs: Vec<ProjectAnalysisSnapshot>,
-    pub(crate) recovery_generation: Option<u64>,
-    pub(crate) rebuild: Option<WorkspaceScanStart>,
-    pub(crate) cancel_recovery_timer: bool,
-}
-
-#[allow(dead_code)]
-pub(crate) struct WorkspaceScanApplication {
-    pub(crate) jobs: Vec<ProjectAnalysisSnapshot>,
-    pub(crate) installed: bool,
-    pub(crate) structural_rebuild_pending: bool,
-    pub(crate) notices: Vec<WorkspaceScanNotice>,
-}
-
 impl fmt::Debug for Session {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("Session")
             .field("documents", &self.documents)
             .field("position_encoding", &self.position_encoding)
-            .field("workspace_input_epoch", &self.workspace_input_epoch)
             .field("client", &self.client)
             .field("settings", &self.settings)
-            .field("workspace_input_status", &self.workspace_input_status)
-            .field("has_complete_host_index", &self.host_index.is_complete())
+            .field("workspace_roots", &self.workspace_roots)
             .finish()
     }
 }
@@ -344,21 +228,10 @@ impl Default for Session {
         Self {
             documents: DocumentStore::default(),
             position_encoding: PositionEncoding::Utf16,
-            workspace_input_epoch: 0,
             client: ClientProfile::default(),
             settings: ServerSettings::default(),
-            host_index: Arc::new(NoHostReferenceIndex),
-            workspace: WorkspaceResources::default(),
             workspace_roots: std::collections::BTreeMap::new(),
-            workspace_error: None,
-            active_scan_notices: std::collections::BTreeSet::new(),
-            workspace_watch_errors: std::collections::BTreeMap::new(),
-            workspace_watch_error_bytes: 0,
-            workspace_watch_errors_overflowed: false,
-            workspace_watch_recovery_required: false,
-            workspace_watch_error_epoch: 0,
-            workspace_scans: Arc::new(Mutex::new(WorkspaceScanCoordinator::default())),
-            workspace_input_status: WorkspaceInputStatus::Ready,
+            project_observations: BTreeMap::new(),
             pending_project_observations: BTreeMap::new(),
         }
     }
@@ -380,27 +253,6 @@ impl Default for ServerSettings {
     }
 }
 
-fn attach_project_context(
-    job: &mut ProjectAnalysisSnapshot,
-    context: Result<crate::workspace::ProjectAnalysisContext, String>,
-) {
-    match context {
-        Ok(context) => job.project_context = Some(context),
-        Err(message) => {
-            job.project_problem = Some(ProjectProblem {
-                document_uri: Some(job.uri.clone()),
-                range: adocweave::text::TextRange::new(
-                    adocweave::text::TextSize::ZERO,
-                    adocweave::text::TextSize::ZERO,
-                )
-                .expect("zero range"),
-                code: "workspace-input-error".to_owned(),
-                message,
-            });
-        }
-    }
-}
-
 fn reject_unsupported_uri(job: &mut ProjectAnalysisSnapshot, uri: &lsp::Url) -> bool {
     if uri.scheme() == "file" {
         return false;
@@ -415,19 +267,6 @@ fn reject_unsupported_uri(job: &mut ProjectAnalysisSnapshot, uri: &lsp::Url) -> 
         ),
     });
     true
-}
-
-fn parse_open_sources(sources: &[(String, i32, String)]) -> Vec<(lsp::Url, i64, Arc<str>)> {
-    sources
-        .iter()
-        .filter_map(|(uri, version, source)| {
-            let uri: lsp::Url = uri.parse().ok()?;
-            if uri.scheme() != "file" {
-                return None;
-            }
-            Some((uri, i64::from(*version), Arc::<str>::from(source.as_str())))
-        })
-        .collect()
 }
 
 fn zero_text_range() -> adocweave::text::TextRange {
@@ -561,72 +400,38 @@ pub(crate) fn project_observations_are_current(
     }
 }
 
-fn completion_observation_uris(outcome: &ProjectAnalysisOutcome) -> BTreeSet<String> {
-    let candidates: Vec<_> = match outcome {
+fn completion_observation_uris(
+    outcome: &ProjectAnalysisOutcome,
+    sources: &ProjectSourceIndex,
+) -> BTreeSet<String> {
+    match outcome {
         ProjectAnalysisOutcome::Processed(Ok(result)) => result
             .resources
             .iter()
             .chain(result.targets.iter().flat_map(|target| &target.resources))
-            .filter_map(|resource| resource.observation.as_ref())
+            .filter_map(|resource| {
+                sources
+                    .get(&resource.source_id)
+                    .map(|source| source.uri.clone())
+                    .or_else(|| {
+                        resource
+                            .observation
+                            .as_ref()
+                            .and_then(|candidate| lsp::Url::from_file_path(&candidate.path).ok())
+                            .map(|uri| uri.to_string())
+                    })
+            })
             .collect(),
-        ProjectAnalysisOutcome::Processed(Err(error)) => {
-            error.repair_candidate().into_iter().collect()
-        }
-        ProjectAnalysisOutcome::Rejected(_) => Vec::new(),
-    };
-    candidates
-        .into_iter()
-        .filter_map(|candidate| lsp::Url::from_file_path(&candidate.path).ok())
-        .map(|uri| uri.to_string())
-        .collect()
+        ProjectAnalysisOutcome::Processed(Err(error)) => error
+            .repair_candidate()
+            .and_then(|candidate| lsp::Url::from_file_path(&candidate.path).ok())
+            .map(|uri| BTreeSet::from([uri.to_string()]))
+            .unwrap_or_default(),
+        ProjectAnalysisOutcome::Rejected(_) => BTreeSet::new(),
+    }
 }
 
-fn record_project_dependencies(
-    workspace: &mut WorkspaceResources,
-    snapshot: &ProjectAnalysisSnapshot,
-    result: &ProjectResult,
-    sources: &ProjectSourceIndex,
-) -> Result<(), String> {
-    let Some(target) = result.targets.first() else {
-        return Ok(());
-    };
-    let root_uri = lsp::Url::parse(&snapshot.uri).map_err(|error| error.to_string())?;
-    let dependency_uri = |resource: &ProjectResourceResult| {
-        sources
-            .get(&resource.source_id)
-            .and_then(|source| lsp::Url::parse(&source.uri).ok())
-            .or_else(|| lsp::Url::from_file_path(&resource.path).ok())
-    };
-    let includes = target.resources.iter().filter_map(|resource| {
-        (resource.kind == ProjectResourceKind::Include
-            && (matches!(
-                resource.outcome,
-                ProjectResourceOutcome::Loaded { .. }
-                    | ProjectResourceOutcome::LoadedOmitted { .. }
-                    | ProjectResourceOutcome::Missing
-            ) || matches!(resource.outcome, ProjectResourceOutcome::Failed(_))
-                && resource.observation.is_some()))
-        .then(|| dependency_uri(resource))
-        .flatten()
-    });
-    let local_targets = target.resources.iter().filter_map(|resource| {
-        (resource.kind == ProjectResourceKind::LocalTarget
-            && (matches!(
-                resource.outcome,
-                ProjectResourceOutcome::Present | ProjectResourceOutcome::Missing
-            ) || matches!(resource.outcome, ProjectResourceOutcome::Failed(_))
-                && resource.observation.is_some()))
-        .then(|| dependency_uri(resource))
-        .flatten()
-    });
-    workspace.record_project_dependencies(&root_uri, includes, local_targets)
-}
-
-fn adopted_problem(
-    snapshot: &ProjectAnalysisSnapshot,
-    problem: ProjectProblem,
-    synchronize_project_input: bool,
-) -> AdoptedAnalysis {
+fn adopted_problem(snapshot: &ProjectAnalysisSnapshot, problem: ProjectProblem) -> AdoptedAnalysis {
     let mut published_diagnostic_uris = BTreeSet::from([snapshot.uri.clone()]);
     if let Some(uri) = &problem.document_uri {
         published_diagnostic_uris.insert(uri.clone());
@@ -638,7 +443,6 @@ fn adopted_problem(
         sources: Arc::new(ProjectSourceIndex::default()),
         problem: Some(problem),
         published_diagnostic_uris,
-        synchronize_project_input,
     }
 }
 
@@ -656,7 +460,6 @@ fn adopted_project_result(
                 code: "project-target-error".to_owned(),
                 message: "Project analysis returned no target.".to_owned(),
             },
-            true,
         );
     };
     let format = *target.config.config.format();
@@ -685,10 +488,7 @@ fn adopted_project_result(
         let Some(text) = text else {
             continue;
         };
-        let version = existing
-            .as_ref()
-            .and_then(|value| value.version)
-            .or_else(|| sources.version_for_uri(&uri));
+        let version = existing.as_ref().and_then(|value| value.version);
         if let Some(version) = version {
             resource_versions.insert(uri.clone(), version);
         }
@@ -700,7 +500,7 @@ fn adopted_project_result(
     let sources = Arc::new(sources);
     let analysis = match target.analysis {
         Ok(analysis) => analysis,
-        Err(error) => return adopted_problem(snapshot, target_problem(snapshot, error), true),
+        Err(error) => return adopted_problem(snapshot, target_problem(snapshot, error)),
     };
     let (expanded, problem) = match analysis.expanded {
         Ok(expanded) => (
@@ -747,42 +547,31 @@ fn adopted_project_result(
         sources,
         problem,
         published_diagnostic_uris,
-        synchronize_project_input: true,
     }
 }
 
 impl Session {
-    fn prepare_project_job(
-        &mut self,
-        job: &mut ProjectAnalysisSnapshot,
-        context: Result<crate::workspace::ProjectAnalysisContext, String>,
-    ) {
-        self.pending_project_observations.remove(&job.uri);
-        attach_project_context(job, context);
-        if job.project_problem.is_some() {
-            self.documents.reject_project_input(job);
-            return;
-        }
-        match self.prepare_project_request(job) {
-            Ok(request) => job.prepared_request = Some(request),
+    fn prepare_project_snapshot(&mut self, snapshot: &mut ProjectAnalysisSnapshot) {
+        self.pending_project_observations.remove(&snapshot.uri);
+        match self.prepare_project_request(snapshot) {
+            Ok(request) => snapshot.prepared_request = Some(request),
             Err(problem) => {
-                job.project_problem = Some(problem);
-                self.documents.reject_project_input(job);
+                snapshot.project_problem = Some(problem);
             }
         }
     }
 
     fn prepare_project_request(
         &self,
-        job: &ProjectAnalysisSnapshot,
+        snapshot: &ProjectAnalysisSnapshot,
     ) -> Result<PreparedProjectRequest, ProjectProblem> {
         let unsupported = |message: String| ProjectProblem {
-            document_uri: Some(job.uri.clone()),
+            document_uri: Some(snapshot.uri.clone()),
             range: zero_text_range(),
             code: "unsupported-uri".to_owned(),
             message,
         };
-        let primary_uri: lsp::Url = job
+        let primary_uri: lsp::Url = snapshot
             .uri
             .parse()
             .map_err(|_| unsupported("The document URI is invalid.".to_owned()))?;
@@ -795,17 +584,13 @@ impl Session {
         let primary_path = primary_uri.to_file_path().map_err(|_| {
             unsupported("The file URI cannot be converted to a file path.".to_owned())
         })?;
-        let input = job.project_context.as_ref().ok_or_else(|| ProjectProblem {
-            document_uri: Some(job.uri.clone()),
-            range: zero_text_range(),
-            code: "project-input-error".to_owned(),
-            message: "Project context is unavailable.".to_owned(),
-        })?;
+        let (project_root, authority_roots) = self.project_scope(&primary_path);
+        let overlay_scope = project_root.clone();
         #[cfg(test)]
         let (project_root, authority_roots, synthetic_test_root) =
-            if !input.project_root.is_dir() || input.project_root.parent().is_none() {
+            if !project_root.is_dir() || project_root.parent().is_none() {
                 let temporary = tempfile::tempdir().map_err(|error| ProjectProblem {
-                    document_uri: Some(job.uri.clone()),
+                    document_uri: Some(snapshot.uri.clone()),
                     range: zero_text_range(),
                     code: "project-authority-error".to_owned(),
                     message: error.to_string(),
@@ -813,18 +598,11 @@ impl Session {
                 let root = temporary.path().to_owned();
                 (root.clone(), vec![root], Some(temporary))
             } else {
-                (
-                    input.project_root.clone(),
-                    input.authority_roots.clone(),
-                    None,
-                )
+                (project_root, authority_roots, None)
             };
-        #[cfg(not(test))]
-        let (project_root, authority_roots) =
-            (input.project_root.clone(), input.authority_roots.clone());
         let authority = ProjectAuthority::open(project_root, authority_roots).map_err(|error| {
             ProjectProblem {
-                document_uri: Some(job.uri.clone()),
+                document_uri: Some(snapshot.uri.clone()),
                 range: zero_text_range(),
                 code: "project-authority-error".to_owned(),
                 message: error.to_string(),
@@ -850,7 +628,7 @@ impl Session {
             && let Some(parent) = primary_path.parent()
         {
             std::fs::create_dir_all(parent).map_err(|error| ProjectProblem {
-                document_uri: Some(job.uri.clone()),
+                document_uri: Some(snapshot.uri.clone()),
                 range: zero_text_range(),
                 code: "project-authority-error".to_owned(),
                 message: error.to_string(),
@@ -859,26 +637,20 @@ impl Session {
         project_sources.push(ProjectSource::new(
             primary_id.clone(),
             primary_path,
-            job.document_input.source.clone(),
+            snapshot.document_input.source.clone(),
         ));
         source_index.insert(
             primary_id.clone(),
             ProjectSourceState {
-                uri: job.uri.clone(),
-                text: job.document_input.source.clone(),
-                version: Some(job.document_input.revision.version),
+                uri: snapshot.uri.clone(),
+                text: snapshot.document_input.source.clone(),
+                version: Some(snapshot.document_input.revision.version),
             },
         );
 
         let mut next_source = 1usize;
         for (uri, version, source) in self.documents.open_sources() {
-            if uri == job.uri {
-                continue;
-            }
-            let Ok(resource_id) = ResourceId::new(uri.clone()) else {
-                continue;
-            };
-            if input.resource_snapshot.get(&resource_id).is_none() {
+            if uri == snapshot.uri {
                 continue;
             }
             let Ok(parsed_uri) = lsp::Url::parse(&uri) else {
@@ -890,6 +662,9 @@ impl Session {
             let Ok(path) = parsed_uri.to_file_path() else {
                 continue;
             };
+            if !path.starts_with(&overlay_scope) {
+                continue;
+            }
             #[cfg(test)]
             let path = synthetic_test_root.as_ref().map_or(path.clone(), |root| {
                 root.path()
@@ -900,7 +675,7 @@ impl Session {
                 && let Some(parent) = path.parent()
             {
                 std::fs::create_dir_all(parent).map_err(|error| ProjectProblem {
-                    document_uri: Some(job.uri.clone()),
+                    document_uri: Some(snapshot.uri.clone()),
                     range: zero_text_range(),
                     code: "project-authority-error".to_owned(),
                     message: error.to_string(),
@@ -919,13 +694,6 @@ impl Session {
                 },
             );
         }
-        for (resource_id, resource) in input.resource_snapshot.resources() {
-            if resource.layer() == ResourceLayer::Disk {
-                source_index
-                    .record_version(resource_id.as_str().to_owned(), resource.revision().get());
-            }
-        }
-        let config = ConfigSelection::Resolved(input.project_config.clone());
         let overrides = ProjectOverrides {
             enable_lint_rules: self
                 .settings
@@ -939,7 +707,7 @@ impl Session {
             request: ProjectRequest {
                 targets: vec![ProjectTarget::Source(primary_id)],
                 sources: project_sources,
-                config,
+                config: ConfigSelection::Discover,
                 overrides,
                 apply_safe_fixes: false,
                 resource_selection: ProjectResourceSelection {
@@ -956,63 +724,35 @@ impl Session {
         })
     }
 
-    fn advance_workspace_input_epoch(&mut self) {
-        self.workspace_input_epoch = self
-            .workspace_input_epoch
-            .checked_add(1)
-            .expect("Language Server workspace input epoch exhausted");
-    }
-
-    fn current_workspace_error(&self) -> Option<&str> {
-        self.workspace_error
-            .as_ref()
-            .filter(|error| error.epoch == self.workspace_input_epoch)
-            .map(|error| error.message.as_str())
-    }
-
-    fn set_workspace_error(&mut self, message: String) {
-        self.workspace_error = Some(WorkspaceEpochError {
-            epoch: self.workspace_input_epoch,
-            message,
-        });
+    fn project_scope(&self, primary: &Path) -> (PathBuf, Vec<PathBuf>) {
+        let selected = self
+            .workspace_roots
+            .values()
+            .filter_map(|uri| uri.to_file_path().ok())
+            .filter_map(|root| {
+                let is_file =
+                    std::fs::symlink_metadata(&root).is_ok_and(|metadata| metadata.is_file());
+                if is_file {
+                    (root == primary)
+                        .then(|| root.parent().map(Path::to_owned))
+                        .flatten()
+                } else {
+                    primary.starts_with(&root).then_some(root)
+                }
+            })
+            .max_by_key(|root| root.components().count())
+            .or_else(|| primary.parent().map(Path::to_owned))
+            .unwrap_or_else(|| primary.to_owned());
+        (selected.clone(), vec![selected])
     }
 
     fn analysis_snapshot_is_current(&self, job: &ProjectAnalysisSnapshot) -> bool {
-        self.workspace_input_status == WorkspaceInputStatus::Ready
-            && self.documents.snapshot_is_current(job)
-    }
-
-    fn invalidate_all_document_inputs(&mut self) {
-        self.documents.invalidate_all_inputs();
-        self.pending_project_observations.clear();
-        self.workspace_input_status = WorkspaceInputStatus::Rebuilding;
-    }
-
-    fn begin_workspace_rebuild(&mut self) {
-        self.advance_workspace_input_epoch();
-        self.invalidate_all_document_inputs();
-    }
-
-    #[cfg(test)]
-    pub(crate) const fn workspace_input_epoch(&self) -> u64 {
-        self.workspace_input_epoch
-    }
-
-    #[cfg(test)]
-    pub(crate) fn set_workspace_input_epoch_for_test(&mut self, epoch: u64) {
-        self.workspace_input_epoch = epoch;
+        self.documents.snapshot_is_current(job)
     }
 
     #[cfg(test)]
     pub(crate) fn workspace_roots(&self) -> Vec<lsp::Url> {
         self.workspace_roots.values().cloned().collect()
-    }
-
-    pub fn with_host_index(host_index: Arc<dyn HostReferenceIndex>) -> Self {
-        Self {
-            host_index,
-            ..Self::default()
-        }
     }
 
     pub fn initialize(&mut self, params: &lsp::InitializeParams) -> lsp::InitializeResult {
@@ -1044,14 +784,6 @@ impl Session {
             .into_iter()
             .map(|uri| (uri.to_string(), uri))
             .collect();
-        let roots = self.workspace_roots.values().cloned().collect::<Vec<_>>();
-        let configured = self.workspace.configure_roots(&roots, &[]);
-        self.advance_workspace_input_epoch();
-        self.workspace_error = None;
-        if let Err(error) = configured {
-            self.set_workspace_error(error);
-        }
-        self.clear_workspace_watch_errors();
         lsp::InitializeResult {
             capabilities: lsp::ServerCapabilities {
                 position_encoding: Some(self.position_encoding.lsp()),
@@ -1139,34 +871,13 @@ impl Session {
             document.uri.to_string(),
             document.version,
             document.text.clone(),
-            self.analysis_options_for(None),
+            self.analysis_options(),
         );
         if reject_unsupported_uri(&mut job, &document.uri) {
-            self.documents.reject_project_input(&job);
             return vec![job];
         }
-        if self.workspace_input_status == WorkspaceInputStatus::Rebuilding {
-            self.documents.mark_project_input_pending(&job);
-            return Vec::new();
-        }
-        if self.workspace_roots.is_empty() {
-            return self.configure_open_workspace();
-        }
-        let affected = match self.workspace.upsert_open(
-            document.uri.clone(),
-            i64::from(document.version),
-            document.text,
-        ) {
-            Ok(affected) => affected,
-            Err(error) => {
-                self.prepare_project_job(&mut job, Err(error));
-                return vec![job];
-            }
-        };
-        let project_context = self.workspace.project_analysis_context(&document.uri);
-        let options = self.analysis_options_for(project_context.as_ref().ok());
-        self.documents.update_snapshot_options(&mut job, options);
-        self.prepare_project_job(&mut job, project_context);
+        let affected = self.observing_documents(document.uri.as_str());
+        self.prepare_project_snapshot(&mut job);
         let mut jobs = vec![job];
         self.append_dependent_jobs(&affected, document.uri.as_str(), &mut jobs);
         jobs
@@ -1217,30 +928,10 @@ impl Session {
             return Ok(Vec::new());
         };
         if reject_unsupported_uri(&mut job, &params.text_document.uri) {
-            self.documents.reject_project_input(&job);
             return Ok(vec![job]);
         }
-        if self.workspace_input_status == WorkspaceInputStatus::Rebuilding {
-            self.documents.mark_project_input_pending(&job);
-            return Ok(Vec::new());
-        }
-        let affected = match self.workspace.upsert_open(
-            params.text_document.uri.clone(),
-            i64::from(params.text_document.version),
-            source,
-        ) {
-            Ok(affected) => affected,
-            Err(error) => {
-                self.prepare_project_job(&mut job, Err(error));
-                return Ok(vec![job]);
-            }
-        };
-        let project_context = self
-            .workspace
-            .project_analysis_context(&params.text_document.uri);
-        let options = self.analysis_options_for(project_context.as_ref().ok());
-        self.documents.update_snapshot_options(&mut job, options);
-        self.prepare_project_job(&mut job, project_context);
+        let affected = self.observing_documents(params.text_document.uri.as_str());
+        self.prepare_project_snapshot(&mut job);
         let mut jobs = vec![job];
         self.append_dependent_jobs(&affected, params.text_document.uri.as_str(), &mut jobs);
         Ok(jobs)
@@ -1253,25 +944,32 @@ impl Session {
         jobs: &mut Vec<ProjectAnalysisSnapshot>,
     ) {
         for uri in affected.iter().filter(|uri| uri.as_str() != changed) {
-            let Ok(parsed) = uri.parse() else {
-                continue;
-            };
             let Some(mut job) = self.documents.begin_reanalysis(uri) else {
                 continue;
             };
-            let project_context = self.workspace.project_analysis_context(&parsed);
-            self.prepare_project_job(&mut job, project_context);
+            self.prepare_project_snapshot(&mut job);
             jobs.push(job);
         }
     }
 
-    fn analysis_options_for(
-        &self,
-        workspace: Option<&crate::workspace::ProjectAnalysisContext>,
-    ) -> adocweave::AnalysisOptions {
-        let mut options = workspace.map_or_else(adocweave::AnalysisOptions::default, |input| {
-            input.project_config.analysis.clone()
-        });
+    fn observing_documents(&self, changed: &str) -> BTreeSet<String> {
+        let mut documents: BTreeSet<String> = self
+            .project_observations
+            .iter()
+            .filter(|(_, observations)| observations.uris.contains(changed))
+            .map(|(uri, _)| uri.clone())
+            .collect();
+        documents.extend(
+            self.pending_project_observations
+                .iter()
+                .filter(|(_, observations)| observations.uris.contains(changed))
+                .map(|(uri, _)| uri.clone()),
+        );
+        documents
+    }
+
+    fn analysis_options(&self) -> adocweave::AnalysisOptions {
+        let mut options = adocweave::AnalysisOptions::default();
         for code in &self.settings.enabled_rules {
             let Some(descriptor) = lint_rule(code) else {
                 continue;
@@ -1287,501 +985,27 @@ impl Session {
         options
     }
 
-    fn clear_workspace_watch_errors(&mut self) -> bool {
-        let changed = self.workspace_watch_error_epoch == self.workspace_input_epoch
-            && (!self.workspace_watch_errors.is_empty()
-                || self.workspace_watch_errors_overflowed
-                || self.workspace_watch_recovery_required);
-        self.workspace_watch_errors.clear();
-        self.workspace_watch_error_bytes = 0;
-        self.workspace_watch_errors_overflowed = false;
-        self.workspace_watch_recovery_required = false;
-        self.workspace_watch_error_epoch = self.workspace_input_epoch;
-        changed
-    }
-
-    fn ensure_current_workspace_watch_errors(&mut self) {
-        if self.workspace_watch_error_epoch != self.workspace_input_epoch {
-            self.clear_workspace_watch_errors();
-        }
-    }
-
-    fn current_workspace_watch_recovery_required(&self) -> bool {
-        self.workspace_watch_error_epoch == self.workspace_input_epoch
-            && self.workspace_watch_recovery_required
-    }
-
-    fn clear_workspace_watch_error(&mut self, uri: &lsp::Url) -> bool {
-        self.ensure_current_workspace_watch_errors();
-        let Some(error) = self.workspace_watch_errors.remove(uri.as_str()) else {
-            return false;
-        };
-        self.workspace_watch_error_bytes = self
-            .workspace_watch_error_bytes
-            .saturating_sub(uri.as_str().len().saturating_add(error.len()));
-        true
-    }
-
-    fn record_workspace_watch_error(&mut self, uri: &lsp::Url, error: String) -> bool {
-        self.ensure_current_workspace_watch_errors();
-        if let Some(previous) = self.workspace_watch_errors.get_mut(uri.as_str()) {
-            if *previous == error {
-                return false;
-            }
-            let next_bytes = self
-                .workspace_watch_error_bytes
-                .saturating_sub(previous.len())
-                .saturating_add(error.len());
-            if next_bytes > MAX_WORKSPACE_WATCH_ERROR_BYTES {
-                self.workspace_watch_errors_overflowed = true;
-                return true;
-            }
-            self.workspace_watch_error_bytes = next_bytes;
-            *previous = error;
-            return true;
-        }
-        let additional_bytes = uri.as_str().len().saturating_add(error.len());
-        if self.workspace_watch_errors.len() >= MAX_WORKSPACE_WATCH_ERRORS
-            || self
-                .workspace_watch_error_bytes
-                .saturating_add(additional_bytes)
-                > MAX_WORKSPACE_WATCH_ERROR_BYTES
-        {
-            let changed = !self.workspace_watch_errors_overflowed;
-            self.workspace_watch_errors_overflowed = true;
-            return changed;
-        }
-        self.workspace_watch_error_bytes = self
-            .workspace_watch_error_bytes
-            .saturating_add(additional_bytes);
-        self.workspace_watch_errors.insert(uri.to_string(), error);
-        true
-    }
-
-    fn workspace_watch_error_message(&self) -> Option<String> {
-        if self.workspace_watch_error_epoch != self.workspace_input_epoch
-            || (self.workspace_watch_errors.is_empty() && !self.workspace_watch_errors_overflowed)
-        {
-            return None;
-        }
-        let mut messages = self
-            .workspace_watch_errors
-            .iter()
-            .map(|(uri, error)| format!("{uri}: {error}"))
-            .collect::<Vec<_>>();
-        if self.workspace_watch_errors_overflowed {
-            messages.push(format!(
-                "additional workspace watch errors exceed the retained limit of {MAX_WORKSPACE_WATCH_ERRORS}"
-            ));
-        }
-        Some(messages.join("; "))
-    }
-
-    pub(crate) fn workspace_files_changed_with_journal(
-        &mut self,
-        params: lsp::DidChangeWatchedFilesParams,
-    ) -> WorkspaceFileChanges {
-        if params.changes.iter().any(|change| {
-            change.uri.path_segments().and_then(Iterator::last) == Some(adocweave_config::FILE_NAME)
-        }) {
-            // Project files are handled by the backend's asynchronous full
-            // scan. Mixing an incremental resource reload with a new resource
-            // plan would admit files under two different configurations.
-            return WorkspaceFileChanges {
-                jobs: Vec::new(),
-                journal: Vec::new(),
-                replay_complete: false,
-                recovery_required: false,
-            };
-        }
-        let mut coalesced = std::collections::BTreeMap::<lsp::Url, lsp::FileChangeType>::new();
-        let mut uri_bytes = 0_usize;
-        for change in params.changes {
-            if !coalesced.contains_key(&change.uri) {
-                if coalesced.len() >= MAX_WORKSPACE_WATCH_CHANGES
-                    || uri_bytes.saturating_add(change.uri.as_str().len())
-                        > MAX_WORKSPACE_WATCH_URI_BYTES
-                {
-                    self.ensure_current_workspace_watch_errors();
-                    self.workspace_watch_recovery_required = true;
-                    return WorkspaceFileChanges {
-                        jobs: Vec::new(),
-                        journal: Vec::new(),
-                        replay_complete: false,
-                        recovery_required: true,
-                    };
-                }
-                uri_bytes = uri_bytes.saturating_add(change.uri.as_str().len());
-            }
-            coalesced.insert(change.uri, change.typ);
-        }
-        let changes = coalesced
-            .into_iter()
-            .map(|(uri, typ)| lsp::FileEvent { uri, typ });
-        let mut affected = std::collections::BTreeSet::new();
-        let mut journal = Vec::new();
-        let mut watch_errors_changed = false;
-        for change in changes {
-            affected.extend(
-                self.pending_project_observations
-                    .iter()
-                    .filter(|(_, pending)| pending.uris.contains(change.uri.as_str()))
-                    .map(|(uri, _)| uri.clone()),
-            );
-            let kind = if change.typ == lsp::FileChangeType::DELETED {
-                WatchedFileKind::Delete
-            } else {
-                WatchedFileKind::Upsert
-            };
-            match self.workspace.apply_watched_file(change.uri.clone(), kind) {
-                Ok(update) => {
-                    watch_errors_changed |= self.clear_workspace_watch_error(&change.uri);
-                    affected.extend(update.affected);
-                    if update.journal_relevant {
-                        journal.push(change);
-                    }
-                }
-                Err(error) => {
-                    watch_errors_changed |=
-                        self.record_workspace_watch_error(&change.uri, error.message);
-                    if error.journal_relevant {
-                        journal.push(change);
-                    }
-                }
-            }
-        }
-        let mut jobs = Vec::new();
-        self.append_dependent_jobs(&affected, "", &mut jobs);
-        if watch_errors_changed {
-            let queued = jobs
-                .iter()
-                .map(|job| job.uri.clone())
-                .collect::<std::collections::BTreeSet<_>>();
-            for (uri, _, _) in self.documents.open_sources() {
-                if queued.contains(&uri) {
-                    continue;
-                }
-                let Ok(parsed) = uri.parse::<lsp::Url>() else {
-                    continue;
-                };
-                if parsed.scheme() != "file" {
-                    let Some(mut job) = self
-                        .documents
-                        .reconfigure(&uri, self.analysis_options_for(None))
-                    else {
-                        continue;
-                    };
-                    reject_unsupported_uri(&mut job, &parsed);
-                    self.documents.reject_project_input(&job);
-                    jobs.push(job);
-                    continue;
-                }
-                let project_context = self.workspace.project_analysis_context(&parsed);
-                let options = self.analysis_options_for(project_context.as_ref().ok());
-                if let Some(mut job) = self.documents.reconfigure(&uri, options) {
-                    self.prepare_project_job(&mut job, project_context);
-                    jobs.push(job);
-                }
-            }
-        }
-        WorkspaceFileChanges {
-            jobs,
-            journal,
-            replay_complete: true,
-            recovery_required: self.workspace_watch_error_epoch == self.workspace_input_epoch
-                && (self.workspace_watch_errors_overflowed
-                    || self.workspace_watch_recovery_required),
-        }
-    }
-
     pub(crate) fn handle_workspace_files_changed(
         &mut self,
         params: lsp::DidChangeWatchedFilesParams,
-    ) -> WorkspaceFileEventOutcome {
-        if params.changes.iter().any(|change| {
-            change.uri.path_segments().and_then(Iterator::last) == Some(adocweave_config::FILE_NAME)
-        }) {
-            self.advance_workspace_input_epoch();
-            return WorkspaceFileEventOutcome {
-                jobs: self.reconfigure_open_workspace(),
-                recovery_generation: None,
-                rebuild: None,
-                cancel_recovery_timer: false,
-            };
-        }
-
-        if self.workspace_input_status == WorkspaceInputStatus::Rebuilding {
-            let mut uris = std::collections::BTreeSet::new();
-            let mut uri_bytes = 0_usize;
-            let mut replay_complete = true;
-            for change in &params.changes {
-                if uris.insert(change.uri.as_str()) {
-                    uri_bytes = uri_bytes
-                        .checked_add(change.uri.as_str().len())
-                        .expect("workspace watch URI byte count exhausted");
-                    if uris.len() > MAX_WORKSPACE_WATCH_CHANGES
-                        || uri_bytes > MAX_WORKSPACE_WATCH_URI_BYTES
-                    {
-                        replay_complete = false;
-                        break;
-                    }
-                }
-            }
-            let changes = WorkspaceFileChanges {
-                jobs: Vec::new(),
-                journal: if replay_complete {
-                    params.changes
-                } else {
-                    Vec::new()
-                },
-                replay_complete,
-                recovery_required: !replay_complete
-                    || self.current_workspace_watch_recovery_required(),
-            };
-            if !replay_complete {
-                self.begin_workspace_rebuild();
-            }
-            let recovery_generation = self.record_workspace_changes(&changes);
-            return WorkspaceFileEventOutcome {
-                jobs: Vec::new(),
-                recovery_generation,
-                rebuild: None,
-                cancel_recovery_timer: false,
-            };
-        }
-
-        let changes = self.workspace_files_changed_with_journal(params);
-        let mut jobs = changes.jobs;
-        if changes.recovery_required || !changes.replay_complete {
-            jobs.extend(self.reconfigure_open_workspace());
-        }
-        WorkspaceFileEventOutcome {
-            jobs,
-            recovery_generation: None,
-            rebuild: None,
-            cancel_recovery_timer: false,
-        }
-    }
-
-    /// Reads the workspace roots without touching service state.
-    ///
-    /// This is the half of a reload whose cost grows with the workspace: it
-    /// walks every directory below each root and reads the `.adoc` files it
-    /// finds. It takes `&self` so a caller can run it on a worker while the
-    /// event loop keeps answering requests. Installing the result is
-    /// [`Self::apply_workspace_scan`], which is cheap and runs in order.
-    #[cfg(test)]
-    pub fn plan_workspace_scan(&self, cancellation: &dyn CancellationCheck) -> WorkspaceScan {
-        let roots = self.workspace_roots.values().cloned().collect::<Vec<_>>();
-        WorkspaceScan {
-            loaded: self
-                .workspace
-                .load_roots_detached_with_cancellation(&roots, cancellation),
-        }
-    }
-
-    pub(crate) fn plan_workspace_scan_with_job(
-        &self,
-        cancellation: &dyn CancellationCheck,
-        job: &adocweave_host::FilesystemJobCoordinator,
-    ) -> WorkspaceScan {
-        let roots = self.workspace_roots.values().cloned().collect::<Vec<_>>();
-        WorkspaceScan {
-            loaded: self
-                .workspace
-                .load_roots_detached_with_job(&roots, cancellation, job),
-        }
-    }
-
-    pub(crate) fn record_workspace_changes(
-        &mut self,
-        changes: &WorkspaceFileChanges,
-    ) -> Option<u64> {
-        self.workspace_scans
-            .lock()
-            .expect("workspace scan state lock is poisoned")
-            .record_workspace_changes(changes)
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn workspace_scan_recovery_is_current(&self, generation: u64) -> bool {
-        self.workspace_scans
-            .lock()
-            .expect("workspace scan state lock is poisoned")
-            .debouncing_generation()
-            == Some(generation)
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn request_workspace_scan_recovery(
-        &mut self,
-        recovery: WorkspaceScanRecovery,
-    ) -> Option<WorkspaceScanStart> {
-        self.workspace_scans
-            .lock()
-            .expect("workspace scan state lock is poisoned")
-            .request_recovery(recovery.generation())
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn complete_workspace_scan(
-        &mut self,
-        scanned: WorkspaceScanned,
-    ) -> Option<WorkspaceScanTransition> {
-        let scan_state = Arc::clone(&self.workspace_scans);
-        let mut coordinator = {
-            let mut state = scan_state
-                .lock()
-                .expect("workspace scan state lock is poisoned");
-            std::mem::take(&mut *state)
-        };
-        let transition = coordinator.complete(self, scanned);
-        *scan_state
-            .lock()
-            .expect("workspace scan state lock is poisoned") = coordinator;
-        transition
-    }
-
-    pub(crate) fn cancel_workspace_scan(&mut self) {
-        self.workspace_scans
-            .lock()
-            .expect("workspace scan state lock is poisoned")
-            .cancel();
-    }
-
-    /// Installs a completed scan and returns the analyses it makes stale.
-    ///
-    /// The documents open at this moment are overlaid onto the read, not the
-    /// ones open when it started, so a document opened during the walk is kept.
-    #[allow(dead_code)]
-    pub(crate) fn apply_workspace_scan(&mut self, scan: WorkspaceScan) -> WorkspaceScanApplication {
-        let structural_rebuild = self.workspace_input_status == WorkspaceInputStatus::Rebuilding;
-        let open_sources = self.documents.open_sources();
-        let parsed_open_sources = parse_open_sources(&open_sources);
-        let outcome = self
-            .workspace
-            .apply_loaded_roots(scan.loaded, &parsed_open_sources);
-        let installed = outcome.is_ok();
-        let structural_rebuild_pending = structural_rebuild && !installed;
-        let jobs = if structural_rebuild_pending {
-            self.workspace_scan_failed(outcome.expect_err("failed structural workspace install"))
-        } else {
-            if installed {
-                self.documents.synchronize_all_project_inputs();
-            }
-            self.workspace_input_status = WorkspaceInputStatus::Ready;
-            self.finish_reload(outcome, open_sources)
-        };
-        let notices = if installed {
-            let current = self.workspace.scan_notices().clone();
-            let newly_active = current
-                .difference(&self.active_scan_notices)
-                .cloned()
-                .collect();
-            self.active_scan_notices = current;
-            newly_active
-        } else {
-            Vec::new()
-        };
-        WorkspaceScanApplication {
-            jobs,
-            installed,
-            structural_rebuild_pending,
-            notices,
-        }
-    }
-
-    /// Records an internal scan worker failure without replacing the last
-    /// coherent workspace snapshot.
-    #[allow(dead_code)]
-    pub fn workspace_scan_failed(&mut self, error: String) -> Vec<ProjectAnalysisSnapshot> {
-        if self.workspace_input_status == WorkspaceInputStatus::Rebuilding {
-            self.set_workspace_error(error);
-            self.ensure_current_workspace_watch_errors();
-            self.workspace_watch_recovery_required = true;
-            return Vec::new();
-        }
-        self.set_workspace_error(error);
-        self.ensure_current_workspace_watch_errors();
-        self.workspace_watch_recovery_required = true;
-        self.documents
-            .open_sources()
-            .into_iter()
-            .filter_map(|(uri, _, _)| {
-                let parsed: lsp::Url = uri.parse().ok()?;
-                if parsed.scheme() != "file" {
-                    let mut job = self
-                        .documents
-                        .reconfigure(&uri, self.analysis_options_for(None))?;
-                    reject_unsupported_uri(&mut job, &parsed);
-                    self.documents.reject_project_input(&job);
-                    return Some(job);
-                }
-                let project_context = self.workspace.project_analysis_context(&parsed);
-                let options = self.analysis_options_for(project_context.as_ref().ok());
-                let mut job = self.documents.reconfigure(&uri, options)?;
-                self.prepare_project_job(&mut job, project_context);
-                Some(job)
-            })
-            .collect()
-    }
-
-    /// Turns the result of a reload into the reanalyses it requires.
-    fn finish_reload(
-        &mut self,
-        outcome: Result<(), String>,
-        open_sources: Vec<(String, i32, String)>,
     ) -> Vec<ProjectAnalysisSnapshot> {
-        if let Err(error) = outcome {
-            let failed_closed = self.workspace.last_load_failed_closed();
-            self.set_workspace_error(error.clone());
-            self.ensure_current_workspace_watch_errors();
-            self.workspace_watch_recovery_required = true;
-            return open_sources
-                .into_iter()
-                .filter_map(|(uri, _, _)| {
-                    let parsed: lsp::Url = uri.parse().ok()?;
-                    if parsed.scheme() != "file" {
-                        let mut job = self
-                            .documents
-                            .reconfigure(&uri, self.analysis_options_for(None))?;
-                        reject_unsupported_uri(&mut job, &parsed);
-                        self.documents.reject_project_input(&job);
-                        return Some(job);
-                    }
-                    let project_context = if failed_closed {
-                        Err(error.clone())
-                    } else {
-                        self.workspace.project_analysis_context(&parsed)
-                    };
-                    let options = self.analysis_options_for(project_context.as_ref().ok());
-                    let mut job = self.documents.reconfigure(&uri, options)?;
-                    self.prepare_project_job(&mut job, project_context);
-                    Some(job)
-                })
-                .collect();
-        }
-        self.workspace_error = None;
-        self.clear_workspace_watch_errors();
-        open_sources
-            .into_iter()
-            .filter_map(|(uri, _, _)| {
-                let parsed: lsp::Url = uri.parse().ok()?;
-                if parsed.scheme() != "file" {
-                    let mut job = self
-                        .documents
-                        .reconfigure(&uri, self.analysis_options_for(None))?;
-                    reject_unsupported_uri(&mut job, &parsed);
-                    self.documents.reject_project_input(&job);
-                    return Some(job);
+        let mut changed = BTreeSet::new();
+        let mut uri_bytes = 0usize;
+        for change in params.changes {
+            if changed.insert(change.uri.to_string()) {
+                uri_bytes = uri_bytes.saturating_add(change.uri.as_str().len());
+                if changed.len() > MAX_WORKSPACE_WATCH_CHANGES
+                    || uri_bytes > MAX_WORKSPACE_WATCH_URI_BYTES
+                {
+                    return self.reconfigure_open_documents();
                 }
-                let project_context = self.workspace.project_analysis_context(&parsed);
-                let options = self.analysis_options_for(project_context.as_ref().ok());
-                let mut job = self.documents.reconfigure(&uri, options)?;
-                self.prepare_project_job(&mut job, project_context);
-                Some(job)
-            })
-            .collect()
+            }
+        }
+        let affected = changed
+            .iter()
+            .flat_map(|uri| self.observing_documents(uri))
+            .collect::<BTreeSet<_>>();
+        self.reconfigure_documents(&affected)
     }
 
     pub fn workspace_folders_changed(
@@ -1802,42 +1026,30 @@ impl Session {
             return Vec::new();
         }
         self.workspace_roots = roots;
-        self.active_scan_notices.clear();
-        self.advance_workspace_input_epoch();
-        self.reconfigure_open_workspace()
+        self.reconfigure_open_documents()
     }
 
-    fn reconfigure_open_workspace(&mut self) -> Vec<ProjectAnalysisSnapshot> {
-        self.configure_open_workspace()
+    fn reconfigure_open_documents(&mut self) -> Vec<ProjectAnalysisSnapshot> {
+        let uris = self
+            .documents
+            .open_sources()
+            .into_iter()
+            .map(|(uri, _, _)| uri)
+            .collect();
+        self.reconfigure_documents(&uris)
     }
 
-    /// Rebuilds authority and project input from the documents open now.
-    ///
-    /// With no workspace folders, each open file contributes only its parent
-    /// directory. Replacing the set on every open and close also drops the
-    /// authority for a directory after its last document closes.
-    fn configure_open_workspace(&mut self) -> Vec<ProjectAnalysisSnapshot> {
-        let open_sources = self.documents.open_sources();
-        let parsed_open_sources = parse_open_sources(&open_sources);
-        let roots = self.workspace_roots.values().cloned().collect::<Vec<_>>();
-        let outcome = self.workspace.configure_roots(&roots, &parsed_open_sources);
-        if outcome.is_ok() {
-            self.documents.synchronize_all_project_inputs();
-        }
-        self.workspace_input_status = WorkspaceInputStatus::Ready;
-        self.finish_reload(outcome, open_sources)
-    }
-
-    /// Returns the effective text a workspace resource holds, if it is known.
-    #[cfg(test)]
-    pub fn workspace_resource(&self, uri: &lsp::Url) -> Option<std::sync::Arc<str>> {
-        self.workspace.resource_text(uri)
-    }
-
-    /// Returns how many documents the workspace currently holds.
-    #[cfg(test)]
-    pub fn workspace_analysis_count(&self) -> usize {
-        self.workspace.resource_count()
+    fn reconfigure_documents(&mut self, uris: &BTreeSet<String>) -> Vec<ProjectAnalysisSnapshot> {
+        uris.iter()
+            .filter_map(|uri| {
+                let parsed = lsp::Url::parse(uri).ok()?;
+                let mut snapshot = self.documents.reconfigure(uri, self.analysis_options())?;
+                if !reject_unsupported_uri(&mut snapshot, &parsed) {
+                    self.prepare_project_snapshot(&mut snapshot);
+                }
+                Some(snapshot)
+            })
+            .collect()
     }
 
     pub fn watched_files_registration(&self) -> Option<lsp::RegistrationParams> {
@@ -1866,31 +1078,6 @@ impl Session {
             })
     }
 
-    #[cfg(test)]
-    pub fn adopt(
-        &mut self,
-        job: &ProjectAnalysisSnapshot,
-        result: adocweave::AnalysisResult,
-    ) -> Adoption {
-        if !self.analysis_snapshot_is_current(job) {
-            return Adoption::Stale;
-        }
-        if job
-            .project_context
-            .as_ref()
-            .is_some_and(|input| !self.workspace.project_analysis_context_is_current(input))
-        {
-            return Adoption::Stale;
-        }
-        let format = job
-            .project_context
-            .as_ref()
-            .map_or_else(formatter::FormatConfig::default, |input| {
-                input.project_config.format
-            });
-        self.documents.adopt_with_format(job, result, format)
-    }
-
     pub(crate) fn project_processing_completed(
         &mut self,
         mut completion: ProjectAnalysisCompletion,
@@ -1898,14 +1085,11 @@ impl Session {
         if !self.analysis_snapshot_is_current(&completion.snapshot) {
             return ProjectAnalysisAction::Ignore;
         }
-        if self.project_context_is_stale(&completion.snapshot) {
-            return self.retry_completion(&completion.snapshot);
-        }
         if matches!(completion.outcome, ProjectAnalysisOutcome::Rejected(_)) {
             completion.observations_are_current = Some(true);
             return self.complete_analysis(completion);
         }
-        let uris = completion_observation_uris(&completion.outcome);
+        let uris = completion_observation_uris(&completion.outcome, &completion.source_index);
         self.pending_project_observations.insert(
             completion.snapshot.uri.clone(),
             PendingProjectObservations {
@@ -1924,66 +1108,29 @@ impl Session {
         if !self.analysis_snapshot_is_current(&completion.snapshot) {
             return ProjectAnalysisAction::Ignore;
         }
-        if self.project_context_is_stale(&completion.snapshot) {
-            return self.retry_completion(&completion.snapshot);
-        }
         if completion.observations_are_current != Some(true) {
             return self.retry_completion(&completion.snapshot);
         }
 
-        let mut next_workspace = self.workspace.clone();
+        let observed_uris =
+            completion_observation_uris(&completion.outcome, &completion.source_index);
+        let records_observations =
+            matches!(completion.outcome, ProjectAnalysisOutcome::Processed(_));
         let adopted = match completion.outcome {
             ProjectAnalysisOutcome::Processed(Ok(mut result)) => {
-                if record_project_dependencies(
-                    &mut next_workspace,
-                    &completion.snapshot,
-                    &result,
-                    &completion.source_index,
-                )
-                .is_err()
-                {
-                    return self.retry_completion(&completion.snapshot);
-                }
                 adopted_project_result(&completion.snapshot, &mut result, completion.source_index)
             }
             ProjectAnalysisOutcome::Processed(Err(error)) => {
                 if matches!(error, ProjectError::Cancelled) {
                     return ProjectAnalysisAction::Ignore;
                 }
-                let Ok(root) = lsp::Url::parse(&completion.snapshot.uri) else {
-                    return self.retry_completion(&completion.snapshot);
-                };
-                let repair_uris = match error.repair_candidate() {
-                    Some(candidate) => {
-                        let Ok(uri) = lsp::Url::from_file_path(&candidate.path) else {
-                            return self.retry_completion(&completion.snapshot);
-                        };
-                        vec![uri]
-                    }
-                    None => Vec::new(),
-                };
-                if next_workspace
-                    .record_project_dependencies(&root, repair_uris, [])
-                    .is_err()
-                {
-                    return self.retry_completion(&completion.snapshot);
-                }
                 adopted_problem(
                     &completion.snapshot,
                     project_error_problem(&completion.snapshot.uri, &error),
-                    true,
                 )
             }
             ProjectAnalysisOutcome::Rejected(problem) => {
-                if let Ok(root) = lsp::Url::parse(&completion.snapshot.uri)
-                    && root.scheme() == "file"
-                    && next_workspace
-                        .record_project_dependencies(&root, [], [])
-                        .is_err()
-                {
-                    return self.retry_completion(&completion.snapshot);
-                }
-                adopted_problem(&completion.snapshot, problem, false)
+                adopted_problem(&completion.snapshot, problem)
             }
         };
         let mut diagnostic_uris = completion
@@ -1998,19 +1145,20 @@ impl Session {
         {
             return ProjectAnalysisAction::Ignore;
         }
-        self.workspace = next_workspace;
+        if records_observations {
+            self.project_observations.insert(
+                completion.snapshot.uri.clone(),
+                ProjectObservations {
+                    uris: observed_uris,
+                },
+            );
+        } else {
+            self.project_observations.remove(&completion.snapshot.uri);
+        }
         ProjectAnalysisAction::Publish {
             snapshot: completion.snapshot,
             diagnostic_uris: diagnostic_uris.into_iter().collect(),
         }
-    }
-
-    fn project_context_is_stale(&mut self, snapshot: &ProjectAnalysisSnapshot) -> bool {
-        snapshot.project_problem.is_none()
-            && snapshot
-                .project_context
-                .as_ref()
-                .is_none_or(|context| !self.workspace.project_analysis_context_is_current(context))
     }
 
     fn retry_completion(&mut self, snapshot: &ProjectAnalysisSnapshot) -> ProjectAnalysisAction {
@@ -2030,11 +1178,6 @@ impl Session {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn workspace_copy(&self) -> crate::workspace::WorkspaceResources {
-        self.workspace.clone()
-    }
-
     pub fn retry_project_analysis(
         &mut self,
         job: &ProjectAnalysisSnapshot,
@@ -2049,40 +1192,19 @@ impl Session {
         &mut self,
         job: &ProjectAnalysisSnapshot,
     ) -> Option<ProjectAnalysisSnapshot> {
-        let uri: lsp::Url = job.uri.parse().ok()?;
-        let context = self.workspace.project_analysis_context(&uri);
-        let options = self.analysis_options_for(context.as_ref().ok());
-        let mut retry = self.documents.reconfigure(&job.uri, options)?;
-        self.prepare_project_job(&mut retry, context);
+        let mut retry = self
+            .documents
+            .reconfigure(&job.uri, self.analysis_options())?;
+        self.prepare_project_snapshot(&mut retry);
         Some(retry)
     }
 
     pub fn close(&mut self, uri: &lsp::Url) -> SessionCloseOutcome {
+        let affected = self.observing_documents(uri.as_str());
         self.pending_project_observations.remove(uri.as_str());
+        self.project_observations.remove(uri.as_str());
         let diagnostic_uris = self.documents.published_diagnostic_uris(uri.as_str());
         let closed = self.documents.close(uri.as_str());
-        if self.workspace_input_status == WorkspaceInputStatus::Rebuilding {
-            return SessionCloseOutcome {
-                closed,
-                reanalysis_jobs: Vec::new(),
-                diagnostic_uris,
-            };
-        }
-        if closed && self.workspace_roots.is_empty() {
-            return SessionCloseOutcome {
-                closed,
-                reanalysis_jobs: self.configure_open_workspace(),
-                diagnostic_uris,
-            };
-        }
-        let mut affected = self.workspace.close_open(uri).unwrap_or_else(|error| {
-            self.set_workspace_error(error);
-            std::collections::BTreeSet::new()
-        });
-        match self.workspace.forget_project_dependencies(uri) {
-            Ok(pruned) => affected.extend(pruned),
-            Err(error) => self.set_workspace_error(error),
-        }
         let mut jobs = Vec::new();
         self.append_dependent_jobs(&affected, uri.as_str(), &mut jobs);
         SessionCloseOutcome {
@@ -2094,7 +1216,7 @@ impl Session {
 
     pub fn shutdown(&mut self) {
         self.documents.cancel_all();
-        self.cancel_workspace_scan();
+        self.pending_project_observations.clear();
     }
 
     pub fn document_cancellation(
@@ -2102,21 +1224,6 @@ impl Session {
         uri: &lsp::Url,
     ) -> Option<Arc<adocweave::CancellationToken>> {
         self.documents.cancellation(uri.as_str())
-    }
-
-    #[cfg(test)]
-    pub(crate) fn begin_reanalysis_for_test(
-        &mut self,
-        uri: &lsp::Url,
-    ) -> Option<ProjectAnalysisSnapshot> {
-        let mut job = self.documents.begin_reanalysis(uri.as_str())?;
-        if reject_unsupported_uri(&mut job, uri) {
-            self.documents.reject_project_input(&job);
-            return Some(job);
-        }
-        let project_context = self.workspace.project_analysis_context(uri);
-        self.prepare_project_job(&mut job, project_context);
-        Some(job)
     }
 
     pub fn update_configuration(
@@ -2141,31 +1248,7 @@ impl Session {
         if !diagnostics_changed {
             return Ok(Vec::new());
         }
-        if self.workspace_input_status == WorkspaceInputStatus::Rebuilding {
-            self.invalidate_all_document_inputs();
-            return Ok(Vec::new());
-        }
-        Ok(self
-            .documents
-            .open_sources()
-            .into_iter()
-            .filter_map(|(uri, _, _)| {
-                let parsed: lsp::Url = uri.parse().ok()?;
-                if parsed.scheme() != "file" {
-                    let mut job = self
-                        .documents
-                        .reconfigure(&uri, self.analysis_options_for(None))?;
-                    reject_unsupported_uri(&mut job, &parsed);
-                    self.documents.reject_project_input(&job);
-                    return Some(job);
-                }
-                let project_context = self.workspace.project_analysis_context(&parsed);
-                let options = self.analysis_options_for(project_context.as_ref().ok());
-                let mut job = self.documents.reconfigure(&uri, options)?;
-                self.prepare_project_job(&mut job, project_context);
-                Some(job)
-            })
-            .collect())
+        Ok(self.reconfigure_open_documents())
     }
 
     pub const fn debounce_ms(&self) -> u64 {
@@ -2173,21 +1256,14 @@ impl Session {
     }
 
     pub fn diagnostics(&self, uri: &lsp::Url) -> Result<lsp::PublishDiagnosticsParams, String> {
-        let workspace_watch_error = self.workspace_watch_error_message();
         let document = self.documents.get(uri.as_str());
-        let resource = self.workspace.get(uri);
         let source = document
             .map(|document| document.document_input.source.as_ref())
-            .or_else(|| self.documents.adopted_source(uri.as_str()))
-            .or_else(|| resource.map(|resource| resource.text().as_ref()));
+            .or_else(|| self.documents.adopted_source(uri.as_str()));
         let Some(source) = source else {
             return Ok(lsp::PublishDiagnosticsParams::new(
                 uri.clone(),
-                self.current_workspace_error()
-                    .or(workspace_watch_error.as_deref())
-                    .map(crate::diagnostics::workspace_error)
-                    .into_iter()
-                    .collect(),
+                Vec::new(),
                 None,
             ));
         };
@@ -2200,13 +1276,7 @@ impl Session {
             })
             .flatten();
         let mut diagnostics = document
-            .and_then(|document| {
-                if document.project_input_problem().is_some() {
-                    None
-                } else {
-                    document.view.as_ref().map(|view| view.primary.as_ref())
-                }
-            })
+            .and_then(|document| document.view.as_ref().map(|view| view.primary.as_ref()))
             .iter()
             .flat_map(|analysis| analysis.diagnostics().iter())
             .map(|diagnostic| {
@@ -2218,30 +1288,12 @@ impl Session {
                 )
             })
             .collect::<Result<Vec<_>, String>>()?;
-        if let Some(error) = self.current_workspace_error() {
-            diagnostics.push(crate::diagnostics::workspace_error(error));
-        }
-        if let Some(error) = &workspace_watch_error {
-            diagnostics.push(crate::diagnostics::workspace_error(error));
-        }
-        if let Some(problem) = document.and_then(|document| document.project_input_problem()) {
-            diagnostics.push(crate::diagnostics::project_problem(
-                problem.range,
-                &problem.code,
-                &problem.message,
-                &source_document,
-                self.position_encoding,
-            )?);
-        }
         for expanded in self.documents.expanded_analyses() {
             let current_version = expanded.resource_versions.get(uri.as_str()).copied();
             let is_root = expanded.analysis.source_id().is_some_and(|source_id| {
                 expanded.uri_for_source_id(source_id) == Some(uri.as_str())
             });
-            if current_version
-                != document
-                    .map(|document| document.document_input.revision.version)
-                    .or_else(|| resource.map(|resource| resource.revision().get()))
+            if current_version != document.map(|document| document.document_input.revision.version)
             {
                 continue;
             }
@@ -2443,17 +1495,7 @@ impl Session {
         };
         match navigation::definition(&input, uri, position, cancellation)? {
             navigation::Definition::Resolved(response) => Ok(response),
-            navigation::Definition::Host(target) => {
-                let request =
-                    host_reference_request(&document, uri, target, self.position_encoding);
-                cancellation.check_now()?;
-                let result = self
-                    .host_index
-                    .definition(&request)
-                    .map(|location| location.map(lsp::GotoDefinitionResponse::Scalar));
-                cancellation.check_now()?;
-                Ok(result?)
-            }
+            navigation::Definition::Unresolved => Ok(None),
         }
     }
 
@@ -2480,16 +1522,6 @@ impl Session {
         };
         let result =
             navigation::references(&input, uri, position, include_declaration, cancellation)?;
-        if let Some(target) = result.host_target {
-            let request = host_reference_request(&document, uri, target, self.position_encoding);
-            cancellation.check_now()?;
-            let locations = self.host_index.references(&request, include_declaration);
-            cancellation.check_now()?;
-            let locations = locations?;
-            if let Some(locations) = locations {
-                return Ok(Some(locations));
-            }
-        }
         Ok(Some(result.fallback))
     }
 
@@ -2565,31 +1597,21 @@ impl Session {
         target: &editing::RenameTarget,
         cancellation: &QueryCancellation,
     ) -> QueryResult<Option<Vec<lsp::Location>>> {
-        let host_request =
-            host_reference_request(document, uri, target.key.clone(), self.position_encoding);
-        cancellation.check_now()?;
-        let host_locations = self.host_index.references(&host_request, false);
-        cancellation.check_now()?;
-        let host_locations = host_locations?;
-        let mut locations = if let Some(locations) = host_locations {
-            locations
-        } else {
-            let snapshots = self.documents.snapshots();
-            let expanded_analyses = self.documents.expanded_analyses().collect::<Vec<_>>();
-            let source_document = |source_uri: &lsp::Url| self.source_document(source_uri);
-            let input = NavigationInput {
-                document,
-                snapshots: &snapshots,
-                expanded_analyses: &expanded_analyses,
-                encoding: self.position_encoding,
-                source_document: &source_document,
-            };
-            let references = navigation::references(&input, uri, position, false, cancellation)?;
-            if !references.anchor_occurrences_are_authored {
-                return Ok(None);
-            }
-            references.fallback
+        let snapshots = self.documents.snapshots();
+        let expanded_analyses = self.documents.expanded_analyses().collect::<Vec<_>>();
+        let source_document = |source_uri: &lsp::Url| self.source_document(source_uri);
+        let input = NavigationInput {
+            document,
+            snapshots: &snapshots,
+            expanded_analyses: &expanded_analyses,
+            encoding: self.position_encoding,
+            source_document: &source_document,
         };
+        let references = navigation::references(&input, uri, position, false, cancellation)?;
+        if !references.anchor_occurrences_are_authored {
+            return Ok(None);
+        }
+        let mut locations = references.fallback;
         locations.push(lsp::Location::new(uri.clone(), target.range));
         Ok(Some(locations))
     }
@@ -2614,20 +1636,7 @@ impl Session {
             source_document: &source_document,
         };
         let tooltips = self.client.document_link_tooltip;
-        let mut links = navigation::document_links(&input, uri, tooltips, cancellation)?;
-        for unresolved in std::mem::take(&mut links.unresolved) {
-            cancellation.checkpoint()?;
-            let request = host_reference_request(
-                &document,
-                uri,
-                unresolved.target.clone(),
-                self.position_encoding,
-            );
-            cancellation.check_now()?;
-            let location = self.host_index.definition(&request).ok().flatten();
-            cancellation.check_now()?;
-            links.resolve(unresolved, location, tooltips);
-        }
+        let links = navigation::document_links(&input, uri, tooltips, cancellation)?;
         Ok(Some(links.finish(cancellation)?))
     }
 
@@ -2637,11 +1646,6 @@ impl Session {
             .get(uri.as_str())
             .map(|document| document.document_input.source.as_ref())
             .or_else(|| self.documents.adopted_source(uri.as_str()))
-            .or_else(|| {
-                self.workspace
-                    .get(uri)
-                    .map(|resource| resource.text().as_ref())
-            })
             .ok_or_else(|| format!("projected source is missing: {uri}"))?;
         SourceDocument::new(source).map_err(|error| error.to_string())
     }
@@ -2791,21 +1795,6 @@ fn code_action_kind_requested(
                     .is_some_and(|suffix| suffix.starts_with('.'))
         })
     })
-}
-
-fn host_reference_request(
-    document: &DocumentSnapshot,
-    uri: &lsp::Url,
-    target: ReferenceKey,
-    encoding: PositionEncoding,
-) -> HostReferenceRequest {
-    HostReferenceRequest {
-        source: uri.clone(),
-        source_version: revision_version_i32(&document.revision),
-        source_generation: document.revision.generation,
-        target,
-        encoding,
-    }
 }
 
 fn revision_version_i32(revision: &adocweave::DocumentRevision) -> i32 {
