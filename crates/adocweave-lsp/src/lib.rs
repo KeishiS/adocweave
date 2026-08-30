@@ -3,8 +3,6 @@
 use std::error::Error;
 use std::fmt;
 
-use adocweave_host::ExitStatus;
-
 mod backend;
 mod cancellation;
 mod diagnostics;
@@ -24,6 +22,15 @@ pub use position::PositionEncoding;
 pub const SERVER_NAME: &str = "adocweave";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Category of a failure while serving LSP over standard I/O.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StdioErrorKind {
+    /// The peer violated the Language Server Protocol.
+    Protocol,
+    /// The transport or Language Server runtime stopped unexpectedly.
+    Runtime,
+}
+
 /// A failure while serving the Language Server Protocol over standard I/O.
 #[derive(Debug)]
 pub struct StdioError {
@@ -35,12 +42,12 @@ impl StdioError {
         Self { source }
     }
 
-    /// Returns the process status required by the protocol or transport failure.
-    pub fn exit_status(&self) -> ExitStatus {
+    /// Returns whether the failure came from the protocol or the runtime.
+    pub fn kind(&self) -> StdioErrorKind {
         if matches!(self.source, async_lsp::Error::Protocol(_)) {
-            ExitStatus::Diagnostics
+            StdioErrorKind::Protocol
         } else {
-            ExitStatus::InputOutput
+            StdioErrorKind::Runtime
         }
     }
 }

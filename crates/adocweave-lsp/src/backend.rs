@@ -29,6 +29,22 @@ use crate::state::{ProjectAnalysisSnapshot, ProjectSourceIndex};
 const MAX_CONCURRENT_REQUESTS: usize = 16;
 const MAX_CONCURRENT_ANALYSES: usize = 2;
 
+#[cfg(test)]
+pub(crate) enum RequestHandlerPanic {}
+
+#[cfg(test)]
+impl request::Request for RequestHandlerPanic {
+    type Params = ();
+    type Result = ();
+
+    const METHOD: &'static str = "adocweave/testRequestHandlerPanic";
+}
+
+#[cfg(test)]
+async fn request_handler_panic() -> Result<(), ResponseError> {
+    panic!("intentional request handler panic")
+}
+
 pub(crate) struct Backend {
     client: ClientSocket,
     session: Session,
@@ -252,6 +268,9 @@ impl Backend {
             .event::<ProjectValidationCompleted>(|state, completed| {
                 state.project_validation_completed(completed)
             });
+
+        #[cfg(test)]
+        router.request::<RequestHandlerPanic, _>(|_, ()| request_handler_panic());
 
         ServiceBuilder::new()
             .layer(TracingLayer::default())

@@ -3,14 +3,12 @@
 //! This crate owns the bounded local-filesystem boundary. It deliberately does
 //! not depend on the parser core or long-lived application or session state.
 
-mod exit_status;
 mod filesystem_job;
 mod filesystem_limits;
 mod include_filesystem;
 mod local_resource;
 mod local_target;
 
-pub use exit_status::ExitStatus;
 pub use filesystem_job::{
     FilesystemJobCoordinator, FilesystemJobError, FilesystemJobId, FilesystemJobLimit,
     FilesystemJobLimits, FilesystemJobUsage,

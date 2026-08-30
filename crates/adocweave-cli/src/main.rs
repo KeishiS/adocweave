@@ -1,5 +1,4 @@
 use std::env;
-use std::process::ExitCode;
 use std::sync::atomic::AtomicBool;
 
 use adocweave::OutputLimits;
@@ -11,6 +10,7 @@ mod cli_error;
 mod commands;
 mod diagnostic_json;
 mod diagnostic_output;
+mod exit_code;
 mod file_workflow;
 mod local_target;
 mod preview;
@@ -41,10 +41,9 @@ use commands::format::Options as FormatOptions;
 const DEFAULT_PREVIEW_PORT: u16 = 4000;
 const DEFAULT_PREVIEW_DEBOUNCE_MS: u64 = 100;
 
-use adocweave_host::ExitStatus;
-
 use arguments::{Action, CommandOptions, CompletionShell, command, parse_arguments};
 use cli_error::{CliError, preview_error};
+use exit_code::CliExitCode;
 
 fn finish_output(output: String) -> Result<String, CliError> {
     let limit = OutputLimits::default().max_output_bytes;
@@ -87,18 +86,18 @@ fn render_rules_human() -> String {
     output
 }
 
-async fn run() -> Result<ExitCode, CliError> {
+async fn run() -> Result<CliExitCode, CliError> {
     match parse_arguments(env::args_os().skip(1))? {
         Action::Lsp => {
             adocweave_lsp::run_stdio()
                 .await
                 .map_err(CliError::LanguageServer)?;
-            Ok(ExitCode::SUCCESS)
+            Ok(CliExitCode::Success)
         }
         Action::Help(help) => {
-            let exit_code = u8::try_from(help.exit_code()).unwrap_or(2);
+            let exit_code = CliExitCode::from_clap(help.exit_code());
             help.print().map_err(CliError::Write)?;
-            Ok(ExitCode::from(exit_code))
+            Ok(exit_code)
         }
         Action::Version { json } => {
             if json {
@@ -112,11 +111,11 @@ async fn run() -> Result<ExitCode, CliError> {
             } else {
                 println!("adocweave {VERSION}");
             }
-            Ok(ExitCode::SUCCESS)
+            Ok(CliExitCode::Success)
         }
         Action::Completion { shell } => {
             print!("{}", completion_script(shell));
-            Ok(ExitCode::SUCCESS)
+            Ok(CliExitCode::Success)
         }
         Action::Rules { json } => {
             if json {
@@ -124,7 +123,7 @@ async fn run() -> Result<ExitCode, CliError> {
             } else {
                 print!("{}", render_rules_human());
             }
-            Ok(ExitCode::SUCCESS)
+            Ok(CliExitCode::Success)
         }
         Action::Run(arguments) => {
             if !matches!(arguments.command, CommandOptions::Preview { .. }) {
@@ -168,7 +167,7 @@ async fn run() -> Result<ExitCode, CliError> {
                     &PREVIEW_SHUTDOWN,
                 )
                 .map_err(preview_error)?;
-                return Ok(ExitCode::SUCCESS);
+                return Ok(CliExitCode::Success);
             }
             unreachable!("preview handled above")
         }
@@ -176,25 +175,25 @@ async fn run() -> Result<ExitCode, CliError> {
 }
 
 #[tokio::main]
-async fn main() -> ExitCode {
+async fn main() -> std::process::ExitCode {
     match run().await {
-        Ok(exit_code) => exit_code,
+        Ok(exit_code) => exit_code.into(),
         Err(CliError::Arguments(source)) => {
-            let exit_code = u8::try_from(source.exit_code()).unwrap_or(2);
+            let exit_code = CliExitCode::from_clap(source.exit_code());
             if source.print().is_err() {
-                return ExitStatus::InputOutput.into();
+                return CliExitCode::InputOutput.into();
             }
-            ExitCode::from(exit_code)
+            exit_code.into()
         }
         Err(error) => {
-            let status = error.exit_status();
+            let exit_code = error.exit_code();
             eprintln!("adocweave: {error}");
             // Only a caller who wrote the command wrong is helped by being sent
             // to the help text.
-            if status == ExitStatus::Usage {
+            if exit_code == CliExitCode::Usage {
                 eprintln!("Try 'adocweave --help' for more information.");
             }
-            status.into()
+            exit_code.into()
         }
     }
 }

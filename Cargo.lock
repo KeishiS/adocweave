@@ -16,7 +16,6 @@ name = "adocweave-cli"
 version = "0.56.0"
 dependencies = [
  "adocweave",
- "adocweave-host",
  "adocweave-lsp",
  "adocweave-project",
  "clap",
@@ -43,7 +42,6 @@ name = "adocweave-lsp"
 version = "0.56.0"
 dependencies = [
  "adocweave",
- "adocweave-host",
  "adocweave-project",
  "async-lsp",
  "futures",

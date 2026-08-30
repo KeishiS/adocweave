@@ -44,6 +44,66 @@ fn exit_without_shutdown_uses_a_nonzero_process_status() {
 }
 
 #[test]
+fn initialization_error_then_exit_without_shutdown_uses_the_protocol_process_status() {
+    let output = run_server(&[
+        json!({
+            "jsonrpc":"2.0",
+            "id":1,
+            "method":"initialize",
+            "params":null
+        }),
+        json!({
+            "jsonrpc":"2.0",
+            "method":"exit",
+            "params":null
+        }),
+    ]);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("\"code\":-32602"),
+        "unexpected stdout: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("exit received before shutdown"),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn closed_standard_output_uses_the_input_output_process_status() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_adocweave"))
+        .arg("lsp")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start language server");
+    drop(child.stdout.take().expect("server stdout"));
+    child
+        .stdin
+        .take()
+        .expect("server stdin")
+        .write_all(&frame(&json!({
+            "jsonrpc":"2.0",
+            "id":1,
+            "method":"initialize",
+            "params":{"processId":null,"rootUri":null,"capabilities":{}}
+        })))
+        .expect("write initialize request");
+
+    let output = child.wait_with_output().expect("wait for language server");
+    assert_eq!(output.status.code(), Some(3));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("adocweave:"),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn shutdown_then_exit_uses_a_zero_process_status() {
     let output = run_server(&[
         json!({

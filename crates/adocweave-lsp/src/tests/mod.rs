@@ -5,7 +5,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
-use super::{PositionEncoding, run};
+use super::{PositionEncoding, StdioError, StdioErrorKind, run};
 use crate::service::Session;
 use crate::state::ProjectAnalysisSnapshot;
 

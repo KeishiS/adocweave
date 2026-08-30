@@ -229,13 +229,19 @@ fn every_lint_rule_constant_is_reexported() {
 }
 
 #[test]
-fn core_package_has_no_native_host_or_runtime_dependency() {
+fn only_project_depends_on_the_native_host_boundary() {
     let root = repository_root();
     let core = fs::read_to_string(root.join("crates/adocweave/Cargo.toml")).expect("core manifest");
     let cli =
         fs::read_to_string(root.join("crates/adocweave-cli/Cargo.toml")).expect("CLI manifest");
+    let lsp =
+        fs::read_to_string(root.join("crates/adocweave-lsp/Cargo.toml")).expect("LSP manifest");
+    let project = fs::read_to_string(root.join("crates/adocweave-project/Cargo.toml"))
+        .expect("project manifest");
     assert!(!core.contains("adocweave-host"));
     assert!(!core.contains("tokio"));
     assert!(cli.contains("adocweave = { path = \"../adocweave\" }"));
-    assert!(cli.contains("adocweave-host = { path = \"../adocweave-host\" }"));
+    assert!(!cli.contains("adocweave-host"));
+    assert!(!lsp.contains("adocweave-host"));
+    assert!(project.contains("adocweave-host = { path = \"../adocweave-host\" }"));
 }

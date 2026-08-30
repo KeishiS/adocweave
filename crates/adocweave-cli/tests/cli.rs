@@ -127,7 +127,7 @@ fn configured_resource_limit_rejects_root_before_processing() {
 }
 
 #[test]
-fn each_kind_of_failure_reports_its_own_exit_status() {
+fn each_kind_of_failure_reports_its_own_exit_code() {
     let root = tempfile::tempdir().expect("root");
     std::fs::write(root.path().join("clean.adoc"), "= Title\n\ntext\n").expect("clean document");
     std::fs::write(root.path().join("broken.adoc"), "= Title\n\n<<missing>>\n")
@@ -173,7 +173,7 @@ fn each_kind_of_failure_reports_its_own_exit_status() {
 }
 
 #[test]
-fn configured_stylesheet_limit_uses_the_limit_exit_status() {
+fn configured_stylesheet_limit_uses_the_limit_exit_code() {
     let root = tempfile::tempdir().expect("root");
     std::fs::write(root.path().join("document.adoc"), "x\n").expect("document");
     std::fs::write(root.path().join("large.css"), "0123456789").expect("stylesheet");
