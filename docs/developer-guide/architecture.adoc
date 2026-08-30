@@ -14,9 +14,8 @@ VS Code・Zed ──LSP──> adocweave lsp
 textlint ──> adocweave-textlint ──> adocweave
 
 adocweave-cli ──> adocweave-lsp, adocweave-project, adocweave-host, adocweave
-adocweave-lsp ──> adocweave-project, adocweave-config, adocweave-host, adocweave-workspace, adocweave
-adocweave-project ──> adocweave-config, adocweave-host, adocweave
-adocweave-config ──> adocweave-host, adocweave-workspace, adocweave
+adocweave-lsp ──> adocweave-project, adocweave-host, adocweave
+adocweave-project ──> adocweave-host, adocweave
 adocweave-workspace ──> adocweave
 ----
 
@@ -36,12 +35,9 @@ adocweave-workspace ──> adocweave
 |``adocweave-workspace``
 |ディスク上のリソース、開いている文書、世代、依存関係およびI/Oに依存しない再開可能な前処理
 
-|``adocweave-config``
-|Rustの設定型から生成するスキーマ、設定の探索と読込、および処理上限の解決
-
 |``adocweave-project``
-|一回のプロジェクト処理で所有する全解析対象、設定の指定と上書き、検証済みのファイル読込権限、
-処理上限、対象探索、設定と関連ファイルの取得、有限回の解析および対象別の結果
+|一回のプロジェクト処理で所有する全解析対象、設定の型とスキーマ、設定の指定と上書き、
+検証済みのファイル読込権限、処理上限、対象探索、設定と関連ファイルの取得、有限回の解析および対象別の結果
 
 |``adocweave-cli``
 |``adocweave``のコマンド、標準入出力、ファイル操作、処理の調停および終了状態への変換
@@ -87,9 +83,10 @@ BrowserのWorker入口とNode.jsのdirect入口は、同じWebAssembly要求、�
 コアはファイルシステム、ネットワーク、データベース、環境変数および非同期の実行環境へ直接アクセスしません。
 利用側アプリは外部リソースを取得して権限と上限を確認し、一回の処理中に変化しないスナップショットとして渡します。
 
-ローカルファイルの安全性は``adocweave-host``、保持中のリソースと解析世代は``adocweave-workspace``、
-設定と上限の解決は``adocweave-config``が所有します。CLIとLanguage Serverは``adocweave-project``を通じて
-これらを利用します。どちらもパス検査、使用量の計測またはinclude規則を独自に実装しません。
+ローカルファイルの安全性は``adocweave-host``、保持中のリソースと解析世代は``adocweave-workspace``が
+所有します。``adocweave-project``は設定と処理上限を解決し、同じ要求が持つファイル読込権限で設定を取得します。
+CLIとLanguage Serverは``adocweave-project``を利用し、パス検査、使用量の計測またはinclude規則を
+独自に実装しません。
 
 ``adocweave-project``の``process``は、一つの所有された要求を同期的に処理します。対象の探索、設定の読込、
 主文書、include、スタイルシートおよびローカル参照先の取得では、要求が持つ同じ権限と使用量上限を共有します。

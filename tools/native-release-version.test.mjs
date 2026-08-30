@@ -9,7 +9,7 @@ import {
 
 test("一つのworkspace版をnative releaseのmanifestとlockfileで使用する", () => {
   assert.equal(checkNativeReleaseVersion(), workspaceVersion());
-  assert.equal(workspaceVersion(), "0.55.0");
+  assert.equal(workspaceVersion(), "0.56.0");
 });
 
 test("CLI引数はnative版の検査と更新だけを受理する", () => {

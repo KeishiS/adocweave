@@ -10,10 +10,10 @@ use adocweave::SourceId;
 use adocweave::output::diagnostics::{RuleSettings, lint_rule};
 use adocweave::text::SourceDocument;
 use adocweave_project::{
-    ConfigSelection, ProjectAuthority, ProjectError, ProjectExpansionError, ProjectLimits,
-    ProjectObservationAccess, ProjectOverrides, ProjectRequest, ProjectResourceErrorCode,
-    ProjectResourceKind, ProjectResourceOutcome, ProjectResourceResult, ProjectResourceSelection,
-    ProjectResult, ProjectSource, ProjectTarget, ProjectTargetError,
+    ProjectAuthority, ProjectConfigOverrides, ProjectConfigSelection, ProjectError,
+    ProjectExpansionError, ProjectLimits, ProjectObservationAccess, ProjectRequest,
+    ProjectResourceErrorCode, ProjectResourceKind, ProjectResourceOutcome, ProjectResourceResult,
+    ProjectResourceSelection, ProjectResult, ProjectSource, ProjectTarget, ProjectTargetError,
 };
 use async_lsp::lsp_types as lsp;
 use serde::Deserialize;
@@ -702,20 +702,20 @@ impl Session {
                 },
             );
         }
-        let overrides = ProjectOverrides {
+        let overrides = ProjectConfigOverrides {
             enable_lint_rules: self
                 .settings
                 .enabled_rules
                 .iter()
                 .filter_map(|code| lint_rule(code).map(|rule| rule.id))
                 .collect(),
-            ..ProjectOverrides::default()
+            ..ProjectConfigOverrides::default()
         };
         Ok(PreparedProjectRequest {
             request: ProjectRequest {
                 targets: vec![ProjectTarget::Source(primary_id)],
                 sources: project_sources,
-                config: ConfigSelection::Discover,
+                config: ProjectConfigSelection::Discover,
                 overrides,
                 apply_safe_fixes: false,
                 resource_selection: ProjectResourceSelection {

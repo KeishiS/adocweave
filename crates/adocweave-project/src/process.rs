@@ -2,13 +2,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::config::LoadedProjectConfig;
 use adocweave::preprocess::{
     EffectivePreprocessStep, EffectiveProcessingOptions, PreparedAnalysisError, PreprocessInputs,
     PreprocessedAnalysis, ProjectionFailure, ProjectionLimits, ResourceDocument, ResourceLookup,
     ResourceLookupResult,
 };
 use adocweave::{Analysis, AnalysisInputs, CancellationCheck, Engine, SourceId};
-use adocweave_config::{ConfigSnapshot, ResolvedProjectConfig};
 use adocweave_host::{
     DerivedFilesystemRoots, FilesystemDraftError, FilesystemJobError, FilesystemJobLimit,
     FilesystemJobLimits, FilesystemReadLimits, IncludeFilesystemBudgetedOutcome,
@@ -22,12 +22,13 @@ use crate::selection::{
     NormalizedSelector, absolute_lexical, identity_path, normalize_selectors, select_targets,
 };
 use crate::{
-    ConfigSelection, ProjectAnalysis, ProjectConfigRequest, ProjectConfigResult,
-    ProjectConfigSnapshot, ProjectError, ProjectExpandedAnalysis, ProjectExpansionError,
-    ProjectLimit, ProjectOutcome, ProjectParseError, ProjectRequest, ProjectResourceFailure,
-    ProjectResourceKind, ProjectResourceOutcome, ProjectResourceResult, ProjectResult,
-    ProjectSourceLocation, ProjectTargetError, ProjectTargetResult, ProjectUsage, ProjectWarning,
-    project_authority_error, project_config_error, project_expansion_read, project_target_read,
+    ProjectAnalysis, ProjectConfig, ProjectConfigRequest, ProjectConfigResult,
+    ProjectConfigSelection, ProjectConfigSnapshot, ProjectError, ProjectExpandedAnalysis,
+    ProjectExpansionError, ProjectLimit, ProjectOutcome, ProjectParseError, ProjectRequest,
+    ProjectResourceFailure, ProjectResourceKind, ProjectResourceLimits, ProjectResourceOutcome,
+    ProjectResourceResult, ProjectResult, ProjectSourceLocation, ProjectTargetError,
+    ProjectTargetResult, ProjectUsage, ProjectWarning, project_authority_error,
+    project_config_error, project_expansion_read, project_target_read,
 };
 
 pub fn process(request: ProjectRequest, cancellation: &dyn CancellationCheck) -> ProjectOutcome {
@@ -71,7 +72,7 @@ pub fn resolve_config(
             .ok()
             .map(|value| SourceId::new(value.as_str()))
     });
-    let config = Arc::new(ProjectConfigSnapshot::from_resolved(
+    let config = Arc::new(ProjectConfigSnapshot::from_loaded(
         resolved.snapshot.as_deref(),
         resolved.resolved.as_ref(),
         source_id,
@@ -88,8 +89,8 @@ pub fn resolve_config(
 
 struct Processor<'request> {
     project_root: PathBuf,
-    config_selection: ConfigSelection,
-    overrides: crate::ProjectOverrides,
+    config_selection: ProjectConfigSelection,
+    overrides: crate::ProjectConfigOverrides,
     apply_safe_fixes: bool,
     resource_selection: crate::ProjectResourceSelection,
     limits: crate::ProjectLimits,
@@ -107,8 +108,8 @@ struct Processor<'request> {
     source_ids_by_path: BTreeMap<PathBuf, LogicalSourceId>,
     reserved_source_ids: BTreeMap<LogicalSourceId, Option<PathBuf>>,
     inspections: BTreeMap<LogicalSourceId, Vec<FixedInspection>>,
-    configs: BTreeMap<PathBuf, Arc<ConfigSnapshot>>,
-    resolved_configs: BTreeMap<Option<PathBuf>, Arc<ResolvedProjectConfig>>,
+    configs: BTreeMap<PathBuf, Arc<LoadedProjectConfig>>,
+    resolved_configs: BTreeMap<Option<PathBuf>, Arc<ProjectConfig>>,
     published_configs: BTreeMap<Option<PathBuf>, Arc<ProjectConfigSnapshot>>,
     scope_budgets: BTreeMap<PathBuf, ScopeBudget>,
     inspection_scope_budgets: BTreeMap<PathBuf, ScopeBudget>,
@@ -152,7 +153,7 @@ struct FixedInspection {
 struct TargetAnalysisContext<'target> {
     source_id: &'target LogicalSourceId,
     source: &'target Arc<str>,
-    config: &'target ResolvedProjectConfig,
+    config: &'target ProjectConfig,
     allowed_roots: &'target [PathBuf],
     scope: &'target Path,
     bases: &'target mut BTreeMap<String, PathBuf>,
@@ -163,8 +164,8 @@ struct TargetAnalysisContext<'target> {
 }
 
 struct TargetConfig {
-    snapshot: Option<Arc<ConfigSnapshot>>,
-    resolved: Arc<ResolvedProjectConfig>,
+    snapshot: Option<Arc<LoadedProjectConfig>>,
+    resolved: Arc<ProjectConfig>,
     resource: Option<ProjectResourceResult>,
 }
 
@@ -178,8 +179,8 @@ struct FinishTargetInput {
     source_id: LogicalSourceId,
     path: PathBuf,
     replacement_source: Option<Arc<str>>,
-    config: Option<Arc<ConfigSnapshot>>,
-    resolved_config: Arc<ResolvedProjectConfig>,
+    config: Option<Arc<LoadedProjectConfig>>,
+    resolved_config: Arc<ProjectConfig>,
     resources: Vec<ProjectResourceResult>,
     outcome: Result<ProjectAnalysis, ProjectTargetError>,
 }
@@ -373,31 +374,31 @@ impl<'request> Processor<'request> {
                 )));
             }
             if source.source.len()
-                > usize::try_from(limits.max_resource_bytes).unwrap_or(usize::MAX)
+                > usize::try_from(limits.resources.max_resource_bytes).unwrap_or(usize::MAX)
             {
                 return Err(ProjectError::Limit(ProjectLimit::ResourceBytes {
-                    limit: limits.max_resource_bytes,
+                    limit: limits.resources.max_resource_bytes,
                 }));
             }
             memory_count =
                 memory_count
                     .checked_add(1)
                     .ok_or(ProjectError::Limit(ProjectLimit::Files {
-                        limit: limits.max_files,
+                        limit: limits.resources.max_files,
                     }))?;
-            if memory_count > limits.max_files {
+            if memory_count > limits.resources.max_files {
                 return Err(ProjectError::Limit(ProjectLimit::Files {
-                    limit: limits.max_files,
+                    limit: limits.resources.max_files,
                 }));
             }
             memory_bytes = memory_bytes
                 .checked_add(u64::try_from(source.source.len()).unwrap_or(u64::MAX))
                 .ok_or(ProjectError::Limit(ProjectLimit::ReadBytes {
-                    limit: limits.max_read_bytes,
+                    limit: limits.resources.max_total_bytes,
                 }))?;
-            if memory_bytes > limits.max_read_bytes {
+            if memory_bytes > limits.resources.max_total_bytes {
                 return Err(ProjectError::Limit(ProjectLimit::ReadBytes {
-                    limit: limits.max_read_bytes,
+                    limit: limits.resources.max_total_bytes,
                 }));
             }
             let memory = MemorySource {
@@ -441,8 +442,11 @@ impl<'request> Processor<'request> {
         }
         let targets = filesystem_targets;
         let host_limits = crate::ProjectLimits {
-            max_files: limits.max_files - memory_count,
-            max_read_bytes: limits.max_read_bytes - memory_bytes,
+            resources: ProjectResourceLimits {
+                max_files: limits.resources.max_files - memory_count,
+                max_total_bytes: limits.resources.max_total_bytes - memory_bytes,
+                ..limits.resources
+            },
             ..limits
         };
         let project_root = absolute_lexical(
@@ -480,15 +484,16 @@ impl<'request> Processor<'request> {
         let retained_roots = authority.roots().to_vec();
         let identity_roots = retained_roots.clone();
         authority = authority
-            .access_existing(retained_roots, host_limits.filesystem_reads())
+            .access_existing(retained_roots, host_limits.resources.filesystem_reads())
             .map_err(project_authority_error)?;
         let selectors = normalize_selectors(&project_root, &targets)?;
         let filesystem = authority.session().map_err(project_authority_error)?;
-        let filesystem_reads = host_limits.filesystem_reads();
+        let filesystem_reads = host_limits.resources.filesystem_reads();
         let read_operations = u64::try_from(filesystem_reads.max_files).unwrap_or(u64::MAX);
         // One scan session per selector, one common read session and at most one
         // confined local-target session per document admitted by the file limit.
         let max_sessions = limits
+            .resources
             .max_files
             .saturating_mul(2)
             .saturating_add(selectors.len())
@@ -617,7 +622,7 @@ impl<'request> Processor<'request> {
                 fixed
                     .requested_path
                     .file_name()
-                    .is_some_and(|name| name == adocweave_config::FILE_NAME)
+                    .is_some_and(|name| name == crate::config::FILE_NAME)
             })
             .map(|fixed| fixed.result(ProjectResourceKind::Config, None, None))
             .collect::<Vec<_>>();
@@ -680,11 +685,11 @@ impl<'request> Processor<'request> {
         );
         self.scope_budgets
             .entry(scope.clone())
-            .or_insert_with(|| ScopeBudget::new(config.resources.limit_plan.filesystem_reads));
+            .or_insert_with(|| ScopeBudget::new(config.resources.limits));
         let source_id = self.source_id_for_path(&path)?;
         self.inspection_scope_budgets
             .entry(scope.clone())
-            .or_insert_with(|| ScopeBudget::new(config.resources.limit_plan.filesystem_reads));
+            .or_insert_with(|| ScopeBudget::new(config.resources.limits));
         let primary_authority = self.filesystem.policy_for_path(&path).cloned();
         let _ = self
             .inspection_scope_budgets
@@ -880,10 +885,10 @@ impl<'request> Processor<'request> {
         );
         self.scope_budgets
             .entry(scope.clone())
-            .or_insert_with(|| ScopeBudget::new(config.resources.limit_plan.filesystem_reads));
+            .or_insert_with(|| ScopeBudget::new(config.resources.limits));
         self.inspection_scope_budgets
             .entry(scope.clone())
-            .or_insert_with(|| ScopeBudget::new(config.resources.limit_plan.filesystem_reads));
+            .or_insert_with(|| ScopeBudget::new(config.resources.limits));
         let mut resources = resource.into_iter().collect::<Vec<_>>();
         if let Err(limit) = self
             .reserve_scope(&scope, &input.source_id, None)
@@ -1015,8 +1020,8 @@ impl<'request> Processor<'request> {
         &mut self,
         input: MemorySource,
         replacement_source: Option<Arc<str>>,
-        config: Option<Arc<ConfigSnapshot>>,
-        resolved_config: Arc<ResolvedProjectConfig>,
+        config: Option<Arc<LoadedProjectConfig>>,
+        resolved_config: Arc<ProjectConfig>,
         mut resources: Vec<ProjectResourceResult>,
         mut outcome: Result<ProjectAnalysis, ProjectTargetError>,
     ) -> ProjectTargetResult {
@@ -1060,7 +1065,7 @@ impl<'request> Processor<'request> {
                 .as_ref()
                 .and_then(|snapshot| self.filesystem_source_id_for_path(&snapshot.path).ok())
                 .map(|value| SourceId::new(value.as_str()));
-            let published = Arc::new(ProjectConfigSnapshot::from_resolved(
+            let published = Arc::new(ProjectConfigSnapshot::from_loaded(
                 config.as_deref(),
                 resolved_config.as_ref(),
                 source_id,
@@ -1146,7 +1151,7 @@ impl<'request> Processor<'request> {
                 .as_ref()
                 .and_then(|snapshot| self.filesystem_source_id_for_path(&snapshot.path).ok())
                 .map(|value| SourceId::new(value.as_str()));
-            let published = Arc::new(ProjectConfigSnapshot::from_resolved(
+            let published = Arc::new(ProjectConfigSnapshot::from_loaded(
                 config.as_deref(),
                 resolved_config.as_ref(),
                 config_source_id,
@@ -1201,19 +1206,13 @@ impl<'request> Processor<'request> {
         target_is_directory: bool,
     ) -> Result<TargetConfig, ProjectError> {
         let path = match self.config_selection.clone() {
-            ConfigSelection::Disabled => None,
-            ConfigSelection::Resolved(config) => {
-                let resolved = self.resolved_config_value(None, config);
-                return Ok(TargetConfig {
-                    snapshot: None,
-                    resolved,
-                    resource: None,
-                });
-            }
-            ConfigSelection::Explicit(path) => {
+            ProjectConfigSelection::Disabled => None,
+            ProjectConfigSelection::Explicit(path) => {
                 Some(absolute_lexical(&self.project_root, &path).map_err(project_authority_error)?)
             }
-            ConfigSelection::Discover => self.discover_config(target, target_is_directory)?,
+            ProjectConfigSelection::Discover => {
+                self.discover_config(target, target_is_directory)?
+            }
         };
         let Some(path) = path else {
             let resolved = self.resolved_config_for(None);
@@ -1275,20 +1274,19 @@ impl<'request> Processor<'request> {
 
     fn resolved_config_for(
         &mut self,
-        snapshot: Option<&Arc<ConfigSnapshot>>,
-    ) -> Arc<ResolvedProjectConfig> {
+        snapshot: Option<&Arc<LoadedProjectConfig>>,
+    ) -> Arc<ProjectConfig> {
         let key = snapshot.map(|snapshot| snapshot.path.clone());
-        let config = snapshot.map_or_else(ResolvedProjectConfig::default, |snapshot| {
-            snapshot.config.clone()
-        });
+        let config =
+            snapshot.map_or_else(ProjectConfig::default, |snapshot| snapshot.config.clone());
         self.resolved_config_value(key, Arc::new(config))
     }
 
     fn resolved_config_value(
         &mut self,
         key: Option<PathBuf>,
-        mut config: Arc<ResolvedProjectConfig>,
-    ) -> Arc<ResolvedProjectConfig> {
+        mut config: Arc<ProjectConfig>,
+    ) -> Arc<ProjectConfig> {
         if let Some(config) = self.resolved_configs.get(&key) {
             return Arc::clone(config);
         }
@@ -1322,7 +1320,7 @@ impl<'request> Processor<'request> {
         config
     }
 
-    fn load_config(&mut self, path: PathBuf) -> Result<Arc<ConfigSnapshot>, ProjectError> {
+    fn load_config(&mut self, path: PathBuf) -> Result<Arc<LoadedProjectConfig>, ProjectError> {
         if let Some(snapshot) = self.configs.get(&path) {
             return Ok(Arc::clone(snapshot));
         }
@@ -1362,10 +1360,9 @@ impl<'request> Processor<'request> {
             };
         };
         let snapshot = Arc::new(
-            adocweave_config::ConfigSnapshot::from_utf8_source(fixed.path.clone(), source)
-                .map_err(|error| {
-                    project_config_error(fixed.path.clone(), source.as_bytes(), error)
-                })?,
+            LoadedProjectConfig::from_utf8_source(fixed.path.clone(), source).map_err(|error| {
+                project_config_error(fixed.path.clone(), source.as_bytes(), error)
+            })?,
         );
         self.retain_config_output(source.len())?;
         self.configs.insert(path, Arc::clone(&snapshot));
@@ -1405,7 +1402,7 @@ impl<'request> Processor<'request> {
             if self.cancellation.is_cancelled() {
                 return Err(ProjectError::Cancelled);
             }
-            let candidate = directory.join(adocweave_config::FILE_NAME);
+            let candidate = directory.join(crate::config::FILE_NAME);
             let source_id = self.filesystem_source_id_for_path(&candidate)?;
             let fixed = self.read_fixed_no_symlinks(source_id, candidate.clone());
             match fixed.outcome {
@@ -1753,7 +1750,7 @@ impl<'request> Processor<'request> {
         &self,
         source_id: &LogicalSourceId,
         source: Arc<str>,
-        config: &ResolvedProjectConfig,
+        config: &ProjectConfig,
     ) -> Result<PreparedSource, PreparedSourceFailure> {
         let core_id = SourceId::new(source_id.as_str());
         let analyze = |source: &str| {
@@ -1821,7 +1818,7 @@ impl<'request> Processor<'request> {
     fn collect_stylesheets(
         &mut self,
         requested_by: &LogicalSourceId,
-        config: &ResolvedProjectConfig,
+        config: &ProjectConfig,
         scope: &Path,
         resources: &mut Vec<ProjectResourceResult>,
     ) {
@@ -1867,7 +1864,7 @@ impl<'request> Processor<'request> {
     fn collect_local_targets(
         &mut self,
         analysis: &mut ProjectExpandedAnalysis,
-        config: &ResolvedProjectConfig,
+        config: &ProjectConfig,
         scope: &Path,
         bases: &BTreeMap<String, PathBuf>,
         include_bases: &BTreeMap<String, PathBuf>,
@@ -2226,7 +2223,7 @@ impl<'request> Processor<'request> {
             .read_allowance(
                 source_id,
                 authority,
-                self.host_limits.filesystem_reads(),
+                self.host_limits.resources,
                 request_remaining_bytes,
             )
     }
@@ -2404,7 +2401,7 @@ impl<'request> Processor<'request> {
                 .ok_or_else(|| ResourceError::OutsideRoots(root.clone()))?;
             let access = if anchor == *root {
                 self.authority
-                    .access_existing([anchor], self.host_limits.filesystem_reads())?
+                    .access_existing([anchor], self.host_limits.resources.filesystem_reads())?
             } else {
                 self.authority.access_derived(
                     &anchor,
@@ -2412,7 +2409,7 @@ impl<'request> Processor<'request> {
                         confined: vec![root.clone()],
                         independent: Vec::new(),
                     },
-                    self.host_limits.filesystem_reads(),
+                    self.host_limits.resources.filesystem_reads(),
                 )?
             };
             selected.extend(access.roots().iter().cloned());
@@ -2420,7 +2417,7 @@ impl<'request> Processor<'request> {
         selected.sort();
         selected.dedup();
         self.authority
-            .access_existing(selected, self.host_limits.filesystem_reads())?
+            .access_existing(selected, self.host_limits.resources.filesystem_reads())?
             .session()
     }
 
@@ -3098,11 +3095,7 @@ fn observation_candidate(
     })
 }
 
-fn include_roots(
-    base: &Path,
-    project_root: Option<&Path>,
-    config: &ResolvedProjectConfig,
-) -> Vec<PathBuf> {
+fn include_roots(base: &Path, project_root: Option<&Path>, config: &ProjectConfig) -> Vec<PathBuf> {
     let mut roots = if config.resources.roots.is_empty() {
         vec![project_root.unwrap_or(base).to_owned()]
     } else {
@@ -3128,7 +3121,7 @@ impl ResourceLookup for FixedLookup {
 }
 
 struct ScopeBudget {
-    limits: FilesystemReadLimits,
+    limits: ProjectResourceLimits,
     observations: BTreeMap<LogicalSourceId, Vec<BudgetObservation>>,
     files: usize,
     bytes: u64,
@@ -3148,7 +3141,7 @@ struct ScopeReadAllowance {
 }
 
 impl ScopeBudget {
-    fn new(limits: FilesystemReadLimits) -> Self {
+    fn new(limits: ProjectResourceLimits) -> Self {
         Self {
             limits,
             observations: BTreeMap::new(),
@@ -3235,7 +3228,7 @@ impl ScopeBudget {
         &self,
         source_id: &LogicalSourceId,
         authority: Option<&LocalTargetPolicy>,
-        request_limits: FilesystemReadLimits,
+        request_limits: ProjectResourceLimits,
         request_remaining_bytes: u64,
     ) -> Result<ScopeReadAllowance, ProjectLimit> {
         let observation = self
@@ -3430,11 +3423,11 @@ fn classify_resource_failure(
             ProjectResourceFailure::Limit(ProjectLimit::Files { limit: *limit })
         }
         ResourceError::ByteLimit => ProjectResourceFailure::Limit(ProjectLimit::ReadBytes {
-            limit: limits.max_read_bytes,
+            limit: limits.resources.max_total_bytes,
         }),
         ResourceError::ResourceTooLarge(_) => {
             ProjectResourceFailure::Limit(ProjectLimit::ResourceBytes {
-                limit: limits.max_resource_bytes,
+                limit: limits.resources.max_resource_bytes,
             })
         }
         ResourceError::Job(FilesystemJobError::Limit(limit)) => {
@@ -3454,11 +3447,11 @@ fn map_job_limit(limit: FilesystemJobLimit, limits: crate::ProjectLimits) -> Pro
         FilesystemJobLimit::ReadOperations { .. }
         | FilesystemJobLimit::CandidateChanges { .. }
         | FilesystemJobLimit::Sessions { .. } => ProjectLimit::Files {
-            limit: limits.max_files,
+            limit: limits.resources.max_files,
         },
         FilesystemJobLimit::ReadBytes { .. } | FilesystemJobLimit::ReadProbeBytes { .. } => {
             ProjectLimit::ReadBytes {
-                limit: limits.max_read_bytes,
+                limit: limits.resources.max_total_bytes,
             }
         }
         FilesystemJobLimit::DirectoryOperations { .. }
@@ -3528,8 +3521,9 @@ mod tests {
         map_projection_failure,
     };
     use crate::{
-        ConfigSelection, ProjectAuthority, ProjectLimits, ProjectOverrides, ProjectParseError,
-        ProjectRequest, ProjectResourceFailure, ProjectResourceOutcome, ProjectTarget, process,
+        ProjectAuthority, ProjectConfigOverrides, ProjectConfigSelection, ProjectLimits,
+        ProjectParseError, ProjectRequest, ProjectResourceFailure, ProjectResourceLimits,
+        ProjectResourceOutcome, ProjectTarget, process,
     };
 
     #[test]
@@ -3784,8 +3778,8 @@ mod tests {
                     ProjectTarget::Path(PathBuf::from("child/z-guide.adoc")),
                 ],
                 sources: Vec::new(),
-                config: ConfigSelection::Discover,
-                overrides: ProjectOverrides::default(),
+                config: ProjectConfigSelection::Discover,
+                overrides: ProjectConfigOverrides::default(),
                 apply_safe_fixes: false,
                 resource_selection: crate::ProjectResourceSelection {
                     local_targets: true,
@@ -3793,9 +3787,11 @@ mod tests {
                 },
                 authority: ProjectAuthority::open(root.clone(), [root]).expect("parent authority"),
                 limits: ProjectLimits {
-                    max_files: filesystem_reads.max_files,
-                    max_resource_bytes: filesystem_reads.max_resource_bytes,
-                    max_read_bytes: filesystem_reads.max_total_bytes,
+                    resources: ProjectResourceLimits {
+                        max_files: filesystem_reads.max_files,
+                        max_total_bytes: filesystem_reads.max_total_bytes,
+                        max_resource_bytes: filesystem_reads.max_resource_bytes,
+                    },
                     max_directory_entries: 100,
                     max_processing_iterations: 10,
                     max_output_bytes: u32::MAX,
@@ -3900,8 +3896,8 @@ mod tests {
             ProjectRequest {
                 targets: vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
                 sources: Vec::new(),
-                config: ConfigSelection::Disabled,
-                overrides: ProjectOverrides {
+                config: ProjectConfigSelection::Disabled,
+                overrides: ProjectConfigOverrides {
                     include: Some(true),
                     enable_lint_rules: Vec::new(),
                     resource_roots: None,
@@ -3913,9 +3909,11 @@ mod tests {
                 authority: ProjectAuthority::open(root.clone(), [root])
                     .expect("temporary project authority"),
                 limits: ProjectLimits {
-                    max_files: filesystem_reads.max_files,
-                    max_resource_bytes: filesystem_reads.max_resource_bytes,
-                    max_read_bytes: filesystem_reads.max_total_bytes,
+                    resources: ProjectResourceLimits {
+                        max_files: filesystem_reads.max_files,
+                        max_total_bytes: filesystem_reads.max_total_bytes,
+                        max_resource_bytes: filesystem_reads.max_resource_bytes,
+                    },
                     max_directory_entries: 100,
                     max_processing_iterations: 10,
                     max_output_bytes: u32::MAX,

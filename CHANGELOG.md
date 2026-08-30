@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.55.0] - 2026-08-30
+## [0.56.0] - 2026-08-30
 
 ### Main changes
 
@@ -15,11 +15,14 @@
 - Language Server project results and errors pass through the same document-generation and filesystem-observation checks. Analysis state, diagnostics, and watched references are adopted together, so stale workers cannot partially update the active document.
 - Include, local-target, and project-configuration observations are owned per open document. File notifications reanalyze only affected documents, while oversized notifications reanalyze each open document once without scanning the workspace.
 - The former workspace scan, recovery coordinator, scan generations, pending-change journal, and duplicate workspace resource state are removed.
+- Project configuration types, TOML validation, defaults, relative-path resolution, and schema generation now belong to `adocweave-project`. The separate `adocweave-config` crate is removed.
 
 ### Rust API
 
 - `ProjectTarget::Workspace` is removed. Use `ProjectTarget::Directory` or `ProjectTarget::Glob` when a caller explicitly requests multi-file discovery.
-- `ConfigSelection::Resolved` accepts an `Arc<ResolvedProjectConfig>`. Live callers can freeze and share configuration with the rest of a request instead of discovering or rereading a project file during processing.
+- `ConfigSelection` and `ProjectOverrides` are replaced by `ProjectConfigSelection` and `ProjectConfigOverrides`.
+- `ProjectConfig` is the effective configuration type. `ResolvedProjectConfig`, `ConfigSelection::Resolved`, `ProjectScopeId`, and `AnalysisSnapshotBudget` are removed without compatibility aliases.
+- `ProjectLimits` stores file count and size ceilings in `ProjectResourceLimits`, the same type returned by `ProjectConfig::resource_limits`.
 - `ProjectResourceResult.requested_at` identifies the source and optional source range that requested a related resource.
 - `HostReferenceIndex`, `HostReferenceRequest`, `NoHostReferenceIndex`, and `run_with_host_index` are removed from `adocweave-lsp`.
 
@@ -29,6 +32,8 @@
 - Replace `ProjectTarget::Workspace` with an explicit file, directory, glob, or in-memory source target.
 - Construct `ProjectResourceResult` with `requested_at`. Use `None` for resources without a requesting source, and use `ProjectSourceLocation.range = None` when no authored position exists.
 - Use `adocweave_lsp::run` or `adocweave_lsp::run_stdio` to start the Language Server. Product-specific reference indexes must be implemented outside the Language Server protocol adapter.
+- Replace `ConfigSelection` with `ProjectConfigSelection` and `ProjectOverrides` with `ProjectConfigOverrides`. Remove callers which construct or inject `ResolvedProjectConfig`; project processing now obtains configuration through `ProjectConfigSelection` and `ProjectAuthority`.
+- Move the `max_files`, `max_read_bytes`, and `max_resource_bytes` fields of `ProjectLimits` into `ProjectLimits::resources`, renaming `max_read_bytes` to `max_total_bytes`.
 
 ## [0.52.0] - 2026-08-30
 
@@ -109,6 +114,6 @@ const result = await analyze({
 - `ProjectRequest` is consumed by each stateless processing call. `ProjectAuthority::observation_access`, resource observations, and `ProjectError::repair_candidate` let live callers detect changes through the same retained filesystem authority. `ProjectTarget::PathNoSymlinks` supports callers that must reject symbolic links in an authored target path.
 - Rust crate versions now follow the repository-wide version.
 
-[0.55.0]: https://github.com/KeishiS/adocweave/releases/tag/v0.55.0
+[0.56.0]: https://github.com/KeishiS/adocweave/releases/tag/v0.56.0
 [0.52.0]: https://github.com/KeishiS/adocweave/releases/tag/v0.52.0
 [0.51.0]: https://github.com/KeishiS/adocweave/releases/tag/v0.51.0

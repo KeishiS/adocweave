@@ -1,8 +1,9 @@
 use adocweave::{NeverCancel, SourceId};
 use adocweave_project::{
-    ConfigSelection, ProjectAuthority, ProjectConfigRequest, ProjectError, ProjectLimit,
-    ProjectLimits, ProjectOverrides, ProjectRequest, ProjectResourceKind, ProjectResourceOrigin,
-    ProjectResourceSelection, ProjectSource, ProjectTarget, process, resolve_config,
+    ProjectAuthority, ProjectConfigOverrides, ProjectConfigRequest, ProjectConfigSelection,
+    ProjectError, ProjectLimit, ProjectLimits, ProjectRequest, ProjectResourceKind,
+    ProjectResourceLimits, ProjectResourceOrigin, ProjectResourceSelection, ProjectSource,
+    ProjectTarget, process, resolve_config,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -15,15 +16,17 @@ fn request_with(targets: Vec<ProjectTarget>) -> ProjectRequest {
     ProjectRequest {
         targets,
         sources: Vec::new(),
-        config: ConfigSelection::Discover,
-        overrides: ProjectOverrides::default(),
+        config: ProjectConfigSelection::Discover,
+        overrides: ProjectConfigOverrides::default(),
         apply_safe_fixes: false,
         resource_selection: Default::default(),
         authority,
         limits: ProjectLimits {
-            max_files: 100_000,
-            max_resource_bytes: 10 * 1024 * 1024,
-            max_read_bytes: 50 * 1024 * 1024,
+            resources: ProjectResourceLimits {
+                max_files: 100_000,
+                max_total_bytes: 50 * 1024 * 1024,
+                max_resource_bytes: 10 * 1024 * 1024,
+            },
             max_directory_entries: 100_000,
             max_processing_iterations: 100_000,
             max_output_bytes: u32::MAX,
@@ -59,7 +62,7 @@ fn in_memory_source_is_owned_by_the_request() {
         "= Standard input\n",
     ));
     request.targets.push(ProjectTarget::Source(id));
-    request.config = ConfigSelection::Disabled;
+    request.config = ProjectConfigSelection::Disabled;
     let result = process(request, &NeverCancel).expect("memory source is processed");
     assert_eq!(
         result.targets[0].source.as_deref(),
@@ -76,8 +79,8 @@ fn file_write_capability_is_bound_to_the_observed_contents() {
     let request = || ProjectRequest {
         targets: vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
         sources: Vec::new(),
-        config: ConfigSelection::Disabled,
-        overrides: ProjectOverrides::default(),
+        config: ProjectConfigSelection::Disabled,
+        overrides: ProjectConfigOverrides::default(),
         apply_safe_fixes: false,
         resource_selection: Default::default(),
         authority: ProjectAuthority::open(
@@ -108,8 +111,8 @@ fn safe_fixes_return_the_original_and_reanalyze_the_replacement() {
     let make_request = |apply_safe_fixes| ProjectRequest {
         targets: vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
         sources: Vec::new(),
-        config: ConfigSelection::Disabled,
-        overrides: ProjectOverrides::default(),
+        config: ProjectConfigSelection::Disabled,
+        overrides: ProjectConfigOverrides::default(),
         apply_safe_fixes,
         resource_selection: Default::default(),
         authority: ProjectAuthority::open(
@@ -185,8 +188,8 @@ fn symlinked_project_root_uses_the_opened_canonical_identity() {
         ProjectRequest {
             targets: vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
             sources: Vec::new(),
-            config: ConfigSelection::Disabled,
-            overrides: ProjectOverrides::default(),
+            config: ProjectConfigSelection::Disabled,
+            overrides: ProjectConfigOverrides::default(),
             apply_safe_fixes: false,
             resource_selection: Default::default(),
             authority,
@@ -217,8 +220,8 @@ fn configuration_can_be_resolved_without_processing_a_target() {
             .expect("authority"),
             search_from: directory.path().to_owned(),
             search_from_is_directory: true,
-            config: ConfigSelection::Discover,
-            overrides: ProjectOverrides::default(),
+            config: ProjectConfigSelection::Discover,
+            overrides: ProjectConfigOverrides::default(),
             limits: request_with(Vec::new()).limits,
         },
         &NeverCancel,
@@ -248,10 +251,10 @@ fn request_lint_overrides_apply_to_configuration_and_analysis() {
     let mut request = ProjectRequest {
         targets: vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
         sources: Vec::new(),
-        config: ConfigSelection::Disabled,
-        overrides: ProjectOverrides {
+        config: ProjectConfigSelection::Disabled,
+        overrides: ProjectConfigOverrides {
             enable_lint_rules: vec![rule],
-            ..ProjectOverrides::default()
+            ..ProjectConfigOverrides::default()
         },
         apply_safe_fixes: false,
         resource_selection: Default::default(),
@@ -306,11 +309,11 @@ fn request_path_overrides_replace_resource_and_local_target_roots() {
             .expect("authority"),
             search_from: project.path().to_owned(),
             search_from_is_directory: true,
-            config: ConfigSelection::Discover,
-            overrides: ProjectOverrides {
+            config: ProjectConfigSelection::Discover,
+            overrides: ProjectConfigOverrides {
                 resource_roots: Some(vec![external.path().to_owned()]),
                 local_target_project_root: Some(external.path().to_owned()),
-                ..ProjectOverrides::default()
+                ..ProjectConfigOverrides::default()
             },
             limits: request_with(Vec::new()).limits,
         },
@@ -353,11 +356,11 @@ fn pathless_input_keeps_include_and_local_target_bases_separate() {
             include_base.clone(),
             "include::part.adoc[]\n\nimage::asset.png[]\n",
         )],
-        config: ConfigSelection::Disabled,
-        overrides: ProjectOverrides {
+        config: ProjectConfigSelection::Disabled,
+        overrides: ProjectConfigOverrides {
             include: Some(true),
             local_target_project_root: Some(directory.path().to_owned()),
-            ..ProjectOverrides::default()
+            ..ProjectConfigOverrides::default()
         },
         apply_safe_fixes: false,
         resource_selection: ProjectResourceSelection {
@@ -440,11 +443,11 @@ fn pathless_input_checks_same_relative_target_against_each_base() {
         let mut request = ProjectRequest {
             targets: vec![ProjectTarget::Source(id.clone())],
             sources: vec![ProjectSource::memory(id, include_base.clone(), source)],
-            config: ConfigSelection::Disabled,
-            overrides: ProjectOverrides {
+            config: ProjectConfigSelection::Disabled,
+            overrides: ProjectConfigOverrides {
                 include: Some(true),
                 local_target_project_root: Some(directory.path().to_owned()),
-                ..ProjectOverrides::default()
+                ..ProjectConfigOverrides::default()
             },
             apply_safe_fixes: false,
             resource_selection: ProjectResourceSelection {
@@ -500,10 +503,10 @@ fn pathless_bases_must_both_be_inside_the_request_authority() {
         ProjectRequest {
             targets: vec![ProjectTarget::Source(id.clone())],
             sources: vec![ProjectSource::memory(id, base, "text\n")],
-            config: ConfigSelection::Disabled,
-            overrides: ProjectOverrides {
+            config: ProjectConfigSelection::Disabled,
+            overrides: ProjectConfigOverrides {
                 local_target_project_root: Some(local_root),
-                ..ProjectOverrides::default()
+                ..ProjectConfigOverrides::default()
             },
             apply_safe_fixes: false,
             resource_selection: Default::default(),
@@ -551,10 +554,10 @@ fn pathless_input_does_not_replace_a_real_file_with_a_synthetic_name() {
             directory.path().to_owned(),
             "include::.adocweave-memory-0.adoc[]\n",
         )],
-        config: ConfigSelection::Disabled,
-        overrides: ProjectOverrides {
+        config: ProjectConfigSelection::Disabled,
+        overrides: ProjectConfigOverrides {
             include: Some(true),
-            ..ProjectOverrides::default()
+            ..ProjectConfigOverrides::default()
         },
         apply_safe_fixes: false,
         resource_selection: Default::default(),
@@ -596,8 +599,8 @@ fn file_overlay_is_identified_as_input_and_is_not_watched() {
     let request = ProjectRequest {
         targets: vec![ProjectTarget::Source(id.clone())],
         sources: vec![ProjectSource::new(id, path, "overlay\n")],
-        config: ConfigSelection::Disabled,
-        overrides: ProjectOverrides::default(),
+        config: ProjectConfigSelection::Disabled,
+        overrides: ProjectConfigOverrides::default(),
         apply_safe_fixes: false,
         resource_selection: Default::default(),
         authority: ProjectAuthority::open(
@@ -625,7 +628,7 @@ fn file_overlay_is_identified_as_input_and_is_not_watched() {
 #[test]
 fn duplicate_and_unknown_source_ids_are_invalid_input() {
     let mut request = request_with(vec![ProjectTarget::Source(SourceId::new("missing"))]);
-    request.config = ConfigSelection::Disabled;
+    request.config = ProjectConfigSelection::Disabled;
     assert!(matches!(
         process(request, &NeverCancel),
         Err(ProjectError::InvalidInput(_))
@@ -639,7 +642,7 @@ fn duplicate_and_unknown_source_ids_are_invalid_input() {
         request.authority.project_root().to_owned(),
         "text\n",
     ));
-    request.config = ConfigSelection::Disabled;
+    request.config = ProjectConfigSelection::Disabled;
     assert!(matches!(
         process(request, &NeverCancel),
         Err(ProjectError::InvalidInput(_))
@@ -656,7 +659,7 @@ fn unrepresentable_caller_source_id_is_invalid_input() {
         "text\n",
     ));
     request.targets.push(ProjectTarget::Source(id));
-    request.config = ConfigSelection::Disabled;
+    request.config = ProjectConfigSelection::Disabled;
 
     assert!(matches!(
         process(request, &NeverCancel),
@@ -697,8 +700,8 @@ fn file_overlay_is_reused_inside_a_narrow_include_authority() {
             narrow.join("part.adoc"),
             "overlay\n",
         )],
-        config: ConfigSelection::Disabled,
-        overrides: ProjectOverrides::default(),
+        config: ProjectConfigSelection::Disabled,
+        overrides: ProjectConfigOverrides::default(),
         apply_safe_fixes: false,
         resource_selection: Default::default(),
         authority: ProjectAuthority::open(
@@ -751,8 +754,8 @@ fn project_authority_keeps_the_opened_child_identity() {
         ProjectRequest {
             targets: vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
             sources: Vec::new(),
-            config: ConfigSelection::Disabled,
-            overrides: ProjectOverrides::default(),
+            config: ProjectConfigSelection::Disabled,
+            overrides: ProjectConfigOverrides::default(),
             apply_safe_fixes: false,
             resource_selection: Default::default(),
             authority: authority.clone(),
@@ -767,8 +770,8 @@ fn project_authority_keeps_the_opened_child_identity() {
         ProjectRequest {
             targets: vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
             sources: Vec::new(),
-            config: ConfigSelection::Disabled,
-            overrides: ProjectOverrides::default(),
+            config: ProjectConfigSelection::Disabled,
+            overrides: ProjectConfigOverrides::default(),
             apply_safe_fixes: false,
             resource_selection: Default::default(),
             authority,
@@ -783,7 +786,7 @@ fn project_authority_keeps_the_opened_child_identity() {
 #[test]
 fn source_targets_are_deduplicated_and_sorted_by_source_id() {
     let mut request = request_with(Vec::new());
-    request.config = ConfigSelection::Disabled;
+    request.config = ProjectConfigSelection::Disabled;
     for (id, source) in [("z", "z\n"), ("a", "a\n")] {
         request.sources.push(ProjectSource::memory(
             SourceId::new(id),
@@ -807,7 +810,7 @@ fn source_targets_are_deduplicated_and_sorted_by_source_id() {
 fn memory_sources_obey_request_file_resource_and_total_byte_limits() {
     let make_request = |sources: Vec<ProjectSource>, targets: Vec<ProjectTarget>| {
         let mut request = request_with(targets);
-        request.config = ConfigSelection::Disabled;
+        request.config = ProjectConfigSelection::Disabled;
         request.sources = sources;
         request
     };
@@ -821,7 +824,7 @@ fn memory_sources_obey_request_file_resource_and_total_byte_limits() {
         )],
         vec![ProjectTarget::Source(id)],
     );
-    resource.limits.max_resource_bytes = 4;
+    resource.limits.resources.max_resource_bytes = 4;
     assert!(matches!(
         process(resource, &NeverCancel),
         Err(ProjectError::Limit(ProjectLimit::ResourceBytes {
@@ -838,7 +841,7 @@ fn memory_sources_obey_request_file_resource_and_total_byte_limits() {
         .collect();
     let targets = ids.iter().cloned().map(ProjectTarget::Source).collect();
     let mut total = make_request(sources, targets);
-    total.limits.max_read_bytes = 5;
+    total.limits.resources.max_total_bytes = 5;
     assert!(matches!(
         process(total, &NeverCancel),
         Err(ProjectError::Limit(ProjectLimit::ReadBytes { limit: 5 }))
@@ -851,7 +854,7 @@ fn memory_sources_obey_request_file_resource_and_total_byte_limits() {
         .collect();
     let targets = ids.iter().cloned().map(ProjectTarget::Source).collect();
     let mut files = make_request(sources, targets);
-    files.limits.max_files = 1;
+    files.limits.resources.max_files = 1;
     assert!(matches!(
         process(files, &NeverCancel),
         Err(ProjectError::Limit(ProjectLimit::Files { limit: 1 }))
@@ -874,8 +877,8 @@ fn pathless_input_obeys_scope_and_output_limits() {
             directory.path().to_owned(),
             "too large\n",
         )],
-        config: ConfigSelection::Discover,
-        overrides: ProjectOverrides::default(),
+        config: ProjectConfigSelection::Discover,
+        overrides: ProjectConfigOverrides::default(),
         apply_safe_fixes: false,
         resource_selection: Default::default(),
         authority: ProjectAuthority::open(
@@ -900,7 +903,7 @@ fn pathless_input_obeys_scope_and_output_limits() {
         "output text\n",
     ));
     request.targets.push(ProjectTarget::Source(id));
-    request.config = ConfigSelection::Disabled;
+    request.config = ProjectConfigSelection::Disabled;
     request.limits.max_output_bytes = 1;
     let result = process(request, &NeverCancel).expect("output failure is target-local");
     assert_eq!(result.targets[0].source, None);
@@ -929,8 +932,8 @@ fn memory_sources_cannot_replace_configuration_or_stylesheets() {
                 "memory stylesheet\n",
             ),
         ],
-        config: ConfigSelection::Discover,
-        overrides: ProjectOverrides::default(),
+        config: ProjectConfigSelection::Discover,
+        overrides: ProjectConfigOverrides::default(),
         apply_safe_fixes: false,
         resource_selection: ProjectResourceSelection {
             local_targets: false,
@@ -979,8 +982,8 @@ fn config_only_cancellation_is_request_wide() {
             .expect("authority"),
             search_from: directory.path().join("a"),
             search_from_is_directory: true,
-            config: ConfigSelection::Discover,
-            overrides: ProjectOverrides::default(),
+            config: ProjectConfigSelection::Discover,
+            overrides: ProjectConfigOverrides::default(),
             limits: request_with(Vec::new()).limits,
         },
         &CancelAfter {
@@ -1002,8 +1005,8 @@ fn directory_scan_observes_cancellation_during_the_walk() {
     let request = ProjectRequest {
         targets: vec![ProjectTarget::Directory(directory.path().to_owned())],
         sources: Vec::new(),
-        config: ConfigSelection::Disabled,
-        overrides: ProjectOverrides::default(),
+        config: ProjectConfigSelection::Disabled,
+        overrides: ProjectConfigOverrides::default(),
         apply_safe_fixes: false,
         resource_selection: Default::default(),
         authority: ProjectAuthority::open(
@@ -1041,7 +1044,7 @@ fn document_cancellation_is_always_request_wide() {
         request.authority =
             ProjectAuthority::open(directory.path().to_owned(), [directory.path().to_owned()])
                 .expect("authority");
-        request.config = ConfigSelection::Disabled;
+        request.config = ProjectConfigSelection::Disabled;
         request.overrides.include = Some(true);
         match process(
             request,

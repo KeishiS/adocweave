@@ -7,7 +7,6 @@ const STABLE_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const NATIVE_PACKAGES = [
   "adocweave",
   "adocweave-cli",
-  "adocweave-config",
   "adocweave-host",
   "adocweave-lsp",
   "adocweave-project",

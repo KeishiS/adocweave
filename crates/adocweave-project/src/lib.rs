@@ -15,6 +15,7 @@
 //! consumes one request, fixes each observed file result for that call and
 //! returns all owned results before it finishes.
 
+mod config;
 mod process;
 mod selection;
 
@@ -32,12 +33,13 @@ use adocweave::preprocess::{
     ProjectionError,
 };
 use adocweave::{Analysis, AnalysisOptions, ParseError, SourceId};
-use adocweave_config::{ConfigError, ConfigErrorCode, ConfigSnapshot, ResolvedProjectConfig};
 use adocweave_host::{
     DerivedFilesystemRoots, FilesystemReadLimits, FilesystemReadOutcome, LocalFilesystemPolicy,
     LocalFilesystemSession, LocalTargetError, LocalTargetPolicy, LogicalSourceId, ResourceError,
 };
+use config::{ConfigError, ConfigErrorCode, LoadedProjectConfig};
 
+pub use config::ProjectConfig;
 pub use process::{process, resolve_config};
 
 pub(crate) fn project_authority_error(error: ResourceError) -> ProjectError {
@@ -88,8 +90,8 @@ pub struct ProjectRequest {
     pub targets: Vec<ProjectTarget>,
     /// In-memory sources available as primary documents or include overlays.
     pub sources: Vec<ProjectSource>,
-    pub config: ConfigSelection,
-    pub overrides: ProjectOverrides,
+    pub config: ProjectConfigSelection,
+    pub overrides: ProjectConfigOverrides,
     /// Applies diagnostics edits marked as always safe before project analysis.
     pub apply_safe_fixes: bool,
     /// Related resources which this caller needs in the returned result.
@@ -320,14 +322,12 @@ impl ProjectSource {
 
 /// How a request selects its project configuration.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub enum ConfigSelection {
+pub enum ProjectConfigSelection {
     /// Searches from each target towards [`ProjectAuthority::project_root`].
     #[default]
     Discover,
     /// Uses one explicitly selected project file.
     Explicit(PathBuf),
-    /// Uses one caller-provided effective configuration without filesystem discovery.
-    Resolved(Arc<ResolvedProjectConfig>),
     /// Uses built-in defaults without loading a project file.
     Disabled,
 }
@@ -338,7 +338,7 @@ pub enum ConfigSelection {
 /// which currently have a caller-level override; it is not a second project
 /// configuration schema.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct ProjectOverrides {
+pub struct ProjectConfigOverrides {
     pub include: Option<bool>,
     /// Lint rules enabled for this request in addition to project settings.
     pub enable_lint_rules: Vec<LintRuleId>,
@@ -359,9 +359,7 @@ pub struct ProjectOverrides {
 /// not replace these request-wide ceilings.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProjectLimits {
-    pub max_files: usize,
-    pub max_resource_bytes: u64,
-    pub max_read_bytes: u64,
+    pub resources: ProjectResourceLimits,
     pub max_directory_entries: u64,
     pub max_processing_iterations: u32,
     /// Maximum UTF-8 bytes retained in returned expanded documents and loaded
@@ -372,14 +370,16 @@ pub struct ProjectLimits {
 
 impl Default for ProjectLimits {
     fn default() -> Self {
-        let filesystem = FilesystemReadLimits::default();
+        let configured = ProjectResourceLimits::default();
         Self {
             // A request can span several independently configured projects.
             // Keep the request-wide ceiling above the per-project default so
             // each resolved configuration remains the practical limit.
-            max_files: filesystem.max_files.saturating_mul(10),
-            max_resource_bytes: filesystem.max_resource_bytes,
-            max_read_bytes: filesystem.max_total_bytes,
+            resources: ProjectResourceLimits {
+                max_files: configured.max_files.saturating_mul(10),
+                max_total_bytes: configured.max_total_bytes,
+                max_resource_bytes: configured.max_resource_bytes,
+            },
             max_directory_entries: 100_000,
             max_processing_iterations: 100_000,
             max_output_bytes: adocweave::OutputLimits::default().max_output_bytes,
@@ -390,9 +390,9 @@ impl Default for ProjectLimits {
 impl ProjectLimits {
     pub(crate) const fn filesystem_reads(self) -> FilesystemReadLimits {
         FilesystemReadLimits {
-            max_files: self.max_files,
-            max_total_bytes: self.max_read_bytes,
-            max_resource_bytes: self.max_resource_bytes,
+            max_files: self.resources.max_files,
+            max_total_bytes: self.resources.max_total_bytes,
+            max_resource_bytes: self.resources.max_resource_bytes,
         }
     }
 }
@@ -424,8 +424,8 @@ pub struct ProjectConfigRequest {
     pub authority: ProjectAuthority,
     pub search_from: PathBuf,
     pub search_from_is_directory: bool,
-    pub config: ConfigSelection,
-    pub overrides: ProjectOverrides,
+    pub config: ProjectConfigSelection,
+    pub overrides: ProjectConfigOverrides,
     pub limits: ProjectLimits,
 }
 
@@ -942,7 +942,6 @@ impl ProjectParseError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProjectConfigErrorCode {
     ReadFailed,
-    OutsideBoundary,
     InvalidToml,
     UnsupportedSchema,
     InvalidRule,
@@ -952,7 +951,7 @@ pub enum ProjectConfigErrorCode {
     InvalidRole,
 }
 
-/// Configuration failure without an `adocweave-config` type in the contract.
+/// Failure while reading or validating project configuration.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProjectConfigError {
     pub code: ProjectConfigErrorCode,
@@ -967,7 +966,6 @@ impl ProjectConfigError {
     fn from_config(path: PathBuf, source: &[u8], error: ConfigError) -> Self {
         let code = match error.code {
             ConfigErrorCode::ReadFailed => ProjectConfigErrorCode::ReadFailed,
-            ConfigErrorCode::OutsideBoundary => ProjectConfigErrorCode::OutsideBoundary,
             ConfigErrorCode::InvalidToml => ProjectConfigErrorCode::InvalidToml,
             ConfigErrorCode::UnsupportedSchema => ProjectConfigErrorCode::UnsupportedSchema,
             ConfigErrorCode::InvalidRule => ProjectConfigErrorCode::InvalidRule,
@@ -1079,12 +1077,6 @@ impl fmt::Display for ProjectResourceError {
 
 impl std::error::Error for ProjectResourceError {}
 
-/// Effective project configuration owned by this crate.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ProjectConfig {
-    inner: ResolvedProjectConfig,
-}
-
 /// Effective retained-resource ceilings from project configuration.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProjectResourceLimits {
@@ -1093,53 +1085,68 @@ pub struct ProjectResourceLimits {
     pub max_resource_bytes: u64,
 }
 
-impl ProjectConfig {
-    pub fn schema_version(&self) -> u32 {
-        self.inner.schema_version
-    }
-    pub fn analysis(&self) -> &AnalysisOptions {
-        &self.inner.analysis
-    }
-    pub fn preprocess(&self) -> &PreprocessOptions {
-        &self.inner.preprocess
-    }
-    pub fn include_enabled(&self) -> bool {
-        self.inner.resources.include
-    }
-    pub fn resource_roots(&self) -> &[PathBuf] {
-        &self.inner.resources.roots
-    }
-    pub fn resource_limits(&self) -> ProjectResourceLimits {
-        let limits = self.inner.resources.limit_plan.filesystem_reads;
-        ProjectResourceLimits {
-            max_files: limits.max_files,
-            max_total_bytes: limits.max_total_bytes,
-            max_resource_bytes: limits.max_resource_bytes,
+impl Default for ProjectResourceLimits {
+    fn default() -> Self {
+        Self {
+            max_files: 10_000,
+            max_total_bytes: 50 * 1024 * 1024,
+            max_resource_bytes: 10 * 1024 * 1024,
         }
     }
+}
+
+impl ProjectResourceLimits {
+    pub(crate) const fn filesystem_reads(self) -> FilesystemReadLimits {
+        FilesystemReadLimits {
+            max_files: self.max_files,
+            max_total_bytes: self.max_total_bytes,
+            max_resource_bytes: self.max_resource_bytes,
+        }
+    }
+}
+
+impl ProjectConfig {
+    pub fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+    pub fn analysis(&self) -> &AnalysisOptions {
+        &self.analysis
+    }
+    pub fn preprocess(&self) -> &PreprocessOptions {
+        &self.preprocess
+    }
+    pub fn include_enabled(&self) -> bool {
+        self.resources.include
+    }
+    pub fn resource_roots(&self) -> &[PathBuf] {
+        &self.resources.roots
+    }
+    pub fn resource_limits(&self) -> ProjectResourceLimits {
+        self.resources.limits
+    }
     pub fn local_targets_enabled(&self) -> bool {
-        self.inner.local_targets.enabled
+        self.local_targets.enabled
     }
     pub fn local_target_root(&self) -> Option<&Path> {
-        self.inner.local_targets.project_root.as_deref()
+        self.local_targets.project_root.as_deref()
     }
     pub fn format(&self) -> &FormatConfig {
-        &self.inner.format
+        &self.format
     }
     pub fn format_newline_explicit(&self) -> bool {
-        self.inner.format_newline_explicit
+        self.format_newline_explicit
     }
     pub fn format_final_newline_explicit(&self) -> bool {
-        self.inner.format_final_newline_explicit
+        self.format_final_newline_explicit
     }
     pub fn html_policy(&self) -> &RenderPolicy {
-        &self.inner.html.policy
+        &self.html.policy
     }
     pub fn stylesheet_files(&self) -> &[PathBuf] {
-        &self.inner.html.stylesheet_files
+        &self.html.stylesheet_files
     }
     pub fn stylesheet_urls(&self) -> &[String] {
-        &self.inner.html.stylesheet_urls
+        &self.html.stylesheet_urls
     }
 }
 
@@ -1153,18 +1160,16 @@ pub struct ProjectConfigSnapshot {
 }
 
 impl ProjectConfigSnapshot {
-    pub(crate) fn from_resolved(
-        snapshot: Option<&ConfigSnapshot>,
-        config: &ResolvedProjectConfig,
+    pub(crate) fn from_loaded(
+        snapshot: Option<&LoadedProjectConfig>,
+        config: &ProjectConfig,
         source_id: Option<SourceId>,
     ) -> Self {
         Self {
             source_id,
             path: snapshot.map(|value| value.path.clone()),
             content_sha256: snapshot.map(|value| value.content_sha256),
-            config: ProjectConfig {
-                inner: config.clone(),
-            },
+            config: config.clone(),
         }
     }
 }
