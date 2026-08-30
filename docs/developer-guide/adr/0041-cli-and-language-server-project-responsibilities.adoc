@@ -1,5 +1,5 @@
 = ADR 0041: CLIとLanguage Serverのプロジェクト処理責務
-:status: accepted
+:status: partially superseded by ADR 0044
 
 == 文脈
 

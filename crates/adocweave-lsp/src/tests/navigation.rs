@@ -121,141 +121,8 @@ https://example.com:99999[Invalid port]\n";
     }
 }
 
-#[derive(Debug)]
-struct TestHostIndex {
-    complete: bool,
-    fail: bool,
-}
-
-#[derive(Debug)]
-struct CancelDuringHostIndex {
-    document: Arc<adocweave::CancellationToken>,
-}
-
-impl HostReferenceIndex for CancelDuringHostIndex {
-    fn definition(&self, _request: &HostReferenceRequest) -> Result<Option<lsp::Location>, String> {
-        self.document.cancel();
-        Ok(Some(lsp::Location::new(
-            uri("file:///stale.adoc"),
-            lsp::Range::default(),
-        )))
-    }
-
-    fn references(
-        &self,
-        _request: &HostReferenceRequest,
-        _include_declaration: bool,
-    ) -> Result<Option<Vec<lsp::Location>>, String> {
-        self.document.cancel();
-        Ok(Some(Vec::new()))
-    }
-
-    fn is_complete(&self) -> bool {
-        true
-    }
-}
-
-impl HostReferenceIndex for TestHostIndex {
-    fn definition(&self, request: &HostReferenceRequest) -> Result<Option<lsp::Location>, String> {
-        assert!(request.source_generation > 0);
-        if self.fail {
-            return Err("host index unavailable".to_owned());
-        }
-        Ok(
-            matches!(request.target, ReferenceKey::Scheme { .. }).then(|| {
-                lsp::Location::new(
-                    uri("file:///resolved-note.adoc"),
-                    lsp::Range::new(lsp::Position::new(2, 0), lsp::Position::new(2, 5)),
-                )
-            }),
-        )
-    }
-
-    fn references(
-        &self,
-        request: &HostReferenceRequest,
-        include_declaration: bool,
-    ) -> Result<Option<Vec<lsp::Location>>, String> {
-        assert!(request.source_generation > 0);
-        if self.fail {
-            return Err("host index unavailable".to_owned());
-        }
-        Ok(self.complete.then(|| {
-            let mut locations = vec![lsp::Location::new(
-                uri("file:///b.adoc"),
-                lsp::Range::new(lsp::Position::new(3, 7), lsp::Position::new(3, 13)),
-            )];
-            if include_declaration {
-                locations.insert(
-                    0,
-                    lsp::Location::new(
-                        request.source.clone(),
-                        lsp::Range::new(lsp::Position::new(0, 2), lsp::Position::new(0, 8)),
-                    ),
-                );
-            }
-            locations
-        }))
-    }
-
-    fn is_complete(&self) -> bool {
-        self.complete
-    }
-}
-
 #[test]
-fn definition_uses_injected_host_index_for_scheme_references() {
-    let mut service = Session::with_host_index(Arc::new(TestHostIndex {
-        complete: true,
-        fail: false,
-    }));
-    open(&mut service, "file:///a.adoc", 1, "xref:note:42[Note]\n");
-    let definition = service
-        .definition(&uri("file:///a.adoc"), lsp::Position::new(0, 8))
-        .expect("definition")
-        .expect("resolved");
-    let value = serde_json::to_value(definition).expect("serialize");
-    assert_eq!(value["uri"], "file:///resolved-note.adoc");
-    let links = service
-        .document_links(&uri("file:///a.adoc"))
-        .expect("document links")
-        .expect("links");
-    assert_eq!(
-        links[0].target.as_ref().map(lsp::Url::as_str),
-        Some("file:///resolved-note.adoc")
-    );
-    let references = service
-        .references(&uri("file:///a.adoc"), lsp::Position::new(0, 8), true)
-        .expect("references")
-        .expect("resolved references");
-    assert_eq!(references.len(), 2);
-}
-
-#[test]
-fn host_index_result_is_rejected_when_the_document_changes_during_the_call() {
-    let document = Arc::new(adocweave::CancellationToken::new());
-    let mut service = Session::with_host_index(Arc::new(CancelDuringHostIndex {
-        document: document.clone(),
-    }));
-    open(&mut service, "file:///a.adoc", 1, "xref:note:42[Note]\n");
-    let cancellation = crate::cancellation::QueryCancellation::new(
-        Arc::new(adocweave::CancellationToken::new()),
-        Some(document),
-    );
-
-    let error = service
-        .definition_cancellable(
-            &uri("file:///a.adoc"),
-            lsp::Position::new(0, 8),
-            &cancellation,
-        )
-        .expect_err("stale host result");
-
-    assert_eq!(error, crate::cancellation::QueryError::ContentModified);
-}
-
-#[test]
-fn rename_uses_workspace_index_and_prefers_a_complete_host_index() {
+fn rename_uses_open_document_analyses() {
     let mut incomplete = Session::default();
     open(
         &mut incomplete,
@@ -284,17 +151,6 @@ fn rename_uses_workspace_index_and_prefers_a_complete_host_index() {
             .all(|edit| edit.range.start.line != 1 && edit.range.end.line != 1),
         "rename must not replace the block an anchor targets",
     );
-
-    let mut complete = Session::with_host_index(Arc::new(TestHostIndex {
-        complete: true,
-        fail: false,
-    }));
-    open(&mut complete, "file:///a.adoc", 1, "[[target]]\n== A\n");
-    let edit = complete
-        .rename(&uri("file:///a.adoc"), lsp::Position::new(0, 3), "renamed")
-        .expect("rename")
-        .expect("complete edit");
-    assert_eq!(edit.changes.expect("changes").len(), 2);
 }
 
 #[test]
@@ -510,30 +366,5 @@ fn prepare_rename_is_silent_for_clients_that_do_not_declare_support() {
             .expect("rename")
             .is_some(),
         "rename itself keeps working without prepare support",
-    );
-}
-
-#[test]
-fn host_index_failure_does_not_disable_core_language_features() {
-    let mut service = Session::with_host_index(Arc::new(TestHostIndex {
-        complete: false,
-        fail: true,
-    }));
-    open(
-        &mut service,
-        "file:///a.adoc",
-        1,
-        "= Title\n\nxref:note:42[Note]\n",
-    );
-    assert!(
-        service
-            .definition(&uri("file:///a.adoc"), lsp::Position::new(2, 8))
-            .is_err()
-    );
-    assert!(
-        service
-            .document_symbols(&uri("file:///a.adoc"))
-            .expect("symbols remain available")
-            .is_some()
     );
 }

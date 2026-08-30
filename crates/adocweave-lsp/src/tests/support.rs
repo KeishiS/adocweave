@@ -10,33 +10,11 @@ pub(super) fn uri(value: &str) -> lsp::Url {
     value.parse().expect("valid URI")
 }
 
-pub(super) fn analyze_document_input(
-    job: &ProjectAnalysisSnapshot,
-    cancellation: &dyn adocweave::CancellationCheck,
-) -> adocweave::AnalysisResult {
-    adocweave::AnalysisRequest {
-        revision: job.document_input.revision.clone(),
-        source: job.document_input.source.clone(),
-        options: job.document_input.options.clone(),
-    }
-    .analyze(cancellation)
-    .expect("document analysis")
-}
-
-/// Runs the lifecycle a client performs: `initialize`, then `initialized`.
-///
-/// The walk runs on a worker in the server and returns through an event. Here
-/// the two halves run back to back, so a test observes the state the client
-/// reaches once the scan has landed. A test that only calls `initialize`
-/// observes a service that has not read its roots yet.
 pub(super) fn initialize_with_params(
     service: &mut Session,
     params: lsp::InitializeParams,
 ) -> lsp::InitializeResult {
-    let result = service.initialize(&params);
-    let scan = service.plan_workspace_scan(&adocweave::NeverCancel);
-    let _ = service.apply_workspace_scan(scan);
-    result
+    service.initialize(&params)
 }
 
 pub(super) async fn write_message(output: &mut (impl AsyncWriteExt + Unpin), message: &Value) {
