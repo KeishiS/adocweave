@@ -1,8 +1,8 @@
 {
   "name": "adocweave",
-  "displayName": "AdocWeave",
+  "displayName": "AdocWeave Language Support",
   "description": "AdocWeave Language Server client and AsciiDoc syntax highlighting",
-  "version": "0.55.0",
+  "version": "0.55.1",
   "publisher": "adocweave",
   "license": "MIT OR Apache-2.0",
   "homepage": "https://github.com/KeishiS/adocweave",

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 /** The fields of the extension `package.json` these scripts read. */
 export interface ExtensionManifest {
   capabilities?: { untrustedWorkspaces?: { description?: string; supported?: boolean } };
+  displayName: string;
   engines?: { vscode?: string };
   name: string;
   publisher: string;
