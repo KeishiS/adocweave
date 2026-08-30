@@ -7,7 +7,7 @@ import {
   validateDistPlan,
   validateReleaseTag,
   verifyRepository,
-} from "./release-contract.mjs";
+} from "./native-release-checks.mjs";
 
 const release = verifyRepository();
 const plan = JSON.parse(execFileSync("dist", ["plan", `--tag=${release.tag}`, "--output-format=json"], {

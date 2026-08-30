@@ -23,16 +23,16 @@ const PUBLICATION_COMMIT_EXPRESSION = "${{ inputs.commit }}";
 const OIDC_PUBLICATION = { contents: "read", "id-token": "write" };
 const MARKETPLACE_OIDC_PUBLICATION = { contents: "read", "id-token": "write" };
 const EXTERNAL_PUBLICATION_WORKFLOWS = new Set([
-  "binary-cache-publish.yml",
+  "cachix-publish.yml",
 ]);
 const OIDC_PUBLICATION_WORKFLOWS = new Set([
   "textlint-plugin-publish.yml",
   "wasm-publish.yml",
 ]);
 const RELEASE_PUBLICATION_JOBS = new Map([
-  ["publish-binary-cache", "binary-cache-publish.yml"],
+  ["publish-cachix", "cachix-publish.yml"],
 ]);
-const BINARY_CACHE_TARGETS = [
+const CACHIX_TARGETS = [
   { runner: "ubuntu-24.04", nixSystem: "x86_64-linux" },
   { runner: "ubuntu-24.04-arm", nixSystem: "aarch64-linux" },
 ];
@@ -177,40 +177,40 @@ export function validateReleaseFlow(workflows, distConfiguration) {
     fail("release plan must distinguish tag publication from pull-request planning");
   }
 
-  const contractCalls = Object.entries(jobs).filter(([, job]) =>
-    job.uses === "./.github/workflows/release-contract.yml"
+  const nativeCheckCalls = Object.entries(jobs).filter(([, job]) =>
+    job.uses === "./.github/workflows/native-release-checks.yml"
   );
-  if (contractCalls.length !== 1) {
-    fail("release must call the common release contract exactly once");
+  if (nativeCheckCalls.length !== 1) {
+    fail("release must call the native release checks exactly once");
   }
-  const [contractJobName, contractCall] = contractCalls[0];
-  if (needs(contractCall).length !== 0 || contractCall.if !== undefined ||
-      contractCall.strategy !== undefined) {
-    fail("common release contract must be one unconditional root job");
+  const [nativeCheckJobName, nativeCheckCall] = nativeCheckCalls[0];
+  if (needs(nativeCheckCall).length !== 0 || nativeCheckCall.if !== undefined ||
+      nativeCheckCall.strategy !== undefined) {
+    fail("native release checks must be one unconditional root job");
   }
-  const contract = workflows["release-contract.yml"];
-  const contractJobs = Object.entries(contract?.jobs ?? {});
-  if (contract?.on?.workflow_call === undefined || contractJobs.length !== 1) {
-    fail("release-contract.yml must expose one common workflow_call job");
+  const nativeChecks = workflows["native-release-checks.yml"];
+  const nativeCheckJobs = Object.entries(nativeChecks?.jobs ?? {});
+  if (nativeChecks?.on?.workflow_call === undefined || nativeCheckJobs.length !== 1) {
+    fail("native-release-checks.yml must expose one workflow_call job");
   }
-  const [, contractVerification] = contractJobs[0];
-  const contractSteps = contractVerification.steps ?? [];
-  const contractCheckout = contractSteps.find((step) =>
+  const [, nativeCheckVerification] = nativeCheckJobs[0];
+  const nativeCheckSteps = nativeCheckVerification.steps ?? [];
+  const nativeCheckCheckout = nativeCheckSteps.find((step) =>
     typeof step.uses === "string" && step.uses.startsWith("actions/checkout@")
   );
-  if (contractCheckout?.with?.["fetch-depth"] !== 0 ||
-      contractCheckout?.with?.["persist-credentials"] !== false) {
-    fail("common release contract must fetch complete history without checkout credentials");
+  if (nativeCheckCheckout?.with?.["fetch-depth"] !== 0 ||
+      nativeCheckCheckout?.with?.["persist-credentials"] !== false) {
+    fail("native release checks must fetch complete history without checkout credentials");
   }
-  const releaseContractIndex = contractSteps.findIndex((step) =>
-    String(step.run ?? "").includes("cargo make release-contract")
+  const nativeCheckIndex = nativeCheckSteps.findIndex((step) =>
+    String(step.run ?? "").includes("cargo make native-release-checks")
   );
-  const ancestrySteps = contractSteps
+  const ancestrySteps = nativeCheckSteps
     .map((step, index) => ({ index, step }))
     .filter(({ step }) => String(step.run ?? "").includes("git merge-base --is-ancestor"));
-  if (releaseContractIndex < 0 || ancestrySteps.length !== 1 ||
-      ancestrySteps[0].index <= releaseContractIndex) {
-    fail("common release contract must verify main ancestry once after tag and version checks");
+  if (nativeCheckIndex < 0 || ancestrySteps.length !== 1 ||
+      ancestrySteps[0].index <= nativeCheckIndex) {
+    fail("native release checks must verify main ancestry once after tag and version checks");
   }
   const ancestry = ancestrySteps[0].step;
   const ancestrySource = String(ancestry.run ?? "");
@@ -220,25 +220,25 @@ export function validateReleaseFlow(workflows, distConfiguration) {
     'git merge-base --is-ancestor "$tag_commit" refs/remotes/origin/main',
   ]) {
     if (!ancestrySource.includes(required)) {
-      fail(`common release contract must bind the stable tag to origin/main: ${required}`);
+      fail(`native release checks must bind the stable tag to origin/main: ${required}`);
     }
   }
   if (!condition(ancestry).includes("github.event_name == 'push'") ||
       ancestry.env?.RELEASE_COMMIT !== "${{ github.sha }}" ||
       ancestry.env?.RELEASE_TAG !== "${{ github.ref_name }}") {
-    fail("common release contract main ancestry check must use the triggering tag commit");
+    fail("native release checks must use the triggering tag commit for the main ancestry check");
   }
 
   const host = jobs.host;
   const required = [
     "plan",
-    contractJobName,
+    nativeCheckJobName,
     "build-local-artifacts",
     "build-global-artifacts",
     "custom-native-artifact-smoke",
   ];
   if (!host || !required.every((jobName) => needs(host).includes(jobName))) {
-    fail("release host must wait for plan, common contract, local, global, and native smoke jobs");
+    fail("release host must wait for plan, native checks, local, global, and native smoke jobs");
   }
   if (host.environment !== "github-release") {
     fail("release host write access and OIDC must stay in the github-release environment");
@@ -262,6 +262,19 @@ export function validateReleaseFlow(workflows, distConfiguration) {
   );
   if (String(attestation?.with?.["subject-path"] ?? "").trim() !== "artifacts/*") {
     fail("release host must attest every published artifact");
+  }
+  const hostSource = jobRuns(host);
+  for (const requiredSource of [
+    "rm -f artifacts/*-dist-manifest.json",
+    "gh release create",
+    "artifacts/*",
+  ]) {
+    if (!hostSource.includes(requiredSource)) {
+      fail(`release host must preserve and publish the cargo-dist manifest: ${requiredSource}`);
+    }
+  }
+  if (/rm\s+-f\s+artifacts\/dist-manifest\.json/u.test(hostSource)) {
+    fail("release host must not remove the final cargo-dist manifest");
   }
 
   for (const [jobName, workflowName] of RELEASE_PUBLICATION_JOBS) {
@@ -287,21 +300,22 @@ export function validateReleaseFlow(workflows, distConfiguration) {
     }
   }
 
-  const announce = jobs.announce;
-  const publicationJobs = [...RELEASE_PUBLICATION_JOBS.keys()];
-  if (!announce || !["host", "plan", ...publicationJobs].every((jobName) =>
-    needs(announce).includes(jobName)
-  )) {
-    fail("release announce must wait for every external publication job");
+  const calledWorkflows = Object.values(jobs)
+    .map((job) => job.uses)
+    .filter((uses) => typeof uses === "string" && uses.startsWith("./.github/workflows/"))
+    .map((uses) => uses.slice("./.github/workflows/".length))
+    .sort();
+  const expectedWorkflows = [
+    "cachix-publish.yml",
+    "native-artifact-smoke.yml",
+    "native-release-checks.yml",
+  ];
+  if (canonical(calledWorkflows) !== canonical(expectedWorkflows)) {
+    fail("native Release must call only native checks, native smoke, and Cachix publication");
   }
-  const announceCondition = condition(announce);
-  for (const jobName of ["host", ...publicationJobs]) {
-    if (!announceCondition.includes(`needs.${jobName}.result == 'success'`)) {
-      fail(`release announce must require ${jobName} success`);
-    }
-  }
-  if (/result\s*==\s*'skipped'/.test(announceCondition)) {
-    fail("release announce must not report success after a skipped publication");
+
+  if (jobs.announce !== undefined) {
+    fail("release must not keep an empty announce job after GitHub Release creation");
   }
 }
 
@@ -357,7 +371,7 @@ export function validateExternalPublicationIsolation(workflows) {
         !String(workflow.concurrency?.group ?? "").includes(PUBLICATION_TAG_EXPRESSION)) {
       fail(`${name} must serialize idempotent publication attempts by release tag`);
     }
-    const expectedJobs = name === "binary-cache-publish.yml"
+    const expectedJobs = name === "cachix-publish.yml"
       ? ["publish", "verify"]
       : ["publish"];
     if (canonical(Object.keys(workflow.jobs ?? {}).sort()) !== canonical(expectedJobs.sort())) {
@@ -374,7 +388,7 @@ export function validateExternalPublicationIsolation(workflows) {
     }
     const publicationSource = jobRuns(publication);
     if (/merge-base\s+--is-ancestor|refs\/remotes\/origin\/main/u.test(publicationSource)) {
-      fail(`${name} must leave main ancestry verification in the common release contract`);
+      fail(`${name} must leave main ancestry verification in the native release checks`);
     }
     for (const required of [
       'releases/tags/$RELEASE_TAG',
@@ -405,22 +419,22 @@ function cachixAction(job) {
   );
 }
 
-function validateBinaryCacheMatrix(job, location) {
+function validateCachixMatrix(job, location) {
   if (job?.strategy?.["fail-fast"] !== false ||
-      canonical(job?.strategy?.matrix?.include) !== canonical(BINARY_CACHE_TARGETS)) {
+      canonical(job?.strategy?.matrix?.include) !== canonical(CACHIX_TARGETS)) {
     fail(`${location} must process the fixed x86_64-linux and aarch64-linux targets`);
   }
 }
 
-export function validateBinaryCachePublication(workflows) {
-  const workflow = workflows["binary-cache-publish.yml"];
-  if (!workflow) fail("binary-cache-publish.yml is required");
+export function validateCachixPublication(workflows) {
+  const workflow = workflows["cachix-publish.yml"];
+  if (!workflow) fail("cachix-publish.yml is required");
   const publish = workflow.jobs?.publish;
   const verify = workflow.jobs?.verify;
-  validateBinaryCacheMatrix(publish, "binary-cache-publish.yml publish");
-  validateBinaryCacheMatrix(verify, "binary-cache-publish.yml verify");
+  validateCachixMatrix(publish, "cachix-publish.yml publish");
+  validateCachixMatrix(verify, "cachix-publish.yml verify");
   if (!needs(verify).includes("publish")) {
-    fail("binary-cache-publish.yml verify must run after every published closure");
+    fail("cachix-publish.yml verify must run after every published closure");
   }
 
   const publishSource = jobRuns(publish);
@@ -435,13 +449,13 @@ export function validateBinaryCachePublication(workflows) {
     'cachix push keishis "$package"',
   ]) {
     if (!publishSource.includes(required)) {
-      fail(`binary-cache-publish.yml publish must verify and send the stable release: ${required}`);
+      fail(`cachix-publish.yml publish must verify and send the stable release: ${required}`);
     }
   }
   const publishCachix = cachixAction(publish);
   if (publishCachix?.with?.name !== "keishis" || publishCachix?.with?.skipPush !== true ||
       publishCachix?.with?.authToken !== "${{ secrets.CACHIX_AUTH_TOKEN }}") {
-    fail("binary-cache-publish.yml publish must use only the dedicated Cachix token");
+    fail("cachix-publish.yml publish must use only the dedicated Cachix token");
   }
 
   const verifySource = jobRuns(verify);
@@ -451,24 +465,24 @@ export function validateBinaryCachePublication(workflows) {
     "--option fallback false",
     "--option max-jobs 0",
     "--option substituters https://keishis.cachix.org",
-    "node tools/binary-cache-smoke.mjs",
+    "node tools/cachix-smoke.mjs",
   ]) {
     if (!verifySource.includes(required)) {
-      fail(`binary-cache-publish.yml verify must acquire and smoke the public closure: ${required}`);
+      fail(`cachix-publish.yml verify must acquire and smoke the public closure: ${required}`);
     }
   }
   const verifyCachix = cachixAction(verify);
   if (verifyCachix?.with?.name !== "keishis" || verifyCachix?.with?.skipPush !== true ||
       verifyCachix?.with?.authToken !== undefined ||
       JSON.stringify(verify).includes("CACHIX_AUTH_TOKEN")) {
-    fail("binary-cache-publish.yml verify must configure Cachix without a write token");
+    fail("cachix-publish.yml verify must configure Cachix without a write token");
   }
 
   const tokenUsers = Object.entries(workflows)
     .filter(([, candidate]) => JSON.stringify(candidate).includes("CACHIX_AUTH_TOKEN"))
     .map(([name]) => name);
-  if (canonical(tokenUsers) !== canonical(["binary-cache-publish.yml"])) {
-    fail("CACHIX_AUTH_TOKEN must be used only by binary-cache-publish.yml");
+  if (canonical(tokenUsers) !== canonical(["cachix-publish.yml"])) {
+    fail("CACHIX_AUTH_TOKEN must be used only by cachix-publish.yml");
   }
 }
 
@@ -760,7 +774,7 @@ export function validateReleaseWorkflowPolicy({
   validateReleaseFlow(workflows, distConfiguration);
   validateCiGates(workflows);
   validateExternalPublicationIsolation(workflows);
-  validateBinaryCachePublication(workflows);
+  validateCachixPublication(workflows);
   validateTextlintPluginPublication(workflows, textlintNpmSmoke);
   validateWasmPublication(workflows, wasmNpmSmoke);
   validateVscodePublication(workflows);
