@@ -33,7 +33,6 @@ export function expectedReleaseAssets(version = workspaceVersion()) {
       `adocweave-${target}.zip.sha256`,
     ]),
     `adocweave-vscode-${version}.vsix`,
-    `adocweave-zed-${version}.tar.xz`,
     "sha256.sum",
   ].sort();
 }

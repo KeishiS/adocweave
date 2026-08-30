@@ -57,7 +57,7 @@ if (!kind || !candidateArgument || !target) {
   process.exit(2);
 }
 
-const installationKinds = new Set(["native", "wasm", "vscode", "zed"]);
+const installationKinds = new Set(["native", "wasm", "vscode"]);
 if (!installationKinds.has(kind)) {
   throw new Error(`unsupported installation E2E kind: ${kind}`);
 }
@@ -106,7 +106,6 @@ const {
   currentLink,
   versionRoot,
   vscodeRoot,
-  zedRoot,
 } = installationLayout(prefix, version, runtime.pathApi);
 const previousRoot = join(prefix, "lib", "adocweave", `${version}-previous-fixture`);
 
@@ -241,17 +240,6 @@ function installWasm() {
   renameSync(extracted, wasmRoot);
 }
 
-function installZed() {
-  const archiveRoot = `adocweave-zed-${version}`;
-  const extracted = extract(
-    archive(`${archiveRoot}.tar.xz`),
-    join(scratch, "extract", "zed"),
-    archiveRoot,
-  );
-  mkdirSync(dirname(zedRoot), { recursive: true });
-  renameSync(extracted, zedRoot);
-}
-
 function installVSCode() {
   const name = `adocweave-vscode-${version}.vsix`;
   const extracted = extract(
@@ -344,7 +332,6 @@ try {
   const native = kind === "native";
   if (native) installNative(nativeArtifact, nativeExecutable);
   else if (kind === "wasm") installWasm();
-  else if (kind === "zed") installZed();
   else if (kind === "vscode") installVSCode();
   const executables = native ? [nativeExecutable] : [];
   if (native) {
@@ -380,9 +367,6 @@ try {
     if (!existsSync(join(wasmRoot, "wasm", "adocweave_wasm_bg.wasm"))) throw new Error("WASM is missing");
     await verifyWasmContract();
   }
-  if (kind === "zed") {
-    if (!existsSync(join(zedRoot, "extension.toml"))) throw new Error("Zed extension manifest is missing");
-  }
   if (kind === "vscode") {
     const vscodeManifest = JSON.parse(readFileSync(join(vscodeRoot, "package.json"), "utf8"));
     if (!vscodePackageContract(vscodeManifest, version)) {
@@ -397,7 +381,7 @@ try {
     rmSync(versionRoot, { recursive: true });
     rmSync(previousRoot, { recursive: true });
   }
-  if (["wasm", "zed", "vscode"].includes(kind)) {
+  if (["wasm", "vscode"].includes(kind)) {
     rmSync(join(prefix, "share", "adocweave", version), { recursive: true });
   }
   for (const directory of [

@@ -11,8 +11,12 @@ attestationの確認はxref:../user-guide/release-installation.adoc[インスト
 |===
 |対象 |正本
 
-|ネイティブ版
+|ネイティブ実行ファイルのバージョン
 |リポジトリ直下のlink:../../Cargo.toml[Cargo workspaceの``package.version``]
+
+|Zed拡張のバージョン
+|link:../../editors/zed/extension.toml[``editors/zed/extension.toml``の``version``]。変更内容は
+link:../../editors/zed/CHANGELOG.md[Zed拡張のChangelog]に記録します。
 
 |WebAssemblyパッケージの版
 |link:../../packages/wasm/package.json[``packages/wasm/package.json``]。変更内容は
@@ -34,7 +38,7 @@ link:../../packages/wasm/CHANGELOG.md[パッケージのChangelog]に記録し�
 |RustとNode.jsの構築版
 |link:../../toolchains.json[toolchain manifest]
 
-|人が記述するバージョン固有の変更
+|ネイティブ版と同じ版で公開する成果物の変更
 |link:../../CHANGELOG.md[Changelog]。cargo-distが対応するバージョンの内容をGitHub Release本文へ取り込みます。
 |===
 
@@ -48,15 +52,16 @@ link:../../packages/wasm/CHANGELOG.md[パッケージのChangelog]に記録し�
 ネイティブ実行ファイルは、一つのcommit、一つの``vX.Y.Z``タグおよび一つのGitHub Releaseを公開単位とします。
 WebAssemblyパッケージとtextlint用Processorは独立した版を持ち、それぞれ``wasm/vX.Y.Z``タグと
 ``textlint-plugin-asciidoc/vX.Y.Z``タグからnpm Registryへ直接公開します。
-どちらも同じバージョン番号を別の内容へ再利用しません。
+Zed拡張も独立した版を持ち、公式Zed拡張レジストリが``editors/zed``のソースを構築して配布します。
+いずれも同じバージョン番号を別の内容へ再利用しません。
 
 cargo-distは、OSとCPU architectureごとの``adocweave-<target>.zip``をnative成果物として構築します。
-VS Code拡張とZed拡張は追加成果物として同じplanと
-GitHub Releaseへ含めます。GitHubが自動生成するsource archiveは検証対象の成果物に含めません。
+VS Code拡張は追加成果物として同じplanとGitHub Releaseへ含めます。
+GitHubが自動生成するsource archiveは検証対象の成果物に含めません。
 
 registryへも公開する追加成果物は、GitHub Releaseへ添付して検証したものと同じ内容を送ります。VS Code拡張は
 Open VSX RegistryとVisual Studio Marketplaceへ公開します。registry向けに構築し直しません。
-Zed拡張はGitHub Releaseへの添付だけを対象とします。WebAssemblyパッケージとtextlint用Processorは、それぞれの
+WebAssemblyパッケージとtextlint用Processorは、それぞれの
 専用workflowで一度だけ構築して検査し、その成果物をnpm Registryへ送ります。
 Rust crateはcrates.ioへ公開しません。
 
@@ -92,8 +97,8 @@ xref:core-profile.adoc#wasm-api[WebAssembly API]を基準とし、Worker内部�
 直接依存しない公開入口を提供します。
 
 VS Code拡張とZed拡張はLanguage Serverを同梱しません。設定で指定した絶対path、``PATH``、自動取得の順で
-``adocweave``を選び、``lsp``引数を付けて起動します。自動取得では同じGitHub Releaseの
-``adocweave-<target>.zip``を使用します。現在の選択規則と手動導入方法は利用者向け文書を基準とし、
+``adocweave``を選び、``lsp``引数を付けて起動します。Zed拡張は最新の安定版GitHub Releaseにある
+``adocweave-<target>.zip``を使用し、拡張版との一致を求めません。現在の選択規則と手動導入方法は利用者向け文書を基準とし、
 この分担の理由はxref:adr/0028-editor-language-server-boundary.adoc[ADR 0028]を参照してください。
 
 textlint用ProcessorはProcessor、TxtAST変換、型定義、Node.js向けWebAssembly、licenseおよび第三者依存の通知を
