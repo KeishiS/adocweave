@@ -25,21 +25,15 @@ use crate::service::{
     project_observations_are_current,
 };
 use crate::state::{ProjectAnalysisSnapshot, ProjectSourceIndex};
-use crate::workspace_scan::{
-    WorkspaceScanRecovery, WorkspaceScanRecoveryTimer, WorkspaceScanStart, WorkspaceScanned,
-};
-use crate::{HostReferenceIndex, NoHostReferenceIndex};
 
 const MAX_CONCURRENT_REQUESTS: usize = 16;
 const MAX_CONCURRENT_ANALYSES: usize = 2;
-const WATCH_SCAN_RECOVERY_DEBOUNCE_MS: u64 = 100;
 
 pub(crate) struct Backend {
     client: ClientSocket,
     session: Session,
     cpu_limit: Arc<Semaphore>,
     analysis_workers: BTreeMap<String, AnalysisWorker>,
-    workspace_scan_recovery_timer: WorkspaceScanRecoveryTimer,
 }
 
 struct AnalysisWorker {
@@ -55,20 +49,12 @@ impl Backend {
     pub(crate) fn router(
         client: ClientSocket,
     ) -> impl async_lsp::LspService<Response = Value, Error = ResponseError> {
-        Self::router_with_index(client, Arc::new(NoHostReferenceIndex))
-    }
-
-    pub(crate) fn router_with_index(
-        client: ClientSocket,
-        host_index: Arc<dyn HostReferenceIndex>,
-    ) -> impl async_lsp::LspService<Response = Value, Error = ResponseError> {
         let process_monitor = client.clone();
         let mut router = Router::new(Self {
             client,
-            session: Session::with_host_index(host_index),
+            session: Session::default(),
             cpu_limit: Arc::new(Semaphore::new(MAX_CONCURRENT_ANALYSES)),
             analysis_workers: BTreeMap::new(),
-            workspace_scan_recovery_timer: WorkspaceScanRecoveryTimer::default(),
         });
 
         router
@@ -82,12 +68,10 @@ impl Backend {
             })
             .request::<request::Shutdown, _>(|state, _| {
                 state.cancel_all_analysis();
-                state.invalidate_workspace_scan();
                 async move { Ok(()) }
             })
             .notification::<notification::Exit>(|state, _| {
                 state.cancel_all_analysis();
-                state.invalidate_workspace_scan();
                 ControlFlow::Continue(())
             })
             .notification::<notification::DidOpenTextDocument>(|state, params| {
@@ -119,18 +103,8 @@ impl Backend {
                 ControlFlow::Continue(())
             })
             .notification::<notification::DidChangeWatchedFiles>(|state, params| {
-                let outcome = state.session.handle_workspace_files_changed(params);
-                if outcome.cancel_recovery_timer {
-                    state.cancel_workspace_scan_recovery();
-                }
-                if let Some(generation) = outcome.recovery_generation {
-                    state.schedule_workspace_scan_recovery(generation);
-                }
-                for job in outcome.jobs {
+                for job in state.session.handle_workspace_files_changed(params) {
                     state.schedule_analysis(job);
-                }
-                if let Some(start) = outcome.rebuild {
-                    state.spawn_workspace_scan(start);
                 }
                 ControlFlow::Continue(())
             })
@@ -321,46 +295,6 @@ impl Backend {
             })
             .await
         }
-    }
-
-    fn spawn_workspace_scan(&self, start: WorkspaceScanStart) {
-        let (sequence, cancellation) = start.into_parts();
-        let service = self.session.clone();
-        let client = self.client.clone();
-        tokio::spawn(async move {
-            let worker_cancellation = Arc::clone(&cancellation);
-            let scan = tokio::task::spawn_blocking(move || {
-                worker_cancellation.filesystem_job().map(|job| {
-                    service.plan_workspace_scan_with_job(worker_cancellation.as_ref(), job)
-                })
-            })
-            .await
-            .map_err(|error| format!("workspace scan worker failed: {error}"))
-            .and_then(|scan| scan);
-            let _ = client.emit(WorkspaceScanned::new(sequence, scan));
-        });
-    }
-
-    fn schedule_workspace_scan_recovery(&mut self, generation: u64) {
-        self.cancel_workspace_scan_recovery();
-        let client = self.client.clone();
-        self.workspace_scan_recovery_timer
-            .replace(tokio::spawn(async move {
-                tokio::time::sleep(std::time::Duration::from_millis(
-                    WATCH_SCAN_RECOVERY_DEBOUNCE_MS,
-                ))
-                .await;
-                let _ = client.emit(WorkspaceScanRecovery::new(generation));
-            }));
-    }
-
-    fn cancel_workspace_scan_recovery(&mut self) {
-        self.workspace_scan_recovery_timer.cancel();
-    }
-
-    fn invalidate_workspace_scan(&mut self) {
-        self.cancel_workspace_scan_recovery();
-        self.session.cancel_workspace_scan();
     }
 
     fn schedule_analysis(&mut self, snapshot: ProjectAnalysisSnapshot) {
@@ -681,13 +615,13 @@ mod tests {
     use super::*;
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn aborting_the_async_wrapper_does_not_release_a_running_workspace_worker() {
+    async fn aborting_the_async_wrapper_does_not_release_a_running_blocking_worker() {
         let gate = Arc::new(Semaphore::new(1));
         let worker_gate = Arc::clone(&gate);
         let (started_tx, started_rx) = std::sync::mpsc::channel();
         let (finish_tx, finish_rx) = std::sync::mpsc::channel();
         let task = tokio::spawn(async move {
-            let permit = worker_gate.acquire_owned().await.expect("workspace permit");
+            let permit = worker_gate.acquire_owned().await.expect("worker permit");
             tokio::task::spawn_blocking(move || {
                 let _permit = permit;
                 started_tx.send(()).expect("started receiver");
@@ -707,13 +641,13 @@ mod tests {
             tokio::time::timeout(Duration::from_millis(50), Arc::clone(&gate).acquire_owned())
                 .await
                 .is_err(),
-            "the detached blocking worker still owns the workspace gate"
+            "the detached blocking worker still owns the execution permit"
         );
         finish_tx.send(()).expect("finish worker");
         let _permit = tokio::time::timeout(Duration::from_secs(1), gate.acquire_owned())
             .await
-            .expect("workspace gate released after worker exit")
-            .expect("workspace permit");
+            .expect("execution permit released after worker exit")
+            .expect("worker permit");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

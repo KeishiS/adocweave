@@ -12,14 +12,11 @@ use adocweave::{
 };
 use adocweave_project::{ProjectLocalTargetDiagnostic, ProjectObservationAccess, ProjectRequest};
 
-use crate::workspace::ProjectAnalysisContext;
-
 #[derive(Debug)]
 pub struct ProjectAnalysisSnapshot {
     pub uri: String,
     pub document_input: DocumentAnalysisInput,
     pub cancellation: Arc<CancellationToken>,
-    pub project_context: Option<ProjectAnalysisContext>,
     pub project_problem: Option<ProjectProblem>,
     pub prepared_request: Option<PreparedProjectRequest>,
     pub previously_published_diagnostic_uris: BTreeSet<String>,
@@ -44,7 +41,6 @@ pub struct DocumentAnalysisInput {
 #[derive(Clone, Debug, Default)]
 pub struct ProjectSourceIndex {
     by_id: BTreeMap<SourceId, ProjectSourceState>,
-    versions_by_uri: BTreeMap<String, i64>,
 }
 
 #[derive(Clone, Debug)]
@@ -52,6 +48,7 @@ pub struct ProjectSourceState {
     pub uri: String,
     pub text: Arc<str>,
     pub version: Option<i64>,
+    pub generation: Option<u64>,
 }
 
 impl ProjectSourceIndex {
@@ -67,12 +64,15 @@ impl ProjectSourceIndex {
         self.by_id.values().find(|source| source.uri == uri)
     }
 
-    pub fn record_version(&mut self, uri: String, version: i64) {
-        self.versions_by_uri.insert(uri, version);
+    pub fn open_document_revisions(&self) -> impl Iterator<Item = (&str, i64, u64)> {
+        self.by_id
+            .values()
+            .filter_map(|source| Some((source.uri.as_str(), source.version?, source.generation?)))
     }
 
-    pub fn version_for_uri(&self, uri: &str) -> Option<i64> {
-        self.versions_by_uri.get(uri).copied()
+    pub fn retain(&mut self, source_ids: &BTreeSet<SourceId>) {
+        self.by_id
+            .retain(|source_id, _| source_ids.contains(source_id));
     }
 }
 
@@ -83,19 +83,7 @@ pub struct DocumentState {
     pub view: Option<Arc<DocumentView>>,
     pub project_problem: Option<ProjectProblem>,
     published_diagnostic_uris: BTreeSet<String>,
-    project_input: ProjectInputState,
     cancellation: Arc<CancellationToken>,
-}
-
-/// Whether the current LSP text is safe to combine with a workspace snapshot.
-///
-/// This is input state, not an analysis result: unrelated reanalysis must not
-/// turn a rejected request back into an apparently valid one.
-#[derive(Clone, Debug)]
-enum ProjectInputState {
-    Synchronized,
-    PendingRebuild,
-    Rejected(ProjectProblem),
 }
 
 #[derive(Debug)]
@@ -113,7 +101,6 @@ pub struct AdoptedAnalysis {
     pub sources: Arc<ProjectSourceIndex>,
     pub problem: Option<ProjectProblem>,
     pub published_diagnostic_uris: BTreeSet<String>,
-    pub synchronize_project_input: bool,
 }
 
 #[cfg(test)]
@@ -121,27 +108,9 @@ impl DocumentState {
     pub fn analysis(&self) -> Option<&Analysis> {
         self.view.as_ref().map(|view| view.primary.as_ref())
     }
-
-    pub fn expanded_analysis(&self) -> Option<&ExpandedDocumentAnalysis> {
-        self.view.as_ref()?.expanded.as_deref()
-    }
 }
 
 impl DocumentState {
-    pub(crate) fn project_input_problem(&self) -> Option<&ProjectProblem> {
-        match &self.project_input {
-            ProjectInputState::Rejected(problem) => Some(problem),
-            ProjectInputState::Synchronized | ProjectInputState::PendingRebuild => self
-                .project_problem
-                .as_ref()
-                .filter(|problem| problem.code == "workspace-input-error"),
-        }
-    }
-
-    fn project_input_is_synchronized(&self) -> bool {
-        matches!(self.project_input, ProjectInputState::Synchronized)
-    }
-
     fn published_diagnostic_uris(&self, document_uri: &str) -> BTreeSet<String> {
         let mut uris = self.published_diagnostic_uris.clone();
         uris.insert(document_uri.to_owned());
@@ -203,9 +172,6 @@ impl DocumentStore {
 
     pub fn snapshot(&self, uri: &str) -> Option<DocumentSnapshot> {
         let document = self.documents.get(uri)?;
-        if !document.project_input_is_synchronized() || document.project_input_problem().is_some() {
-            return None;
-        }
         Some(DocumentSnapshot {
             uri: document.source_id.as_str().to_owned(),
             revision: document.document_input.revision.clone(),
@@ -234,12 +200,30 @@ impl DocumentStore {
             .collect()
     }
 
-    pub fn expanded_analyses(&self) -> impl Iterator<Item = &ExpandedDocumentAnalysis> {
-        self.documents.values().filter_map(|document| {
-            document
-                .project_input_is_synchronized()
-                .then(|| document.view.as_ref()?.expanded.as_deref())?
+    pub fn open_project_sources(&self) -> Vec<(String, DocumentRevision, String)> {
+        self.documents
+            .values()
+            .map(|document| {
+                (
+                    document.source_id.as_str().to_owned(),
+                    document.document_input.revision.clone(),
+                    document.document_input.source.to_string(),
+                )
+            })
+            .collect()
+    }
+
+    pub fn revision_is_current(&self, uri: &str, version: i64, generation: u64) -> bool {
+        self.documents.get(uri).is_some_and(|document| {
+            document.document_input.revision.version == version
+                && document.document_input.revision.generation == generation
         })
+    }
+
+    pub fn expanded_analyses(&self) -> impl Iterator<Item = &ExpandedDocumentAnalysis> {
+        self.documents
+            .values()
+            .filter_map(|document| document.view.as_ref()?.expanded.as_deref())
     }
 
     pub fn project_problems(&self) -> impl Iterator<Item = &ProjectProblem> {
@@ -309,7 +293,6 @@ impl DocumentStore {
                 view: None,
                 project_problem: None,
                 published_diagnostic_uris: BTreeSet::from([uri]),
-                project_input: ProjectInputState::Synchronized,
                 cancellation: snapshot.cancellation.clone(),
             },
         );
@@ -331,38 +314,11 @@ impl DocumentStore {
         current.cancellation.cancel();
         let snapshot = self.new_snapshot(uri.to_owned(), source_id, version, text, options);
         self.install_snapshot(uri, &snapshot);
-        // A newer protocol input starts the document-scoped retry. The Session
-        // immediately records Rejected or PendingRebuild if it cannot install
-        // this text in WorkspaceResources.
-        Arc::make_mut(&mut self.documents)
-            .get_mut(uri)
-            .expect("document existence checked")
-            .project_input = ProjectInputState::Synchronized;
         Some(snapshot)
-    }
-
-    pub fn update_snapshot_options(
-        &mut self,
-        snapshot: &mut ProjectAnalysisSnapshot,
-        options: AnalysisOptions,
-    ) {
-        assert!(
-            self.snapshot_is_current(snapshot),
-            "analysis options may only be updated before scheduling the current job"
-        );
-        snapshot.document_input.options = options.clone();
-        Arc::make_mut(&mut self.documents)
-            .get_mut(&snapshot.uri)
-            .expect("current document exists")
-            .document_input
-            .options = options;
     }
 
     pub fn begin_reanalysis(&mut self, uri: &str) -> Option<ProjectAnalysisSnapshot> {
         let current = self.documents.get(uri)?;
-        if !current.project_input_is_synchronized() {
-            return None;
-        }
         current.cancellation.cancel();
         let version = i32::try_from(current.document_input.revision.version).ok()?;
         let text = current.document_input.source.to_string();
@@ -379,9 +335,6 @@ impl DocumentStore {
         options: AnalysisOptions,
     ) -> Option<ProjectAnalysisSnapshot> {
         let current = self.documents.get(uri)?;
-        if !current.project_input_is_synchronized() {
-            return None;
-        }
         current.cancellation.cancel();
         let version = i32::try_from(current.document_input.revision.version).ok()?;
         let text = current.document_input.source.to_string();
@@ -392,8 +345,7 @@ impl DocumentStore {
     }
 
     /// Replaces an existing document's pending request with `snapshot`, clearing the
-    /// prior analysis view and workspace problem while preserving whether its
-    /// current LSP text is synchronized with WorkspaceResources.
+    /// prior analysis view and project problem.
     fn install_snapshot(&mut self, uri: &str, snapshot: &ProjectAnalysisSnapshot) {
         let current = Arc::make_mut(&mut self.documents)
             .get_mut(uri)
@@ -481,9 +433,6 @@ impl DocumentStore {
         });
         document.project_problem = analysis.problem;
         document.published_diagnostic_uris = analysis.published_diagnostic_uris;
-        if analysis.synchronize_project_input {
-            document.project_input = ProjectInputState::Synchronized;
-        }
         Adoption::Adopted
     }
 
@@ -501,47 +450,6 @@ impl DocumentStore {
     pub fn cancel_all(&mut self) {
         for document in self.documents.values() {
             document.cancellation.cancel();
-        }
-    }
-
-    pub fn invalidate_all_inputs(&mut self) {
-        for document in Arc::make_mut(&mut self.documents).values_mut() {
-            document.cancellation.cancel();
-            document.view = None;
-            document.project_problem = None;
-            document.project_input = ProjectInputState::PendingRebuild;
-        }
-    }
-
-    pub fn mark_project_input_pending(&mut self, snapshot: &ProjectAnalysisSnapshot) {
-        assert!(
-            self.snapshot_is_current(snapshot),
-            "only the current input may be marked pending"
-        );
-        Arc::make_mut(&mut self.documents)
-            .get_mut(&snapshot.uri)
-            .expect("current document exists")
-            .project_input = ProjectInputState::PendingRebuild;
-    }
-
-    pub fn reject_project_input(&mut self, snapshot: &ProjectAnalysisSnapshot) {
-        assert!(
-            self.snapshot_is_current(snapshot),
-            "only the current input may be rejected"
-        );
-        let problem = snapshot
-            .project_problem
-            .clone()
-            .expect("a rejected workspace input has a problem");
-        Arc::make_mut(&mut self.documents)
-            .get_mut(&snapshot.uri)
-            .expect("current document exists")
-            .project_input = ProjectInputState::Rejected(problem);
-    }
-
-    pub fn synchronize_all_project_inputs(&mut self) {
-        for document in Arc::make_mut(&mut self.documents).values_mut() {
-            document.project_input = ProjectInputState::Synchronized;
         }
     }
 
@@ -571,7 +479,6 @@ impl DocumentStore {
             uri,
             document_input,
             cancellation: Arc::new(CancellationToken::new()),
-            project_context: None,
             project_problem: None,
             prepared_request: None,
             previously_published_diagnostic_uris,

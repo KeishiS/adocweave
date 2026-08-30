@@ -88,19 +88,6 @@ pub(super) fn project_problem(
     )
 }
 
-pub(super) fn workspace_error(message: &str) -> lsp::Diagnostic {
-    lsp::Diagnostic {
-        range: lsp::Range::default(),
-        severity: Some(lsp::DiagnosticSeverity::ERROR),
-        code: Some(lsp::NumberOrString::String(
-            "workspace-resource-error".to_owned(),
-        )),
-        source: Some("adocweave-project".to_owned()),
-        message: message.to_owned(),
-        ..lsp::Diagnostic::default()
-    }
-}
-
 struct DiagnosticFields<'a> {
     range: TextRange,
     severity: Severity,
@@ -264,7 +251,11 @@ mod tests {
         assert_eq!(related[0].location.uri, uri);
         assert_eq!(related[0].location.range.start, lsp::Position::new(0, 4));
 
-        let mut diagnostics = vec![utf8.clone(), workspace_error("workspace"), utf8];
+        let zero = lsp::Diagnostic {
+            message: "project".to_owned(),
+            ..lsp::Diagnostic::default()
+        };
+        let mut diagnostics = vec![utf8.clone(), zero, utf8];
         canonicalize(&mut diagnostics);
         assert_eq!(diagnostics.len(), 2);
         assert_eq!(diagnostics[0].range, lsp::Range::default());
