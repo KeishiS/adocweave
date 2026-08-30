@@ -348,17 +348,25 @@ fi`,
       steps: [
         { uses: pin, with: { ref: "${{ github.sha }}" } },
         {
-          uses: "cachix/cachix-action@0000000000000000000000000000000000000000",
-          with: { name: "keishis", skipPush: true },
-        },
-        {
-          env: { NIX_SYSTEM: "${{ matrix.nixSystem }}" },
+          env: {
+            CACHIX_PUBLIC_KEY:
+              "keishis.cachix.org-1:j3UwGrrgTifYMa9Uo6fyDU8GEJBcorOzrHdkXBXruK4=",
+            NIX_SYSTEM: "${{ matrix.nixSystem }}",
+          },
           run: `
+expected_package="$(nix eval --raw ".#packages.\${NIX_SYSTEM}.default.outPath")"
+store_hash="$(basename "$expected_package" | cut -d- -f1)"
+[[ "$store_hash" =~ ^[0-9abcdfghijklmnpqrsvwxyz]{32}$ ]]
+curl --fail --silent --show-error --retry 5 \
+  "https://keishis.cachix.org/\${store_hash}.narinfo" > "$narinfo"
+grep -Fx "StorePath: $expected_package" "$narinfo"
 nix build ".#packages.\${NIX_SYSTEM}.default" \\
-  --option builders '' \\
-  --option fallback false \\
-  --option max-jobs 0 \\
-  --option substituters https://keishis.cachix.org
+  --builders '' \\
+  --no-fallback \\
+  --max-jobs 0 \\
+  --extra-trusted-public-keys "$CACHIX_PUBLIC_KEY" \\
+  --substituters "https://keishis.cachix.org https://cache.nixos.org"
+test "$package" = "$expected_package"
 node tools/cachix-smoke.mjs "$package/bin/adocweave"
 `,
         },
@@ -733,9 +741,9 @@ test("Cachix公開は二つのLinux closureを送り別のtokenなしrunnerで�
   const verify = fixtures["release.yml"].jobs["verify-cachix"];
   const smoke = verify.steps.find((step) => String(step.run ?? "").includes("max-jobs"));
   smoke.run = smoke.run.replace(
-      "--option max-jobs 0",
-      "--option max-jobs 1",
-    );
+    "--max-jobs 0",
+    "--max-jobs 1",
+  );
   assert.throws(
     () => validateCachixPublication(fixtures),
     /acquire and smoke.*max-jobs/u,
@@ -768,6 +776,29 @@ test("Cachix公開は二つのLinux closureを送り別のtokenなしrunnerで�
     /acquire the Nix system selected by its matrix entry/u,
   );
 
+  const wrongPublicKey = workflows();
+  const untrustedSmoke = wrongPublicKey["release.yml"].jobs["verify-cachix"].steps.find((step) =>
+    String(step.run ?? "").includes("cachix-smoke")
+  );
+  untrustedSmoke.env.CACHIX_PUBLIC_KEY = "keishis.cachix.org-1:wrong";
+  assert.throws(
+    () => validateCachixPublication(wrongPublicKey),
+    /pin the trusted Cachix public key/u,
+  );
+
+  const missingUpstream = workflows();
+  const incompleteSmoke = missingUpstream["release.yml"].jobs["verify-cachix"].steps.find((step) =>
+    String(step.run ?? "").includes("cachix-smoke")
+  );
+  incompleteSmoke.run = incompleteSmoke.run.replace(
+    "https://keishis.cachix.org https://cache.nixos.org",
+    "https://keishis.cachix.org",
+  );
+  assert.throws(
+    () => validateCachixPublication(missingUpstream),
+    /acquire and smoke.*cache\.nixos\.org/u,
+  );
+
   const duplicateAncestry = workflows();
   duplicateAncestry["release.yml"].jobs["publish-cachix"].steps.push({
     run: "git merge-base --is-ancestor HEAD refs/remotes/origin/main",
@@ -780,14 +811,13 @@ test("Cachix公開は二つのLinux closureを送り別のtokenなしrunnerで�
 
 test("Cachixの書込みtokenを公開job以外へ渡さない", () => {
   const fixtures = workflows();
-  const verifyAction = fixtures["release.yml"].jobs["verify-cachix"].steps.find((step) =>
-    String(step.uses ?? "").startsWith("cachix/cachix-action@")
-  );
-  verifyAction.with.authToken =
-    "${{ secrets.CACHIX_AUTH_TOKEN }}";
+  fixtures["release.yml"].jobs["verify-cachix"].steps.push({
+    uses: "cachix/cachix-action@0000000000000000000000000000000000000000",
+    with: { authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}", name: "keishis" },
+  });
   assert.throws(
     () => validateCachixPublication(fixtures),
-    /without a write token/u,
+    /only the pinned public cache identity/u,
   );
 
   const jobWide = workflows();

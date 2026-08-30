@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.56.5] - 2026-08-30
+
+### Fixed
+
+- Tokenless Cachix verification now pins the cache public key and confirms that the AdocWeave store path is available from Cachix. It uses `cache.nixos.org` alongside Cachix for shared Nixpkgs dependencies while local builds remain disabled.
+
 ## [0.56.4] - 2026-08-30
 
 ### Fixed
@@ -78,5 +84,6 @@ if let Ok(expanded) = analysis.expanded {
 }
 ```
 
+[0.56.5]: https://github.com/KeishiS/adocweave/compare/v0.56.4...v0.56.5
 [0.56.4]: https://github.com/KeishiS/adocweave/compare/v0.56.3...v0.56.4
 [0.56.3]: https://github.com/KeishiS/adocweave/releases/tag/v0.56.3
