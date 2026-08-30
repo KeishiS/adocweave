@@ -84,12 +84,17 @@ fn changed_overlay_retries_a_completed_project_before_adoption() {
                 "uri": "file:///book/root.adoc",
                 "languageId": "asciidoc",
                 "version": 1,
-                "text": "include::part.adoc[]\n"
+                "text": "= Root\n"
             }
         })))
         .pop()
         .expect("root analysis");
     let completed = process_project_snapshot(root);
+    let crate::service::ProjectAnalysisAction::Validate(completed) =
+        session.project_processing_completed(completed)
+    else {
+        panic!("completed project must wait for observation validation");
+    };
 
     let overlay_jobs = session
         .begin_change(typed(json!({
@@ -100,7 +105,7 @@ fn changed_overlay_retries_a_completed_project_before_adoption() {
     assert_eq!(overlay_jobs.len(), 1);
 
     let crate::service::ProjectAnalysisAction::Retry(retry) =
-        session.project_processing_completed(completed)
+        session.complete_analysis(validate(*completed))
     else {
         panic!("changed overlay must retry the completed root analysis");
     };
@@ -135,16 +140,21 @@ fn closed_overlay_retries_a_completed_project_before_adoption() {
                 "uri": "file:///book/root.adoc",
                 "languageId": "asciidoc",
                 "version": 1,
-                "text": "include::part.adoc[]\n"
+                "text": "= Root\n"
             }
         })))
         .pop()
         .expect("root analysis");
     let completed = process_project_snapshot(root);
+    let crate::service::ProjectAnalysisAction::Validate(completed) =
+        session.project_processing_completed(completed)
+    else {
+        panic!("completed project must wait for observation validation");
+    };
 
     assert!(session.close(&overlay_uri).closed);
     let crate::service::ProjectAnalysisAction::Retry(retry) =
-        session.project_processing_completed(completed)
+        session.complete_analysis(validate(*completed))
     else {
         panic!("closed overlay must retry the completed root analysis");
     };

@@ -1128,6 +1128,9 @@ impl Session {
         if !self.analysis_snapshot_is_current(&completion.snapshot) {
             return ProjectAnalysisAction::Ignore;
         }
+        if !self.project_sources_are_current(&completion.source_index) {
+            return self.retry_completion(&completion.snapshot);
+        }
         if completion.observations_are_current != Some(true) {
             return self.retry_completion(&completion.snapshot);
         }
