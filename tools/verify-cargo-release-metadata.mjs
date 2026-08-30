@@ -4,15 +4,14 @@ import process from "node:process";
 import toolchains from "../toolchains.json" with { type: "json" };
 import { workspaceVersion } from "./release-version.mjs";
 
-const [path, zedPath] = process.argv.slice(2);
-if (!path || !zedPath) {
-  process.stderr.write("usage: node tools/verify-cargo-release-metadata.mjs ROOT_METADATA_JSON ZED_METADATA_JSON\n");
+const [path] = process.argv.slice(2);
+if (!path || process.argv.length !== 3) {
+  process.stderr.write("usage: node tools/verify-cargo-release-metadata.mjs ROOT_METADATA_JSON\n");
   process.exit(2);
 }
 
 try {
   const metadata = JSON.parse(readFileSync(path, "utf8"));
-  const zedMetadata = JSON.parse(readFileSync(zedPath, "utf8"));
   const expectedNames = [
     "adocweave",
     "adocweave-cli",
@@ -39,12 +38,6 @@ try {
     if (pkg.rust_version !== toolchains.rustVersion) {
       throw new Error(`${pkg.name}: cargo metadata Rust version mismatch`);
     }
-  }
-  const zed = zedMetadata.packages.find((pkg) => pkg.name === "adocweave-zed");
-  if (!zed) throw new Error("cargo metadata is missing the Zed package");
-  if (zed.version !== version) throw new Error("adocweave-zed: cargo metadata version mismatch");
-  if (zed.rust_version !== toolchains.rustVersion) {
-    throw new Error("adocweave-zed: cargo metadata Rust version mismatch");
   }
   process.stdout.write("cargo release metadata verified\n");
 } catch (error) {

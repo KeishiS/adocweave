@@ -14,23 +14,17 @@ import { vscodeRuntimePackages } from "./verify-vscode-dependencies.mjs";
 const workspace = { id: "adocweave 1.2.3 (path+file:///workspace)", name: "adocweave", version: "1.2.3" };
 const packageOf = (name, version, license) => ({ id: `${name} ${version} (registry+https://example.invalid)`, name, version, license });
 
-test("notice rendering groups root dependencies and leaves shared Zed dependencies out of the extension section", () => {
+test("notice rendering groups native and VS Code runtime dependencies", () => {
   const root = {
     workspace_members: [workspace.id],
     packages: [workspace, packageOf("alpha", "1.0.0", "MIT"), packageOf("beta", "2.0.0", "Apache-2.0")],
   };
-  const zed = {
-    workspace_members: [workspace.id],
-    packages: [workspace, packageOf("alpha", "1.0.0", "MIT"), packageOf("gamma", "3.0.0", "MIT")],
-  };
-
-  const rendered = renderThirdPartyNotices(root, zed, [
+  const rendered = renderThirdPartyNotices(root, [
     { name: "delta", version: "4.0.0", license: "MIT" },
   ]);
   assert.match(rendered, /\|Apache-2\.0\n\|beta 2\.0\.0/);
   assert.match(rendered, /\|MIT\n\|alpha 1\.0\.0/);
-  assert.match(rendered, /== Zed開発拡張archiveの追加依存[\s\S]*\|MIT\n\|gamma 3\.0\.0/);
-  assert.doesNotMatch(rendered, /== Zed開発拡張archiveの追加依存[\s\S]*alpha 1\.0\.0/);
+  assert.doesNotMatch(rendered, /Zed開発拡張archive/u);
   assert.match(rendered, /== VS Code拡張の実行時依存[\s\S]*\|MIT\n\|delta 4\.0\.0/);
 });
 

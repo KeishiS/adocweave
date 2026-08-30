@@ -3,11 +3,11 @@
 
 == 文脈
 
-Zed拡張、Language Serverおよびコアを同じリポジトリで管理すると、同じcommitで起動時の接続、queryおよび
+Zed拡張、Language Serverおよびコアを同じリポジトリで管理すると、同じcommitで起動時の接続および
 回帰試験を横断して確認できます。
 
 Zed extensionとLanguage Serverを別repositoryへ分離すると、Zed固有のreviewと公開を独立できる可能性があります。一方で、
-releaseのバージョン、binary provenance、LSP protocol、Tree-sitter queryおよびrollbackの整合性をrepository間で新たに
+releaseのバージョン、binary provenance、LSP protocolおよびrollbackの整合性をrepository間で新たに
 保証しなければなりません。
 
 == 決定
@@ -15,11 +15,11 @@ releaseのバージョン、binary provenance、LSP protocol、Tree-sitter query
 Zed拡張とLanguage ServerはAdocWeave monorepoに維持し、独立repositoryを導入しません。Zed固有の責務は
 monorepo内に局所化します。Zed拡張の版と公開先は
 xref:0043-independent-distribution-units.adoc[ADR 0043]に従い、拡張は
-xref:0028-editor-language-server-boundary.adoc[ADR 0028]に従ってLanguage Serverを取得しません。
+xref:0028-editor-language-server-boundary.adoc[ADR 0028]に従って最新の安定版Language Serverを取得します。
 
 == 非採用案
 
-Zed拡張だけを別repositoryで管理する案は採用しません。protocol変更、Tree-sitter queryおよび回帰fixtureを
+Zed拡張だけを別repositoryで管理する案は採用しません。protocol変更および回帰fixtureを
 repository間で調整する運用費用が、現在の開発規模に対して大きいためです。
 
 == 再評価条件
