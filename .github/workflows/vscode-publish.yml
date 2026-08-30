@@ -65,6 +65,9 @@ jobs:
       contents: read
       id-token: write
     env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_CORE_OUTPUT: none
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
       VSIX: target/distrib/${{ needs.candidate.outputs.vsix }}
       VERSION: ${{ needs.candidate.outputs.version }}
     steps:
@@ -73,6 +76,12 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
       - uses: DeterminateSystems/determinate-nix-action@527f17dd63d2d60d3e5552934bc84b9a33a14d11 # v3.22.2
+      - name: Microsoft Entra ID login
+        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: vscode-extension-candidate
@@ -91,7 +100,7 @@ jobs:
       - name: Visual Studio Marketplace publication
         if: steps.existing.outputs.state == 'missing'
         working-directory: editors/vscode
-        run: npx --no-install vsce publish --packagePath "$GITHUB_WORKSPACE/$VSIX" --oidc
+        run: npx --no-install vsce publish --packagePath "$GITHUB_WORKSPACE/$VSIX" --azure-credential
       - name: Published Marketplace extension verification
         working-directory: editors/vscode
         run: |

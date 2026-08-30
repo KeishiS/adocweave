@@ -410,7 +410,20 @@ cargo make test-vscode-release-candidate
   });
   const marketplace = registryJob("marketplace-publish");
   marketplace.permissions = { contents: "read", "id-token": "write" };
-  marketplace.steps[3].run = "npx vsce publish --packagePath extension.vsix --oidc";
+  marketplace.env = {
+    AZURE_CLIENT_ID: "${{ vars.AZURE_CLIENT_ID }}",
+    AZURE_TENANT_ID: "${{ vars.AZURE_TENANT_ID }}",
+  };
+  marketplace.steps.splice(1, 0, {
+    uses: "azure/login@0000000000000000000000000000000000000000",
+    with: {
+      "client-id": "${{ vars.AZURE_CLIENT_ID }}",
+      "tenant-id": "${{ vars.AZURE_TENANT_ID }}",
+      "allow-no-subscriptions": true,
+    },
+  });
+  marketplace.steps[4].run =
+    "npx vsce publish --packagePath extension.vsix --azure-credential";
   const openVsx = registryJob("open-vsx-publish");
   openVsx.steps[3].env = { OVSX_PAT: "${{ secrets.OPEN_VSX_TOKEN }}" };
   openVsx.steps[3].run = "npx ovsx publish extension.vsix";
@@ -710,20 +723,20 @@ test("VS Code拡張は一つの候補を二つのregistryへ独立して公開�
   const marketplaceStep = fixtures["vscode-publish.yml"].jobs.marketplace.steps.find((step) =>
     String(step.run ?? "").includes("vsce publish")
   );
-  marketplaceStep.run =
-    "npx vsce publish --packagePath extension.vsix --azure-credential";
+  marketplaceStep.run = "npx vsce publish --packagePath extension.vsix --oidc";
   assert.throws(
     () => validateVscodePublication(fixtures),
-    /trusted publishing with OIDC/u,
+    /Microsoft Entra ID credential/u,
   );
 
   const azure = workflows();
-  azure["vscode-publish.yml"].jobs.marketplace.steps.push({
-    uses: "Azure/login@0000000000000000000000000000000000000000",
-  });
+  const azureLogin = azure["vscode-publish.yml"].jobs.marketplace.steps.find((step) =>
+    String(step.uses ?? "").startsWith("azure/login@")
+  );
+  azureLogin.with["client-id"] = "${{ secrets.AZURE_CLIENT_ID }}";
   assert.throws(
     () => validateVscodePublication(azure),
-    /trusted publishing with OIDC/u,
+    /federated Azure identity from environment variables/u,
   );
 
   const shared = workflows();

@@ -150,9 +150,10 @@ Release作成後は、``release.yml``のCachix公開jobをrepositoryの読取り
 取得確認jobはenvironmentも書込みtokenも使用しません。外部actionは完全なcommit SHAへ固定します。
 
 VS Code拡張では、``vscode-publish.yml``の``open-vsx`` jobだけが``open-vsx-publish`` environmentの専用tokenを
-使用します。``marketplace`` jobは``marketplace-publish`` environmentと``vsce publish --oidc``を使用し、長期tokenを
-持ちません。MarketplaceのTrusted Publisherにはrepository、workflow file``vscode-publish.yml``および
-Environment名``marketplace-publish``を登録します。二つのjobは候補構築jobが保存した同じVSIXだけを使用します。
+使用します。``marketplace`` jobは``marketplace-publish`` environmentのClient IDとTenant IDを使い、GitHubの
+OIDC tokenでMicrosoft Entra IDへログインします。Visual Studio Marketplaceには、対応するマネージドIDを
+publisherのContributorとして登録します。PAT、client secretおよび証明書は使用しません。二つのjobは候補構築jobが
+保存した同じVSIXだけを使用します。
 
 textlint用Processorでは、``textlint-plugin-publish.yml``の公開jobだけがGitHub environment``npm-publish``で
 ``id-token``の書込みを持ちます。Trusted Publisherへ登録するworkflow identityは
@@ -182,10 +183,10 @@ Cachixと``cache.nixos.org``から必要な内容を取得します。Cachixの�
 ``open-vsx-publish``の各environmentを作成します。VS Code用の二つのenvironmentは``vscode/v*``タグだけを許可します。
 ``github-release``と``cachix-publish``は``v*``、``npm-publish``は``wasm/v*``と
 ``textlint-plugin-asciidoc/v*``を許可します。
-Open VSXのtokenはrepository全体ではなく``open-vsx-publish`` environmentへ置きます。MarketplaceのTrusted Publisherには
-``vscode-publish.yml``、textlint packageのTrusted Publisherには``textlint-plugin-publish.yml``、
-WebAssemblyパッケージのTrusted Publisherには``wasm-publish.yml``を登録し、それぞれ前述のEnvironment名と
-対応させます。
+Open VSXのtokenはrepository全体ではなく``open-vsx-publish`` environmentへ置きます。
+``marketplace-publish`` environmentには``AZURE_CLIENT_ID``と``AZURE_TENANT_ID``を変数として登録します。
+textlint packageのTrusted Publisherには``textlint-plugin-publish.yml``、WebAssemblyパッケージのTrusted Publisherには
+``wasm-publish.yml``を登録し、それぞれ``npm-publish`` environmentと対応させます。
 
 repositoryへの書込み権限がある利用者による手元からのtag作成を、workflowだけで機械的に禁止することはできません。
 tag rulesetを追加せず、公開前検査によって権限を制限する理由は
