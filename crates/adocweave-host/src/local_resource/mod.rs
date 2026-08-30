@@ -790,6 +790,18 @@ impl LocalFilesystemSession {
             .map_err(ResourceError::from)
     }
 
+    /// Reads one absolute path while rejecting every symbolic link.
+    pub fn read_utf8_no_symlinks_outcome(
+        &mut self,
+        source_id: LogicalSourceId,
+        path: &Path,
+    ) -> Result<FilesystemReadOutcome, ResourceError> {
+        self.invalidate_active_draft();
+        self.mutation_cursor()
+            .read_utf8_no_symlinks(source_id, path)
+            .map_err(ResourceError::from)
+    }
+
     /// Resolves and reads one authored target relative to an absolute base.
     pub fn read_target_utf8(
         &mut self,
@@ -1164,6 +1176,25 @@ impl LocalFilesystemMutationCursor<'_> {
             },
         )
         .map_err(FilesystemBoundedReadError::into_established)
+    }
+
+    fn read_utf8_no_symlinks_with_limits(
+        &mut self,
+        source_id: LogicalSourceId,
+        path: &Path,
+        limits: FilesystemReadLimits,
+    ) -> Result<FilesystemReadOutcome, FilesystemBoundedReadError> {
+        self.read_utf8_with_disposition(
+            source_id,
+            path,
+            || {},
+            FilesystemReadOptions {
+                text_cache: LocalTargetTextCachePolicy::BYPASS,
+                follow_symlinks: false,
+                missing: MissingDisposition::ApplyNotFound,
+                additional_limits: Some(limits),
+            },
+        )
     }
 
     fn read_utf8_preserving_missing(
@@ -1930,6 +1961,31 @@ impl LocalFilesystemDraft {
         let result = self
             .mutation_cursor()
             .read_utf8_with_limits(source_id, path, limits);
+        match result {
+            Ok(outcome) => Ok(FilesystemLimitedReadOutcome::Read(outcome)),
+            Err(FilesystemBoundedReadError::AdditionalLimit) => {
+                Ok(FilesystemLimitedReadOutcome::AdditionalLimit)
+            }
+            Err(FilesystemBoundedReadError::Established(error)) if is_read_limit_error(&error) => {
+                Ok(FilesystemLimitedReadOutcome::EstablishedLimit(error))
+            }
+            Err(FilesystemBoundedReadError::Established(error)) => {
+                self.poisoned = true;
+                Err(error)
+            }
+        }
+    }
+
+    pub(crate) fn read_utf8_no_symlinks_within_limits(
+        &mut self,
+        source_id: LogicalSourceId,
+        path: &Path,
+        limits: FilesystemReadLimits,
+    ) -> Result<FilesystemLimitedReadOutcome, FilesystemDraftError> {
+        self.ensure_operation_can_start()?;
+        let result = self
+            .mutation_cursor()
+            .read_utf8_no_symlinks_with_limits(source_id, path, limits);
         match result {
             Ok(outcome) => Ok(FilesystemLimitedReadOutcome::Read(outcome)),
             Err(FilesystemBoundedReadError::AdditionalLimit) => {

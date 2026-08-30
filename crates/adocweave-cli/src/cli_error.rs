@@ -3,13 +3,11 @@
 use std::error::Error;
 use std::fmt;
 use std::io;
-use std::path::PathBuf;
 
-use adocweave::ParseError;
 use adocweave_host::ExitStatus;
 use adocweave_project::{ProjectLimit, ProjectResourceErrorCode, ProjectTargetError};
 
-use crate::{commands, local_include, preview};
+use crate::{commands, preview};
 
 #[derive(Debug)]
 pub(crate) enum CliError {
@@ -23,18 +21,13 @@ pub(crate) enum CliError {
     InvalidUtf8 {
         valid_up_to: usize,
     },
-    Analysis(ParseError),
     Position(adocweave::text::PositionError),
     OutputLimit {
         limit: u32,
         actual: u64,
     },
-    ResourceLimit(String),
-    Include(local_include::LocalIncludeError),
     FormattingRequired,
     Stylesheet(String),
-    Config(adocweave_config::ConfigError),
-    ConfigAuthority(PathBuf),
     Path(String),
     PartialWrite {
         files: usize,
@@ -65,7 +58,6 @@ impl fmt::Display for CliError {
                 formatter,
                 "input is not valid UTF-8 (invalid byte starts at offset {valid_up_to})"
             ),
-            Self::Analysis(source) => source.fmt(formatter),
             Self::Position(source) => source.fmt(formatter),
             Self::OutputLimit { limit, actual } => {
                 write!(
@@ -73,16 +65,8 @@ impl fmt::Display for CliError {
                     "output bytes limit exceeded (limit {limit}, actual {actual})"
                 )
             }
-            Self::ResourceLimit(message) => formatter.write_str(message),
-            Self::Include(source) => source.fmt(formatter),
             Self::FormattingRequired => formatter.write_str("document is not formatted"),
             Self::Stylesheet(message) => formatter.write_str(message),
-            Self::Config(source) => source.fmt(formatter),
-            Self::ConfigAuthority(path) => write!(
-                formatter,
-                "project configuration cannot grant access outside the workspace: {}",
-                path.display()
-            ),
             Self::Path(message) => formatter.write_str(message),
             Self::PartialWrite {
                 files,
@@ -161,10 +145,7 @@ impl Error for CliError {
         match self {
             Self::Arguments(source) => Some(source),
             Self::Read { source, .. } | Self::Write(source) => Some(source),
-            Self::Analysis(source) => Some(source),
             Self::Position(source) => Some(source),
-            Self::Include(source) => Some(source),
-            Self::Config(source) => Some(source),
             Self::Preview(source) => Some(source),
             Self::LanguageServer(source) => Some(source),
             Self::Project(source) => Some(source),
@@ -174,10 +155,8 @@ impl Error for CliError {
             | Self::Serialize(_)
             | Self::InvalidUtf8 { .. }
             | Self::OutputLimit { .. }
-            | Self::ResourceLimit(_)
             | Self::FormattingRequired
             | Self::Stylesheet(_)
-            | Self::ConfigAuthority(_)
             | Self::Path(_)
             | Self::PartialWrite { .. } => None,
         }
@@ -189,19 +168,14 @@ impl CliError {
     pub(crate) fn exit_status(&self) -> ExitStatus {
         match self {
             // What the caller asked for cannot be acted on as written.
-            Self::Arguments(_)
-            | Self::Usage(_)
-            | Self::Path(_)
-            | Self::Stylesheet(_)
-            | Self::ConfigAuthority(_) => ExitStatus::Usage,
+            Self::Arguments(_) | Self::Usage(_) | Self::Path(_) | Self::Stylesheet(_) => {
+                ExitStatus::Usage
+            }
             // A file, stream or resource could not be read or written. The input
             // may be fine; the surroundings were not.
-            Self::Read { .. }
-            | Self::Write(_)
-            | Self::Include(_)
-            | Self::Config(_)
-            | Self::PartialWrite { .. }
-            | Self::Preview(_) => ExitStatus::InputOutput,
+            Self::Read { .. } | Self::Write(_) | Self::PartialWrite { .. } | Self::Preview(_) => {
+                ExitStatus::InputOutput
+            }
             Self::LanguageServer(source) => source.exit_status(),
             Self::Project(adocweave_project::ProjectError::Config(_))
             | Self::Project(adocweave_project::ProjectError::Authority(_))
@@ -214,7 +188,6 @@ impl CliError {
             // A configured bound was reached, so the work stopped rather than
             // grew without limit.
             Self::OutputLimit { .. }
-            | Self::ResourceLimit(_)
             | Self::Project(adocweave_project::ProjectError::Limit(_))
             | Self::ProjectPrimary(adocweave_project::ProjectTargetError::Incomplete(_))
             | Self::ProjectTarget(adocweave_project::ProjectTargetError::Incomplete(_)) => {
@@ -224,7 +197,6 @@ impl CliError {
             // reports. Everything left describes the document or the analysis of
             // it, so it shares the status diagnostics use.
             Self::InvalidUtf8 { .. }
-            | Self::Analysis(_)
             | Self::Position(_)
             | Self::FormattingRequired
             | Self::Serialize(_)
@@ -263,20 +235,13 @@ pub(crate) fn format_error(error: commands::format::Error) -> CliError {
 
 pub(crate) fn preview_error(error: commands::preview::Error) -> CliError {
     match error {
-        commands::preview::Error::Analysis(source) => CliError::Analysis(source),
-        commands::preview::Error::Include(source) => CliError::Include(source),
-        commands::preview::Error::Html(source) => html_policy_error(source),
-        commands::preview::Error::Path(message) => CliError::Path(message),
+        commands::preview::Error::Input(message) => CliError::Path(message),
         commands::preview::Error::Server(source) => CliError::Preview(source),
     }
 }
 
 pub(crate) fn html_policy_error(error: commands::html_policy::Error) -> CliError {
     match error {
-        commands::html_policy::Error::Cancelled => CliError::Analysis(ParseError::Cancelled),
-        commands::html_policy::Error::InvalidUtf8 { valid_up_to } => {
-            CliError::InvalidUtf8 { valid_up_to }
-        }
         commands::html_policy::Error::Read {
             source_name,
             source,

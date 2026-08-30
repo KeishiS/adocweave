@@ -76,6 +76,20 @@ fn preview_get(address: std::net::SocketAddr, path: &str) -> String {
 }
 
 #[cfg(unix)]
+fn preview_wait_contains(address: std::net::SocketAddr, path: &str, expected: &str) -> String {
+    use std::time::Duration;
+
+    for _ in 0..300 {
+        let response = preview_get(address, path);
+        if response.contains(expected) {
+            return response;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    panic!("preview response at {path} did not contain {expected:?}");
+}
+
+#[cfg(unix)]
 fn stop_preview(child: &mut std::process::Child) {
     use std::os::unix::process::ExitStatusExt;
 
@@ -651,6 +665,96 @@ fn preview_never_serves_an_include_through_an_outside_root_symlink() {
 
 #[cfg(unix)]
 #[test]
+fn preview_rebuilds_when_an_existing_include_symlink_is_retargeted() {
+    use std::os::unix::fs::symlink;
+    use std::time::Duration;
+
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(root.path().join("document.adoc"), "include::alias.adoc[]\n").expect("document");
+    std::fs::write(root.path().join("first.adoc"), "FIRST_BODY\n").expect("first include");
+    std::fs::write(root.path().join("second.adoc"), "SECOND_BODY\n").expect("second include");
+    let alias = root.path().join("alias.adoc");
+    symlink("first.adoc", &alias).expect("initial include symlink");
+
+    let mut child = adocweave()
+        .current_dir(root.path())
+        .args([
+            "preview",
+            "--include",
+            "--debounce-ms",
+            "10",
+            "--port",
+            "0",
+            "document.adoc",
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("preview");
+    let address = preview_address(child.stderr.as_mut().expect("preview stderr"));
+    assert!(preview_get(address, "/document").contains("FIRST_BODY"));
+
+    std::fs::remove_file(&alias).expect("remove initial symlink");
+    symlink("second.adoc", &alias).expect("retarget include symlink");
+    for _ in 0..200 {
+        let response = preview_get(address, "/document");
+        if response.contains("SECOND_BODY") {
+            assert!(!response.contains("FIRST_BODY"));
+            stop_preview(&mut child);
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    stop_preview(&mut child);
+    panic!("preview did not rebuild after retargeting the include symlink");
+}
+
+#[cfg(unix)]
+#[test]
+fn preview_recovers_after_a_symlinked_primary_is_replaced_with_a_file() {
+    use std::os::unix::fs::symlink;
+    use std::time::Duration;
+
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(root.path().join("real.adoc"), "SYMLINKED_BODY\n").expect("real document");
+    let document = root.path().join("document.adoc");
+    symlink("real.adoc", &document).expect("document symlink");
+
+    let mut child = adocweave()
+        .current_dir(root.path())
+        .args([
+            "preview",
+            "--debounce-ms",
+            "10",
+            "--port",
+            "0",
+            "document.adoc",
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("preview");
+    let address = preview_address(child.stderr.as_mut().expect("preview stderr"));
+    let initial = preview_get(address, "/document");
+    assert!(initial.contains("Preview error"));
+    assert!(!initial.contains("SYMLINKED_BODY"));
+
+    std::fs::remove_file(&document).expect("remove document symlink");
+    std::fs::write(&document, "RECOVERED_BODY\n").expect("replacement document");
+    for _ in 0..200 {
+        let response = preview_get(address, "/document");
+        if response.contains("RECOVERED_BODY") {
+            stop_preview(&mut child);
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    stop_preview(&mut child);
+    panic!("preview did not recover after replacing the primary symlink");
+}
+
+#[cfg(unix)]
+#[test]
 fn preview_non_privileged_child_recovers_after_include_permission_returns() {
     use std::os::unix::fs::PermissionsExt;
     use std::os::unix::process::CommandExt;
@@ -802,7 +906,8 @@ fn preview_serves_and_recovers_from_an_initial_include_read_failure() {
         .expect("preview");
     let address = preview_address(child.stderr.as_mut().expect("preview stderr"));
 
-    assert!(preview_get(address, "/diagnostics").contains("missing"));
+    let diagnostics = preview_get(address, "/diagnostics");
+    assert!(diagnostics.contains("part.adoc"), "{diagnostics}");
     assert!(child.try_wait().expect("child state").is_none());
     std::fs::write(&include, "RECOVERED_INCLUDE\n").expect("create include");
     for _ in 0..200 {
@@ -814,6 +919,145 @@ fn preview_serves_and_recovers_from_an_initial_include_read_failure() {
     }
     stop_preview(&mut child);
     panic!("preview did not recover after the include became readable");
+}
+
+#[cfg(unix)]
+#[test]
+fn preview_recovers_after_an_invalid_configuration_is_fixed() {
+    let root = tempfile::tempdir().expect("root");
+    let config = root.path().join(".adocweave.toml");
+    std::fs::write(&config, "not valid TOML = [\n").expect("invalid configuration");
+    std::fs::write(root.path().join("document.adoc"), "= RECOVERED_CONFIG\n").expect("document");
+    let mut child = adocweave()
+        .current_dir(root.path())
+        .args([
+            "preview",
+            "--debounce-ms",
+            "10",
+            "--port",
+            "0",
+            "document.adoc",
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("preview");
+    let address = preview_address(child.stderr.as_mut().expect("preview stderr"));
+
+    assert!(preview_get(address, "/document").contains("Preview error"));
+    std::fs::write(&config, "schema-version = 2\n").expect("fixed configuration");
+    preview_wait_contains(address, "/document", "RECOVERED_CONFIG");
+
+    stop_preview(&mut child);
+}
+
+#[cfg(unix)]
+#[test]
+fn preview_recovers_after_a_configured_stylesheet_is_created() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(
+        root.path().join(".adocweave.toml"),
+        "schema-version = 2\n[html]\nstylesheet-files = [\"theme.css\"]\n",
+    )
+    .expect("configuration");
+    std::fs::write(root.path().join("document.adoc"), "= Preview\n").expect("document");
+    let stylesheet = root.path().join("theme.css");
+    let mut child = adocweave()
+        .current_dir(root.path())
+        .args([
+            "preview",
+            "--debounce-ms",
+            "10",
+            "--port",
+            "0",
+            "document.adoc",
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("preview");
+    let address = preview_address(child.stderr.as_mut().expect("preview stderr"));
+
+    assert!(preview_get(address, "/document").contains("Preview error"));
+    std::fs::write(&stylesheet, "body { color: rebeccapurple; }\n").expect("stylesheet");
+    preview_wait_contains(address, "/document", "rebeccapurple");
+
+    stop_preview(&mut child);
+}
+
+#[cfg(unix)]
+#[test]
+fn preview_reloads_configuration_changes() {
+    let root = tempfile::tempdir().expect("root");
+    let config = root.path().join(".adocweave.toml");
+    std::fs::write(
+        &config,
+        "schema-version = 2\n[html]\nstylesheet-urls = [\"https://one.example/theme.css\"]\n",
+    )
+    .expect("configuration");
+    std::fs::write(root.path().join("document.adoc"), "= Preview\n").expect("document");
+    let mut child = adocweave()
+        .current_dir(root.path())
+        .args([
+            "preview",
+            "--debounce-ms",
+            "10",
+            "--port",
+            "0",
+            "document.adoc",
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("preview");
+    let address = preview_address(child.stderr.as_mut().expect("preview stderr"));
+
+    assert!(preview_get(address, "/document").contains("one.example"));
+    std::fs::write(
+        &config,
+        "schema-version = 2\n[html]\nstylesheet-urls = [\"https://two.example/theme.css\"]\n",
+    )
+    .expect("updated configuration");
+    let response = preview_wait_contains(address, "/document", "two.example");
+    assert!(!response.contains("one.example"));
+
+    stop_preview(&mut child);
+}
+
+#[cfg(unix)]
+#[test]
+fn preview_recovers_after_a_document_exceeds_then_returns_under_its_limit() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(
+        root.path().join(".adocweave.toml"),
+        "schema-version = 2\n[resources]\nmax-files = 8\nmax-total-bytes = 4096\nmax-resource-bytes = 128\n",
+    )
+    .expect("configuration");
+    let document = root.path().join("document.adoc");
+    std::fs::write(&document, "= BEFORE_LIMIT\n").expect("document");
+    let mut child = adocweave()
+        .current_dir(root.path())
+        .args([
+            "preview",
+            "--debounce-ms",
+            "10",
+            "--port",
+            "0",
+            "document.adoc",
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("preview");
+    let address = preview_address(child.stderr.as_mut().expect("preview stderr"));
+
+    assert!(preview_get(address, "/document").contains("BEFORE_LIMIT"));
+    std::fs::write(&document, "x".repeat(256)).expect("oversized document");
+    preview_wait_contains(address, "/document", "Preview error");
+    std::fs::write(&document, "= AFTER_LIMIT\n").expect("recovered document");
+    preview_wait_contains(address, "/document", "AFTER_LIMIT");
+
+    stop_preview(&mut child);
 }
 
 #[test]

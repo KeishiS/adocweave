@@ -144,6 +144,84 @@ stylesheet-files = ["styles/manual.css"]
 }
 
 #[test]
+fn invalid_configuration_reports_the_selected_safe_observation() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    let config = root.join(".adocweave.toml");
+    write(&config, "not valid TOML = [\n");
+    write(root.join("guide.adoc"), "text\n");
+
+    let error = process(request(
+        root,
+        vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
+    ))
+    .expect_err("configuration is invalid");
+
+    assert_eq!(
+        error
+            .repair_candidate()
+            .map(|candidate| candidate.path.as_path()),
+        Some(config.as_path())
+    );
+    assert!(matches!(
+        error,
+        ProjectError::Config(ref config_error)
+            if config_error.path == config
+    ));
+}
+
+#[test]
+fn invalid_configuration_keeps_the_observation_from_the_failed_request() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    let config = root.join(".adocweave.toml");
+    let invalid = "not valid TOML = [\n";
+    write(&config, invalid);
+    write(root.join("guide.adoc"), "text\n");
+    let authority = ProjectAuthority::open(root, [root.to_owned()]).expect("project authority");
+    let mut request = request(root, vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))]);
+    request.authority = authority.clone();
+
+    let error = process(request).expect_err("configuration is invalid");
+    let candidate = error.repair_candidate().expect("repair candidate").clone();
+    assert_eq!(
+        candidate.observation,
+        adocweave_project::ProjectResourceObservation::from_bytes(invalid.as_bytes())
+    );
+
+    write(&config, "schema-version = 2\n");
+    let mut observation = authority
+        .observation_access()
+        .session()
+        .expect("observation session");
+    assert_ne!(
+        observation.observe(&candidate.path, candidate.kind),
+        candidate.observation
+    );
+}
+
+#[test]
+fn existence_observation_does_not_read_a_large_local_target_body() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    let asset = root.join("large.bin");
+    fs::File::create(&asset)
+        .expect("large asset")
+        .set_len(11 * 1024 * 1024)
+        .expect("large asset length");
+    let authority = ProjectAuthority::open(root, [root.to_owned()]).expect("project authority");
+    let mut observation = authority
+        .observation_access()
+        .session()
+        .expect("observation session");
+
+    assert_eq!(
+        observation.observe(&asset, adocweave_project::ProjectObservationKind::Existence),
+        adocweave_project::ProjectResourceObservation::present()
+    );
+}
+
+#[test]
 fn unselected_local_targets_do_not_expand_the_include_roots() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let root = directory.path();
@@ -225,7 +303,11 @@ fn missing_primary_is_confined_to_one_target() {
     ));
     assert!(result.targets[0].resources.iter().any(|resource| {
         resource.outcome == ProjectResourceOutcome::Missing
-            && resource.watch_path.as_deref() == Some(missing.as_path())
+            && resource
+                .observation
+                .as_ref()
+                .map(|value| value.path.as_path())
+                == Some(missing.as_path())
     }));
 }
 
@@ -281,14 +363,24 @@ fn symlinked_include_is_rejected() {
     let result = process(request).expect("request remains coherent");
     let target = &result.targets[0];
     assert!(target.outcome.is_err());
-    assert!(target.resources.iter().any(|resource| {
-        resource.kind == ProjectResourceKind::Include
-            && matches!(
-                resource.outcome,
-                ProjectResourceOutcome::Failed(ProjectResourceFailure::Rejected(_))
-            )
-            && resource.watch_path.is_none()
-    }));
+    let include = target
+        .resources
+        .iter()
+        .find(|resource| resource.kind == ProjectResourceKind::Include)
+        .expect("rejected include");
+    assert!(matches!(
+        include.outcome,
+        ProjectResourceOutcome::Failed(ProjectResourceFailure::Rejected(_))
+    ));
+    let observation = include
+        .observation
+        .as_ref()
+        .expect("safe repair observation");
+    assert_eq!(observation.path, directory.path().join("linked.adoc"));
+    assert_eq!(
+        observation.kind,
+        adocweave_project::ProjectObservationKind::Contents
+    );
 }
 
 #[test]
@@ -773,7 +865,7 @@ fn per_resource_scope_limit_bounds_io_and_reports_its_own_ceiling() {
             ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(
                 ProjectLimit::ResourceBytes { limit: 4 }
             ))
-        ) && resource.watch_path.is_none()
+        ) && resource.observation.is_none()
     }));
     assert_eq!(result.usage.read_bytes, config.len() as u64 + 5);
 }
@@ -1302,7 +1394,10 @@ fn invalid_utf8_primary_is_reported_as_unreadable() {
         ProjectResourceOutcome::Failed(ProjectResourceFailure::Unreadable(_))
     ));
     assert_eq!(
-        result.targets[0].resources[0].watch_path.as_deref(),
+        result.targets[0].resources[0]
+            .observation
+            .as_ref()
+            .map(|value| value.path.as_path()),
         Some(bad.as_path())
     );
 }
@@ -1330,7 +1425,13 @@ fn invalid_utf8_include_is_reported_as_watchable_unreadable_input() {
         include.outcome,
         ProjectResourceOutcome::Failed(ProjectResourceFailure::Unreadable(_))
     ));
-    assert_eq!(include.watch_path.as_deref(), Some(bad.as_path()));
+    assert_eq!(
+        include
+            .observation
+            .as_ref()
+            .map(|value| value.path.as_path()),
+        Some(bad.as_path())
+    );
 }
 
 #[test]
@@ -1423,11 +1524,19 @@ fn external_config_authority_does_not_grant_its_include_stylesheet_or_local_path
             [project.path().to_owned(), external.path().to_owned()],
             vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
         );
-        request.config = ConfigSelection::Explicit(config);
+        request.config = ConfigSelection::Explicit(config.clone());
         let result = process(request);
         assert!(
-            matches!(result, Err(adocweave_project::ProjectError::Authority(_))),
+            matches!(&result, Err(adocweave_project::ProjectError::Authority(_))),
             "external configuration path must not grant {name} resources"
+        );
+        assert_eq!(
+            result
+                .expect_err("authority failure")
+                .repair_candidate()
+                .map(|candidate| candidate.path.as_path()),
+            Some(config.as_path()),
+            "the safely acquired configuration must remain repairable"
         );
     }
 }
@@ -1489,6 +1598,41 @@ fn explicit_symlinked_config_is_rejected() {
     );
     request.config = ConfigSelection::Explicit(PathBuf::from("linked.toml"));
     assert!(process(request).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn no_symlink_path_target_rejects_an_explicit_symbolic_link() {
+    use std::os::unix::fs::symlink;
+
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    write(root.join("real.adoc"), "REAL\n");
+    symlink("real.adoc", root.join("link.adoc")).expect("symbolic link");
+
+    let result = process(request(
+        root,
+        vec![ProjectTarget::PathNoSymlinks(PathBuf::from("link.adoc"))],
+    ))
+    .expect("project result");
+    let target = result.targets.first().expect("selected target");
+
+    assert!(matches!(target.outcome, Err(ProjectTargetError::Read(_))));
+    assert_eq!(target.resources.len(), 1);
+    assert_eq!(target.resources[0].kind, ProjectResourceKind::Primary);
+    let observation = target.resources[0]
+        .observation
+        .as_ref()
+        .expect("safe repair observation");
+    assert_eq!(observation.path, root.join("link.adoc"));
+    assert_eq!(
+        observation.kind,
+        adocweave_project::ProjectObservationKind::ContentsNoSymlinks
+    );
+    assert!(matches!(
+        target.resources[0].outcome,
+        ProjectResourceOutcome::Failed(ProjectResourceFailure::Rejected(_))
+    ));
 }
 
 #[cfg(unix)]
@@ -1870,12 +2014,39 @@ fn stylesheet_and_local_target_symlinks_are_retained_as_failures() {
     ))
     .expect("request remains coherent");
     let resources = &result.targets[0].resources;
-    for kind in [
-        ProjectResourceKind::Stylesheet,
-        ProjectResourceKind::LocalTarget,
-    ] {
-        assert!(resources.iter().any(|resource| {
-            resource.kind == kind && matches!(resource.outcome, ProjectResourceOutcome::Failed(_))
-        }));
-    }
+    let stylesheet = resources
+        .iter()
+        .find(|resource| resource.kind == ProjectResourceKind::Stylesheet)
+        .expect("stylesheet failure");
+    assert!(matches!(
+        stylesheet.outcome,
+        ProjectResourceOutcome::Failed(_)
+    ));
+    let stylesheet_observation = stylesheet
+        .observation
+        .as_ref()
+        .expect("stylesheet repair observation");
+    assert_eq!(stylesheet_observation.path, root.join("style.css"));
+    assert_eq!(
+        stylesheet_observation.kind,
+        adocweave_project::ProjectObservationKind::Contents
+    );
+
+    let local_target = resources
+        .iter()
+        .find(|resource| resource.kind == ProjectResourceKind::LocalTarget)
+        .expect("local target failure");
+    assert!(matches!(
+        local_target.outcome,
+        ProjectResourceOutcome::Failed(_)
+    ));
+    let local_target_observation = local_target
+        .observation
+        .as_ref()
+        .expect("local target repair observation");
+    assert_eq!(local_target_observation.path, root.join("asset.dat"));
+    assert_eq!(
+        local_target_observation.kind,
+        adocweave_project::ProjectObservationKind::Existence
+    );
 }

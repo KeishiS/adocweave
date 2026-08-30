@@ -1,39 +1,6 @@
 //! Explicit filesystem validation for typed local targets.
 
 use adocweave::text::{PositionEncoding, SourceDocument};
-#[cfg(test)]
-use adocweave_host::{
-    IncludeFilesystem, IncludeFilesystemInspectionOutcome, IncludeFilesystemRequest,
-    LocalFilesystemSession, LocalTargetError, LogicalSourceId, ResourceError,
-};
-#[cfg(test)]
-use std::path::Path;
-
-#[cfg(test)]
-pub(crate) fn inspect_with_session(
-    source_id: &str,
-    authority: &Path,
-    base: &Path,
-    target: &str,
-    session: &mut LocalFilesystemSession,
-) -> Result<(), LocalTargetError> {
-    let source = LogicalSourceId::new(source_id.to_owned())
-        .map_err(|error| LocalTargetError::Unverifiable(error.to_string()))?;
-    match IncludeFilesystem::new().inspect_within(
-        session,
-        authority,
-        IncludeFilesystemRequest::new(source, base, target),
-    ) {
-        IncludeFilesystemInspectionOutcome::Found(_) => Ok(()),
-        IncludeFilesystemInspectionOutcome::NotFound(missing) => Err(LocalTargetError::Missing(
-            missing.watch_candidate().path().to_owned(),
-        )),
-        IncludeFilesystemInspectionOutcome::Failed(failed) => Err(
-            crate::local_include::include_target_error(ResourceError::from(failed.error().clone())),
-        ),
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct HostDiagnostic {
     pub code: String,
