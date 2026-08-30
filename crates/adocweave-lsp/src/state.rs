@@ -69,6 +69,11 @@ impl ProjectSourceIndex {
             .values()
             .filter_map(|source| Some((source.uri.as_str(), source.version?, source.generation?)))
     }
+
+    pub fn retain(&mut self, source_ids: &BTreeSet<SourceId>) {
+        self.by_id
+            .retain(|source_id, _| source_ids.contains(source_id));
+    }
 }
 
 #[derive(Clone, Debug)]

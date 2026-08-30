@@ -1102,6 +1102,26 @@ impl Session {
         if !self.analysis_snapshot_is_current(&completion.snapshot) {
             return ProjectAnalysisAction::Ignore;
         }
+        // A successful result names every primary and resource it actually
+        // observed. Request-wide failures do not carry that complete list, so
+        // they conservatively keep and revalidate every captured overlay.
+        if let ProjectAnalysisOutcome::Processed(Ok(result)) = &completion.outcome {
+            let referenced_sources = result
+                .targets
+                .iter()
+                .map(|target| &target.source_id)
+                .chain(result.resources.iter().map(|resource| &resource.source_id))
+                .chain(
+                    result
+                        .targets
+                        .iter()
+                        .flat_map(|target| &target.resources)
+                        .map(|resource| &resource.source_id),
+                )
+                .cloned()
+                .collect();
+            completion.source_index.retain(&referenced_sources);
+        }
         if !self.project_sources_are_current(&completion.source_index) {
             return self.retry_completion(&completion.snapshot);
         }

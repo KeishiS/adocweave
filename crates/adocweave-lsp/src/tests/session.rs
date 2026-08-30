@@ -74,7 +74,7 @@ fn one_project_request_captures_primary_and_open_include_overlays() {
 }
 
 #[test]
-fn changed_overlay_retries_a_completed_project_before_adoption() {
+fn changed_include_overlay_retries_project_processing() {
     let mut session = Session::default();
     initialize(&mut session, &["utf-16"]);
     open(&mut session, "file:///book/part.adoc", 1, "old overlay\n");
@@ -84,18 +84,11 @@ fn changed_overlay_retries_a_completed_project_before_adoption() {
                 "uri": "file:///book/root.adoc",
                 "languageId": "asciidoc",
                 "version": 1,
-                "text": "= Root\n"
+                "text": "include::part.adoc[]\n"
             }
         })))
         .pop()
         .expect("root analysis");
-    let completed = process_project_snapshot(root);
-    let crate::service::ProjectAnalysisAction::Validate(completed) =
-        session.project_processing_completed(completed)
-    else {
-        panic!("completed project must wait for observation validation");
-    };
-
     let overlay_jobs = session
         .begin_change(typed(json!({
             "textDocument": {"uri": "file:///book/part.adoc", "version": 2},
@@ -105,9 +98,9 @@ fn changed_overlay_retries_a_completed_project_before_adoption() {
     assert_eq!(overlay_jobs.len(), 1);
 
     let crate::service::ProjectAnalysisAction::Retry(retry) =
-        session.complete_analysis(validate(*completed))
+        session.project_processing_completed(process_project_snapshot(root))
     else {
-        panic!("changed overlay must retry the completed root analysis");
+        panic!("an include changed during processing must retry the root analysis");
     };
     let request = &retry
         .prepared_request
@@ -129,7 +122,7 @@ fn changed_overlay_retries_a_completed_project_before_adoption() {
 }
 
 #[test]
-fn closed_overlay_retries_a_completed_project_before_adoption() {
+fn closed_include_overlay_retries_project_processing() {
     let mut session = Session::default();
     initialize(&mut session, &["utf-16"]);
     let overlay_uri = uri("file:///book/part.adoc");
@@ -140,23 +133,16 @@ fn closed_overlay_retries_a_completed_project_before_adoption() {
                 "uri": "file:///book/root.adoc",
                 "languageId": "asciidoc",
                 "version": 1,
-                "text": "= Root\n"
+                "text": "include::part.adoc[]\n"
             }
         })))
         .pop()
         .expect("root analysis");
-    let completed = process_project_snapshot(root);
-    let crate::service::ProjectAnalysisAction::Validate(completed) =
-        session.project_processing_completed(completed)
-    else {
-        panic!("completed project must wait for observation validation");
-    };
-
     assert!(session.close(&overlay_uri).closed);
     let crate::service::ProjectAnalysisAction::Retry(retry) =
-        session.complete_analysis(validate(*completed))
+        session.project_processing_completed(process_project_snapshot(root))
     else {
-        panic!("closed overlay must retry the completed root analysis");
+        panic!("an include closed during processing must retry the root analysis");
     };
     assert_eq!(
         retry
@@ -174,6 +160,122 @@ fn closed_overlay_retries_a_completed_project_before_adoption() {
             .snapshot("file:///book/root.adoc")
             .is_none()
     );
+}
+
+#[test]
+fn changed_include_overlay_retries_while_observations_are_validated() {
+    let mut session = Session::default();
+    initialize(&mut session, &["utf-16"]);
+    open(&mut session, "file:///book/part.adoc", 1, "old overlay\n");
+    let root = session
+        .begin_open(typed(json!({
+            "textDocument": {
+                "uri": "file:///book/root.adoc",
+                "languageId": "asciidoc",
+                "version": 1,
+                "text": "include::part.adoc[]\n"
+            }
+        })))
+        .pop()
+        .expect("root analysis");
+    let completed = process_project_snapshot(root);
+    let crate::service::ProjectAnalysisAction::Validate(completed) =
+        session.project_processing_completed(completed)
+    else {
+        panic!("completed project must wait for observation validation");
+    };
+
+    let jobs = session
+        .begin_change(typed(json!({
+            "textDocument": {"uri": "file:///book/part.adoc", "version": 2},
+            "contentChanges": [{"text": "new overlay\n"}]
+        })))
+        .expect("overlay change");
+    assert!(jobs.iter().any(|job| job.uri == "file:///book/root.adoc"));
+    assert!(matches!(
+        session.complete_analysis(validate(*completed)),
+        crate::service::ProjectAnalysisAction::Ignore
+    ));
+}
+
+#[test]
+fn closed_include_overlay_retries_while_observations_are_validated() {
+    let mut session = Session::default();
+    initialize(&mut session, &["utf-16"]);
+    let overlay_uri = uri("file:///book/part.adoc");
+    open(&mut session, overlay_uri.as_str(), 1, "overlay\n");
+    let root = session
+        .begin_open(typed(json!({
+            "textDocument": {
+                "uri": "file:///book/root.adoc",
+                "languageId": "asciidoc",
+                "version": 1,
+                "text": "include::part.adoc[]\n"
+            }
+        })))
+        .pop()
+        .expect("root analysis");
+    let completed = process_project_snapshot(root);
+    let crate::service::ProjectAnalysisAction::Validate(completed) =
+        session.project_processing_completed(completed)
+    else {
+        panic!("completed project must wait for observation validation");
+    };
+
+    let closed = session.close(&overlay_uri);
+    assert!(closed.closed);
+    assert!(
+        closed
+            .reanalysis_jobs
+            .iter()
+            .any(|job| job.uri == "file:///book/root.adoc")
+    );
+    assert!(matches!(
+        session.complete_analysis(validate(*completed)),
+        crate::service::ProjectAnalysisAction::Ignore
+    ));
+}
+
+#[test]
+fn changed_unreferenced_overlay_is_not_retried_or_retained() {
+    let mut session = Session::default();
+    initialize(&mut session, &["utf-16"]);
+    let overlay_uri = "file:///book/part.adoc";
+    open(&mut session, overlay_uri, 1, "old overlay\n");
+    let root = session
+        .begin_open(typed(json!({
+            "textDocument": {
+                "uri": "file:///book/root.adoc",
+                "languageId": "asciidoc",
+                "version": 1,
+                "text": "= Root\n"
+            }
+        })))
+        .pop()
+        .expect("root analysis");
+    session
+        .begin_change(typed(json!({
+            "textDocument": {"uri": overlay_uri, "version": 2},
+            "contentChanges": [{"text": "new overlay\n"}]
+        })))
+        .expect("overlay change");
+
+    let crate::service::ProjectAnalysisAction::Validate(completed) =
+        session.project_processing_completed(process_project_snapshot(root))
+    else {
+        panic!("an unreferenced overlay change must not retry the root analysis");
+    };
+    assert!(matches!(
+        session.complete_analysis(validate(*completed)),
+        crate::service::ProjectAnalysisAction::Publish { .. }
+    ));
+    let sources = &session
+        .documents
+        .get("file:///book/root.adoc")
+        .and_then(|document| document.view.as_ref())
+        .expect("adopted root analysis")
+        .sources;
+    assert!(sources.source_for_uri(overlay_uri).is_none());
 }
 
 #[test]
