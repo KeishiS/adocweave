@@ -8,11 +8,11 @@ import {
   validatePermissions,
   validatePinnedActions,
   validateReleaseFlow,
-  validateReleaseVersionCommands,
+  validateNativeVersionCommands,
   validateTextlintPluginPublication,
   validateVscodePublication,
   validateWasmPublication,
-} from "./release-workflow-policy.mjs";
+} from "./workflow-policy-library.mjs";
 
 const pin = "actions/checkout@0000000000000000000000000000000000000000";
 const publicationTag = "${{ inputs.tag }}";
@@ -717,15 +717,15 @@ test("WebAssembly packageは専用tagから構築してnpmへ直接公開する"
   );
 });
 
-test("release guideは単一versionの--checkと--versionだけを使う", () => {
-  validateReleaseVersionCommands(`
-node tools/sync-release-version.mjs --version X.Y.Z
-node tools/sync-release-version.mjs --check
+test("release guideはnative版の--checkと--versionだけを使う", () => {
+  validateNativeVersionCommands(`
+node tools/native-release-version.mjs --version X.Y.Z
+node tools/native-release-version.mjs --check
 `);
   assert.throws(
-    () => validateReleaseVersionCommands(
-      "node tools/sync-release-version.mjs --product cli --version X.Y.Z",
+    () => validateNativeVersionCommands(
+      "node tools/native-release-version.mjs --product cli --version X.Y.Z",
     ),
-    /使用方法/,
+    /usage:/,
   );
 });

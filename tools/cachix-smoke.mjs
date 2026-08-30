@@ -5,7 +5,7 @@ import {
   createNativeSmokeDeadline,
   smokeLsp,
 } from "./native-lsp-smoke.mjs";
-import { workspaceVersion } from "./release-version.mjs";
+import { workspaceVersion } from "./native-release-version.mjs";
 
 export async function verifyCachixPackage(
   binary,

@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { parseReleaseVersionArguments } from "./sync-release-version.mjs";
+import { parseNativeVersionArguments } from "./native-release-version.mjs";
 
 // actionlint checks workflow syntax. This policy checks repository-specific
 // trust boundaries that generated cargo-dist YAML cannot express by itself.
@@ -735,11 +735,11 @@ export function validateVscodePublication(workflows) {
   }
 }
 
-export function validateReleaseVersionCommands(source) {
-  const invocations = [...source.matchAll(/node tools\/sync-release-version\.mjs ([^\n]+)/g)]
+export function validateNativeVersionCommands(source) {
+  const invocations = [...source.matchAll(/node tools\/native-release-version\.mjs ([^\n]+)/g)]
     .map((match) => match[1].trim().split(/\s+/));
-  if (invocations.length === 0) fail("release guide must show sync-release-version commands");
-  for (const arguments_ of invocations) parseReleaseVersionArguments(arguments_);
+  if (invocations.length === 0) fail("release guide must show native-release-version commands");
+  for (const arguments_ of invocations) parseNativeVersionArguments(arguments_);
   if (!invocations.some((arguments_) => arguments_[0] === "--check") ||
       !invocations.some((arguments_) => arguments_[0] === "--version")) {
     fail("release guide must show both --check and --version");
@@ -760,37 +760,4 @@ export function loadWorkflowPolicyInputs() {
       Object.entries(sources).map(([name, source]) => [name, parseWorkflow(name, source)]),
     ),
   };
-}
-
-export function validateReleaseWorkflowPolicy({
-  workflows,
-  distConfiguration,
-  releaseGuide,
-  textlintNpmSmoke,
-  wasmNpmSmoke,
-}) {
-  validatePinnedActions(workflows);
-  validatePermissions(workflows);
-  validateReleaseFlow(workflows, distConfiguration);
-  validateCiGates(workflows);
-  validateExternalPublicationIsolation(workflows);
-  validateCachixPublication(workflows);
-  validateTextlintPluginPublication(workflows, textlintNpmSmoke);
-  validateWasmPublication(workflows, wasmNpmSmoke);
-  validateVscodePublication(workflows);
-  validateReleaseVersionCommands(releaseGuide);
-}
-
-export function main() {
-  validateReleaseWorkflowPolicy(loadWorkflowPolicyInputs());
-  process.stdout.write("release workflow policy verified\n");
-}
-
-if (process.argv[1] && import.meta.url === new URL(process.argv[1], "file:").href) {
-  try {
-    main();
-  } catch (error) {
-    process.stderr.write(`${error.message}\n`);
-    process.exitCode = 1;
-  }
 }

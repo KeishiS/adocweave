@@ -273,23 +273,23 @@ release作業も通常の変更と同様に、短命なブランチとpull reque
 xref:docs/developer-guide/zed-development.adoc#zed-registry-submission[公式レジストリへの提出]に従います。
 
 . ネイティブ版の変更について、互換性および利用者への影響に応じたSemantic Versioningのバージョンを決めます。
-  続いて、workspace版と登録済みのmanifestを一括更新します。WebAssemblyパッケージ、textlint用Processorおよび
+  続いて、Cargo workspaceの版、native用lockfileおよびrootのChangelogにある版を更新します。WebAssemblyパッケージ、textlint用Processorおよび
   VS Code拡張、Zed拡張の版は更新しません。
 +
 [source,console]
 ----
-node tools/sync-release-version.mjs --version X.Y.Z
+node tools/native-release-version.mjs --version X.Y.Z
 ----
 +
-このtoolはlink:release/version-sync.json[バージョン同期対象]に明示したmanifestとlockfileだけを
-更新します。更新前に部分的なバージョン変更を検出した場合は、ファイルを書き換えず停止します。
+このtoolはnative版が持つ``Cargo.toml``、``Cargo.lock``、``fuzz/Cargo.lock``およびrootの``CHANGELOG.md``だけを
+更新します。npmパッケージとエディタ拡張のmanifestは、それぞれを公開するときに所有先で更新します。
 . rootの``CHANGELOG.md``の先頭へネイティブ対象版の項目を追加します。利用者から見える変更、移行手順およびRustの公開APIに
   互換性のない変更がある場合は、その内容を記載します。必要な仕様文書とテスト用入力も更新してから、
-  登録したmanifestのversionがworkspace版と一致することを検査します。
+  native用lockfileとChangelogの版がworkspace版と一致することを検査します。
 +
 [source,console]
 ----
-node tools/sync-release-version.mjs --check
+node tools/native-release-version.mjs --check
 ----
 . ``cargo make release-check``を実行し、pull requestの必須checkが成功したことを確認して``main``へ統合します。
 . release対象のPull Requestをすべて統合し、公開対象が``main``の先端であることと、そのcommitに対するrelease gateの
@@ -313,7 +313,7 @@ rootの``CHANGELOG.md``へ記載します。利用者の作業が必要な場合
 ある場合は``Rust API``へ記載します。
 前の版と比較していない仕様を「変更していません」と機械生成しません。
 
-``tools/sync-release-version.mjs``は``release/version-sync.json``に登録したfileだけを変更します。
+``tools/native-release-version.mjs``はnative版の固定された4ファイルだけを変更します。
 rootの``CHANGELOG.md``の本文と日付は人が確認します。cargo-distは対象版の項目をGitHub Release Notesへ直接取り込むため、
 別のRelease Notes生成器は使用しません。
 

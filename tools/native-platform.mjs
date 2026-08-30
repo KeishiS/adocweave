@@ -42,7 +42,7 @@ export function nativeExecutableName(executableSuffix) {
   return `adocweave${executableSuffix}`;
 }
 
-export function targetPlatform(target) {
+export function nativeTargetPlatform(target) {
   const architecture = target.startsWith("aarch64-")
     ? "arm64"
     : target.startsWith("x86_64-") ? "x64" : undefined;
@@ -58,7 +58,7 @@ export function targetPlatform(target) {
 }
 
 export function nativeArtifactFromPlan(plan, target) {
-  const platform = targetPlatform(target);
+  const platform = nativeTargetPlatform(target);
   const releases = plan?.releases ?? [];
   if (releases.length !== 1 || releases[0]?.app_name !== "adocweave") {
     throw new Error("dist plan must contain exactly one adocweave release");
@@ -84,29 +84,13 @@ export function nativeArtifactFromPlan(plan, target) {
   return Object.freeze({ artifact, executable, platform });
 }
 
-export function requiredInstallationAssets(kind, target, version) {
-  const names = {
-    native: `adocweave-${target}.zip`,
-    wasm: `adocweave-wasm-${version}.tgz`,
-  };
-  if (!Object.hasOwn(names, kind)) throw new Error(`unsupported installation kind: ${kind}`);
-  return [names[kind]];
-}
-
-export function missingInstallationAssets(available, required) {
-  const names = new Set(available);
-  return required.filter((name) => !names.has(name));
-}
-
-export function installationLayout(prefix, version, pathApi) {
+export function nativeInstallationLayout(prefix, version, pathApi) {
   const nativeRoot = pathApi.join(prefix, "lib", "adocweave");
-  const shareRoot = pathApi.join(prefix, "share", "adocweave", version);
   return {
     binDirectory: pathApi.join(prefix, "bin"),
     versionRoot: pathApi.join(nativeRoot, version),
     currentLink: pathApi.join(nativeRoot, "current"),
     activeMarker: pathApi.join(nativeRoot, "active-version"),
-    wasmRoot: pathApi.join(shareRoot, "wasm"),
   };
 }
 

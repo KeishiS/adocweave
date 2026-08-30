@@ -42,13 +42,18 @@ link:../../editors/vscode/CHANGELOG.md[拡張のChangelog]に記録します。
 |RustとNode.jsの構築版
 |link:../../toolchains.json[toolchain manifest]
 
-|ネイティブ版と同じ版で公開する成果物の変更
+|ネイティブ版の変更
 |link:../../CHANGELOG.md[Changelog]。cargo-distが対応するバージョンの内容をGitHub Release本文へ取り込みます。
 |===
 
 成果物名、対象環境および個数はcargo-distの設定からplanへ導出します。独自の配布計画や配布manifestを
 別の正本として保守しません。公開処理はplanにない成果物や処理を追加せず、構築後は標準dist-manifestと
 実際のファイルを照合します。
+
+公開処理の正本は、native版が``release.yml``と``cachix-publish.yml``、WebAssemblyパッケージが
+``wasm-publish.yml``、textlint用Processorが``textlint-plugin-publish.yml``、VS Code拡張が
+``vscode-publish.yml``です。Zed拡張は公式レジストリへ``editors/zed``を提出します。各workflowは自身のtag、
+manifest、候補の検査、公開および公開後確認だけを扱います。
 
 [#distribution-boundary]
 == 配布単位
