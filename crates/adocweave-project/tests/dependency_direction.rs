@@ -1,23 +1,24 @@
 use std::collections::BTreeSet;
 
-fn direct_dependencies(manifest: &str) -> BTreeSet<&str> {
-    manifest
-        .split_once("[dependencies]\n")
-        .map(|(_, dependencies)| dependencies)
+fn direct_dependencies(manifest: &str) -> BTreeSet<String> {
+    toml::from_str::<toml::Table>(manifest)
+        .expect("valid Cargo manifest")
+        .get("dependencies")
+        .and_then(toml::Value::as_table)
+        .map(|dependencies| dependencies.keys().cloned().collect())
         .unwrap_or_default()
-        .split("\n[")
-        .next()
-        .unwrap_or_default()
-        .lines()
-        .filter_map(|line| line.split_once('=').map(|(name, _)| name.trim()))
-        .filter(|name| !name.is_empty())
-        .collect()
 }
 
 #[test]
 fn project_has_only_lower_level_crates_and_standard_glob_dependency() {
     let actual = direct_dependencies(include_str!("../Cargo.toml"));
-    let expected = BTreeSet::from(["adocweave", "glob", "serde", "sha2", "toml"]);
+    let expected = BTreeSet::from([
+        "adocweave".to_owned(),
+        "glob".to_owned(),
+        "serde".to_owned(),
+        "sha2".to_owned(),
+        "toml".to_owned(),
+    ]);
     assert_eq!(actual, expected);
 }
 

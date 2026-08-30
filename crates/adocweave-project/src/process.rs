@@ -3478,6 +3478,7 @@ fn observe_fixed(_: &FixedResource) {}
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "linux")]
     use std::collections::BTreeMap;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -3489,10 +3490,12 @@ mod tests {
     use adocweave::{NeverCancel, ParseError};
 
     use super::{
-        ExpandedAnalysisFailure, FIXED_OBSERVER, FixedInspection, FixedReadRequest, FixedResource,
-        RequestFilesystemUsage, cached_for_authority, cached_inspection_for_authority,
-        derive_confined_authority, map_prepared_error, map_projection_failure, read_fixed_from,
+        ExpandedAnalysisFailure, FIXED_OBSERVER, FixedInspection, FixedResource,
+        cached_for_authority, cached_inspection_for_authority, derive_confined_authority,
+        map_prepared_error, map_projection_failure,
     };
+    #[cfg(target_os = "linux")]
+    use super::{FixedReadRequest, RequestFilesystemUsage, read_fixed_from};
     use crate::{
         ProjectAuthority, ProjectConfigOverrides, ProjectConfigSelection, ProjectLimits,
         ProjectParseError, ProjectRequest, ProjectResourceFailure, ProjectResourceLimits,

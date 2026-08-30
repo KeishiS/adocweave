@@ -58,6 +58,12 @@ fn write(path: impl AsRef<Path>, source: &str) {
     fs::write(path, source).expect("fixture is written");
 }
 
+fn canonical_child(root: &Path, child: impl AsRef<Path>) -> PathBuf {
+    root.canonicalize()
+        .expect("temporary root is canonicalized")
+        .join(child)
+}
+
 fn target_path_ends(target: &adocweave_project::ProjectTargetResult, suffix: &str) -> bool {
     target
         .path
@@ -165,6 +171,7 @@ fn invalid_configuration_reports_the_selected_safe_observation() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let root = directory.path();
     let config = root.join(".adocweave.toml");
+    let canonical_config = canonical_child(root, ".adocweave.toml");
     write(&config, "not valid TOML = [\n");
     write(root.join("guide.adoc"), "text\n");
 
@@ -178,12 +185,12 @@ fn invalid_configuration_reports_the_selected_safe_observation() {
         error
             .repair_candidate()
             .map(|candidate| candidate.path.as_path()),
-        Some(config.as_path())
+        Some(canonical_config.as_path())
     );
     assert!(matches!(
         error,
         ProjectError::Config(ref config_error)
-            if config_error.path == config
+            if config_error.path == canonical_config
     ));
 }
 
@@ -299,7 +306,7 @@ fn rejected_local_targets_from_different_sources_have_distinct_ids() {
 #[test]
 fn missing_primary_is_confined_to_one_target() {
     let directory = tempfile::tempdir().expect("temporary directory");
-    let missing = directory.path().join("missing.adoc");
+    let missing = canonical_child(directory.path(), "missing.adoc");
     let result = process(request(
         directory.path(),
         vec![ProjectTarget::Path(PathBuf::from("missing.adoc"))],
@@ -539,7 +546,10 @@ fn symlinked_include_is_rejected() {
         .observation
         .as_ref()
         .expect("safe repair observation");
-    assert_eq!(observation.path, directory.path().join("linked.adoc"));
+    assert_eq!(
+        observation.path,
+        canonical_child(directory.path(), "linked.adoc")
+    );
     assert_eq!(
         observation.kind,
         adocweave_project::ProjectObservationKind::Contents
@@ -798,7 +808,7 @@ fn external_primary_resolves_relative_include_from_its_own_authority() {
     );
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn non_utf8_parent_resolves_relative_include_without_lossy_paths() {
     use std::ffi::OsString;
@@ -1671,6 +1681,7 @@ fn repeated_loaded_resource_distinguishes_body_omission_from_acquisition_failure
 fn invalid_utf8_primary_is_reported_as_unreadable() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let bad = directory.path().join("bad.adoc");
+    let canonical_bad = canonical_child(directory.path(), "bad.adoc");
     fs::write(&bad, [0xff]).expect("binary fixture");
     let result = process(request(
         directory.path(),
@@ -1690,7 +1701,7 @@ fn invalid_utf8_primary_is_reported_as_unreadable() {
             .observation
             .as_ref()
             .map(|value| value.path.as_path()),
-        Some(bad.as_path())
+        Some(canonical_bad.as_path())
     );
 }
 
@@ -1698,6 +1709,7 @@ fn invalid_utf8_primary_is_reported_as_unreadable() {
 fn invalid_utf8_include_is_reported_as_watchable_unreadable_input() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let bad = directory.path().join("bad.adoc");
+    let canonical_bad = canonical_child(directory.path(), "bad.adoc");
     write(directory.path().join("guide.adoc"), "include::bad.adoc[]\n");
     fs::write(&bad, [0xff]).expect("binary include fixture");
     let mut request = request(
@@ -1722,7 +1734,7 @@ fn invalid_utf8_include_is_reported_as_watchable_unreadable_input() {
             .observation
             .as_ref()
             .map(|value| value.path.as_path()),
-        Some(bad.as_path())
+        Some(canonical_bad.as_path())
     );
 }
 
@@ -1810,6 +1822,7 @@ fn external_config_authority_does_not_grant_its_include_stylesheet_or_local_path
         ),
     ] {
         let config = external.path().join(name);
+        let canonical_config = canonical_child(external.path(), name);
         write(&config, body);
         let mut request = request_with_roots(
             project.path(),
@@ -1827,7 +1840,7 @@ fn external_config_authority_does_not_grant_its_include_stylesheet_or_local_path
                 .expect_err("authority failure")
                 .repair_candidate()
                 .map(|candidate| candidate.path.as_path()),
-            Some(config.as_path()),
+            Some(canonical_config.as_path()),
             "the safely acquired configuration must remain repairable"
         );
     }
@@ -1850,7 +1863,7 @@ fn external_config_authority_can_read_only_the_config_body() {
     assert!(result.targets[0].analysis.is_ok());
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn non_utf8_path_has_a_distinct_stable_source_id() {
     use std::ffi::OsString;
@@ -1916,7 +1929,7 @@ fn no_symlink_path_target_rejects_an_explicit_symbolic_link() {
         .observation
         .as_ref()
         .expect("safe repair observation");
-    assert_eq!(observation.path, root.join("link.adoc"));
+    assert_eq!(observation.path, canonical_child(root, "link.adoc"));
     assert_eq!(
         observation.kind,
         adocweave_project::ProjectObservationKind::ContentsNoSymlinks
@@ -2318,7 +2331,10 @@ fn stylesheet_and_local_target_symlinks_are_retained_as_failures() {
         .observation
         .as_ref()
         .expect("stylesheet repair observation");
-    assert_eq!(stylesheet_observation.path, root.join("style.css"));
+    assert_eq!(
+        stylesheet_observation.path,
+        canonical_child(root, "style.css")
+    );
     assert_eq!(
         stylesheet_observation.kind,
         adocweave_project::ProjectObservationKind::Contents
@@ -2336,7 +2352,10 @@ fn stylesheet_and_local_target_symlinks_are_retained_as_failures() {
         .observation
         .as_ref()
         .expect("local target repair observation");
-    assert_eq!(local_target_observation.path, root.join("asset.dat"));
+    assert_eq!(
+        local_target_observation.path,
+        canonical_child(root, "asset.dat")
+    );
     assert_eq!(
         local_target_observation.kind,
         adocweave_project::ProjectObservationKind::Existence
