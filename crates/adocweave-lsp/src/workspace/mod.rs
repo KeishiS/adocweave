@@ -7,9 +7,9 @@ use std::sync::{Arc, Mutex};
 use adocweave::CancellationCheck;
 #[cfg(test)]
 use adocweave::NeverCancel;
-use adocweave::preprocess::{
-    EffectiveProcessingOptions, PreprocessOptions, ProjectionLimits, SafeMode,
-};
+use adocweave::preprocess::SafeMode;
+#[cfg(test)]
+use adocweave::preprocess::{EffectiveProcessingOptions, ProjectionLimits};
 use adocweave_host::{
     FilesystemDraftError, FilesystemJobCoordinator, FilesystemJobLimits, FilesystemReadLimits,
     FilesystemReadOutcome, IncludeFilesystemBinding, IncludeFilesystemBudgetedOutcome,
@@ -18,10 +18,13 @@ use adocweave_host::{
 };
 use adocweave_workspace::{
     Generation, ResourceId, RetainedLayerCharge, RetainedResourceBudget, RetainedResourceLimits,
-    Revision, Workspace, WorkspaceAnalysis, WorkspaceAnalysisDraft, WorkspaceAnalysisStep,
-    WorkspaceError, WorkspaceLimits, WorkspacePreprocessOutcome, WorkspaceResourceLoad,
-    WorkspaceResourceLoadEvent, WorkspaceResourceLoader, WorkspaceResourceRequest,
-    WorkspaceResourceResolution, WorkspaceSnapshot,
+    Revision, Workspace, WorkspaceLimits, WorkspaceSnapshot,
+};
+#[cfg(test)]
+use adocweave_workspace::{
+    WorkspaceAnalysis, WorkspaceAnalysisDraft, WorkspaceAnalysisStep, WorkspaceError,
+    WorkspacePreprocessOutcome, WorkspaceResourceLoad, WorkspaceResourceLoadEvent,
+    WorkspaceResourceLoader, WorkspaceResourceRequest, WorkspaceResourceResolution,
 };
 use async_lsp::lsp_types::Url;
 
@@ -48,6 +51,7 @@ pub(crate) const fn workspace_scan_job_limits() -> FilesystemJobLimits {
 /// job needs no directory allowance at all. The read allowance matches the
 /// workspace scan because a document may legitimately include every file the
 /// scan would have found.
+#[cfg(test)]
 pub(crate) const fn document_analysis_job_limits() -> FilesystemJobLimits {
     let reads = FilesystemReadLimits::DEFAULT;
     FilesystemJobLimits {
@@ -128,20 +132,23 @@ pub(crate) struct WatchedFileError {
 }
 
 #[derive(Clone, Debug)]
-pub struct WorkspaceInput {
-    pub generation: Generation,
-    pub root: ResourceId,
-    pub snapshot: WorkspaceSnapshot,
-    pub options: PreprocessOptions,
-    pub project_config: adocweave_config::ResolvedProjectConfig,
+pub struct ProjectAnalysisContext {
+    pub workspace_generation: Generation,
+    pub primary_resource_id: ResourceId,
+    pub resource_snapshot: WorkspaceSnapshot,
+    pub project_root: PathBuf,
+    pub authority_roots: Vec<PathBuf>,
+    #[cfg(test)]
+    pub options: adocweave::preprocess::PreprocessOptions,
+    pub project_config: Arc<adocweave_config::ResolvedProjectConfig>,
     pub config_sha256: Option<[u8; 32]>,
 }
 
-impl WorkspaceInput {
+impl ProjectAnalysisContext {
     #[cfg(test)]
     pub fn root_text(&self) -> Option<&Arc<str>> {
-        self.snapshot
-            .get(&self.root)
+        self.resource_snapshot
+            .get(&self.primary_resource_id)
             .map(adocweave_workspace::Resource::text)
     }
 }
@@ -204,6 +211,9 @@ pub struct WorkspaceResources {
     include_interests: Arc<BTreeSet<ResourceId>>,
     loaded_include_resources: Arc<BTreeSet<ResourceId>>,
     include_dependencies: Arc<BTreeMap<ResourceId, BTreeSet<ResourceId>>>,
+    /// Non-text resources whose existence is observed for project diagnostics.
+    local_target_interests: Arc<BTreeSet<ResourceId>>,
+    local_target_dependencies: Arc<BTreeMap<ResourceId, BTreeSet<ResourceId>>>,
     retained_layers: Arc<BTreeMap<ProjectScopeId, RetainedResourceBudget>>,
     /// Project files already discovered and parsed, keyed by the directory the
     /// search started from.
@@ -247,16 +257,19 @@ struct WorkspaceFilesystemCandidate {
     draft: Option<LocalFilesystemDraft>,
 }
 
+#[cfg(test)]
 struct IncludeFilesystemCandidate {
     session: Arc<Mutex<LocalFilesystemSession>>,
     transaction: Option<IncludeFilesystemTransaction>,
 }
 
+#[cfg(test)]
 enum AdmittedIncludeTarget {
     Existing(Box<ExistingIncludeTarget>),
     Missing,
 }
 
+#[cfg(test)]
 struct ExistingIncludeTarget {
     uri: Url,
     path: PathBuf,
@@ -269,6 +282,7 @@ struct ExistingIncludeTarget {
 /// Analysis runs on a copy of the workspace, so every include it acquired lives
 /// here rather than in the state the editor can see. Dropping this value leaves
 /// no trace of the attempt.
+#[cfg(test)]
 pub struct AnalyzedRoot {
     acquisition: Option<IncludeAcquisition>,
     root: ResourceId,
@@ -282,6 +296,7 @@ pub struct AnalyzedRoot {
     include_interests: BTreeSet<ResourceId>,
 }
 
+#[cfg(test)]
 enum AnalyzedRootOutcome {
     Complete(Box<WorkspaceAnalysisDraft>),
     Failed(WorkspaceError),
@@ -293,6 +308,8 @@ enum AnalyzedRootOutcome {
 /// This carries the pieces a diagnostic needs rather than the workspace error
 /// itself, so the code that publishes diagnostics does not have to know how
 /// analysis represents its failures.
+#[cfg(test)]
+#[allow(dead_code)]
 pub struct AnalysisFailure {
     pub source_id: Option<String>,
     pub range: Option<adocweave::text::TextRange>,
@@ -300,6 +317,7 @@ pub struct AnalysisFailure {
     pub message: String,
 }
 
+#[cfg(test)]
 impl AnalyzedRoot {
     /// Returns the failure when analysis did not produce a result.
     pub fn failure(&self) -> Option<AnalysisFailure> {
@@ -329,6 +347,7 @@ impl CancellationCheck for SharedCancellation<'_> {
 /// The whole point of this type is that nothing it reads becomes visible until
 /// the analysis finishes and is adopted. It owns the copy, the filesystem drafts
 /// it reads through, and the authority that decides which targets are allowed.
+#[cfg(test)]
 struct IncludeAcquisition {
     candidate: WorkspaceResources,
     transactions: BTreeMap<ProjectScopeId, IncludeFilesystemCandidate>,
@@ -339,10 +358,12 @@ struct IncludeAcquisition {
 }
 
 #[derive(Clone, Copy)]
+#[cfg(test)]
 struct IncludeAuthorityEvidence {
     admitted: bool,
 }
 
+#[cfg(test)]
 impl IncludeAcquisition {
     fn resolve(
         &mut self,
@@ -575,6 +596,7 @@ impl IncludeAcquisition {
     }
 }
 
+#[cfg(test)]
 impl WorkspaceResourceLoader for IncludeAcquisition {
     type Error = String;
     type Evidence = IncludeAuthorityEvidence;
@@ -617,6 +639,26 @@ impl PreparedWorkspaceRead {
 }
 
 impl WorkspaceResources {
+    pub fn record_project_dependencies(
+        &mut self,
+        root: &Url,
+        includes: impl IntoIterator<Item = Url>,
+        local_targets: impl IntoIterator<Item = Url>,
+    ) -> Result<(), String> {
+        let root = uri_id(root)?;
+        let includes = includes
+            .into_iter()
+            .filter_map(|uri| uri_id(&uri).ok())
+            .collect::<BTreeSet<_>>();
+        self.watch_include_interests(&root, includes);
+        let local_targets = local_targets
+            .into_iter()
+            .filter_map(|uri| uri_id(&uri).ok())
+            .collect::<BTreeSet<_>>();
+        self.watch_local_target_interests(&root, local_targets);
+        Ok(())
+    }
+
     #[cfg(test)]
     pub fn load_roots(&mut self, roots: &[Url]) -> Result<(), String> {
         self.load_roots_with_limits(roots, adapter_managed_workspace_limits(), &NeverCancel)
@@ -720,6 +762,12 @@ impl WorkspaceResources {
         mut replacement: Self,
         open_sources: &[(Url, i64, Arc<str>)],
     ) -> Result<(), String> {
+        let retained_include_interests = open_sources
+            .iter()
+            .filter_map(|(uri, _, _)| uri_id(uri).ok())
+            .filter(|id| self.include_interests.contains(id))
+            .collect::<BTreeSet<_>>();
+        Arc::make_mut(&mut replacement.include_interests).extend(retained_include_interests);
         for (uri, version, source) in open_sources {
             let scope_and_plan = match replacement.open_scope_and_plan(uri) {
                 Ok(scope_and_plan) => scope_and_plan,
@@ -1152,6 +1200,8 @@ impl WorkspaceResources {
             Arc::make_mut(&mut self.include_interests).clear();
             Arc::make_mut(&mut self.loaded_include_resources).clear();
             Arc::make_mut(&mut self.include_dependencies).clear();
+            Arc::make_mut(&mut self.local_target_interests).clear();
+            Arc::make_mut(&mut self.local_target_dependencies).clear();
             self.retained_layers = Arc::new(retained_layers);
             self.next_disk_version = next_disk_version;
             Ok(())
@@ -1234,8 +1284,15 @@ impl WorkspaceResources {
             .copied()
             .unwrap_or_default();
         let known_include = self.include_interests.contains(&id);
-        let tracked = roles.is_root() || known_include;
+        let known_local_target = self.local_target_interests.contains(&id);
+        let tracked = roles.is_root() || known_include || known_local_target;
         let is_adoc = path.extension().and_then(|value| value.to_str()) == Some("adoc");
+        if known_local_target && !known_include && !roles.is_root() {
+            return Ok(WatchedFileUpdate {
+                affected: self.local_target_dependents(&id),
+                journal_relevant: true,
+            });
+        }
         if kind == WatchedFileKind::Delete {
             if !tracked && self.inner.get(&id).is_none() {
                 return Ok(WatchedFileUpdate::default());
@@ -1260,7 +1317,7 @@ impl WorkspaceResources {
         if !tracked && !is_adoc {
             return Ok(WatchedFileUpdate::default());
         }
-        if !self.path_is_analysis_root(&path) {
+        if !tracked && !self.path_is_analysis_root(&path) {
             return Ok(WatchedFileUpdate::default());
         }
         let journal_relevant = tracked || is_adoc;
@@ -1284,7 +1341,7 @@ impl WorkspaceResources {
                     journal_relevant,
                 },
             )?;
-        if !self.path_is_analysis_root(&admitted_path) {
+        if !tracked && !self.path_is_analysis_root(&admitted_path) {
             return Ok(WatchedFileUpdate::default());
         }
         let (scope, config) = scope_and_config_for_path_typed(
@@ -1378,7 +1435,8 @@ impl WorkspaceResources {
                 journal_relevant,
             });
         }
-        let pending_dependents = self.include_dependents(&id);
+        let mut pending_dependents = self.include_dependents(&id);
+        pending_dependents.extend(self.local_target_dependents(&id));
         let (filesystem, binding) = prepared.commit().map_err(|message| WatchedFileError {
             message,
             journal_relevant,
@@ -1432,6 +1490,11 @@ impl WorkspaceResources {
         Arc::make_mut(&mut self.loaded_include_resources).remove(id);
         Arc::make_mut(&mut self.include_dependencies).remove(id);
         for dependencies in Arc::make_mut(&mut self.include_dependencies).values_mut() {
+            dependencies.remove(id);
+        }
+        Arc::make_mut(&mut self.local_target_interests).remove(id);
+        Arc::make_mut(&mut self.local_target_dependencies).remove(id);
+        for dependencies in Arc::make_mut(&mut self.local_target_dependencies).values_mut() {
             dependencies.remove(id);
         }
         let pruned = self.prune_unreferenced_include_resources();
@@ -1488,6 +1551,7 @@ impl WorkspaceResources {
     /// The caller passes the exact `Arc<str>` it handed to the preprocessor.
     /// Publication compares resources by shared-text identity, so a copy of the
     /// same bytes would be rejected as a different resource.
+    #[cfg(test)]
     fn admit_include_text(
         &mut self,
         id: ResourceId,
@@ -1760,6 +1824,7 @@ impl WorkspaceResources {
         self.next_disk_version = next_disk_version;
         self.gc_scopes();
         let mut affected = strings(affected);
+        affected.extend(self.include_dependents(&id));
         affected.insert(id.to_string());
         Ok(affected)
     }
@@ -1790,6 +1855,7 @@ impl WorkspaceResources {
         let mut inner = self.inner.clone();
         let mut affected = strings(inner.remove_disk(&id));
         affected.extend(self.include_dependents(&id));
+        affected.extend(self.local_target_dependents(&id));
         self.release_resource_binding(&id)?;
         self.inner = inner;
         self.retained_layers = retained_layers;
@@ -1845,7 +1911,9 @@ impl WorkspaceResources {
             Arc::make_mut(&mut self.resource_projects).remove(&id);
         }
         self.gc_scopes();
-        Ok(strings(affected))
+        let mut affected = strings(affected);
+        affected.extend(self.include_dependents(&id));
+        Ok(affected)
     }
 
     /// Decides whether one include target may be read for this analysis root.
@@ -1853,6 +1921,7 @@ impl WorkspaceResources {
     /// Scan exclusions are intentionally absent here: they choose which files a
     /// workspace walk discovers on its own, not which files a document may
     /// include by name.
+    #[cfg(test)]
     fn admit_include_target(
         &self,
         root_scope: &ProjectScopeId,
@@ -1913,20 +1982,23 @@ impl WorkspaceResources {
         }))
     }
 
-    pub fn input(&mut self, root: &Url) -> Result<WorkspaceInput, String> {
-        let root_id = uri_id(root)?;
+    pub fn project_analysis_context(
+        &mut self,
+        primary_uri: &Url,
+    ) -> Result<ProjectAnalysisContext, String> {
+        let root_id = uri_id(primary_uri)?;
         if self.inner.get(&root_id).is_none() {
-            return Err(format!("workspace resource is missing: {root}"));
+            return Err(format!("workspace resource is missing: {primary_uri}"));
         }
         let root_scope = self
             .resource_projects
             .get(&root_id)
-            .ok_or_else(|| format!("workspace project scope is missing: {root}"))?
+            .ok_or_else(|| format!("workspace project scope is missing: {primary_uri}"))?
             .clone();
         let root_scope = &root_scope;
         let mut allowed_schemes = BTreeSet::new();
         allowed_schemes.insert("file".to_owned());
-        let config_snapshot = self.config_for_uri(root)?;
+        let config_snapshot = self.config_for_uri(primary_uri)?;
         let project_config = config_snapshot.as_ref().map_or_else(
             adocweave_config::ResolvedProjectConfig::default,
             |snapshot| snapshot.config.clone(),
@@ -1936,7 +2008,7 @@ impl WorkspaceResources {
         // configuration, so adding a project file for an unrelated setting
         // silently stopped includes from resolving.
         let mut options = project_config.preprocess.clone();
-        options.base_uri = parent_uri(root);
+        options.base_uri = parent_uri(primary_uri);
         options.safe_mode = SafeMode::Server;
         options.allowed_schemes = allowed_schemes;
         let allowed_roots = if options.enable_includes {
@@ -1978,21 +2050,34 @@ impl WorkspaceResources {
                 .map_err(|error| error.to_string())?;
             Ok::<bool, String>(true)
         })?;
-        Ok(WorkspaceInput {
-            generation: snapshot.generation(),
-            root: root_id,
-            snapshot,
+        let authority_roots = if self.roots.is_empty() {
+            vec![root_scope.workspace_root.clone()]
+        } else {
+            self.roots.clone()
+        };
+        Ok(ProjectAnalysisContext {
+            workspace_generation: snapshot.generation(),
+            primary_resource_id: root_id,
+            resource_snapshot: snapshot,
+            project_root: root_scope.workspace_root.clone(),
+            authority_roots,
+            #[cfg(test)]
             options,
             config_sha256: config_snapshot.map(|snapshot| snapshot.content_sha256),
-            project_config,
+            project_config: Arc::new(project_config),
         })
     }
 
-    pub fn input_is_current(&mut self, input: &WorkspaceInput) -> bool {
-        input.generation == self.generation()
-            && self.config_for_id(&input.root).is_ok_and(|snapshot| {
-                snapshot.map(|value| value.content_sha256) == input.config_sha256
-            })
+    pub fn project_analysis_context_is_current(
+        &mut self,
+        context: &ProjectAnalysisContext,
+    ) -> bool {
+        context.workspace_generation == self.generation()
+            && self
+                .config_for_id(&context.primary_resource_id)
+                .is_ok_and(|snapshot| {
+                    snapshot.map(|value| value.content_sha256) == context.config_sha256
+                })
     }
 
     /// Analyses one root, reading each missing include as it is requested.
@@ -2005,9 +2090,10 @@ impl WorkspaceResources {
     /// The reads share `job`, which bounds the work of the whole analysis rather
     /// than of each file. Abandoning the returned value drops the filesystem
     /// drafts and leaves no acquired resource behind.
+    #[cfg(test)]
     pub(crate) fn analyze_root_detached(
         &self,
-        input: &WorkspaceInput,
+        input: &ProjectAnalysisContext,
         analysis_options: &adocweave::AnalysisOptions,
         cancellation: &dyn CancellationCheck,
         job: IncludeFilesystemJob,
@@ -2017,8 +2103,13 @@ impl WorkspaceResources {
                 .map_err(|error| error.to_string())?;
         let root_scope = self
             .resource_projects
-            .get(&input.root)
-            .ok_or_else(|| format!("workspace project scope is missing: {}", input.root))?
+            .get(&input.primary_resource_id)
+            .ok_or_else(|| {
+                format!(
+                    "workspace project scope is missing: {}",
+                    input.primary_resource_id
+                )
+            })?
             .clone();
         let allowed_roots = if input.options.enable_includes {
             configured_include_roots(
@@ -2038,9 +2129,9 @@ impl WorkspaceResources {
             job,
         };
         let (outcome, loads) = input
-            .snapshot
+            .resource_snapshot
             .preprocess_with(
-                &input.root,
+                &input.primary_resource_id,
                 &options,
                 &mut acquisition,
                 &SharedCancellation(cancellation),
@@ -2083,7 +2174,7 @@ impl WorkspaceResources {
         };
         Ok(AnalyzedRoot {
             acquisition,
-            root: input.root.clone(),
+            root: input.primary_resource_id.clone(),
             canonical_options: options,
             outcome,
             include_interests,
@@ -2095,10 +2186,11 @@ impl WorkspaceResources {
     /// The starting generation and the configuration are checked before
     /// anything moves, so a workspace that changed while the analysis ran
     /// discards the result instead of publishing a stale view.
+    #[cfg(test)]
     pub(crate) fn apply_analyzed_root(
         &mut self,
         analyzed: AnalyzedRoot,
-        input: &WorkspaceInput,
+        input: &ProjectAnalysisContext,
         analysis_options: &adocweave::AnalysisOptions,
     ) -> Result<Option<WorkspaceAnalysis>, String> {
         let AnalyzedRoot {
@@ -2108,7 +2200,7 @@ impl WorkspaceResources {
             outcome,
             include_interests,
         } = analyzed;
-        if input.root != root || !self.input_is_current(input) {
+        if input.primary_resource_id != root || !self.project_analysis_context_is_current(input) {
             return Ok(None);
         }
         if canonical_options.analysis() != analysis_options
@@ -2152,6 +2244,23 @@ impl WorkspaceResources {
         self.record_include_dependencies(root, interests);
     }
 
+    fn watch_local_target_interests(&mut self, root: &ResourceId, interests: BTreeSet<ResourceId>) {
+        for id in &interests {
+            if !self.local_target_interests.contains(id)
+                && self.local_target_interests.len() >= MAX_WATCHED_INCLUDE_RESOURCES
+            {
+                break;
+            }
+            Arc::make_mut(&mut self.local_target_interests).insert(id.clone());
+        }
+        let watched = interests
+            .into_iter()
+            .filter(|id| self.local_target_interests.contains(id))
+            .collect();
+        Arc::make_mut(&mut self.local_target_dependencies).insert(root.clone(), watched);
+        self.prune_unreferenced_local_targets();
+    }
+
     /// Records what one root depends on and drops includes nothing needs.
     ///
     /// Only targets the watcher already holds an interest in are kept, so a
@@ -2169,6 +2278,7 @@ impl WorkspaceResources {
         self.prune_unreferenced_include_resources();
     }
 
+    #[cfg(test)]
     fn prepare_analysis_for_root(
         &mut self,
         root: &ResourceId,
@@ -2183,6 +2293,7 @@ impl WorkspaceResources {
         Ok(())
     }
 
+    #[cfg(test)]
     fn record_analysis_dependencies(
         &mut self,
         root: &ResourceId,
@@ -2203,10 +2314,23 @@ impl WorkspaceResources {
         );
     }
 
-    pub fn forget_include_dependencies(&mut self, root: &Url) -> Result<BTreeSet<String>, String> {
+    pub fn forget_project_dependencies(&mut self, root: &Url) -> Result<BTreeSet<String>, String> {
         let root = uri_id(root)?;
         Arc::make_mut(&mut self.include_dependencies).remove(&root);
-        Ok(self.prune_unreferenced_include_resources())
+        Arc::make_mut(&mut self.local_target_dependencies).remove(&root);
+        let affected = self.prune_unreferenced_include_resources();
+        self.prune_unreferenced_local_targets();
+        Ok(affected)
+    }
+
+    fn prune_unreferenced_local_targets(&mut self) {
+        let retained = self
+            .local_target_dependencies
+            .values()
+            .flat_map(BTreeSet::iter)
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        Arc::make_mut(&mut self.local_target_interests).retain(|id| retained.contains(id));
     }
 
     fn prune_unreferenced_include_resources(&mut self) -> BTreeSet<String> {
@@ -2251,6 +2375,14 @@ impl WorkspaceResources {
     /// lets creating a missing include re-analyse the documents waiting for it.
     fn include_dependents(&self, id: &ResourceId) -> BTreeSet<String> {
         self.include_dependencies
+            .iter()
+            .filter(|(_, dependencies)| dependencies.contains(id))
+            .map(|(root, _)| root.to_string())
+            .collect()
+    }
+
+    fn local_target_dependents(&self, id: &ResourceId) -> BTreeSet<String> {
+        self.local_target_dependencies
             .iter()
             .filter(|(_, dependencies)| dependencies.contains(id))
             .map(|(root, _)| root.to_string())
@@ -2314,7 +2446,10 @@ impl WorkspaceResources {
         let path = uri.to_file_path().map_err(|()| {
             ScopeConfigError::Other(format!("workspace resource is not a file URI: {uri}"))
         })?;
-        if !self.path_is_analysis_root(&path) {
+        let known_include = uri_id(uri)
+            .ok()
+            .is_some_and(|id| self.include_interests.contains(&id));
+        if !known_include && !self.path_is_analysis_root(&path) {
             return Ok(None);
         }
         let admission_path = if self.roots.is_empty() {
@@ -2384,6 +2519,7 @@ struct ReadCandidate {
     binding: IncludeFilesystemBinding,
 }
 
+#[cfg(test)]
 fn read_include_candidate(
     transaction: &mut IncludeFilesystemTransaction,
     path: &Path,
@@ -2535,6 +2671,7 @@ enum WorkspaceLogicalFile {
     Missing(PathBuf),
 }
 
+#[cfg(test)]
 impl WorkspaceLogicalFile {
     fn path(&self) -> &Path {
         match self {

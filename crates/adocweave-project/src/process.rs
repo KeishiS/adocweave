@@ -27,8 +27,8 @@ use crate::{
     ProjectConfigSnapshot, ProjectError, ProjectExpandedAnalysis, ProjectExpansionError,
     ProjectLimit, ProjectOutcome, ProjectParseError, ProjectRequest, ProjectResourceFailure,
     ProjectResourceKind, ProjectResourceOutcome, ProjectResourceResult, ProjectResult,
-    ProjectTargetError, ProjectTargetResult, ProjectUsage, ProjectWarning, project_authority_error,
-    project_config_error, project_expansion_read, project_target_read,
+    ProjectSourceLocation, ProjectTargetError, ProjectTargetResult, ProjectUsage, ProjectWarning,
+    project_authority_error, project_config_error, project_expansion_read, project_target_read,
 };
 
 pub fn process(request: ProjectRequest, cancellation: &dyn CancellationCheck) -> ProjectOutcome {
@@ -241,7 +241,10 @@ impl FixedInspection {
             requested_path: self.requested_path.clone(),
             kind: ProjectResourceKind::LocalTarget,
             origin: crate::ProjectResourceOrigin::Filesystem,
-            requested_by: requested_by.map(|value| SourceId::new(value.as_str())),
+            requested_at: requested_by.map(|value| ProjectSourceLocation {
+                source_id: SourceId::new(value.as_str()),
+                range: None,
+            }),
             observation: observation_candidate(
                 &self.outcome,
                 &self.requested_path,
@@ -259,6 +262,7 @@ impl FixedResource {
         &self,
         kind: ProjectResourceKind,
         requested_by: Option<LogicalSourceId>,
+        request_range: Option<adocweave::text::TextRange>,
     ) -> ProjectResourceResult {
         ProjectResourceResult {
             source_id: SourceId::new(self.source_id.as_str()),
@@ -266,7 +270,10 @@ impl FixedResource {
             requested_path: self.requested_path.clone(),
             kind,
             origin: self.origin,
-            requested_by: requested_by.map(|value| SourceId::new(value.as_str())),
+            requested_at: requested_by.map(|value| ProjectSourceLocation {
+                source_id: SourceId::new(value.as_str()),
+                range: request_range,
+            }),
             observation: observation_candidate(
                 &self.outcome,
                 &self.requested_path,
@@ -353,6 +360,7 @@ impl<'request> Processor<'request> {
             if source_id.as_str().starts_with("project:")
                 || source_id.as_str().starts_with("authority:")
                 || source_id.as_str().starts_with("local-target:")
+                || source_id.as_str().starts_with("include-request:")
             {
                 return Err(ProjectError::InvalidInput(crate::ProjectInputError::new(
                     "reserved-source-id",
@@ -623,7 +631,7 @@ impl<'request> Processor<'request> {
                     .file_name()
                     .is_some_and(|name| name == adocweave_config::FILE_NAME)
             })
-            .map(|fixed| fixed.result(ProjectResourceKind::Config, None))
+            .map(|fixed| fixed.result(ProjectResourceKind::Config, None, None))
             .collect::<Vec<_>>();
         resources.sort_by(|left, right| left.requested_path.cmp(&right.requested_path));
         resources.dedup_by(|left, right| {
@@ -703,7 +711,7 @@ impl<'request> Processor<'request> {
             .get(&path)
             .is_some_and(|source| source.exposed_path.is_none());
         if !pathless_primary {
-            resources.push(primary.result(ProjectResourceKind::Primary, None));
+            resources.push(primary.result(ProjectResourceKind::Primary, None, None));
         }
         let source = match &primary.outcome {
             ProjectResourceOutcome::Loaded { source } => Arc::clone(source),
@@ -1029,7 +1037,7 @@ impl<'request> Processor<'request> {
                 .cmp(&right.source_id)
                 .then_with(|| left.path.cmp(&right.path))
                 .then_with(|| resource_kind_order(left.kind).cmp(&resource_kind_order(right.kind)))
-                .then_with(|| left.requested_by.cmp(&right.requested_by))
+                .then_with(|| left.requested_at.cmp(&right.requested_at))
         });
         let primary_bytes = input
             .source
@@ -1101,7 +1109,7 @@ impl<'request> Processor<'request> {
                 .cmp(&right.source_id)
                 .then_with(|| left.path.cmp(&right.path))
                 .then_with(|| resource_kind_order(left.kind).cmp(&resource_kind_order(right.kind)))
-                .then_with(|| left.requested_by.cmp(&right.requested_by))
+                .then_with(|| left.requested_at.cmp(&right.requested_at))
         });
         let memory_source = self.memory_sources.get(&path);
         let original_source = memory_source
@@ -1206,6 +1214,14 @@ impl<'request> Processor<'request> {
     ) -> Result<TargetConfig, ProjectError> {
         let path = match self.config_selection.clone() {
             ConfigSelection::Disabled => None,
+            ConfigSelection::Resolved(config) => {
+                let resolved = self.resolved_config_value(None, config);
+                return Ok(TargetConfig {
+                    snapshot: None,
+                    resolved,
+                    resource: None,
+                });
+            }
             ConfigSelection::Explicit(path) => {
                 Some(absolute_lexical(&self.project_root, &path).map_err(project_authority_error)?)
             }
@@ -1223,7 +1239,7 @@ impl<'request> Processor<'request> {
         let source_id = self.filesystem_source_id_for_path(&path)?;
         let resource = self.fixed.get(&source_id).and_then(|fixed| {
             reusable_resource(fixed, &path, &self.filesystem, true)
-                .map(|fixed| fixed.result(ProjectResourceKind::Config, None))
+                .map(|fixed| fixed.result(ProjectResourceKind::Config, None, None))
         });
         let repair_candidate = resource
             .as_ref()
@@ -1274,26 +1290,35 @@ impl<'request> Processor<'request> {
         snapshot: Option<&Arc<ConfigSnapshot>>,
     ) -> Arc<ResolvedProjectConfig> {
         let key = snapshot.map(|snapshot| snapshot.path.clone());
+        let config = snapshot.map_or_else(ResolvedProjectConfig::default, |snapshot| {
+            snapshot.config.clone()
+        });
+        self.resolved_config_value(key, Arc::new(config))
+    }
+
+    fn resolved_config_value(
+        &mut self,
+        key: Option<PathBuf>,
+        mut config: Arc<ResolvedProjectConfig>,
+    ) -> Arc<ResolvedProjectConfig> {
         if let Some(config) = self.resolved_configs.get(&key) {
             return Arc::clone(config);
         }
-        let mut config = snapshot.map_or_else(ResolvedProjectConfig::default, |snapshot| {
-            snapshot.config.clone()
-        });
+        let resolved = Arc::make_mut(&mut config);
         if let Some(include) = self.overrides.include {
-            config.resources.include = include;
-            config.preprocess.enable_includes = include;
+            resolved.resources.include = include;
+            resolved.preprocess.enable_includes = include;
         }
         if let Some(roots) = &self.overrides.resource_roots {
-            config.resources.roots.clone_from(roots);
+            resolved.resources.roots.clone_from(roots);
         }
         if let Some(root) = &self.overrides.local_target_project_root {
-            config.local_targets.enabled = true;
-            config.local_targets.project_root = Some(root.clone());
+            resolved.local_targets.enabled = true;
+            resolved.local_targets.project_root = Some(root.clone());
         }
         for rule in &self.overrides.enable_lint_rules {
-            let current = config.analysis.diagnostics.lint.rule(*rule);
-            config.analysis.diagnostics.lint.set_rule(
+            let current = resolved.analysis.diagnostics.lint.rule(*rule);
+            resolved.analysis.diagnostics.lint.set_rule(
                 *rule,
                 adocweave::output::diagnostics::RuleSettings {
                     enabled: true,
@@ -1301,11 +1326,10 @@ impl<'request> Processor<'request> {
                 },
             );
         }
-        config
+        resolved
             .html
             .stylesheet_files
             .extend(self.overrides.stylesheet_files.iter().cloned());
-        let config = Arc::new(config);
         self.resolved_configs.insert(key, Arc::clone(&config));
         config
     }
@@ -1560,6 +1584,39 @@ impl<'request> Processor<'request> {
                         .map_err(project_expansion_read)?
                         .map_or_else(|| resolve_lookup_path(&target, lookup_bases), Ok)
                         .map_err(project_expansion_read)?;
+                    if !allowed_roots.iter().any(|root| path.starts_with(root)) {
+                        let owner = requested_by.as_ref().unwrap_or(source_id);
+                        let rejected_id = self
+                            .include_request_source_id(owner, request.range())
+                            .map_err(project_expansion_read)?;
+                        let error = ResourceError::OutsideRoots(path.clone());
+                        let fixed = self.fix_failure(
+                            rejected_id,
+                            path,
+                            ProjectResourceFailure::Rejected(
+                                crate::ProjectResourceError::from_host(error.clone()),
+                            ),
+                        );
+                        resources.push(fixed.result(
+                            ProjectResourceKind::Include,
+                            requested_by.clone(),
+                            Some(request.range()),
+                        ));
+                        if self.resource_selection.local_targets && config.local_targets.enabled {
+                            let document = ResourceDocument {
+                                source_id: SourceId::new(fixed.source_id.as_str()),
+                                source: Arc::<str>::from(""),
+                            };
+                            lookup.entries.insert(
+                                target.clone(),
+                                ResourceLookupResult::Ready(document.clone()),
+                            );
+                            let response = request.found(document);
+                            step = suspended.resume(response, &lookup, self.cancellation);
+                            continue;
+                        }
+                        return Err(project_expansion_read(error).into());
+                    }
                     let include_id = self
                         .source_id_for_path(&path)
                         .map_err(|error| project_expansion_read(project_error_resource(error)))?;
@@ -1592,8 +1649,11 @@ impl<'request> Processor<'request> {
                                 ),
                             ),
                         );
-                        resources
-                            .push(fixed.result(ProjectResourceKind::Include, requested_by.clone()));
+                        resources.push(fixed.result(
+                            ProjectResourceKind::Include,
+                            requested_by.clone(),
+                            Some(request.range()),
+                        ));
                         let document = ResourceDocument {
                             source_id: SourceId::new(include_id.as_str()),
                             source: Arc::<str>::from(""),
@@ -1606,36 +1666,13 @@ impl<'request> Processor<'request> {
                         step = suspended.resume(response, &lookup, self.cancellation);
                         continue;
                     }
-                    if !allowed_roots.iter().any(|root| path.starts_with(root)) {
-                        let error = ResourceError::OutsideRoots(path.clone());
-                        let fixed = self.fix_failure(
-                            include_id.clone(),
-                            path,
-                            ProjectResourceFailure::Rejected(
-                                crate::ProjectResourceError::from_host(error.clone()),
-                            ),
-                        );
-                        resources
-                            .push(fixed.result(ProjectResourceKind::Include, requested_by.clone()));
-                        if self.resource_selection.local_targets && config.local_targets.enabled {
-                            let document = ResourceDocument {
-                                source_id: SourceId::new(include_id.as_str()),
-                                source: Arc::<str>::from(""),
-                            };
-                            lookup.entries.insert(
-                                target.clone(),
-                                ResourceLookupResult::Ready(document.clone()),
-                            );
-                            let response = request.found(document);
-                            step = suspended.resume(response, &lookup, self.cancellation);
-                            continue;
-                        }
-                        return Err(project_expansion_read(error).into());
-                    }
                     let fixed =
                         self.read_fixed_from_scoped(scope, include_id.clone(), path, filesystem);
-                    resources
-                        .push(fixed.result(ProjectResourceKind::Include, requested_by.clone()));
+                    resources.push(fixed.result(
+                        ProjectResourceKind::Include,
+                        requested_by.clone(),
+                        Some(request.range()),
+                    ));
                     let response = match &fixed.outcome {
                         ProjectResourceOutcome::Loaded { source } => {
                             if let Some(base) = &fixed.base {
@@ -1831,8 +1868,11 @@ impl<'request> Processor<'request> {
                 }
             };
             let fixed = self.read_fixed_scoped(scope, source_id, path.clone());
-            resources
-                .push(fixed.result(ProjectResourceKind::Stylesheet, Some(requested_by.clone())));
+            resources.push(fixed.result(
+                ProjectResourceKind::Stylesheet,
+                Some(requested_by.clone()),
+                None,
+            ));
         }
     }
 
@@ -1935,8 +1975,11 @@ impl<'request> Processor<'request> {
                                     crate::ProjectResourceError::from_host(error),
                                 ),
                             );
-                            resources
-                                .push(fixed.result(ProjectResourceKind::LocalTarget, requested_by));
+                            resources.push(fixed.result(
+                                ProjectResourceKind::LocalTarget,
+                                requested_by,
+                                None,
+                            ));
                         }
                         Err(id_error) => self.warnings.push(ProjectWarning::Resource {
                             path: base.join(&target.path),
@@ -1959,8 +2002,11 @@ impl<'request> Processor<'request> {
                                 path,
                                 ProjectResourceFailure::Rejected(error),
                             );
-                            resources
-                                .push(fixed.result(ProjectResourceKind::LocalTarget, requested_by));
+                            resources.push(fixed.result(
+                                ProjectResourceKind::LocalTarget,
+                                requested_by,
+                                None,
+                            ));
                         }
                         Err(id_error) => self.warnings.push(ProjectWarning::Resource {
                             path,
@@ -1987,7 +2033,7 @@ impl<'request> Processor<'request> {
                         ResourceError::Unverifiable(target.target),
                     )),
                 )
-                .result(ProjectResourceKind::LocalTarget, requested_by)
+                .result(ProjectResourceKind::LocalTarget, requested_by, None)
             } else {
                 self.inspect_fixed_in(
                     scope,
@@ -2445,6 +2491,19 @@ impl<'request> Processor<'request> {
             identity_path(&self.project_root, base)
         ))
     }
+
+    fn include_request_source_id(
+        &self,
+        owner: &LogicalSourceId,
+        range: adocweave::text::TextRange,
+    ) -> Result<LogicalSourceId, ResourceError> {
+        self.source_id_for_value(&format!(
+            "include-request:{}:{}:{}",
+            owner.as_str(),
+            range.start().to_u32(),
+            range.end().to_u32()
+        ))
+    }
 }
 
 fn local_target_diagnostics(
@@ -2479,7 +2538,11 @@ fn local_target_diagnostics(
             let Some(resource) = resources.iter().find(|resource| {
                 resource.kind == ProjectResourceKind::LocalTarget
                     && resource.requested_path == requested_path
-                    && resource.requested_by.as_ref().map(SourceId::as_str) == Some(owner)
+                    && resource
+                        .requested_at
+                        .as_ref()
+                        .map(|location| location.source_id.as_str())
+                        == Some(owner)
             }) else {
                 continue;
             };
@@ -2534,7 +2597,11 @@ fn local_target_diagnostics(
         };
         let Some(resource) = resources.iter().find(|resource| {
             resource.kind == ProjectResourceKind::Include
-                && resource.requested_by.as_ref().map(SourceId::as_str) == Some(owner)
+                && resource
+                    .requested_at
+                    .as_ref()
+                    .map(|location| location.source_id.as_str())
+                    == Some(owner)
                 && directive.resource_source_id.as_ref() == Some(&resource.source_id)
         }) else {
             continue;

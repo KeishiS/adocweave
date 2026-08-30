@@ -12,7 +12,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
 use super::{HostReferenceIndex, HostReferenceRequest, PositionEncoding, run};
 use crate::service::Session;
-use crate::state::{Adoption, AnalysisJob, WorkspaceProblem};
+use crate::state::{Adoption, AnalysisJob};
 
 mod support;
 

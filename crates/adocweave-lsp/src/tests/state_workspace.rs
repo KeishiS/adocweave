@@ -154,7 +154,7 @@ fn initial_workspace_scan_prunes_builtin_and_additional_directories() {
             .documents
             .get(document_uri.as_str())
             .expect("root document")
-            .workspace_analysis()
+            .expanded_analysis()
             .is_some()
     );
     fs::remove_dir_all(root).expect("cleanup");
@@ -199,7 +199,7 @@ fn excluded_include_targets_are_loaded_without_becoming_analysis_roots() {
         .documents
         .get(document_uri.as_str())
         .expect("root document")
-        .workspace_analysis()
+        .expanded_analysis()
         .expect("workspace analysis");
     assert!(analysis.analysis.source().contains("included marker"));
     fs::remove_dir_all(root).expect("cleanup");
@@ -240,10 +240,10 @@ fn non_adoc_include_is_loaded_and_watched_without_becoming_an_analysis_root() {
     let analysis = service
         .documents
         .get(document_uri.as_str())
-        .and_then(|document| document.workspace_analysis())
+        .and_then(|document| document.expanded_analysis())
         .expect("workspace analysis");
     assert!(analysis.analysis.source().contains("first marker"));
-    assert_eq!(service.workspace_analysis_count(), 2);
+    assert_eq!(service.workspace_analysis_count(), 1);
     let previous_revision = service.input_revision();
     let previous_cancellation = service
         .document_cancellation(&document_uri)
@@ -265,7 +265,7 @@ fn non_adoc_include_is_loaded_and_watched_without_becoming_an_analysis_root() {
     let analysis = service
         .documents
         .get(document_uri.as_str())
-        .and_then(|document| document.workspace_analysis())
+        .and_then(|document| document.expanded_analysis())
         .expect("updated workspace analysis");
     assert!(analysis.analysis.source().contains("second marker"));
 
@@ -300,7 +300,7 @@ fn non_adoc_include_is_loaded_and_watched_without_becoming_an_analysis_root() {
     let analysis = service
         .documents
         .get(document_uri.as_str())
-        .and_then(|document| document.workspace_analysis())
+        .and_then(|document| document.expanded_analysis())
         .expect("restored workspace analysis");
     assert!(analysis.analysis.source().contains("restored marker"));
     assert_eq!(service.workspace_analysis_count(), 2);
@@ -392,7 +392,7 @@ fn initially_missing_non_adoc_include_recovers_when_created() {
     let analysis = service
         .documents
         .get(document_uri.as_str())
-        .and_then(|document| document.workspace_analysis())
+        .and_then(|document| document.expanded_analysis())
         .expect("recovered workspace analysis");
     assert!(analysis.analysis.source().contains("created marker"));
     fs::remove_dir_all(root).expect("cleanup");
@@ -431,8 +431,8 @@ fn watched_disk_change_is_retained_below_an_open_overlay() {
             .is_empty(),
         "the unchanged overlay must not be reanalyzed"
     );
-    let (_, jobs) = service.close(&document_uri);
-    assert!(jobs.is_empty());
+    let outcome = service.close(&document_uri);
+    assert!(outcome.reanalysis_jobs.is_empty());
     assert_eq!(
         service
             .workspace_resource(&document_uri)
@@ -492,7 +492,7 @@ fn pending_non_adoc_include_recovers_from_a_workspace_problem() {
         service
             .documents
             .get(document_uri.as_str())
-            .and_then(|document| document.workspace_analysis())
+            .and_then(|document| document.expanded_analysis())
             .is_none(),
         "the circular include must remain a recoverable workspace problem"
     );
@@ -510,7 +510,7 @@ fn pending_non_adoc_include_recovers_from_a_workspace_problem() {
     let analysis = service
         .documents
         .get(document_uri.as_str())
-        .and_then(|document| document.workspace_analysis())
+        .and_then(|document| document.expanded_analysis())
         .expect("recovered workspace analysis");
     assert!(analysis.analysis.source().contains("recovered marker"));
     fs::remove_dir_all(root).expect("cleanup");
@@ -696,7 +696,7 @@ fn include_added_after_initial_scan_loads_an_excluded_target() {
         .documents
         .get(document_uri.as_str())
         .expect("root document")
-        .workspace_analysis()
+        .expanded_analysis()
         .expect("workspace analysis");
     assert!(
         analysis
@@ -752,13 +752,10 @@ fn stale_analysis_cannot_load_a_new_include_resource() {
         .expect("stale analysis");
     // The worker finishes against the state it started from, including reading
     // the include, but a newer revision arrives before the result comes back.
-    let workspace = service.workspace_copy();
-    let analyzed = crate::backend::analyze_workspace_root(
-        &workspace,
-        &stale_job,
-        stale_job.workspace.as_ref().expect("workspace input"),
-    )
-    .expect("stale analysis completes");
+    let mut stale_job = stale_job;
+    let project = stale_job.prepared_request.take().expect("project request");
+    let analyzed = adocweave_project::process(project.request, stale_job.cancellation.as_ref())
+        .expect("stale analysis completes");
     service
         .begin_change(typed(json!({
             "textDocument": {"uri": document_uri, "version": 3},
@@ -768,7 +765,7 @@ fn stale_analysis_cannot_load_a_new_include_resource() {
 
     assert!(
         service
-            .adopt_analyzed_workspace(&stale_job, analyzed)
+            .adopt_project_result(&stale_job, analyzed, project.source_index)
             .is_empty(),
         "a stale worker result must not publish anything"
     );
@@ -846,40 +843,25 @@ async fn different_project_scopes_sharing_an_include_converge_on_the_current_gen
     // session rather than reusing a resource from either snapshot.
     fs::write(shared.join("part.adoc"), "shared marker\n").expect("shared include");
 
-    let first_job = service
-        .refresh_stale_workspace(&first_job)
-        .unwrap_or(first_job);
     let first_config = first_job
-        .workspace
+        .project_context
         .as_ref()
         .expect("first workspace input")
         .config_sha256;
     let second_config = second_job
-        .workspace
+        .project_context
         .as_ref()
         .expect("second workspace input")
         .config_sha256;
     assert_ne!(first_config, second_config);
-    let gate = Arc::new(tokio::sync::Semaphore::new(1));
     let (sender, mut receiver) = tokio::sync::mpsc::channel(2);
-    for job in [first_job, second_job] {
+    for mut job in [first_job, second_job] {
         let sender = sender.clone();
-        let gate =
-            crate::backend::workspace_analysis_gate(&job, &gate).expect("workspace analysis gate");
-        let workspace = service.workspace_copy();
         tokio::spawn(async move {
-            let permit = gate.acquire_owned().await.expect("workspace permit");
             let completed = tokio::task::spawn_blocking(move || {
-                let analysis = job
-                    .request
-                    .analyze(job.cancellation.as_ref())
-                    .expect("document analysis");
-                let workspace_analysis = crate::backend::analyze_workspace_root(
-                    &workspace,
-                    &job,
-                    job.workspace.as_ref().expect("workspace input"),
-                );
-                (permit, job, analysis, workspace_analysis)
+                let project = job.prepared_request.take().expect("project request");
+                let result = adocweave_project::process(project.request, job.cancellation.as_ref());
+                (job, project.source_index, result)
             })
             .await
             .expect("analysis worker");
@@ -888,47 +870,60 @@ async fn different_project_scopes_sharing_an_include_converge_on_the_current_gen
     }
     drop(sender);
 
-    let (first_permit, first_job, first_analysis, first_workspace) =
-        receiver.recv().await.expect("first completion");
-    assert!(service.refresh_stale_workspace(&first_job).is_none());
-    assert_eq!(service.adopt(&first_job, first_analysis), Adoption::Adopted);
-    let first_workspace = first_workspace.expect("first workspace analysis");
-    assert!(
-        !service
-            .adopt_analyzed_workspace(&first_job, first_workspace)
-            .is_empty()
-    );
-    drop(first_permit);
-
-    let (second_permit, second_job, _, second_workspace) =
-        receiver.recv().await.expect("second completion");
-    assert!(
-        second_workspace.is_ok(),
-        "the serialized worker must not expose DraftBusy"
-    );
-    let retry = service
-        .refresh_stale_workspace(&second_job)
-        .expect("completion automatically queues the current workspace generation");
-    drop(second_workspace);
-    drop(second_permit);
-    adopt(&mut service, retry);
+    let mut refreshed = 0;
+    while let Some((job, sources, result)) = receiver.recv().await {
+        if let Some(mut retry) = service.refresh_stale_project(&job) {
+            refreshed += 1;
+            let project = retry
+                .prepared_request
+                .take()
+                .expect("retry project request");
+            let result = adocweave_project::process(project.request, retry.cancellation.as_ref())
+                .expect("retry project analysis");
+            let _ = service.adopt_project_result(&retry, result, project.source_index);
+        } else {
+            let result = result.expect("project analysis");
+            let _ = service.adopt_project_result(&job, result, sources);
+        }
+    }
+    assert!(refreshed > 0, "a stale project context must be retried");
     assert!(
         service
             .documents
             .get(first_uri.as_str())
             .expect("first document")
-            .workspace_analysis()
+            .expanded_analysis()
             .expect("first analysis")
             .analysis
             .source()
             .contains("shared marker")
+    );
+    assert_eq!(
+        service
+            .documents
+            .get(first_uri.as_str())
+            .expect("first document")
+            .document_input
+            .revision
+            .version,
+        1
+    );
+    assert_eq!(
+        service
+            .documents
+            .get(second_uri.as_str())
+            .expect("second document")
+            .document_input
+            .revision
+            .version,
+        1
     );
     assert!(
         service
             .documents
             .get(second_uri.as_str())
             .expect("second document")
-            .workspace_analysis()
+            .expanded_analysis()
             .expect("second analysis")
             .analysis
             .source()
@@ -972,7 +967,7 @@ fn explicitly_opened_document_remains_available_below_an_excluded_directory() {
             .documents
             .get(document_uri.as_str())
             .expect("open document")
-            .workspace_analysis()
+            .expanded_analysis()
             .is_some()
     );
     fs::remove_dir_all(root).expect("cleanup");
@@ -987,8 +982,15 @@ fn file_workspace_folder_analyzes_only_the_selected_document_as_a_root() {
     let root = std::env::temp_dir().join(format!("adocweave-single-file-{unique}"));
     fs::create_dir_all(&root).expect("workspace");
     let document_path = root.join("document.adoc");
-    fs::write(&document_path, "single file\n").expect("document");
+    let included_path = root.join("included.adoc");
+    let unrelated_path = root.join("unrelated.adoc");
+    let source = "include::included.adoc[]\n";
+    fs::write(&document_path, source).expect("document");
+    fs::write(&included_path, "included marker\n").expect("included document");
+    fs::write(&unrelated_path, "unrelated marker\n").expect("unrelated document");
     let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
+    let included_uri = lsp::Url::from_file_path(&included_path).expect("included URI");
+    let unrelated_uri = lsp::Url::from_file_path(&unrelated_path).expect("unrelated URI");
 
     let mut service = Session::default();
     initialize_with_params(
@@ -999,7 +1001,7 @@ fn file_workspace_folder_analyzes_only_the_selected_document_as_a_root() {
             "capabilities": {"workspace": {"workspaceFolders": true}}
         })),
     );
-    open(&mut service, document_uri.as_str(), 1, "single file\n");
+    open(&mut service, document_uri.as_str(), 1, source);
 
     let diagnostics = service.diagnostics(&document_uri).expect("diagnostics");
     assert!(diagnostics.diagnostics.iter().all(|diagnostic| {
@@ -1008,14 +1010,55 @@ fn file_workspace_folder_analyzes_only_the_selected_document_as_a_root() {
                 "workspace-resource-error".to_owned(),
             ))
     }));
+    let expanded = service
+        .documents
+        .get(document_uri.as_str())
+        .expect("open document")
+        .expanded_analysis()
+        .expect("expanded analysis");
+    assert!(expanded.analysis.source().contains("included marker"));
+    assert!(!expanded.analysis.source().contains("unrelated marker"));
+    assert_eq!(service.workspace_analysis_count(), 1);
+
+    fs::write(&included_path, "changed disk marker\n").expect("changed included document");
+    let jobs = service
+        .workspace_files_changed_with_journal(typed(json!({
+            "changes": [{"uri": included_uri, "type": 2}]
+        })))
+        .jobs;
+    assert_eq!(jobs.len(), 1);
+    for job in jobs {
+        adopt(&mut service, job);
+    }
     assert!(
         service
             .documents
             .get(document_uri.as_str())
-            .expect("open document")
-            .workspace_analysis()
-            .is_some()
+            .and_then(|document| document.expanded_analysis())
+            .expect("reanalyzed selected document")
+            .analysis
+            .source()
+            .contains("changed disk marker")
     );
+
+    open(
+        &mut service,
+        included_uri.as_str(),
+        1,
+        "open overlay marker\n",
+    );
+    assert!(
+        service
+            .documents
+            .get(document_uri.as_str())
+            .and_then(|document| document.expanded_analysis())
+            .expect("selected document with include overlay")
+            .analysis
+            .source()
+            .contains("open overlay marker")
+    );
+    assert!(service.workspace_resource(&unrelated_uri).is_none());
+    assert!(service.documents.get(unrelated_uri.as_str()).is_none());
     fs::remove_dir_all(root).expect("cleanup");
 }
 
@@ -1054,10 +1097,7 @@ fn analysis_adoption_rejects_a_stale_workspace_generation() {
         .into_iter()
         .next()
         .expect("analysis job");
-    let analysis = job
-        .request
-        .analyze(job.cancellation.as_ref())
-        .expect("analysis");
+    let analysis = analyze_document_input(&job, job.cancellation.as_ref());
 
     fs::write(&part_path, "new\n").expect("changed part");
     service.workspace_files_changed_with_journal(typed(json!({
@@ -1096,10 +1136,7 @@ fn stale_analysis_never_replaces_published_diagnostics() {
         .expect("current job");
     adopt(&mut service, current_job);
 
-    let stale_analysis = stale_job
-        .request
-        .analyze(&adocweave::NeverCancel)
-        .expect("stale analysis");
+    let stale_analysis = analyze_document_input(&stale_job, &adocweave::NeverCancel);
     assert_eq!(service.adopt(&stale_job, stale_analysis), Adoption::Stale);
 
     let published = service.diagnostics(&document_uri).expect("diagnostics");
@@ -1142,10 +1179,7 @@ fn rejected_change_keeps_protocol_input_for_the_next_incremental_change() {
     })));
     assert_eq!(accepted.len(), 1);
     let stale_job = accepted.into_iter().next().expect("initial job");
-    let stale_result = stale_job
-        .request
-        .analyze(&adocweave::NeverCancel)
-        .expect("initial analysis");
+    let stale_result = analyze_document_input(&stale_job, &adocweave::NeverCancel);
 
     let rejected = service
         .begin_change(typed(json!({
@@ -1157,7 +1191,7 @@ fn rejected_change_keeps_protocol_input_for_the_next_incremental_change() {
     assert_eq!(rejected.len(), 1);
     assert_eq!(
         rejected[0]
-            .workspace_problem
+            .project_problem
             .as_ref()
             .expect("workspace input problem")
             .code,
@@ -1169,8 +1203,8 @@ fn rejected_change_keeps_protocol_input_for_the_next_incremental_change() {
         .documents
         .get(document_uri.as_str())
         .expect("rejected document input");
-    assert_eq!(current.request.revision.version, 2);
-    assert_eq!(current.request.source.as_ref(), "oversized");
+    assert_eq!(current.document_input.revision.version, 2);
+    assert_eq!(current.document_input.source.as_ref(), "oversized");
     adopt(
         &mut service,
         rejected.into_iter().next().expect("rejected analysis"),
@@ -1197,7 +1231,7 @@ fn rejected_change_keeps_protocol_input_for_the_next_incremental_change() {
         })))
         .expect("incremental recovery uses the rejected version");
     assert_eq!(recovered.len(), 1);
-    assert!(recovered[0].workspace_problem.is_none());
+    assert!(recovered[0].project_problem.is_none());
     adopt(
         &mut service,
         recovered.into_iter().next().expect("recovered analysis"),
@@ -1206,8 +1240,8 @@ fn rejected_change_keeps_protocol_input_for_the_next_incremental_change() {
         .documents
         .get(document_uri.as_str())
         .expect("recovered document");
-    assert_eq!(current.request.revision.version, 3);
-    assert_eq!(current.request.source.as_ref(), "new");
+    assert_eq!(current.document_input.revision.version, 3);
+    assert_eq!(current.document_input.source.as_ref(), "new");
     let diagnostics = service.diagnostics(&document_uri).expect("diagnostics");
     assert!(diagnostics.diagnostics.iter().all(|diagnostic| {
         diagnostic.code
@@ -1258,7 +1292,7 @@ fn rejected_overlay_survives_dependent_and_configuration_reanalysis_until_retry(
         .expect("rejected document change")
         .pop()
         .expect("rejected analysis job");
-    assert!(rejected.workspace_problem.is_some());
+    assert!(rejected.project_problem.is_some());
     assert!(!rejected.cancellation.is_cancelled());
 
     fs::write(&include_path, "changed\n").expect("changed include");
@@ -1280,8 +1314,8 @@ fn rejected_overlay_survives_dependent_and_configuration_reanalysis_until_retry(
         .documents
         .get(document_uri.as_str())
         .expect("rejected document");
-    assert_eq!(current.request.revision.version, 2);
-    assert_eq!(current.request.source.len(), 64);
+    assert_eq!(current.document_input.revision.version, 2);
+    assert_eq!(current.document_input.source.len(), 64);
     assert!(service.begin_reanalysis_for_test(&document_uri).is_none());
     assert!(
         service
@@ -1314,8 +1348,8 @@ fn rejected_overlay_survives_dependent_and_configuration_reanalysis_until_retry(
         })))
         .expect("recovered document change");
     assert_eq!(recovered.len(), 1);
-    assert!(recovered[0].workspace.is_some());
-    assert!(recovered[0].workspace_problem.is_none());
+    assert!(recovered[0].project_context.is_some());
+    assert!(recovered[0].project_problem.is_none());
     for job in recovered {
         adopt(&mut service, job);
     }
@@ -1369,8 +1403,8 @@ fn valid_open_and_change_use_the_coherent_workspace_during_a_scan_error() {
         }
     })));
     assert_eq!(opened.len(), 1);
-    assert!(opened[0].workspace.is_some());
-    assert!(opened[0].workspace_problem.is_none());
+    assert!(opened[0].project_context.is_some());
+    assert!(opened[0].project_problem.is_none());
     for job in opened {
         adopt(&mut service, job);
     }
@@ -1382,8 +1416,8 @@ fn valid_open_and_change_use_the_coherent_workspace_during_a_scan_error() {
         })))
         .expect("document change");
     assert_eq!(changed.len(), 1);
-    assert!(changed[0].workspace.is_some());
-    assert!(changed[0].workspace_problem.is_none());
+    assert!(changed[0].project_context.is_some());
+    assert!(changed[0].project_problem.is_none());
     for job in changed {
         adopt(&mut service, job);
     }
@@ -1468,8 +1502,8 @@ fn did_open_outside_configured_roots_keeps_input_until_close() {
         .documents
         .get(rejected_uri.as_str())
         .expect("open document outside configured roots");
-    assert_eq!(rejected_document.request.revision.version, 1);
-    assert_eq!(rejected_document.request.source.as_ref(), "open");
+    assert_eq!(rejected_document.document_input.revision.version, 1);
+    assert_eq!(rejected_document.document_input.source.as_ref(), "open");
     let diagnostics = service.diagnostics(&rejected_uri).expect("diagnostics");
     assert!(diagnostics.diagnostics.iter().any(|diagnostic| {
         diagnostic.code
@@ -1480,9 +1514,9 @@ fn did_open_outside_configured_roots_keeps_input_until_close() {
                 .message
                 .contains("outside configured resource roots")
     }));
-    let (closed, jobs) = service.close(&rejected_uri);
-    assert!(closed);
-    assert!(jobs.is_empty());
+    let outcome = service.close(&rejected_uri);
+    assert!(outcome.closed);
+    assert!(outcome.reanalysis_jobs.is_empty());
     assert!(cancellation.is_cancelled());
     assert!(service.documents.get(rejected_uri.as_str()).is_none());
     fs::remove_dir_all(root).expect("cleanup");
@@ -1514,14 +1548,13 @@ fn workspace_folders_null_does_not_fall_back_to_legacy_root_uri() {
         "include::part.adoc[]\n",
     );
 
-    assert!(
-        service
-            .documents
-            .get(document_uri.as_str())
-            .expect("document")
-            .workspace_analysis()
-            .is_none()
-    );
+    assert!(service.workspace_roots().is_empty());
+    let analysis = service
+        .documents
+        .get(document_uri.as_str())
+        .and_then(|document| document.expanded_analysis())
+        .expect("the document parent remains usable without a workspace folder");
+    assert!(analysis.analysis.source().contains("included"));
     fs::remove_dir_all(root).expect("cleanup");
 }
 
@@ -1555,7 +1588,7 @@ fn legacy_root_path_is_used_only_when_root_uri_is_null() {
             .documents
             .get(document_uri.as_str())
             .expect("document")
-            .workspace_analysis()
+            .expanded_analysis()
             .is_some()
     );
     fs::remove_dir_all(root).expect("cleanup");
@@ -1607,10 +1640,7 @@ fn workspace_folder_changes_rebuild_roots_and_preserve_open_overlays() {
     let stale_job = service
         .begin_reanalysis_for_test(&document_uri)
         .expect("pending analysis");
-    let stale_result = stale_job
-        .request
-        .analyze(&adocweave::NeverCancel)
-        .expect("analysis before root change");
+    let stale_result = analyze_document_input(&stale_job, &adocweave::NeverCancel);
 
     assert!(service.workspace_folders_changed(typed(json!({
         "event": {
@@ -1623,11 +1653,11 @@ fn workspace_folder_changes_rebuild_roots_and_preserve_open_overlays() {
     let scan = service.plan_workspace_scan(&adocweave::NeverCancel);
     let jobs = service.apply_workspace_scan(scan).jobs;
     assert_eq!(jobs.len(), 1);
-    assert_eq!(jobs[0].request.revision.version, 3);
-    assert!(jobs[0].request.source.contains("overlay"));
+    assert_eq!(jobs[0].document_input.revision.version, 3);
+    assert!(jobs[0].document_input.source.contains("overlay"));
     assert_eq!(
         jobs[0]
-            .workspace
+            .project_context
             .as_ref()
             .expect("retained workspace")
             .root_text()
@@ -1696,19 +1726,19 @@ fn removing_a_workspace_folder_does_not_fail_the_retained_folder() {
         .find(|job| job.uri == retained_document.as_str())
         .expect("retained document reanalysis");
     assert!(
-        retained_job.workspace.is_some(),
+        retained_job.project_context.is_some(),
         "retained workspace problem: {:?}",
-        retained_job.workspace_problem
+        retained_job.project_problem
     );
-    assert!(retained_job.workspace_problem.is_none());
+    assert!(retained_job.project_problem.is_none());
     let removed_job = jobs
         .iter()
         .find(|job| job.uri == removed_document.as_str())
         .expect("removed document reanalysis");
-    assert!(removed_job.workspace.is_none());
+    assert!(removed_job.project_context.is_none());
     assert_eq!(
         removed_job
-            .workspace_problem
+            .project_problem
             .as_ref()
             .expect("removed document problem")
             .code,
@@ -1722,11 +1752,8 @@ fn removing_a_workspace_folder_does_not_fail_the_retained_folder() {
         "retained overlay\n"
     );
 
-    let stale_job = removed_job.clone();
-    let stale_result = stale_job
-        .request
-        .analyze(&adocweave::NeverCancel)
-        .expect("analysis before editing the removed root");
+    let stale_job = removed_job;
+    let stale_result = analyze_document_input(stale_job, &adocweave::NeverCancel);
     let changed = service
         .begin_change(typed(json!({
             "textDocument": {"uri": removed_document, "version": 2},
@@ -1736,16 +1763,19 @@ fn removing_a_workspace_folder_does_not_fail_the_retained_folder() {
 
     assert_eq!(changed.len(), 1);
     assert!(stale_job.cancellation.is_cancelled());
-    assert_eq!(service.adopt(&stale_job, stale_result), Adoption::Stale);
+    assert_eq!(service.adopt(stale_job, stale_result), Adoption::Stale);
     let current = service
         .documents
         .get(removed_document.as_str())
         .expect("removed-root document remains open");
-    assert_eq!(current.request.revision.version, 2);
-    assert_eq!(current.request.source.as_ref(), "edited after removal\n");
+    assert_eq!(current.document_input.revision.version, 2);
+    assert_eq!(
+        current.document_input.source.as_ref(),
+        "edited after removal\n"
+    );
     assert_eq!(
         changed[0]
-            .workspace_problem
+            .project_problem
             .as_ref()
             .expect("removed-root input problem")
             .code,
@@ -1902,10 +1932,10 @@ fn configuration_watch_does_not_restore_open_overlay_outside_resource_roots() {
     let jobs = service.apply_workspace_scan(scan).jobs;
 
     assert_eq!(jobs.len(), 1);
-    assert!(jobs[0].workspace.is_none());
+    assert!(jobs[0].project_context.is_none());
     assert_eq!(
         jobs[0]
-            .workspace_problem
+            .project_problem
             .as_ref()
             .expect("fail-closed workspace problem")
             .code,
@@ -2063,8 +2093,8 @@ fn invalid_project_configuration_does_not_fall_back_to_default_analysis() {
         }
     })));
     assert_eq!(jobs.len(), 1, "the workspace error must be publishable");
-    assert!(jobs[0].workspace.is_none());
-    assert!(jobs[0].workspace_problem.is_some());
+    assert!(jobs[0].project_context.is_none());
+    assert!(jobs[0].project_problem.is_some());
     for job in jobs {
         adopt(&mut service, job);
     }
@@ -2148,7 +2178,7 @@ fn invalidated_project_configuration_clears_old_feature_views() {
             ))
     }));
     for job in jobs {
-        assert!(job.workspace_problem.is_some());
+        assert!(job.project_problem.is_some());
         adopt(&mut service, job);
     }
     assert!(service.documents.snapshot(document_uri.as_str()).is_none());
@@ -2367,10 +2397,10 @@ fn stricter_resource_plan_invalidates_the_rejected_open_overlay() {
     let jobs = service.apply_workspace_scan(scan).jobs;
 
     assert_eq!(jobs.len(), 1);
-    assert!(jobs[0].workspace.is_none());
+    assert!(jobs[0].project_context.is_none());
     assert!(
         jobs[0]
-            .workspace_problem
+            .project_problem
             .as_ref()
             .expect("input error")
             .message
@@ -2464,7 +2494,7 @@ fn workspace_include_analysis_uses_versioned_resources_and_projects_diagnostics(
         .documents
         .get("file:///book/root.adoc")
         .expect("root");
-    let workspace = root.workspace_analysis().expect("workspace analysis");
+    let workspace = root.expanded_analysis().expect("expanded analysis");
     assert!(workspace.analysis.source().contains("==Part"));
     assert_eq!(
         workspace.resource_versions.get("file:///book/part.adoc"),
@@ -2508,7 +2538,7 @@ fn workspace_include_analysis_uses_versioned_resources_and_projects_diagnostics(
         .documents
         .get("file:///book/root.adoc")
         .expect("root")
-        .request
+        .document_input
         .revision
         .generation;
     assert!(
@@ -2524,23 +2554,22 @@ fn workspace_include_analysis_uses_versioned_resources_and_projects_diagnostics(
         .documents
         .get("file:///book/root.adoc")
         .expect("root");
-    assert!(reanalyzed.request.revision.generation > root_generation);
-    assert!(reanalyzed.workspace_analysis().is_some());
+    assert!(reanalyzed.document_input.revision.generation > root_generation);
+    assert!(reanalyzed.expanded_analysis().is_some());
 }
 
 #[test]
 fn missing_include_is_reported_as_a_project_diagnostic_at_the_directive() {
     let mut service = Session::default();
+    let document_uri = uri("file:///book/root.adoc");
     open(
         &mut service,
-        "file:///book/root.adoc",
+        document_uri.as_str(),
         1,
         "= Root\n\ninclude::missing.adoc[]\n",
     );
 
-    let diagnostics = service
-        .diagnostics(&uri("file:///book/root.adoc"))
-        .expect("diagnostics");
+    let diagnostics = service.diagnostics(&document_uri).expect("diagnostics");
     let problem = diagnostics
         .diagnostics
         .iter()
@@ -2551,6 +2580,619 @@ fn missing_include_is_reported_as_a_project_diagnostic_at_the_directive() {
         Some(lsp::NumberOrString::String("missing-resource".to_owned()))
     );
     assert_eq!(problem.range.start.line, 2);
+    assert!(
+        service.documents.snapshot(document_uri.as_str()).is_some(),
+        "the primary analysis remains available"
+    );
+    assert!(
+        service
+            .document_symbols(&document_uri)
+            .expect("document symbols")
+            .is_some(),
+        "primary-source language features remain available"
+    );
+}
+
+#[test]
+fn include_outside_the_project_is_rejected_without_discarding_primary_analysis() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let base = std::env::temp_dir().join(format!("adocweave-lsp-project-authority-{unique}"));
+    let project = base.join("project");
+    fs::create_dir_all(&project).expect("project directory");
+    fs::write(base.join("outside.adoc"), "outside\n").expect("outside document");
+    let project_uri = lsp::Url::from_directory_path(&project).expect("project URI");
+    let document_uri = lsp::Url::from_file_path(project.join("guide.adoc")).expect("document URI");
+    let mut service = Session::default();
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "rootUri": project_uri,
+            "capabilities": {}
+        })),
+    );
+
+    open(
+        &mut service,
+        document_uri.as_str(),
+        1,
+        "= Guide\n\ninclude::../outside.adoc[]\n",
+    );
+
+    let diagnostics = service.diagnostics(&document_uri).expect("diagnostics");
+    assert!(diagnostics.diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == Some(lsp::NumberOrString::String("unsafe-target".to_owned()))
+    }));
+    assert!(service.documents.snapshot(document_uri.as_str()).is_some());
+    assert!(
+        service
+            .document_symbols(&document_uri)
+            .expect("document symbols")
+            .is_some()
+    );
+
+    fs::remove_dir_all(base).expect("cleanup");
+}
+
+#[test]
+fn rejected_nested_include_is_reported_at_its_own_directive() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let base = std::env::temp_dir().join(format!("adocweave-lsp-nested-authority-{unique}"));
+    let project = base.join("project");
+    fs::create_dir_all(&project).expect("project directory");
+    let chapter_path = project.join("chapter.adoc");
+    fs::write(&chapter_path, "= Chapter\n\ninclude::../outside.adoc[]\n")
+        .expect("chapter document");
+    fs::write(base.join("outside.adoc"), "outside\n").expect("outside document");
+    let project_uri = lsp::Url::from_directory_path(&project).expect("project URI");
+    let document_uri = lsp::Url::from_file_path(project.join("guide.adoc")).expect("document URI");
+    let chapter_uri = lsp::Url::from_file_path(&chapter_path).expect("chapter URI");
+    let mut service = Session::default();
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "rootUri": project_uri,
+            "capabilities": {}
+        })),
+    );
+
+    open(
+        &mut service,
+        document_uri.as_str(),
+        1,
+        "= Guide\n\ninclude::chapter.adoc[]\n",
+    );
+
+    let diagnostics = service
+        .diagnostics(&chapter_uri)
+        .expect("chapter diagnostics");
+    let problem = diagnostics
+        .diagnostics
+        .iter()
+        .find(|diagnostic| {
+            diagnostic.code == Some(lsp::NumberOrString::String("unsafe-target".to_owned()))
+        })
+        .expect("rejected include diagnostic");
+    assert_eq!(problem.range.start.line, 2);
+
+    fs::remove_dir_all(base).expect("cleanup");
+}
+
+#[test]
+fn replacing_or_closing_a_root_republishes_diagnostics_for_old_includes() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-old-include-diagnostics-{unique}"));
+    fs::create_dir_all(&root).expect("project directory");
+    let document_path = root.join("guide.adoc");
+    let include_path = root.join("part.adoc");
+    fs::write(&document_path, "include::part.adoc[]\n").expect("primary document");
+    fs::write(&include_path, "= Part\n").expect("include document");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("project URI");
+    let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
+    let include_uri = lsp::Url::from_file_path(&include_path).expect("include URI");
+    let mut service = Session::default();
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "capabilities": {}
+        })),
+    );
+
+    open(
+        &mut service,
+        document_uri.as_str(),
+        1,
+        "include::part.adoc[]\n",
+    );
+    let mut jobs = service
+        .begin_change(typed(json!({
+            "textDocument": {"uri": document_uri, "version": 2},
+            "contentChanges": [{"text": "= Guide\n"}]
+        })))
+        .expect("change");
+    let mut job = jobs.pop().expect("replacement analysis");
+    let project = job.prepared_request.take().expect("project request");
+    let result = adocweave_project::process(project.request, job.cancellation.as_ref())
+        .expect("project analysis");
+    let published = service.adopt_project_result(&job, result, project.source_index);
+    assert!(
+        published.contains(&include_uri.to_string()),
+        "the old include must receive an empty diagnostic publication"
+    );
+
+    open(
+        &mut service,
+        document_uri.as_str(),
+        3,
+        "include::part.adoc[]\n",
+    );
+    let outcome = service.close(&document_uri);
+    assert!(outcome.closed);
+    assert!(outcome.diagnostic_uris.contains(include_uri.as_str()));
+
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn local_target_diagnostics_are_published_for_each_source_and_follow_file_creation() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-local-target-watch-{unique}"));
+    fs::create_dir_all(&root).expect("project directory");
+    fs::write(
+        root.join(adocweave_config::FILE_NAME),
+        "schema-version = 2\n[resources]\ninclude = true\n[local-targets]\nenabled = true\nproject-root = \".\"\n",
+    )
+    .expect("configuration");
+    let document_path = root.join("guide.adoc");
+    let include_path = root.join("part.adoc");
+    let root_asset_path = root.join("root.png");
+    let include_asset_path = root.join("part.png");
+    fs::write(
+        &document_path,
+        "include::part.adoc[]\n\nimage::root.png[]\n",
+    )
+    .expect("primary document");
+    fs::write(&include_path, "image::part.png[]\n").expect("include document");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("project URI");
+    let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
+    let include_uri = lsp::Url::from_file_path(&include_path).expect("include URI");
+    let mut service = Session::default();
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "capabilities": {}
+        })),
+    );
+
+    open(
+        &mut service,
+        document_uri.as_str(),
+        1,
+        "include::part.adoc[]\n\nimage::root.png[]\n",
+    );
+    for uri in [&document_uri, &include_uri] {
+        assert!(
+            service
+                .diagnostics(uri)
+                .expect("diagnostics")
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code
+                    == Some(lsp::NumberOrString::String(
+                        "local-target-missing".to_owned()
+                    )))
+        );
+    }
+
+    fs::write(&root_asset_path, [0x89, b'P', b'N', b'G', 0xff]).expect("root asset");
+    let root_asset_uri = lsp::Url::from_file_path(&root_asset_path).expect("root asset URI");
+    let outcome = service.workspace_files_changed_with_journal(typed(json!({
+        "changes": [{"uri": root_asset_uri, "type": 1}]
+    })));
+    assert_eq!(outcome.jobs.len(), 1);
+    for job in outcome.jobs {
+        adopt(&mut service, job);
+    }
+    assert!(
+        service
+            .diagnostics(&document_uri)
+            .expect("root diagnostics")
+            .diagnostics
+            .iter()
+            .all(|diagnostic| {
+                !matches!(
+                    diagnostic.code,
+                    Some(lsp::NumberOrString::String(ref code))
+                        if code == "local-target-missing" || code == "workspace-resource-error"
+                )
+            })
+    );
+    assert!(
+        service
+            .diagnostics(&include_uri)
+            .expect("include diagnostics")
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code
+                == Some(lsp::NumberOrString::String(
+                    "local-target-missing".to_owned()
+                )))
+    );
+
+    fs::write(&include_asset_path, b"image").expect("include asset");
+    let include_asset_uri =
+        lsp::Url::from_file_path(&include_asset_path).expect("include asset URI");
+    let outcome = service.workspace_files_changed_with_journal(typed(json!({
+        "changes": [{"uri": include_asset_uri, "type": 1}]
+    })));
+    assert_eq!(outcome.jobs.len(), 1);
+    for job in outcome.jobs {
+        adopt(&mut service, job);
+    }
+    assert!(
+        service
+            .diagnostics(&include_uri)
+            .expect("include diagnostics")
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code
+                != Some(lsp::NumberOrString::String(
+                    "local-target-missing".to_owned()
+                )))
+    );
+
+    fs::remove_file(&root_asset_path).expect("delete root asset");
+    let outcome = service.workspace_files_changed_with_journal(typed(json!({
+        "changes": [{"uri": root_asset_uri, "type": 3}]
+    })));
+    assert_eq!(outcome.jobs.len(), 1);
+    for job in outcome.jobs {
+        adopt(&mut service, job);
+    }
+    assert!(
+        service
+            .diagnostics(&document_uri)
+            .expect("root diagnostics")
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code
+                == Some(lsp::NumberOrString::String(
+                    "local-target-missing".to_owned()
+                )))
+    );
+
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn local_target_change_before_dependency_registration_retries_the_project() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-local-target-race-{unique}"));
+    fs::create_dir_all(&root).expect("project directory");
+    fs::write(
+        root.join(adocweave_config::FILE_NAME),
+        "schema-version = 2\n[local-targets]\nenabled = true\nproject-root = \".\"\n",
+    )
+    .expect("configuration");
+    let document_path = root.join("guide.adoc");
+    let asset_path = root.join("asset.png");
+    fs::write(&document_path, "image::asset.png[]\n").expect("document");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("project URI");
+    let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
+    let asset_uri = lsp::Url::from_file_path(&asset_path).expect("asset URI");
+    let mut service = Session::default();
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "capabilities": {}
+        })),
+    );
+
+    let mut job = service
+        .begin_open(typed(json!({
+            "textDocument": {
+                "uri": document_uri,
+                "languageId": "asciidoc",
+                "version": 1,
+                "text": "image::asset.png[]\n"
+            }
+        })))
+        .pop()
+        .expect("analysis job");
+    let prepared = job.prepared_request.take().expect("project request");
+    let result = adocweave_project::process(prepared.request, job.cancellation.as_ref())
+        .expect("project analysis");
+
+    fs::write(&asset_path, [0x89, b'P', b'N', b'G', 0xff]).expect("asset");
+    assert!(
+        service
+            .workspace_files_changed_with_journal(typed(json!({
+                "changes": [{"uri": asset_uri, "type": 1}]
+            })))
+            .jobs
+            .is_empty(),
+        "the dependency is not registered until processing completes"
+    );
+    service.record_project_result_dependencies(&job, &result, &prepared.source_index);
+    assert!(!crate::service::project_observations_are_current(
+        &result,
+        &prepared.observation_access,
+        &adocweave::NeverCancel,
+    ));
+
+    let retry = service
+        .retry_project_analysis(&job)
+        .expect("changed observation retries the current document");
+    adopt(&mut service, retry);
+    assert!(
+        service
+            .diagnostics(&document_uri)
+            .expect("diagnostics")
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code
+                != Some(lsp::NumberOrString::String(
+                    "local-target-missing".to_owned()
+                )))
+    );
+
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn non_adoc_include_change_before_dependency_registration_retries_the_project() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-text-include-race-{unique}"));
+    fs::create_dir_all(&root).expect("project directory");
+    fs::write(
+        root.join(adocweave_config::FILE_NAME),
+        "schema-version = 2\n[resources]\ninclude = true\n",
+    )
+    .expect("configuration");
+    let document_path = root.join("guide.adoc");
+    let include_path = root.join("fragment.txt");
+    fs::write(&document_path, "include::fragment.txt[]\n").expect("document");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("project URI");
+    let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
+    let include_uri = lsp::Url::from_file_path(&include_path).expect("include URI");
+    let mut service = Session::default();
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "capabilities": {}
+        })),
+    );
+
+    let mut job = service
+        .begin_open(typed(json!({
+            "textDocument": {
+                "uri": document_uri,
+                "languageId": "asciidoc",
+                "version": 1,
+                "text": "include::fragment.txt[]\n"
+            }
+        })))
+        .pop()
+        .expect("analysis job");
+    let prepared = job.prepared_request.take().expect("project request");
+    let result = adocweave_project::process(prepared.request, job.cancellation.as_ref())
+        .expect("project analysis");
+
+    fs::write(&include_path, "included text\n").expect("include");
+    assert!(
+        service
+            .workspace_files_changed_with_journal(typed(json!({
+                "changes": [{"uri": include_uri, "type": 1}]
+            })))
+            .jobs
+            .is_empty()
+    );
+    service.record_project_result_dependencies(&job, &result, &prepared.source_index);
+    assert!(!crate::service::project_observations_are_current(
+        &result,
+        &prepared.observation_access,
+        &adocweave::NeverCancel,
+    ));
+
+    let retry = service
+        .retry_project_analysis(&job)
+        .expect("changed observation retries the current document");
+    adopt(&mut service, retry);
+    assert!(
+        service
+            .documents
+            .get(document_uri.as_str())
+            .and_then(|document| document.expanded_analysis())
+            .is_some_and(|analysis| analysis.analysis.source().contains("included text"))
+    );
+
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn stale_project_result_cannot_replace_current_dependencies() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-stale-dependencies-{unique}"));
+    fs::create_dir_all(&root).expect("project directory");
+    fs::write(
+        root.join(adocweave_config::FILE_NAME),
+        "schema-version = 2\n[resources]\ninclude = true\n",
+    )
+    .expect("configuration");
+    let document_path = root.join("guide.adoc");
+    let old_include_path = root.join("old.txt");
+    let current_include_path = root.join("current.txt");
+    fs::write(&document_path, "include::old.txt[]\n").expect("document");
+    fs::write(&old_include_path, "old\n").expect("old include");
+    fs::write(&current_include_path, "current\n").expect("current include");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("project URI");
+    let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
+    let old_include_uri = lsp::Url::from_file_path(&old_include_path).expect("old include URI");
+    let current_include_uri =
+        lsp::Url::from_file_path(&current_include_path).expect("current include URI");
+    let mut service = Session::default();
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "capabilities": {}
+        })),
+    );
+
+    let mut old_job = service
+        .begin_open(typed(json!({
+            "textDocument": {
+                "uri": document_uri,
+                "languageId": "asciidoc",
+                "version": 1,
+                "text": "include::old.txt[]\n"
+            }
+        })))
+        .pop()
+        .expect("old job");
+    let old_project = old_job.prepared_request.take().expect("old request");
+    let old_result = adocweave_project::process(old_project.request, old_job.cancellation.as_ref())
+        .expect("old result");
+
+    let mut current_job = service
+        .begin_change(typed(json!({
+            "textDocument": {"uri": document_uri, "version": 2},
+            "contentChanges": [{"text": "include::current.txt[]\n"}]
+        })))
+        .expect("change")
+        .pop()
+        .expect("current job");
+    let current_project = current_job
+        .prepared_request
+        .take()
+        .expect("current request");
+    let current_result =
+        adocweave_project::process(current_project.request, current_job.cancellation.as_ref())
+            .expect("current result");
+
+    assert!(service.record_project_result_dependencies(
+        &current_job,
+        &current_result,
+        &current_project.source_index,
+    ));
+    assert!(!service.record_project_result_dependencies(
+        &old_job,
+        &old_result,
+        &old_project.source_index,
+    ));
+
+    fs::write(&old_include_path, "old changed\n").expect("change old include");
+    assert!(
+        service
+            .workspace_files_changed_with_journal(typed(json!({
+                "changes": [{"uri": old_include_uri, "type": 2}]
+            })))
+            .jobs
+            .is_empty()
+    );
+    fs::write(&current_include_path, "current changed\n").expect("change current include");
+    assert_eq!(
+        service
+            .workspace_files_changed_with_journal(typed(json!({
+                "changes": [{"uri": current_include_uri, "type": 2}]
+            })))
+            .jobs
+            .len(),
+        1
+    );
+
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn closing_an_include_overlay_reanalyzes_the_parent_with_disk_contents() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-lsp-close-include-{unique}"));
+    fs::create_dir_all(&root).expect("project directory");
+    let document_path = root.join("guide.adoc");
+    let include_path = root.join("part.adoc");
+    fs::write(&document_path, "include::part.adoc[]\n").expect("primary document");
+    fs::write(&include_path, "disk contents\n").expect("include document");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("project URI");
+    let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
+    let include_uri = lsp::Url::from_file_path(&include_path).expect("include URI");
+    let mut service = Session::default();
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "capabilities": {}
+        })),
+    );
+
+    open(
+        &mut service,
+        document_uri.as_str(),
+        1,
+        "include::part.adoc[]\n",
+    );
+    open(&mut service, include_uri.as_str(), 1, "open overlay\n");
+    let with_overlay = service
+        .documents
+        .get(document_uri.as_str())
+        .and_then(|document| document.expanded_analysis())
+        .expect("analysis with open include");
+    assert!(with_overlay.analysis.source().contains("open overlay"));
+
+    let outcome = service.close(&include_uri);
+    assert!(outcome.closed);
+    assert_eq!(
+        outcome.reanalysis_jobs.len(),
+        1,
+        "the including document is reanalyzed"
+    );
+    for job in outcome.reanalysis_jobs {
+        adopt(&mut service, job);
+    }
+    let from_disk = service
+        .documents
+        .get(document_uri.as_str())
+        .and_then(|document| document.expanded_analysis())
+        .expect("analysis with disk include");
+    assert!(from_disk.analysis.source().contains("disk contents"));
+    assert!(!from_disk.analysis.source().contains("open overlay"));
+
+    fs::remove_dir_all(root).expect("cleanup");
 }
 
 #[test]

@@ -1,35 +1,91 @@
 //! Versioned document state and generation-checked analysis adoption.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+#[cfg(test)]
+use adocweave::AnalysisResult;
 use adocweave::preprocess::{AnalysisProjection, PreprocessedDocument};
 use adocweave::text::TextRange;
 use adocweave::{
-    Analysis, AnalysisOptions, AnalysisRequest, AnalysisResult, CancellationCheck,
-    CancellationToken, DocumentRevision, SourceId,
+    Analysis, AnalysisOptions, CancellationCheck, CancellationToken, DocumentRevision, SourceId,
 };
+use adocweave_project::{ProjectLocalTargetDiagnostic, ProjectObservationAccess, ProjectRequest};
 
-use crate::workspace::WorkspaceInput;
+use crate::workspace::ProjectAnalysisContext;
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct AnalysisJob {
     pub uri: String,
     pub input_revision: u64,
-    pub request: AnalysisRequest,
+    pub document_input: DocumentAnalysisInput,
     pub cancellation: Arc<CancellationToken>,
-    pub workspace: Option<WorkspaceInput>,
-    pub workspace_problem: Option<WorkspaceProblem>,
+    pub project_context: Option<ProjectAnalysisContext>,
+    pub project_problem: Option<ProjectProblem>,
+    pub prepared_request: Option<PreparedProjectRequest>,
+    pub previously_published_diagnostic_uris: BTreeSet<String>,
+}
+
+#[derive(Debug)]
+pub struct PreparedProjectRequest {
+    pub request: ProjectRequest,
+    pub source_index: ProjectSourceIndex,
+    pub observation_access: ProjectObservationAccess,
+    #[cfg(test)]
+    pub(crate) _synthetic_root: Option<tempfile::TempDir>,
+}
+
+#[derive(Clone, Debug)]
+pub struct DocumentAnalysisInput {
+    pub revision: DocumentRevision,
+    pub source: Arc<str>,
+    pub options: AnalysisOptions,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ProjectSourceIndex {
+    by_id: BTreeMap<SourceId, ProjectSourceState>,
+    versions_by_uri: BTreeMap<String, i64>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ProjectSourceState {
+    pub uri: String,
+    pub text: Arc<str>,
+    pub version: Option<i64>,
+}
+
+impl ProjectSourceIndex {
+    pub fn insert(&mut self, source_id: SourceId, source: ProjectSourceState) {
+        self.by_id.insert(source_id, source);
+    }
+
+    pub fn get(&self, source_id: &SourceId) -> Option<&ProjectSourceState> {
+        self.by_id.get(source_id)
+    }
+
+    pub fn source_for_uri(&self, uri: &str) -> Option<&ProjectSourceState> {
+        self.by_id.values().find(|source| source.uri == uri)
+    }
+
+    pub fn record_version(&mut self, uri: String, version: i64) {
+        self.versions_by_uri.insert(uri, version);
+    }
+
+    pub fn version_for_uri(&self, uri: &str) -> Option<i64> {
+        self.versions_by_uri.get(uri).copied()
+    }
 }
 
 #[derive(Clone, Debug)]
 pub struct DocumentState {
     pub source_id: SourceId,
     pub input_revision: u64,
-    pub request: AnalysisRequest,
+    pub document_input: DocumentAnalysisInput,
     pub view: Option<Arc<DocumentView>>,
-    pub workspace_problem: Option<WorkspaceProblem>,
-    workspace_input: WorkspaceInputState,
+    pub project_problem: Option<ProjectProblem>,
+    published_diagnostic_uris: BTreeSet<String>,
+    project_input: ProjectInputState,
     cancellation: Arc<CancellationToken>,
 }
 
@@ -38,60 +94,86 @@ pub struct DocumentState {
 /// This is input state, not an analysis result: unrelated reanalysis must not
 /// turn a rejected request back into an apparently valid one.
 #[derive(Clone, Debug)]
-enum WorkspaceInputState {
+enum ProjectInputState {
     Synchronized,
     PendingRebuild,
-    Rejected(WorkspaceProblem),
+    Rejected(ProjectProblem),
 }
 
 #[derive(Debug)]
 pub struct DocumentView {
-    pub root: Arc<Analysis>,
-    pub expanded: Option<Arc<WorkspaceAnalysis>>,
+    pub primary: Arc<Analysis>,
+    pub expanded: Option<Arc<ExpandedDocumentAnalysis>>,
     pub format: adocweave::output::formatter::FormatConfig,
+    pub sources: Arc<ProjectSourceIndex>,
+}
+
+pub struct ProjectAdoption {
+    pub primary: Analysis,
+    pub expanded: Option<ExpandedDocumentAnalysis>,
+    pub format: adocweave::output::formatter::FormatConfig,
+    pub sources: Arc<ProjectSourceIndex>,
+    pub problem: Option<ProjectProblem>,
+    pub published_diagnostic_uris: BTreeSet<String>,
 }
 
 #[cfg(test)]
 impl DocumentState {
     pub fn analysis(&self) -> Option<&Analysis> {
-        self.view.as_ref().map(|view| view.root.as_ref())
+        self.view.as_ref().map(|view| view.primary.as_ref())
     }
 
-    pub fn workspace_analysis(&self) -> Option<&WorkspaceAnalysis> {
+    pub fn expanded_analysis(&self) -> Option<&ExpandedDocumentAnalysis> {
         self.view.as_ref()?.expanded.as_deref()
     }
 }
 
 impl DocumentState {
-    pub(crate) fn workspace_input_problem(&self) -> Option<&WorkspaceProblem> {
-        match &self.workspace_input {
-            WorkspaceInputState::Rejected(problem) => Some(problem),
-            WorkspaceInputState::Synchronized | WorkspaceInputState::PendingRebuild => self
-                .workspace_problem
+    pub(crate) fn project_input_problem(&self) -> Option<&ProjectProblem> {
+        match &self.project_input {
+            ProjectInputState::Rejected(problem) => Some(problem),
+            ProjectInputState::Synchronized | ProjectInputState::PendingRebuild => self
+                .project_problem
                 .as_ref()
                 .filter(|problem| problem.code == "workspace-input-error"),
         }
     }
 
-    fn workspace_input_is_synchronized(&self) -> bool {
-        matches!(self.workspace_input, WorkspaceInputState::Synchronized)
+    fn project_input_is_synchronized(&self) -> bool {
+        matches!(self.project_input, ProjectInputState::Synchronized)
+    }
+
+    fn published_diagnostic_uris(&self, document_uri: &str) -> BTreeSet<String> {
+        let mut uris = self.published_diagnostic_uris.clone();
+        uris.insert(document_uri.to_owned());
+        uris
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct WorkspaceProblem {
-    pub source_id: Option<String>,
+pub struct ProjectProblem {
+    pub document_uri: Option<String>,
     pub range: TextRange,
     pub code: String,
     pub message: String,
 }
 
 #[derive(Debug)]
-pub struct WorkspaceAnalysis {
+pub struct ExpandedDocumentAnalysis {
     pub document: Arc<PreprocessedDocument>,
     pub analysis: Arc<Analysis>,
     pub projection: Arc<AnalysisProjection>,
     pub resource_versions: BTreeMap<String, i64>,
+    pub local_target_diagnostics: Vec<ProjectLocalTargetDiagnostic>,
+    pub sources: Arc<ProjectSourceIndex>,
+}
+
+impl ExpandedDocumentAnalysis {
+    pub fn uri_for_source_id(&self, source_id: &SourceId) -> Option<&str> {
+        self.sources
+            .get(source_id)
+            .map(|source| source.uri.as_str())
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -122,15 +204,13 @@ impl DocumentStore {
 
     pub fn snapshot(&self, uri: &str) -> Option<DocumentSnapshot> {
         let document = self.documents.get(uri)?;
-        if !document.workspace_input_is_synchronized()
-            || document.workspace_input_problem().is_some()
-        {
+        if !document.project_input_is_synchronized() || document.project_input_problem().is_some() {
             return None;
         }
         Some(DocumentSnapshot {
             uri: document.source_id.as_str().to_owned(),
-            revision: document.request.revision.clone(),
-            analysis: document.view.as_ref()?.root.clone(),
+            revision: document.document_input.revision.clone(),
+            analysis: document.view.as_ref()?.primary.clone(),
             format: document.view.as_ref()?.format,
         })
     }
@@ -148,25 +228,36 @@ impl DocumentStore {
             .filter_map(|document| {
                 Some((
                     document.source_id.as_str().to_owned(),
-                    i32::try_from(document.request.revision.version).ok()?,
-                    document.request.source.to_string(),
+                    i32::try_from(document.document_input.revision.version).ok()?,
+                    document.document_input.source.to_string(),
                 ))
             })
             .collect()
     }
 
-    pub fn workspace_analyses(&self) -> impl Iterator<Item = &WorkspaceAnalysis> {
+    pub fn expanded_analyses(&self) -> impl Iterator<Item = &ExpandedDocumentAnalysis> {
         self.documents.values().filter_map(|document| {
             document
-                .workspace_input_is_synchronized()
+                .project_input_is_synchronized()
                 .then(|| document.view.as_ref()?.expanded.as_deref())?
         })
     }
 
-    pub fn workspace_problems(&self) -> impl Iterator<Item = &WorkspaceProblem> {
+    pub fn project_problems(&self) -> impl Iterator<Item = &ProjectProblem> {
         self.documents
             .values()
-            .filter_map(|document| document.workspace_problem.as_ref())
+            .filter_map(|document| document.project_problem.as_ref())
+    }
+
+    pub fn adopted_source(&self, uri: &str) -> Option<&str> {
+        self.documents.values().find_map(|document| {
+            document
+                .view
+                .as_ref()?
+                .sources
+                .source_for_uri(uri)
+                .map(|source| source.text.as_ref())
+        })
     }
 
     pub fn cancellation(&self, uri: &str) -> Option<Arc<CancellationToken>> {
@@ -175,10 +266,17 @@ impl DocumentStore {
             .map(|document| document.cancellation.clone())
     }
 
+    pub fn published_diagnostic_uris(&self, uri: &str) -> BTreeSet<String> {
+        self.documents
+            .get(uri)
+            .map(|document| document.published_diagnostic_uris(uri))
+            .unwrap_or_default()
+    }
+
     pub fn job_is_current(&self, job: &AnalysisJob) -> bool {
         self.documents.get(&job.uri).is_some_and(|document| {
             document.input_revision == job.input_revision
-                && document.request.revision == job.request.revision
+                && document.document_input.revision == job.document_input.revision
                 && !job.cancellation.is_cancelled()
         })
     }
@@ -213,10 +311,11 @@ impl DocumentStore {
             DocumentState {
                 source_id,
                 input_revision,
-                request: job.request.clone(),
+                document_input: job.document_input.clone(),
                 view: None,
-                workspace_problem: None,
-                workspace_input: WorkspaceInputState::Synchronized,
+                project_problem: None,
+                published_diagnostic_uris: BTreeSet::from([uri]),
+                project_input: ProjectInputState::Synchronized,
                 cancellation: job.cancellation.clone(),
             },
         );
@@ -231,10 +330,10 @@ impl DocumentStore {
         input_revision: u64,
     ) -> Option<AnalysisJob> {
         let current = self.documents.get(uri)?;
-        if i64::from(version) <= current.request.revision.version {
+        if i64::from(version) <= current.document_input.revision.version {
             return None;
         }
-        let options = current.request.options.clone();
+        let options = current.document_input.options.clone();
         let source_id = current.source_id.clone();
         current.cancellation.cancel();
         let job = self.new_job(
@@ -252,7 +351,7 @@ impl DocumentStore {
         Arc::make_mut(&mut self.documents)
             .get_mut(uri)
             .expect("document existence checked")
-            .workspace_input = WorkspaceInputState::Synchronized;
+            .project_input = ProjectInputState::Synchronized;
         Some(job)
     }
 
@@ -261,23 +360,23 @@ impl DocumentStore {
             self.job_is_current(job),
             "analysis options may only be updated before scheduling the current job"
         );
-        job.request.options = options.clone();
+        job.document_input.options = options.clone();
         Arc::make_mut(&mut self.documents)
             .get_mut(&job.uri)
             .expect("current document exists")
-            .request
+            .document_input
             .options = options;
     }
 
     pub fn begin_reanalysis(&mut self, uri: &str, input_revision: u64) -> Option<AnalysisJob> {
         let current = self.documents.get(uri)?;
-        if !current.workspace_input_is_synchronized() {
+        if !current.project_input_is_synchronized() {
             return None;
         }
         current.cancellation.cancel();
-        let version = i32::try_from(current.request.revision.version).ok()?;
-        let text = current.request.source.to_string();
-        let options = current.request.options.clone();
+        let version = i32::try_from(current.document_input.revision.version).ok()?;
+        let text = current.document_input.source.to_string();
+        let options = current.document_input.options.clone();
         let source_id = current.source_id.clone();
         let job = self.new_job(
             uri.to_owned(),
@@ -298,12 +397,12 @@ impl DocumentStore {
         input_revision: u64,
     ) -> Option<AnalysisJob> {
         let current = self.documents.get(uri)?;
-        if !current.workspace_input_is_synchronized() {
+        if !current.project_input_is_synchronized() {
             return None;
         }
         current.cancellation.cancel();
-        let version = i32::try_from(current.request.revision.version).ok()?;
-        let text = current.request.source.to_string();
+        let version = i32::try_from(current.document_input.revision.version).ok()?;
+        let text = current.document_input.source.to_string();
         let source_id = current.source_id.clone();
         let job = self.new_job(
             uri.to_owned(),
@@ -324,10 +423,10 @@ impl DocumentStore {
         let current = Arc::make_mut(&mut self.documents)
             .get_mut(uri)
             .expect("document existence checked");
-        current.request = job.request.clone();
+        current.document_input = job.document_input.clone();
         current.input_revision = job.input_revision;
         current.view = None;
-        current.workspace_problem = None;
+        current.project_problem = None;
         current.cancellation = job.cancellation.clone();
     }
 
@@ -340,6 +439,7 @@ impl DocumentStore {
         )
     }
 
+    #[cfg(test)]
     pub fn adopt_with_format(
         &mut self,
         job: &AnalysisJob,
@@ -349,16 +449,17 @@ impl DocumentStore {
         let Some(document) = self.documents.get(&job.uri) else {
             return Adoption::Closed;
         };
-        if !result.is_current(&document.request.revision, job.cancellation.as_ref()) {
+        if !result.is_current(&document.document_input.revision, job.cancellation.as_ref()) {
             return Adoption::Stale;
         }
         let document = Arc::make_mut(&mut self.documents)
             .get_mut(&job.uri)
             .expect("document existence checked");
         document.view = Some(Arc::new(DocumentView {
-            root: Arc::new(result.analysis),
+            primary: Arc::new(result.analysis),
             expanded: None,
             format,
+            sources: Arc::new(ProjectSourceIndex::default()),
         }));
         Adoption::Adopted
     }
@@ -370,35 +471,18 @@ impl DocumentStore {
         let Some(document) = self.documents.get(&job.uri) else {
             return Err(Adoption::Closed);
         };
-        if document.request.revision != job.request.revision || job.cancellation.is_cancelled() {
+        if document.document_input.revision != job.document_input.revision
+            || job.cancellation.is_cancelled()
+        {
             return Err(Adoption::Stale);
         }
         Ok(())
     }
 
-    pub fn adopt_workspace(&mut self, job: &AnalysisJob, analysis: WorkspaceAnalysis) -> Adoption {
-        if let Err(adoption) = self.ensure_current(job) {
-            return adoption;
-        }
-        let document = Arc::make_mut(&mut self.documents)
-            .get_mut(&job.uri)
-            .expect("document existence checked");
-        let Some(view) = &document.view else {
-            return Adoption::Stale;
-        };
-        document.view = Some(Arc::new(DocumentView {
-            root: view.root.clone(),
-            expanded: Some(Arc::new(analysis)),
-            format: view.format,
-        }));
-        document.workspace_problem = None;
-        Adoption::Adopted
-    }
-
-    pub fn adopt_workspace_problem(
+    pub fn adopt_project_problem(
         &mut self,
         job: &AnalysisJob,
-        problem: WorkspaceProblem,
+        problem: ProjectProblem,
     ) -> Adoption {
         if let Err(adoption) = self.ensure_current(job) {
             return adoption;
@@ -408,12 +492,40 @@ impl DocumentStore {
             .expect("document existence checked");
         if let Some(view) = &document.view {
             document.view = Some(Arc::new(DocumentView {
-                root: view.root.clone(),
+                primary: view.primary.clone(),
                 expanded: None,
                 format: view.format,
+                sources: view.sources.clone(),
             }));
         }
-        document.workspace_problem = Some(problem);
+        document.project_problem = Some(problem);
+        document.published_diagnostic_uris = BTreeSet::from([job.uri.clone()]);
+        if let Some(uri) = document
+            .project_problem
+            .as_ref()
+            .and_then(|problem| problem.document_uri.as_ref())
+        {
+            document.published_diagnostic_uris.insert(uri.clone());
+        }
+        Adoption::Adopted
+    }
+
+    pub fn adopt_project(&mut self, job: &AnalysisJob, adoption: ProjectAdoption) -> Adoption {
+        if let Err(adoption) = self.ensure_current(job) {
+            return adoption;
+        }
+        let document = Arc::make_mut(&mut self.documents)
+            .get_mut(&job.uri)
+            .expect("document existence checked");
+        document.view = Some(Arc::new(DocumentView {
+            primary: Arc::new(adoption.primary),
+            expanded: adoption.expanded.map(Arc::new),
+            format: adoption.format,
+            sources: adoption.sources,
+        }));
+        document.project_problem = adoption.problem;
+        document.published_diagnostic_uris = adoption.published_diagnostic_uris;
+        document.project_input = ProjectInputState::Synchronized;
         Adoption::Adopted
     }
 
@@ -439,12 +551,12 @@ impl DocumentStore {
             document.input_revision = input_revision;
             document.cancellation.cancel();
             document.view = None;
-            document.workspace_problem = None;
-            document.workspace_input = WorkspaceInputState::PendingRebuild;
+            document.project_problem = None;
+            document.project_input = ProjectInputState::PendingRebuild;
         }
     }
 
-    pub fn mark_workspace_input_pending(&mut self, job: &AnalysisJob) {
+    pub fn mark_project_input_pending(&mut self, job: &AnalysisJob) {
         assert!(
             self.job_is_current(job),
             "only the current input may be marked pending"
@@ -452,27 +564,27 @@ impl DocumentStore {
         Arc::make_mut(&mut self.documents)
             .get_mut(&job.uri)
             .expect("current document exists")
-            .workspace_input = WorkspaceInputState::PendingRebuild;
+            .project_input = ProjectInputState::PendingRebuild;
     }
 
-    pub fn reject_workspace_input(&mut self, job: &AnalysisJob) {
+    pub fn reject_project_input(&mut self, job: &AnalysisJob) {
         assert!(
             self.job_is_current(job),
             "only the current input may be rejected"
         );
         let problem = job
-            .workspace_problem
+            .project_problem
             .clone()
             .expect("a rejected workspace input has a problem");
         Arc::make_mut(&mut self.documents)
             .get_mut(&job.uri)
             .expect("current document exists")
-            .workspace_input = WorkspaceInputState::Rejected(problem);
+            .project_input = ProjectInputState::Rejected(problem);
     }
 
-    pub fn synchronize_all_workspace_inputs(&mut self) {
+    pub fn synchronize_all_project_inputs(&mut self) {
         for document in Arc::make_mut(&mut self.documents).values_mut() {
-            document.workspace_input = WorkspaceInputState::Synchronized;
+            document.project_input = ProjectInputState::Synchronized;
         }
     }
 
@@ -485,24 +597,29 @@ impl DocumentStore {
         options: AnalysisOptions,
         input_revision: u64,
     ) -> AnalysisJob {
+        let previously_published_diagnostic_uris = self.published_diagnostic_uris(&uri);
         self.next_generation = self
             .next_generation
             .checked_add(1)
             .expect("document analysis generation exhausted");
-        let request = AnalysisRequest::new(
-            Some(source_id),
-            i64::from(version),
-            self.next_generation,
-            text,
+        let document_input = DocumentAnalysisInput {
+            revision: DocumentRevision {
+                source_id: Some(source_id),
+                version: i64::from(version),
+                generation: self.next_generation,
+            },
+            source: Arc::from(text),
             options,
-        );
+        };
         AnalysisJob {
             uri,
             input_revision,
-            request,
+            document_input,
             cancellation: Arc::new(CancellationToken::new()),
-            workspace: None,
-            workspace_problem: None,
+            project_context: None,
+            project_problem: None,
+            prepared_request: None,
+            previously_published_diagnostic_uris,
         }
     }
 }
@@ -514,7 +631,13 @@ mod tests {
     use super::{Adoption, AnalysisJob, DocumentStore};
 
     fn analyze(job: &AnalysisJob) -> adocweave::AnalysisResult {
-        job.request.analyze(&NeverCancel).expect("analysis")
+        adocweave::AnalysisRequest {
+            revision: job.document_input.revision.clone(),
+            source: job.document_input.source.clone(),
+            options: job.document_input.options.clone(),
+        }
+        .analyze(&NeverCancel)
+        .expect("analysis")
     }
 
     #[test]
@@ -533,7 +656,7 @@ mod tests {
         assert_eq!(snapshot.revision.version, 2);
         assert_eq!(
             snapshot.revision.generation,
-            new.request.revision.generation
+            new.document_input.revision.generation
         );
         assert_eq!(snapshot.analysis.source(), "= New");
     }

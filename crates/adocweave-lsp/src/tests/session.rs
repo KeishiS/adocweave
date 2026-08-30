@@ -41,6 +41,38 @@ fn one_session_owns_connection_lifecycle_and_cancellation() {
 }
 
 #[test]
+fn one_project_request_captures_primary_and_open_include_overlays() {
+    let mut session = Session::default();
+    initialize(&mut session, &["utf-16"]);
+    open(
+        &mut session,
+        "file:///book/part.adoc",
+        1,
+        "included overlay\n",
+    );
+    let jobs = session.begin_open(typed(json!({
+        "textDocument": {
+            "uri": "file:///book/root.adoc",
+            "languageId": "asciidoc",
+            "version": 1,
+            "text": "include::part.adoc[]\n"
+        }
+    })));
+
+    assert_eq!(jobs.len(), 1);
+    let project = jobs[0].prepared_request.as_ref().expect("project request");
+    assert_eq!(project.request.targets.len(), 1);
+    assert_eq!(project.request.sources.len(), 2);
+    assert!(
+        project
+            .request
+            .sources
+            .iter()
+            .all(|source| !source.source_id.as_str().starts_with("file:"))
+    );
+}
+
+#[test]
 fn session_tracks_multiple_project_roots_with_one_revision() {
     let mut session = Session::default();
     session.initialize(&initialize_params(&[
@@ -94,12 +126,20 @@ fn open_change_and_close_update_one_session_document() {
         .documents
         .get("file:///guide.adoc")
         .expect("open document");
-    assert_eq!(document.request.revision.version, 3);
-    assert_eq!(document.request.source.as_ref(), "= Old\n");
+    assert_eq!(document.document_input.revision.version, 3);
+    assert_eq!(document.document_input.source.as_ref(), "= Old\n");
     let source_id = document.source_id.clone();
+    let analysis_source_id = document
+        .analysis()
+        .and_then(adocweave::Analysis::source_id)
+        .expect("project source ID");
     assert_eq!(
-        document.analysis().and_then(adocweave::Analysis::source_id),
-        Some(&source_id)
+        document
+            .view
+            .as_ref()
+            .and_then(|view| view.sources.get(analysis_source_id))
+            .map(|source| source.uri.as_str()),
+        Some("file:///guide.adoc")
     );
     assert!(session.documents.snapshot("file:///guide.adoc").is_some());
 
@@ -129,20 +169,28 @@ fn open_change_and_close_update_one_session_document() {
         .documents
         .get("file:///guide.adoc")
         .expect("changed document");
-    assert_eq!(document.request.revision.version, 4);
-    assert_eq!(document.request.source.as_ref(), "= New\n");
+    assert_eq!(document.document_input.revision.version, 4);
+    assert_eq!(document.document_input.source.as_ref(), "= New\n");
     assert_eq!(document.source_id, source_id);
+    let analysis_source_id = document
+        .analysis()
+        .and_then(adocweave::Analysis::source_id)
+        .expect("project source ID");
     assert_eq!(
-        document.analysis().and_then(adocweave::Analysis::source_id),
-        Some(&source_id)
+        document
+            .view
+            .as_ref()
+            .and_then(|view| view.sources.get(analysis_source_id))
+            .map(|source| source.uri.as_str()),
+        Some(source_id.as_str())
     );
 
     let cancellation = session
         .document_cancellation(&uri("file:///guide.adoc"))
         .expect("document cancellation");
-    let (closed, jobs) = session.close(&uri("file:///guide.adoc"));
-    assert!(closed);
-    assert!(jobs.is_empty());
+    let outcome = session.close(&uri("file:///guide.adoc"));
+    assert!(outcome.closed);
+    assert!(outcome.reanalysis_jobs.is_empty());
     assert!(cancellation.is_cancelled());
     assert_eq!(session.input_revision(), open_revision + 2);
     assert!(session.documents.get("file:///guide.adoc").is_none());
@@ -209,10 +257,7 @@ fn project_configuration_change_invalidates_jobs_before_rebuild_finishes() {
             }
         })))
         .remove(0);
-    let result = job
-        .request
-        .analyze(&adocweave::NeverCancel)
-        .expect("analysis before configuration change");
+    let result = analyze_document_input(&job, &adocweave::NeverCancel);
     let previous_revision = session.input_revision();
     let previous_epoch = session.workspace_input_epoch();
 
@@ -251,10 +296,7 @@ fn oversized_watch_batch_invalidates_jobs_before_recovery_scan() {
             }
         })))
         .remove(0);
-    let result = job
-        .request
-        .analyze(&adocweave::NeverCancel)
-        .expect("analysis before watched changes");
+    let result = analyze_document_input(&job, &adocweave::NeverCancel);
     let previous_revision = session.input_revision();
     let previous_epoch = session.workspace_input_epoch();
     let changes = (0..=10_000)
@@ -378,14 +420,33 @@ fn open_and_change_wait_for_rebuild_before_creating_analysis_jobs() {
             "text": "= Opened\n"
         }
     })));
+    let unsupported_uri = uri("untitled:rebuilding");
+    let unsupported_jobs = session.begin_open(typed(json!({
+        "textDocument": {
+            "uri": unsupported_uri,
+            "languageId": "asciidoc",
+            "version": 1,
+            "text": "= Untitled\n"
+        }
+    })));
     assert!(changed_jobs.is_empty());
     assert!(opened_jobs.is_empty());
+    assert_eq!(unsupported_jobs.len(), 1);
+    assert!(unsupported_jobs[0].prepared_request.is_none());
+    assert_eq!(
+        unsupported_jobs[0]
+            .project_problem
+            .as_ref()
+            .expect("unsupported URI problem")
+            .code,
+        "unsupported-uri"
+    );
     assert_eq!(
         session
             .documents
             .get("file:///changed.adoc")
             .expect("changed document")
-            .request
+            .document_input
             .source
             .as_ref(),
         "= After\n"
@@ -396,15 +457,22 @@ fn open_and_change_wait_for_rebuild_before_creating_analysis_jobs() {
 
     let scan = session.plan_workspace_scan(&adocweave::NeverCancel);
     let jobs = session.apply_workspace_scan(scan).jobs;
-    assert_eq!(jobs.len(), 2);
+    assert_eq!(jobs.len(), 3);
     assert!(
         jobs.iter()
-            .any(|job| job.request.source.as_ref() == "= After\n")
+            .any(|job| job.document_input.source.as_ref() == "= After\n")
     );
     assert!(
         jobs.iter()
-            .any(|job| job.request.source.as_ref() == "= Opened\n")
+            .any(|job| job.document_input.source.as_ref() == "= Opened\n")
     );
+    assert!(jobs.iter().any(|job| {
+        job.uri == "untitled:rebuilding"
+            && job
+                .project_problem
+                .as_ref()
+                .is_some_and(|problem| problem.code == "unsupported-uri")
+    }));
 }
 
 #[test]
@@ -695,10 +763,10 @@ fn failed_rebuild_retries_after_watch_and_analyzes_latest_open_inputs_once() {
         1
     );
     assert!(recovered.jobs.iter().any(|job| {
-        job.uri == "file:///changed.adoc" && job.request.source.as_ref() == "= Latest\n"
+        job.uri == "file:///changed.adoc" && job.document_input.source.as_ref() == "= Latest\n"
     }));
     assert!(recovered.jobs.iter().any(|job| {
-        job.uri == "file:///opened.adoc" && job.request.source.as_ref() == "= Opened\n"
+        job.uri == "file:///opened.adoc" && job.document_input.source.as_ref() == "= Opened\n"
     }));
     assert!(
         session
@@ -775,9 +843,9 @@ fn failed_structural_install_stays_pending_until_recovery_installs_latest_open_i
             })))
             .is_empty()
     );
-    let (closed, close_jobs) = session.close(&closed_uri);
-    assert!(closed);
-    assert!(close_jobs.is_empty());
+    let outcome = session.close(&closed_uri);
+    assert!(outcome.closed);
+    assert!(outcome.reanalysis_jobs.is_empty());
     let watched_before_failure = session.handle_workspace_files_changed(typed(json!({
         "changes": [{
             "uri": lsp::Url::from_file_path(root.join("before.txt")).expect("watch URI"),
@@ -878,10 +946,11 @@ fn failed_structural_install_stays_pending_until_recovery_installs_latest_open_i
         1
     );
     assert!(recovered.jobs.iter().any(|job| {
-        job.uri == changed_uri.as_str() && job.request.source.as_ref() == "= Changed latest\n"
+        job.uri == changed_uri.as_str()
+            && job.document_input.source.as_ref() == "= Changed latest\n"
     }));
     assert!(recovered.jobs.iter().any(|job| {
-        job.uri == opened_uri.as_str() && job.request.source.as_ref() == "= Opened latest\n"
+        job.uri == opened_uri.as_str() && job.document_input.source.as_ref() == "= Opened latest\n"
     }));
     assert!(
         recovered

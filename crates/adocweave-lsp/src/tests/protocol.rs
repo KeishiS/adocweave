@@ -823,12 +823,9 @@ async fn protocol_workspace_rejection_keeps_document_sync_and_connection_current
         assert!(
             opened["params"]["diagnostics"]
                 .as_array()
-                .is_some_and(|diagnostics| diagnostics.iter().any(|diagnostic| {
-                    matches!(
-                        diagnostic["code"].as_str(),
-                        Some("workspace-input-error" | "workspace-resource-error")
-                    )
-                }))
+                .is_some_and(|diagnostics| diagnostics
+                    .iter()
+                    .any(|diagnostic| { diagnostic["code"] == "unsupported-uri" }))
         );
 
         write_message(
@@ -851,7 +848,7 @@ async fn protocol_workspace_rejection_keeps_document_sync_and_connection_current
                 .as_array()
                 .is_some_and(|diagnostics| diagnostics
                     .iter()
-                    .any(|diagnostic| { diagnostic["code"] == "workspace-input-error" }))
+                    .any(|diagnostic| { diagnostic["code"] == "unsupported-uri" }))
         );
 
         write_message(

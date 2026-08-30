@@ -6,7 +6,9 @@ use std::ops::ControlFlow;
 use std::sync::Arc;
 
 use adocweave::{CancellationCheck, CancellationToken};
-use adocweave_host::IncludeFilesystemJob;
+use adocweave_project::{
+    ProjectError, ProjectObservationAccess, ProjectResult, process as process_project,
+};
 use async_lsp::client_monitor::ClientProcessMonitorLayer;
 use async_lsp::concurrency::ConcurrencyLayer;
 use async_lsp::lsp_types::{
@@ -17,14 +19,14 @@ use async_lsp::router::Router;
 use async_lsp::tracing::TracingLayer;
 use async_lsp::{ClientSocket, ErrorCode, ResponseError};
 use serde_json::Value;
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::sync::Semaphore;
 use tower::ServiceBuilder;
 
 use crate::cancellation::{QueryCancellation, QueryError, QueryResult};
 use crate::lifecycle::ProtocolLifecycleLayer;
-use crate::service::Session;
-use crate::state::{Adoption, AnalysisJob, WorkspaceProblem};
-use crate::workspace::{AnalyzedRoot, WorkspaceScanNotice, document_analysis_job_limits};
+use crate::service::{Session, project_observations_are_current};
+use crate::state::{AnalysisJob, ProjectProblem, ProjectSourceIndex};
+use crate::workspace::WorkspaceScanNotice;
 use crate::workspace_scan::{
     WorkspaceRecoveryTimerUpdate, WorkspaceScanRecovery, WorkspaceScanRecoveryTimer,
     WorkspaceScanStart, WorkspaceScanTransition, WorkspaceScanned,
@@ -40,7 +42,6 @@ pub(crate) struct Backend {
     session: Session,
     cpu_limit: Arc<Semaphore>,
     analysis_tasks: BTreeMap<String, AnalysisTask>,
-    workspace_analysis_gate: Arc<Semaphore>,
     workspace_scan_recovery_timer: WorkspaceScanRecoveryTimer,
 }
 
@@ -49,55 +50,46 @@ struct AnalysisTask {
     handle: tokio::task::JoinHandle<()>,
 }
 
-struct AnalysisCompleted {
+struct ProjectProcessingOutput {
+    result: ProjectResult,
+    source_index: ProjectSourceIndex,
+    observation_access: ProjectObservationAccess,
+}
+
+struct ProjectProcessingCompleted {
     job: AnalysisJob,
-    result: Result<adocweave::AnalysisResult, String>,
-    workspace_result: Option<Result<AnalyzedRoot, WorkspaceProblem>>,
-    workspace_permit: Option<OwnedSemaphorePermit>,
+    result: Result<ProjectProcessingOutput, ProjectProblem>,
 }
 
-pub(crate) fn workspace_analysis_gate(
-    job: &AnalysisJob,
-    gate: &Arc<Semaphore>,
-) -> Option<Arc<Semaphore>> {
-    job.workspace.as_ref().map(|_| Arc::clone(gate))
+struct ProjectValidationCompleted {
+    job: AnalysisJob,
+    output: ProjectProcessingOutput,
+    observations_are_current: bool,
 }
 
-/// Runs one workspace analysis to completion on a worker thread.
-///
-/// Missing includes are read as the preprocessor asks for them, inside one
-/// filesystem job that bounds the reads of the whole analysis. The analysis is
-/// never restarted for an include, so a document with many of them costs one
-/// preprocess rather than one per include.
-///
-/// A run that fails is still returned rather than turned into an error here.
-/// The failure belongs to the result: adopting it is what keeps the file
-/// watcher watching the includes the run asked for, so repairing a broken
-/// include still reaches the document waiting for it.
-pub(crate) fn analyze_workspace_root(
-    workspace: &crate::workspace::WorkspaceResources,
-    job: &AnalysisJob,
-    input: &crate::workspace::WorkspaceInput,
-) -> Result<AnalyzedRoot, WorkspaceProblem> {
-    let filesystem_job = IncludeFilesystemJob::new(document_analysis_job_limits())
-        .map_err(|error| workspace_input_problem(error.to_string()))?;
-    let analyzed = workspace
-        .analyze_root_detached(
-            input,
-            &job.request.options,
-            job.cancellation.as_ref(),
-            filesystem_job,
-        )
-        .map_err(workspace_input_problem)?;
-    Ok(analyzed)
-}
-
-pub(crate) fn workspace_input_problem(message: String) -> WorkspaceProblem {
-    WorkspaceProblem {
-        source_id: None,
+pub(crate) fn project_input_problem(message: String) -> ProjectProblem {
+    ProjectProblem {
+        document_uri: None,
         range: zero_range(),
         code: "workspace-input-error".to_owned(),
         message,
+    }
+}
+
+fn project_problem(uri: &str, error: ProjectError) -> ProjectProblem {
+    ProjectProblem {
+        document_uri: Some(uri.to_owned()),
+        range: zero_range(),
+        code: match &error {
+            ProjectError::Cancelled => "cancelled",
+            ProjectError::Config(_) => "project-config-error",
+            ProjectError::TargetSelection(_) => "project-target-error",
+            ProjectError::Authority(_) => "project-authority-error",
+            ProjectError::InvalidInput(_) => "project-input-error",
+            ProjectError::Limit(_) => "project-limit",
+        }
+        .to_owned(),
+        message: error.to_string(),
     }
 }
 
@@ -118,7 +110,6 @@ impl Backend {
             session: Session::with_host_index(host_index),
             cpu_limit: Arc::new(Semaphore::new(MAX_CONCURRENT_ANALYSES)),
             analysis_tasks: BTreeMap::new(),
-            workspace_analysis_gate: Arc::new(Semaphore::new(1)),
             workspace_scan_recovery_timer: WorkspaceScanRecoveryTimer::default(),
         });
 
@@ -198,11 +189,26 @@ impl Backend {
             .notification::<notification::DidCloseTextDocument>(|state, params| {
                 let uri = params.text_document.uri;
                 state.cancel_analysis(uri.as_str());
-                let (_, jobs) = state.session.close(&uri);
-                for job in jobs {
+                let outcome = state.session.close(&uri);
+                if !outcome.closed {
+                    return ControlFlow::Continue(());
+                }
+                for job in outcome.reanalysis_jobs {
                     state.schedule_analysis(job);
                 }
-                state.publish_current_diagnostics(uri)
+                for diagnostic_uri in outcome.diagnostic_uris {
+                    let Ok(diagnostic_uri) = diagnostic_uri.parse() else {
+                        return ControlFlow::Break(Err(async_lsp::Error::Routing(format!(
+                            "invalid diagnostic URI: {diagnostic_uri}"
+                        ))));
+                    };
+                    if let ControlFlow::Break(error) =
+                        state.publish_current_diagnostics(diagnostic_uri)
+                    {
+                        return ControlFlow::Break(error);
+                    }
+                }
+                ControlFlow::Continue(())
             })
             .request::<request::DocumentSymbolRequest, _>(|state, params| {
                 state.cpu_request(
@@ -312,7 +318,12 @@ impl Backend {
                     },
                 )
             })
-            .event::<AnalysisCompleted>(|state, completed| state.analysis_completed(completed))
+            .event::<ProjectProcessingCompleted>(|state, completed| {
+                state.project_processing_completed(completed)
+            })
+            .event::<ProjectValidationCompleted>(|state, completed| {
+                state.project_validation_completed(completed)
+            })
             .event::<WorkspaceScanned>(|state, scanned| {
                 let Some(transition) = state.session.complete_workspace_scan(scanned) else {
                     return ControlFlow::Continue(());
@@ -477,55 +488,40 @@ impl Backend {
         let client = self.client.clone();
         let uri = job.uri.clone();
         let cancellation = Arc::clone(&job.cancellation);
-        let workspace_gate = workspace_analysis_gate(&job, &self.workspace_analysis_gate);
-        // The worker reads missing includes into this copy while the editor
-        // keeps using the current workspace. Nothing it reads becomes visible
-        // until the finished analysis is adopted.
-        let workspace_copy = self.session.workspace_copy();
         let handle = tokio::spawn(async move {
             if debounce_ms > 0 {
                 tokio::time::sleep(std::time::Duration::from_millis(debounce_ms)).await;
             }
-            let workspace_permit = match workspace_gate {
-                Some(gate) => match gate.acquire_owned().await {
-                    Ok(permit) => Some(permit),
-                    Err(_) => return,
-                },
-                None => None,
-            };
             let Ok(_permit) = limit.acquire_owned().await else {
                 return;
             };
             if job.cancellation.is_cancelled() {
                 return;
             }
-            let worker_job = job.clone();
             let result = tokio::task::spawn_blocking(move || {
-                // A cancelled async wrapper cannot stop a running blocking
-                // worker. Moving the workspace permit into this closure keeps a
-                // replacement from opening a second draft until the old worker
-                // has actually released its transaction.
-                let workspace_permit = workspace_permit;
-                let result = worker_job
-                    .request
-                    .analyze(worker_job.cancellation.as_ref())
-                    .map_err(|error| error.to_string());
-                let workspace_result =
-                    worker_job.workspace_problem.clone().map(Err).or_else(|| {
-                        worker_job.workspace.as_ref().map(|input| {
-                            analyze_workspace_root(&workspace_copy, &worker_job, input)
-                        })
-                    });
-                (result, workspace_result, workspace_permit)
+                let mut job = job;
+                let result = match job.prepared_request.take() {
+                    Some(project) => {
+                        let source_index = project.source_index;
+                        let observation_access = project.observation_access;
+                        process_project(project.request, job.cancellation.as_ref())
+                            .map(|result| ProjectProcessingOutput {
+                                result,
+                                source_index,
+                                observation_access,
+                            })
+                            .map_err(|error| project_problem(&job.uri, error))
+                    }
+                    None => Err(job.project_problem.clone().unwrap_or_else(|| {
+                        project_input_problem("project request is unavailable".to_owned())
+                    })),
+                };
+                ProjectProcessingCompleted { job, result }
             })
-            .await
-            .unwrap_or_else(|error| (Err(format!("analysis worker failed: {error}")), None, None));
-            let _ = client.emit(AnalysisCompleted {
-                job,
-                result: result.0,
-                workspace_result: result.1,
-                workspace_permit: result.2,
-            });
+            .await;
+            if let Ok(completed) = result {
+                let _ = client.emit(completed);
+            }
         });
         self.analysis_tasks.insert(
             uri,
@@ -536,68 +532,114 @@ impl Backend {
         );
     }
 
-    fn analysis_completed(
+    fn project_processing_completed(
         &mut self,
-        mut completed: AnalysisCompleted,
+        completed: ProjectProcessingCompleted,
     ) -> ControlFlow<async_lsp::Result<()>> {
-        // Keep the workspace candidate exclusive until the event loop has either
-        // adopted or rejected it. `AnalyzedRoot` still owns its filesystem
-        // transaction after the worker itself returns.
-        let workspace_permit = completed.workspace_permit.take();
-        let result = self.finish_analysis_completed(completed);
-        drop(workspace_permit);
-        result
-    }
-
-    fn finish_analysis_completed(
-        &mut self,
-        completed: AnalysisCompleted,
-    ) -> ControlFlow<async_lsp::Result<()>> {
-        if self
-            .analysis_tasks
-            .get(&completed.job.uri)
-            .is_some_and(|task| Arc::ptr_eq(&task.cancellation, &completed.job.cancellation))
-        {
-            self.analysis_tasks.remove(&completed.job.uri);
-        }
-        if let Some(retry) = self.session.refresh_stale_workspace(&completed.job) {
+        self.remove_completed_analysis_task(&completed.job);
+        if let Some(retry) = self.session.refresh_stale_project(&completed.job) {
             self.schedule_analysis_immediately(retry);
             return ControlFlow::Continue(());
         }
-        let Ok(analysis) = completed.result else {
-            return ControlFlow::Continue(());
-        };
-        if self.session.adopt(&completed.job, analysis) != Adoption::Adopted {
-            return ControlFlow::Continue(());
-        }
-        let mut publish_uris = std::collections::BTreeSet::from([completed.job.uri.clone()]);
-        if let Some(workspace) = completed.workspace_result {
-            match workspace {
-                Ok(analyzed) => {
-                    let failure = analyzed.failure();
-                    publish_uris.extend(
-                        self.session
-                            .adopt_analyzed_workspace(&completed.job, analyzed),
-                    );
-                    if let Some(failure) = failure {
-                        let _ = self.session.adopt_workspace_problem(
-                            &completed.job,
-                            WorkspaceProblem {
-                                source_id: failure.source_id,
-                                range: failure.range.unwrap_or_else(zero_range),
-                                code: failure.code,
-                                message: failure.message,
-                            },
-                        );
-                    }
+        match completed.result {
+            Ok(output) => {
+                if !self.session.record_project_result_dependencies(
+                    &completed.job,
+                    &output.result,
+                    &output.source_index,
+                ) {
+                    return ControlFlow::Continue(());
                 }
-                Err(problem) => {
-                    let _ = self
-                        .session
-                        .adopt_workspace_problem(&completed.job, problem);
-                }
+                self.schedule_project_validation(completed.job, output);
+                ControlFlow::Continue(())
+            }
+            Err(problem) => {
+                let _ = self.session.adopt_project_problem(&completed.job, problem);
+                self.publish_diagnostics_for_job(&completed.job, std::iter::empty())
             }
         }
+    }
+
+    fn schedule_project_validation(&mut self, job: AnalysisJob, output: ProjectProcessingOutput) {
+        let limit = self.cpu_limit.clone();
+        let client = self.client.clone();
+        let uri = job.uri.clone();
+        let cancellation = Arc::clone(&job.cancellation);
+        let task_cancellation = Arc::clone(&cancellation);
+        let handle = tokio::spawn(async move {
+            let Ok(_permit) = limit.acquire_owned().await else {
+                return;
+            };
+            if cancellation.is_cancelled() {
+                return;
+            }
+            let result = tokio::task::spawn_blocking(move || {
+                let observations_are_current = project_observations_are_current(
+                    &output.result,
+                    &output.observation_access,
+                    cancellation.as_ref(),
+                );
+                ProjectValidationCompleted {
+                    job,
+                    output,
+                    observations_are_current,
+                }
+            })
+            .await;
+            if let Ok(completed) = result {
+                let _ = client.emit(completed);
+            }
+        });
+        self.analysis_tasks.insert(
+            uri,
+            AnalysisTask {
+                cancellation: task_cancellation,
+                handle,
+            },
+        );
+    }
+
+    fn project_validation_completed(
+        &mut self,
+        completed: ProjectValidationCompleted,
+    ) -> ControlFlow<async_lsp::Result<()>> {
+        self.remove_completed_analysis_task(&completed.job);
+        if let Some(retry) = self.session.refresh_stale_project(&completed.job) {
+            self.schedule_analysis_immediately(retry);
+            return ControlFlow::Continue(());
+        }
+        if !completed.observations_are_current {
+            if let Some(retry) = self.session.retry_project_analysis(&completed.job) {
+                self.schedule_analysis_immediately(retry);
+            }
+            return ControlFlow::Continue(());
+        }
+        let published = self.session.adopt_project_result(
+            &completed.job,
+            completed.output.result,
+            completed.output.source_index,
+        );
+        self.publish_diagnostics_for_job(&completed.job, published)
+    }
+
+    fn remove_completed_analysis_task(&mut self, job: &AnalysisJob) {
+        if self
+            .analysis_tasks
+            .get(&job.uri)
+            .is_some_and(|task| Arc::ptr_eq(&task.cancellation, &job.cancellation))
+        {
+            self.analysis_tasks.remove(&job.uri);
+        }
+    }
+
+    fn publish_diagnostics_for_job(
+        &mut self,
+        job: &AnalysisJob,
+        additional_uris: impl IntoIterator<Item = String>,
+    ) -> ControlFlow<async_lsp::Result<()>> {
+        let mut publish_uris = job.previously_published_diagnostic_uris.clone();
+        publish_uris.insert(job.uri.clone());
+        publish_uris.extend(additional_uris);
         for uri in publish_uris {
             let Ok(uri) = uri.parse() else {
                 return ControlFlow::Break(Err(async_lsp::Error::Routing(format!(

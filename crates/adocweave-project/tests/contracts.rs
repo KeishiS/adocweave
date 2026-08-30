@@ -387,7 +387,13 @@ fn pathless_input_keeps_include_and_local_target_bases_separate() {
                 && resource.path == include_base.join("part.adoc")
         })
         .expect("include observation");
-    assert_eq!(include.requested_by.as_ref(), Some(&SourceId::new("stdin")));
+    assert_eq!(
+        include
+            .requested_at
+            .as_ref()
+            .map(|location| &location.source_id),
+        Some(&SourceId::new("stdin"))
+    );
     assert!(matches!(
         include.outcome,
         adocweave_project::ProjectResourceOutcome::Loaded { .. }
@@ -400,7 +406,13 @@ fn pathless_input_keeps_include_and_local_target_bases_separate() {
                 && resource.path == directory.path().join("asset.png")
         })
         .expect("local-target observation");
-    assert_eq!(asset.requested_by.as_ref(), Some(&SourceId::new("stdin")));
+    assert_eq!(
+        asset
+            .requested_at
+            .as_ref()
+            .map(|location| &location.source_id),
+        Some(&SourceId::new("stdin"))
+    );
     assert_eq!(
         asset.outcome,
         adocweave_project::ProjectResourceOutcome::Present
@@ -460,7 +472,11 @@ fn pathless_input_checks_same_relative_target_against_each_base() {
         assert!(local_targets.iter().any(|resource| {
             resource.path == include_base.join("same.adoc")
                 && resource.outcome == adocweave_project::ProjectResourceOutcome::Present
-                && resource.requested_by.as_ref() == Some(&SourceId::new("stdin"))
+                && resource
+                    .requested_at
+                    .as_ref()
+                    .map(|location| &location.source_id)
+                    == Some(&SourceId::new("stdin"))
         }));
         assert!(local_targets.iter().any(|resource| {
             resource.path == directory.path().join("same.adoc")
@@ -468,7 +484,11 @@ fn pathless_input_checks_same_relative_target_against_each_base() {
                     resource.outcome,
                     adocweave_project::ProjectResourceOutcome::Missing
                 )
-                && resource.requested_by.as_ref() == Some(&SourceId::new("stdin"))
+                && resource
+                    .requested_at
+                    .as_ref()
+                    .map(|location| &location.source_id)
+                    == Some(&SourceId::new("stdin"))
         }));
     }
 }
@@ -648,21 +668,21 @@ fn unrepresentable_caller_source_id_is_invalid_input() {
 }
 
 #[test]
-fn caller_sources_cannot_use_generated_local_target_ids() {
+fn caller_sources_cannot_use_generated_resource_ids() {
     let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let mut request = request_with(vec![ProjectTarget::Source(SourceId::new(
-        "local-target:caller",
-    ))]);
-    request.sources.push(ProjectSource::memory(
-        SourceId::new("local-target:caller"),
-        project_root,
-        "text\n",
-    ));
+    for id in ["local-target:caller", "include-request:caller:0:1"] {
+        let mut request = request_with(vec![ProjectTarget::Source(SourceId::new(id))]);
+        request.sources.push(ProjectSource::memory(
+            SourceId::new(id),
+            project_root.clone(),
+            "text\n",
+        ));
 
-    assert!(matches!(
-        process(request, &NeverCancel),
-        Err(ProjectError::InvalidInput(error)) if error.code == "reserved-source-id"
-    ));
+        assert!(matches!(
+            process(request, &NeverCancel),
+            Err(ProjectError::InvalidInput(error)) if error.code == "reserved-source-id"
+        ));
+    }
 }
 
 #[test]
