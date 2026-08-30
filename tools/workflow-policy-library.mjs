@@ -177,6 +177,26 @@ export function validateReleaseFlow(workflows, distConfiguration) {
     fail("release plan must distinguish tag publication from pull-request planning");
   }
 
+  const localArtifactSteps = jobs["build-local-artifacts"]?.steps ?? [];
+  const noticeIndex = localArtifactSteps.findIndex((step) =>
+    String(step.run ?? "").includes(
+      "node tools/generate-third-party-notices.mjs THIRD_PARTY_NOTICES.adoc",
+    )
+  );
+  const buildIndex = localArtifactSteps.findIndex((step) =>
+    String(step.run ?? "").includes("dist build")
+  );
+  if (noticeIndex < 0) {
+    fail("local artifact builds must generate third-party notices");
+  }
+  const noticeStep = localArtifactSteps[noticeIndex];
+  if (noticeStep.if !== undefined || noticeStep["continue-on-error"] !== undefined) {
+    fail("local artifact builds must generate third-party notices unconditionally");
+  }
+  if (buildIndex < 0 || noticeIndex >= buildIndex) {
+    fail("local artifact builds must generate third-party notices before cargo-dist");
+  }
+
   const nativeCheckCalls = Object.entries(jobs).filter(([, job]) =>
     job.uses === "./.github/workflows/native-release-checks.yml"
   );
