@@ -60,7 +60,7 @@ WebAssemblyパッケージ、textlint用ProcessorおよびVS Code拡張は、そ
 Zed拡張は、公式Zed拡張レジストリが``editors/zed``のソースを構築して配布します。
 いずれの配布物も同じバージョン番号を別の内容へ再利用しません。
 
-cargo-distは、OSとCPU architectureごとの``adocweave-<target>.zip``をnative成果物として構築します。
+cargo-distは、OSとCPU architectureごとの``adocweave-<target>.zip``を4件のnative成果物として構築します。
 GitHubが自動生成するsource archiveは検証対象の成果物に含めません。
 
 WebAssemblyパッケージとtextlint用Processorは、それぞれの専用workflowで一度だけ構築して検査し、その成果物を
@@ -123,8 +123,8 @@ cargo-distのplanは、workspaceのバージョン、``vX.Y.Z``タグ、native�
 各構築jobが出力する標準dist-manifestを集約し、公開時に最終的な標準dist-manifestを生成します。planまたは
 dist-manifestにないfile、欠落したfile、異なるバージョンおよび異なるsource commitを受理しません。
 
-``sha256.sum``は同じGitHub Releaseに含める成果物の共通checksum一覧です。cargo-distがnative archiveごとに
-生成する``.sha256``も公開します。外部サービスへ送る成果物は、共通checksumと照合してから使用します。
+``sha256.sum``は4件のnative archiveに対してcargo-distが生成する標準checksum一覧です。archiveごとの
+``.sha256``も公開します。公開後の受入検査では、両方のchecksumを実際に取得したarchiveと照合します。
 
 GitHub Releaseへ添付する成果物、checksumおよび標準dist-manifestにはGitHub Artifact Attestationを付けます。
 credentialや署名fileはarchiveへ埋め込みません。privateリポジトリから取得する場合も、利用者が明示的に与えた
@@ -171,9 +171,9 @@ stable Releaseの公開後に、Cachix用workflowの公開jobだけが``CACHIX_A
 取得した``adocweave``のversionと``adocweave lsp``の起動を確認します。Nix store pathは内容から決まるため、
 同じtagでworkflowを再実行しても既存の内容は変わりません。
 
-最初の自動公開より前に、``github-release``、``binary-cache-publish``、``marketplace-publish``、``npm-publish``および
+最初の自動公開より前に、``github-release``、``cachix-publish``、``marketplace-publish``、``npm-publish``および
 ``open-vsx-publish``の各environmentを作成します。VS Code用の二つのenvironmentは``vscode/v*``タグだけを許可します。
-``github-release``と``binary-cache-publish``は``v*``、``npm-publish``は``wasm/v*``と
+``github-release``と``cachix-publish``は``v*``、``npm-publish``は``wasm/v*``と
 ``textlint-plugin-asciidoc/v*``を許可します。
 Open VSXのtokenはrepository全体ではなく``open-vsx-publish`` environmentへ置きます。MarketplaceのTrusted Publisherには
 ``vscode-publish.yml``、textlint packageのTrusted Publisherには``textlint-plugin-publish.yml``、
@@ -188,14 +188,14 @@ xref:adr/0023-publication-boundary.adoc#publication-authority[ADR 0023]を参照
 == 公開と失敗時保証
 
 公開前検査に成功した``main``のcommitへ``vX.Y.Z``タグを作成すると、cargo-distのRelease workflowが起動します。
-共通のrelease contractは、checkout時に``origin/main``を含む履歴を取得し、tag、commitおよびworkspace版の対応と、
+native Releaseの検査は、checkout時に``origin/main``を含む履歴を取得し、tag、commitおよびworkspace版の対応と、
 tagのcommitが``main``に含まれることを``host``より前に一度だけ検査します。workflowはplanを生成し、native成果物を
 構築して検査した後、一つのGitHub Releaseへ公開します。
 異なるworkflow runや手元の成果物を途中で混在させません。Release作成に成功すると、Release workflow内の公開jobが
 Cachix用の``workflow_call``専用workflowを呼び出します。呼出し先へはplanで確定したtagと
 Releaseを作成した完全なcommit SHAだけを渡します。各公開jobはstableなRelease、tagのcommit、checkoutしたcommit、
-workspace版、checksumおよびattestationを照合します。``main``との関係は共通のrelease contractを正本とし、公開先ごとの
-workflowでは重ねて検査しません。npmパッケージはこのRelease workflowへ含めません。
+workspace版を照合します。``main``との関係はnative Releaseの検査を正本とし、Cachix用workflowでは重ねて
+検査しません。npmパッケージとエディタ拡張はこのRelease workflowへ含めません。
 
 ``main``の検査に成功したcommitへ``wasm/vX.Y.Z``または``textlint-plugin-asciidoc/vX.Y.Z``タグを作成すると、
 対応するパッケージ専用workflowが起動します。workflowはタグ、パッケージの版、commitおよび``main``への統合を
@@ -242,7 +242,8 @@ taskの現在の入口とReleaseの操作手順はxref:../../CONTRIBUTING.adoc[�
 検査をこの段階へ分ける理由はxref:adr/0031-path-independent-pull-request-gate.adoc[ADR 0031]、task間の責務は
 xref:adr/0033-make-task-boundary.adoc[ADR 0033]を参照してください。
 
-GitHub Releaseの公開後は、成果物を実際のRelease URLから取得してchecksumとattestationを確認します。
+GitHub Releaseの公開後は、``RELEASE_TAG=vX.Y.Z cargo make native-release-acceptance``で成果物を実際のReleaseから
+取得し、asset一覧、標準manifest、checksum、attestationおよび実行ホストへの導入を確認します。
 WebAssemblyパッケージとtextlint用Processorはnpm Registry、VS Code拡張はVisual Studio Marketplaceと
 Open VSX Registryから取得して確認します。
 外部registryへ公開したpackageと拡張はregistryから導入し直し、署名などregistry固有のmetadataを除く内容、

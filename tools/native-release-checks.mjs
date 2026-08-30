@@ -5,7 +5,7 @@ import { checkReleaseVersion, validateRegistry } from "./sync-release-version.mj
 import { releaseTag, workspaceVersion } from "./release-version.mjs";
 
 const ROOT = new URL("../", import.meta.url);
-const TARGETS = [
+export const NATIVE_TARGETS = [
   "aarch64-apple-darwin",
   "aarch64-unknown-linux-musl",
   "x86_64-pc-windows-msvc",
@@ -28,12 +28,16 @@ export function validateReleaseTag(tag, version = workspaceVersion()) {
 
 export function expectedReleaseAssets() {
   return [
-    ...TARGETS.flatMap((target) => [
+    ...NATIVE_TARGETS.flatMap((target) => [
       `adocweave-${target}.zip`,
       `adocweave-${target}.zip.sha256`,
     ]),
     "sha256.sum",
   ].sort();
+}
+
+export function expectedPublishedReleaseAssets() {
+  return [...expectedReleaseAssets(), "dist-manifest.json"].sort();
 }
 
 export function validateDistPlan(plan, tag = releaseTag()) {
@@ -52,7 +56,7 @@ export function validateDistPlan(plan, tag = releaseTag()) {
   if (JSON.stringify(actualAssets) !== JSON.stringify(expectedAssets)) {
     fail("dist plan release asset set mismatch");
   }
-  for (const target of TARGETS) {
+  for (const target of NATIVE_TARGETS) {
     const name = `adocweave-${target}.zip`;
     const archive = plan.artifacts?.[name];
     const executables = archive?.assets?.filter(({ kind }) => kind === "executable") ?? [];
@@ -94,12 +98,12 @@ export function verifyRepository() {
 export function main(args) {
   const unknown = args.filter((arg) => !arg.startsWith("--tag="));
   if (unknown.length > 0 || args.filter((arg) => arg.startsWith("--tag=")).length > 1) {
-    fail("usage: node tools/release-contract.mjs [--tag=vX.Y.Z]");
+    fail("usage: node tools/native-release-checks.mjs [--tag=vX.Y.Z]");
   }
   const release = verifyRepository();
   const tag = args.find((arg) => arg.startsWith("--tag="))?.slice(6);
   if (tag) validateReleaseTag(tag, release.version);
-  process.stdout.write(`release contract verified: ${release.tag}\n`);
+  process.stdout.write(`native release checks passed: ${release.tag}\n`);
 }
 
 if (process.argv[1] && import.meta.url === new URL(process.argv[1], "file:").href) {

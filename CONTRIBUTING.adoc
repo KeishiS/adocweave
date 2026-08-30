@@ -305,7 +305,8 @@ git push upstream vX.Y.Z
 . Release workflowがCachixの公開workflowを呼び出します。
 . Cachixへの公開を含むRelease workflow全体が成功し、予定されたassetを含むstableなGitHub Releaseが作成されたことを
   確認します。
-  必要に応じて、xref:#release-checklist[Release checklist]の任意の受入確認を行います。
+  ``RELEASE_TAG=vX.Y.Z cargo make native-release-acceptance``で公開済みassetを確認し、
+  必要に応じてxref:#release-checklist[Release checklist]の任意の受入確認を行います。
 
 CLI引数、Language Server protocol、設定schemaなど、外部から利用する仕様を変更した場合は、変更内容と影響を
 rootの``CHANGELOG.md``へ記載します。利用者の作業が必要な場合は``Migration``、Rustの公開APIに互換性のない変更が
@@ -325,7 +326,7 @@ xref:docs/developer-guide/release-distribution.adoc[GitHub Releases配布仕様]
 公開後に問題が見つかった場合は、既存のtagやassetを置換せず、修正をpull requestで``main``へ統合して
 新しいバージョンで最初から実行します。
 
-最初の自動公開より前に、``github-release``、``binary-cache-publish``、``marketplace-publish``、``npm-publish``および
+最初の自動公開より前に、``github-release``、``cachix-publish``、``marketplace-publish``、``npm-publish``および
 ``open-vsx-publish``の5つのenvironmentを作成します。各environmentのdeployment branch policyではSelected branches
 and tagsを選びます。``npm-publish``では``wasm/v*``と``textlint-plugin-asciidoc/v*``、
 ``marketplace-publish``と``open-vsx-publish``では
@@ -437,10 +438,13 @@ packageを取得し、versionと``adocweave lsp``の起動を確認します。
 
 公開前は自動検査に加え、GitHub上の設定と公開対象を人が確認します。
 
-公開後の項目は**任意**です。実際の画面操作や実環境での導入は人手でしか行えず、毎releaseで全経路を
+公開済みnative Releaseの検査は必須です。``RELEASE_TAG=vX.Y.Z cargo make native-release-acceptance``を実行すると、
+Releaseのasset一覧、標準manifest、checksum、attestationおよび実行ホスト向けarchiveの導入を確認します。
+
+それ以外の公開後の項目は**任意**です。実際の画面操作や実環境での導入は人手でしか行えず、毎releaseで全経路を
 確認すると一人では回らないためです。気になる経路を選んで確認し、結果は必要に応じてIssueへ記録します。
 変更のなかった成果物は省略してかまいません。公開したassetそのものの完全性(checksum、attestation、
-バージョン、binary cacheへの登録)は自動で確認できるため、任意の対象から外します。
+バージョン、Cachixへの登録)は自動で確認できるため、任意の対象から外します。
 
 公開後の手動確認を行う場合は、リポジトリのcheckoutやワークスペースの``target``を``PATH``へ含めない
 clean環境で、公開assetだけを使って実行します。
@@ -467,6 +471,6 @@ clean環境で、公開assetだけを使って実行します。
 * [ ] native実行ファイル: clean ``PATH``へ導入し、CLI操作と``adocweave lsp``、更新、rollbackおよび完全削除を確認する。
 * [ ] Nix: 利用側flakeへtagのコミットを固定し、通常のCLI操作と``adocweave lsp``の``nix run``を確認する。
 
-公開assetの完全性は自動で確認します。asset集合と0バイトではないこと、checksum、attestation、``--version --json``、
-binary cacheへの登録、Open VSXへ公開したfileのバイト一致およびVisual Studio Marketplaceへ公開したVSIXの
+公開assetの完全性は公開後のtaskで確認します。asset集合と0バイトではないこと、checksum、attestation、``--version --json``、
+Cachixへの登録、Open VSXへ公開したfileのバイト一致およびVisual Studio Marketplaceへ公開したVSIXの
 署名以外の内容一致は、公開workflowと公開後の検証で機械的に判定できるため、この一覧には含めません。
