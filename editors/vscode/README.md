@@ -1,7 +1,5 @@
 # AdocWeave for Visual Studio Code
 
-[![Open VSX](https://img.shields.io/open-vsx/v/adocweave/adocweave?label=Open%20VSX)](https://open-vsx.org/extension/adocweave/adocweave)
-
 A Visual Studio Code extension for [AdocWeave](https://github.com/KeishiS/adocweave), an AsciiDoc processor.
 This extension provides the following features:
 
@@ -11,11 +9,21 @@ This extension provides the following features:
 
 ## Installation
 
-Install `adocweave.adocweave` from Visual Studio Marketplace or Open VSX. The official publisher is the `adocweave` namespace.
+After `adocweave.adocweave` is listed in Visual Studio Marketplace or Open VSX, install it with the command for your editor. The official publisher is the `adocweave` namespace.
 
 ```sh
 code --install-extension adocweave.adocweave
 codium --install-extension adocweave.adocweave
+```
+
+Until it is listed, build and install a VSIX from a repository checkout:
+
+```sh
+nix develop
+npm ci --ignore-scripts --prefix editors/vscode
+npm run package --prefix editors/vscode
+VERSION="$(node -p "require('./editors/vscode/package.json').version")"
+code --install-extension "target/distrib/adocweave-$VERSION.vsix"
 ```
 
 ## Requirements
