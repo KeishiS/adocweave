@@ -151,7 +151,13 @@ fn non_adoc_include_is_loaded_and_watched_without_becoming_an_analysis_root() {
         .expect("workspace analysis");
     assert!(analysis.analysis.source().contains("first marker"));
     assert_eq!(service.workspace_analysis_count(), 1);
-    let previous_revision = service.input_revision();
+    let previous_generation = service
+        .documents
+        .get(document_uri.as_str())
+        .expect("document")
+        .document_input
+        .revision
+        .generation;
     let previous_cancellation = service
         .document_cancellation(&document_uri)
         .expect("document cancellation");
@@ -164,8 +170,7 @@ fn non_adoc_include_is_loaded_and_watched_without_becoming_an_analysis_root() {
         .jobs;
     assert_eq!(jobs.len(), 1);
     assert!(previous_cancellation.is_cancelled());
-    assert_eq!(service.input_revision(), previous_revision + 1);
-    assert_eq!(jobs[0].input_revision, service.input_revision());
+    assert!(jobs[0].document_input.revision.generation > previous_generation);
     for job in jobs {
         adopt(&mut service, job);
     }
@@ -592,10 +597,7 @@ fn stale_analysis_cannot_load_a_new_include_resource() {
         .expect("stale analysis");
     // The worker finishes against the state it started from, including reading
     // the include, but a newer revision arrives before the result comes back.
-    let mut stale_job = stale_job;
-    let project = stale_job.prepared_request.take().expect("project request");
-    let analyzed = adocweave_project::process(project.request, stale_job.cancellation.as_ref())
-        .expect("stale analysis completes");
+    let completion = process_project_snapshot(stale_job);
     service
         .begin_change(typed(json!({
             "textDocument": {"uri": document_uri, "version": 3},
@@ -603,12 +605,10 @@ fn stale_analysis_cannot_load_a_new_include_resource() {
         })))
         .expect("newer change");
 
-    assert!(
-        service
-            .adopt_project_result(&stale_job, analyzed, project.source_index)
-            .is_empty(),
-        "a stale worker result must not publish anything"
-    );
+    assert!(matches!(
+        service.project_processing_completed(completion),
+        crate::service::ProjectAnalysisAction::Ignore
+    ));
     let target = lsp::Url::from_file_path(&target_path).expect("target URI");
     assert!(
         service.workspace_copy().get(&target).is_none(),
@@ -695,36 +695,24 @@ async fn different_project_scopes_sharing_an_include_converge_on_the_current_gen
         .config_sha256;
     assert_ne!(first_config, second_config);
     let (sender, mut receiver) = tokio::sync::mpsc::channel(2);
-    for mut job in [first_job, second_job] {
+    for job in [first_job, second_job] {
         let sender = sender.clone();
         tokio::spawn(async move {
-            let completed = tokio::task::spawn_blocking(move || {
-                let project = job.prepared_request.take().expect("project request");
-                let result = adocweave_project::process(project.request, job.cancellation.as_ref());
-                (job, project.source_index, result)
-            })
-            .await
-            .expect("analysis worker");
+            let completed = tokio::task::spawn_blocking(move || process_project_snapshot(job))
+                .await
+                .expect("analysis worker");
             sender.send(completed).await.expect("completion receiver");
         });
     }
     drop(sender);
 
     let mut refreshed = 0;
-    while let Some((job, sources, result)) = receiver.recv().await {
-        if let Some(mut retry) = service.refresh_stale_project(&job) {
+    while let Some(completion) = receiver.recv().await {
+        let next = service.project_processing_completed(completion);
+        if matches!(next, crate::service::ProjectAnalysisAction::Retry(_)) {
             refreshed += 1;
-            let project = retry
-                .prepared_request
-                .take()
-                .expect("retry project request");
-            let result = adocweave_project::process(project.request, retry.cancellation.as_ref())
-                .expect("retry project analysis");
-            let _ = service.adopt_project_result(&retry, result, project.source_index);
-        } else {
-            let result = result.expect("project analysis");
-            let _ = service.adopt_project_result(&job, result, sources);
         }
+        let _ = adopt_next(&mut service, next);
     }
     assert!(refreshed > 0, "a stale project context must be retried");
     assert!(
@@ -2644,11 +2632,9 @@ fn replacing_or_closing_a_root_republishes_diagnostics_for_old_includes() {
             "contentChanges": [{"text": "= Guide\n"}]
         })))
         .expect("change");
-    let mut job = jobs.pop().expect("replacement analysis");
-    let project = job.prepared_request.take().expect("project request");
-    let result = adocweave_project::process(project.request, job.cancellation.as_ref())
-        .expect("project analysis");
-    let published = service.adopt_project_result(&job, result, project.source_index);
+    let job = jobs.pop().expect("replacement analysis");
+    let completion = process_project_snapshot(job);
+    let published = adopt_completion(&mut service, completion);
     assert!(
         published.contains(&include_uri.to_string()),
         "the old include must receive an empty diagnostic publication"
@@ -2804,7 +2790,7 @@ fn local_target_diagnostics_are_published_for_each_source_and_follow_file_creati
 }
 
 #[test]
-fn local_target_change_before_dependency_registration_retries_the_project() {
+fn local_target_change_during_observation_validation_cancels_the_snapshot() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock")
@@ -2832,7 +2818,7 @@ fn local_target_change_before_dependency_registration_retries_the_project() {
         })),
     );
 
-    let mut job = service
+    let job = service
         .begin_open(typed(json!({
             "textDocument": {
                 "uri": document_uri,
@@ -2843,30 +2829,28 @@ fn local_target_change_before_dependency_registration_retries_the_project() {
         })))
         .pop()
         .expect("analysis job");
-    let prepared = job.prepared_request.take().expect("project request");
-    let result = adocweave_project::process(prepared.request, job.cancellation.as_ref())
-        .expect("project analysis");
+    let completion = process_project_snapshot(job);
+    let crate::service::ProjectAnalysisAction::Validate(completion) =
+        service.project_processing_completed(completion)
+    else {
+        panic!("current result must be validated");
+    };
 
     fs::write(&asset_path, [0x89, b'P', b'N', b'G', 0xff]).expect("asset");
-    assert!(
-        service
-            .workspace_files_changed_with_journal(typed(json!({
-                "changes": [{"uri": asset_uri, "type": 1}]
-            })))
-            .jobs
-            .is_empty(),
-        "the dependency is not registered until processing completes"
-    );
-    service.record_project_result_dependencies(&job, &result, &prepared.source_index);
-    assert!(!crate::service::project_observations_are_current(
-        &result,
-        &prepared.observation_access,
-        &adocweave::NeverCancel,
+    let mut jobs = service
+        .workspace_files_changed_with_journal(typed(json!({
+            "changes": [{"uri": asset_uri, "type": 1}]
+        })))
+        .jobs;
+    assert_eq!(jobs.len(), 1);
+    let retry = jobs.pop().expect("replacement analysis");
+    assert!(completion.snapshot.cancellation.is_cancelled());
+    let completion = validate(*completion);
+    assert_eq!(completion.observations_are_current, Some(false));
+    assert!(matches!(
+        service.complete_analysis(completion),
+        crate::service::ProjectAnalysisAction::Ignore
     ));
-
-    let retry = service
-        .retry_project_analysis(&job)
-        .expect("changed observation retries the current document");
     adopt(&mut service, retry);
     assert!(
         service
@@ -2884,7 +2868,7 @@ fn local_target_change_before_dependency_registration_retries_the_project() {
 }
 
 #[test]
-fn non_adoc_include_change_before_dependency_registration_retries_the_project() {
+fn non_adoc_include_change_before_validation_retries_the_project() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock")
@@ -2912,7 +2896,7 @@ fn non_adoc_include_change_before_dependency_registration_retries_the_project() 
         })),
     );
 
-    let mut job = service
+    let job = service
         .begin_open(typed(json!({
             "textDocument": {
                 "uri": document_uri,
@@ -2923,9 +2907,7 @@ fn non_adoc_include_change_before_dependency_registration_retries_the_project() 
         })))
         .pop()
         .expect("analysis job");
-    let prepared = job.prepared_request.take().expect("project request");
-    let result = adocweave_project::process(prepared.request, job.cancellation.as_ref())
-        .expect("project analysis");
+    let completion = process_project_snapshot(job);
 
     fs::write(&include_path, "included text\n").expect("include");
     assert!(
@@ -2936,16 +2918,17 @@ fn non_adoc_include_change_before_dependency_registration_retries_the_project() 
             .jobs
             .is_empty()
     );
-    service.record_project_result_dependencies(&job, &result, &prepared.source_index);
-    assert!(!crate::service::project_observations_are_current(
-        &result,
-        &prepared.observation_access,
-        &adocweave::NeverCancel,
-    ));
-
-    let retry = service
-        .retry_project_analysis(&job)
-        .expect("changed observation retries the current document");
+    let crate::service::ProjectAnalysisAction::Validate(completion) =
+        service.project_processing_completed(completion)
+    else {
+        panic!("current result must be validated");
+    };
+    let completion = validate(*completion);
+    assert_eq!(completion.observations_are_current, Some(false));
+    let crate::service::ProjectAnalysisAction::Retry(retry) = service.complete_analysis(completion)
+    else {
+        panic!("changed observation must retry the current document");
+    };
     adopt(&mut service, retry);
     assert!(
         service
@@ -2953,6 +2936,90 @@ fn non_adoc_include_change_before_dependency_registration_retries_the_project() 
             .get(document_uri.as_str())
             .and_then(|document| document.expanded_analysis())
             .is_some_and(|analysis| analysis.analysis.source().contains("included text"))
+    );
+
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn project_error_repair_candidate_is_validated_and_watched_after_adoption() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-project-error-{unique}"));
+    fs::create_dir_all(&root).expect("project directory");
+    let document_path = root.join("guide.adoc");
+    let repair_path = root.join("repair.toml");
+    fs::write(&document_path, "= Guide\n").expect("document");
+    fs::write(&repair_path, "invalid = [\n").expect("invalid configuration");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("project URI");
+    let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
+    let repair_uri = lsp::Url::from_file_path(&repair_path).expect("repair URI");
+    let mut service = Session::default();
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "capabilities": {}
+        })),
+    );
+
+    let mut snapshot = service
+        .begin_open(typed(json!({
+            "textDocument": {
+                "uri": document_uri,
+                "languageId": "asciidoc",
+                "version": 1,
+                "text": "= Guide\n"
+            }
+        })))
+        .pop()
+        .expect("analysis snapshot");
+    let mut project = snapshot.prepared_request.take().expect("project request");
+    project.request.config = adocweave_project::ConfigSelection::Explicit(repair_path.clone());
+    let result = adocweave_project::process(project.request, snapshot.cancellation.as_ref());
+    assert!(
+        result
+            .as_ref()
+            .is_err_and(|error| error.repair_candidate().is_some())
+    );
+    let completion = crate::service::ProjectAnalysisCompletion {
+        snapshot,
+        outcome: crate::service::ProjectAnalysisOutcome::Processed(result),
+        source_index: project.source_index,
+        observation_access: Some(project.observation_access),
+        observations_are_current: None,
+    };
+    let crate::service::ProjectAnalysisAction::Validate(completion) =
+        service.project_processing_completed(completion)
+    else {
+        panic!("project error must be validated");
+    };
+    let next = service.complete_analysis(validate(*completion));
+    assert!(matches!(
+        next,
+        crate::service::ProjectAnalysisAction::Publish { .. }
+    ));
+    assert_eq!(
+        service
+            .documents
+            .get(document_uri.as_str())
+            .and_then(|document| document.project_problem.as_ref())
+            .map(|problem| problem.code.as_str()),
+        Some("project-config-error")
+    );
+
+    fs::write(&repair_path, "schema-version = 2\n").expect("repaired configuration");
+    assert_eq!(
+        service
+            .workspace_files_changed_with_journal(typed(json!({
+                "changes": [{"uri": repair_uri, "type": 2}]
+            })))
+            .jobs
+            .len(),
+        1
     );
 
     fs::remove_dir_all(root).expect("cleanup");
@@ -2992,7 +3059,7 @@ fn stale_project_result_cannot_replace_current_dependencies() {
         })),
     );
 
-    let mut old_job = service
+    let old_job = service
         .begin_open(typed(json!({
             "textDocument": {
                 "uri": document_uri,
@@ -3003,11 +3070,9 @@ fn stale_project_result_cannot_replace_current_dependencies() {
         })))
         .pop()
         .expect("old job");
-    let old_project = old_job.prepared_request.take().expect("old request");
-    let old_result = adocweave_project::process(old_project.request, old_job.cancellation.as_ref())
-        .expect("old result");
+    let old_completion = process_project_snapshot(old_job);
 
-    let mut current_job = service
+    let current_job = service
         .begin_change(typed(json!({
             "textDocument": {"uri": document_uri, "version": 2},
             "contentChanges": [{"text": "include::current.txt[]\n"}]
@@ -3015,23 +3080,11 @@ fn stale_project_result_cannot_replace_current_dependencies() {
         .expect("change")
         .pop()
         .expect("current job");
-    let current_project = current_job
-        .prepared_request
-        .take()
-        .expect("current request");
-    let current_result =
-        adocweave_project::process(current_project.request, current_job.cancellation.as_ref())
-            .expect("current result");
-
-    assert!(service.record_project_result_dependencies(
-        &current_job,
-        &current_result,
-        &current_project.source_index,
-    ));
-    assert!(!service.record_project_result_dependencies(
-        &old_job,
-        &old_result,
-        &old_project.source_index,
+    let current_completion = process_project_snapshot(current_job);
+    let _ = adopt_completion(&mut service, current_completion);
+    assert!(matches!(
+        service.project_processing_completed(old_completion),
+        crate::service::ProjectAnalysisAction::Ignore
     ));
 
     fs::write(&old_include_path, "old changed\n").expect("change old include");
