@@ -2,11 +2,6 @@
   "schemaVersion": 1,
   "literals": [
     {
-      "path": "packages/textlint-plugin-asciidoc/package.json",
-      "template": "\"version\": \"{version}\"",
-      "count": 1
-    },
-    {
       "path": "editors/zed/Cargo.toml",
       "template": "version = \"{version}\"",
       "count": 1
@@ -24,7 +19,7 @@
     {
       "path": "dist-workspace.toml",
       "template": "-{version}",
-      "count": 2
+      "count": 1
     }
   ],
   "cargoLocks": [

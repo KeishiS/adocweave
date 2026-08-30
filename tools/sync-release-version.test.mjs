@@ -14,7 +14,7 @@ const registry = JSON.parse(readFileSync(new URL("release/version-sync.json", RO
 
 test("一つのworkspace版をnative releaseのmanifestとlockfileで使用する", () => {
   assert.equal(checkReleaseVersion({ registry }), workspaceVersion());
-  assert.equal(workspaceVersion(), "0.54.0");
+  assert.equal(workspaceVersion(), "0.54.1");
 });
 
 test("同期設定は製品別の正本を持たない", () => {
@@ -30,7 +30,10 @@ test("同期設定は製品別の正本を持たない", () => {
     false,
   );
   assert.equal(
-    registry.literals.some(({ path }) => path.startsWith("editors/vscode/")),
+    registry.literals.some(({ path }) =>
+      path.startsWith("editors/vscode/") ||
+      path === "packages/textlint-plugin-asciidoc/package.json"
+    ),
     false,
   );
 });

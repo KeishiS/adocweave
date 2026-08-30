@@ -32,7 +32,6 @@ export function expectedReleaseAssets(version = workspaceVersion()) {
       `adocweave-${target}.zip`,
       `adocweave-${target}.zip.sha256`,
     ]),
-    `adocweave-textlint-plugin-asciidoc-${version}.tgz`,
     `adocweave-zed-${version}.tar.xz`,
     "sha256.sum",
   ].sort();

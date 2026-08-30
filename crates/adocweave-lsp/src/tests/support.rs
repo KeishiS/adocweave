@@ -11,7 +11,7 @@ pub(super) fn uri(value: &str) -> lsp::Url {
 }
 
 pub(super) fn analyze_document_input(
-    job: &AnalysisJob,
+    job: &ProjectAnalysisSnapshot,
     cancellation: &dyn adocweave::CancellationCheck,
 ) -> adocweave::AnalysisResult {
     adocweave::AnalysisRequest {
@@ -159,22 +159,88 @@ pub(super) fn change(
 }
 
 /// Runs one job the way the event loop and its worker do, then adopts it.
-pub(super) fn adopt(service: &mut Session, mut job: AnalysisJob) {
-    if let Some(problem) = &job.project_problem {
-        assert_eq!(
-            service.adopt_project_problem(&job, problem.clone()),
-            Adoption::Adopted
-        );
-        return;
+pub(super) fn adopt(service: &mut Session, job: ProjectAnalysisSnapshot) {
+    let _ = adopt_completion(service, process_project_snapshot(job));
+}
+
+pub(super) fn adopt_completion(
+    service: &mut Session,
+    completion: crate::service::ProjectAnalysisCompletion,
+) -> Vec<String> {
+    let next = service.project_processing_completed(completion);
+    let next = match next {
+        crate::service::ProjectAnalysisAction::Validate(completion) => {
+            service.complete_analysis(validate(*completion))
+        }
+        next => next,
+    };
+    adopt_next(service, next)
+}
+
+pub(super) fn adopt_next(
+    service: &mut Session,
+    action: crate::service::ProjectAnalysisAction,
+) -> Vec<String> {
+    match action {
+        crate::service::ProjectAnalysisAction::Publish {
+            diagnostic_uris, ..
+        } => diagnostic_uris,
+        crate::service::ProjectAnalysisAction::Retry(snapshot) => {
+            adopt_completion(service, process_project_snapshot(snapshot))
+        }
+        crate::service::ProjectAnalysisAction::Validate(completion) => {
+            let next = service.complete_analysis(validate(*completion));
+            adopt_next(service, next)
+        }
+        crate::service::ProjectAnalysisAction::Ignore => panic!("analysis was not adopted"),
     }
-    let project = job.prepared_request.take().expect("project request");
-    let result = adocweave_project::process(project.request, job.cancellation.as_ref())
-        .expect("project analysis");
-    assert!(
-        !service
-            .adopt_project_result(&job, result, project.source_index)
-            .is_empty()
-    );
+}
+
+pub(super) fn process_project_snapshot(
+    mut job: ProjectAnalysisSnapshot,
+) -> crate::service::ProjectAnalysisCompletion {
+    let (outcome, source_index, observation_access) = match job.prepared_request.take() {
+        Some(project) => (
+            crate::service::ProjectAnalysisOutcome::Processed(adocweave_project::process(
+                project.request,
+                job.cancellation.as_ref(),
+            )),
+            project.source_index,
+            Some(project.observation_access),
+        ),
+        None => (
+            crate::service::ProjectAnalysisOutcome::Rejected(
+                job.project_problem.clone().expect("project problem"),
+            ),
+            crate::state::ProjectSourceIndex::default(),
+            None,
+        ),
+    };
+    crate::service::ProjectAnalysisCompletion {
+        snapshot: job,
+        outcome,
+        source_index,
+        observation_access,
+        observations_are_current: None,
+    }
+}
+
+pub(super) fn validate(
+    mut completion: crate::service::ProjectAnalysisCompletion,
+) -> crate::service::ProjectAnalysisCompletion {
+    let access = completion
+        .observation_access
+        .as_ref()
+        .expect("observation access");
+    let crate::service::ProjectAnalysisOutcome::Processed(result) = &completion.outcome else {
+        unreachable!("only processed results require validation");
+    };
+    completion.observations_are_current = Some(crate::service::project_observations_are_current(
+        result,
+        access,
+        &adocweave::NeverCancel,
+    ));
+    completion
 }
 
 pub(super) fn apply_edits(source: &str, edits: &[lsp::TextEdit]) -> String {

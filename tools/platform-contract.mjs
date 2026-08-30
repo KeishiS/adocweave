@@ -88,7 +88,6 @@ export function requiredInstallationAssets(kind, target, version) {
   const names = {
     native: `adocweave-${target}.zip`,
     wasm: `adocweave-wasm-${version}.tgz`,
-    textlint: `adocweave-textlint-plugin-asciidoc-${version}.tgz`,
     zed: `adocweave-zed-${version}.tar.xz`,
   };
   if (!Object.hasOwn(names, kind)) throw new Error(`unsupported installation kind: ${kind}`);

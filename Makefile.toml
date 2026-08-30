@@ -172,7 +172,6 @@ args = [
   "tools/release-installation-e2e.test.mjs",
   "tools/textlint-plugin-npm-smoke.test.mjs",
   "tools/textlint-plugin-npx-smoke.test.mjs",
-  "tools/textlint-plugin-post-release-smoke.test.mjs",
   "tools/textlint-plugin-consumer-e2e.test.mjs",
   "tools/verify-textlint-plugin-reproducibility.test.mjs",
 ]
@@ -296,11 +295,13 @@ node tools/textlint-plugin-consumer-e2e.mjs \
   "target/distrib/adocweave-textlint-plugin-asciidoc-$version.tgz"
 '''
 
-[tasks.textlint-plugin-post-release-npx-smoke]
+[tasks.test-textlint-plugin-release-candidate]
 category = "CI entry points"
-description = "Observe the published GitHub Release asset, checksum, and one-shot npx path after publication"
-command = "node"
-args = ["tools/textlint-plugin-post-release-smoke.mjs"]
+description = "Build, verify, reproduce, and exercise the textlint plugin release candidate"
+dependencies = [
+  "textlint-plugin-reproducibility",
+  "textlint-plugin-release-consumer-e2e",
+]
 
 [tasks.textlint-plugin-post-publication-npm-smoke]
 category = "CI entry points"
@@ -356,7 +357,6 @@ args = ["tools/wasm-bundler-smoke.sh"]
 private = true
 description = "Build and completely verify each global release candidate"
 dependencies = [
-  "textlint-plugin-release-consumer-e2e",
   "test-zed-release-candidate",
 ]
 
