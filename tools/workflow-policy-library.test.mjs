@@ -82,7 +82,13 @@ function releaseWorkflow() {
         steps: [{ uses: pin }],
       },
       "custom-native-release-checks": { uses: "./.github/workflows/native-release-checks.yml" },
-      "build-local-artifacts": { needs: ["plan", "custom-native-release-checks"], steps: [] },
+      "build-local-artifacts": {
+        needs: ["plan", "custom-native-release-checks"],
+        steps: [
+          { run: "node tools/generate-third-party-notices.mjs THIRD_PARTY_NOTICES.adoc" },
+          { run: "dist build --artifacts=local" },
+        ],
+      },
       "build-global-artifacts": { needs: ["plan", "build-local-artifacts"], steps: [] },
       "custom-native-artifact-smoke": {
         needs: ["plan", "build-local-artifacts"],
@@ -458,6 +464,25 @@ test("ReleaseはPRでplanだけを作り、tagの成功済み成果物だけをh
   assert.throws(
     () => validateReleaseFlow(releaseFlowWorkflows(release), 'pr-run-mode = "plan"'),
     /tag.*only/,
+  );
+});
+
+test("native配布物の構築前に第三者依存の通知を生成する", () => {
+  const valid = releaseFlowWorkflows(releaseWorkflow());
+  validateReleaseFlow(valid, 'pr-run-mode = "plan"');
+
+  const conditional = releaseFlowWorkflows(releaseWorkflow());
+  conditional["release.yml"].jobs["build-local-artifacts"].steps[0].if = "runner.os == 'Linux'";
+  assert.throws(
+    () => validateReleaseFlow(conditional, 'pr-run-mode = "plan"'),
+    /generate third-party notices unconditionally/u,
+  );
+
+  const late = releaseFlowWorkflows(releaseWorkflow());
+  late["release.yml"].jobs["build-local-artifacts"].steps.reverse();
+  assert.throws(
+    () => validateReleaseFlow(late, 'pr-run-mode = "plan"'),
+    /generate third-party notices before cargo-dist/u,
   );
 });
 
