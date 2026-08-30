@@ -228,6 +228,15 @@ cargo make test-textlint-plugin-release-candidate
         steps: [
           { uses: pin },
           {
+            id: "node-version",
+            run: 'echo "value=$(jq -er .nodeVersion toolchains.json)" >> "$GITHUB_OUTPUT"',
+          },
+          { uses: "DeterminateSystems/determinate-nix-action@0000000000000000000000000000000000000000" },
+          {
+            uses: "actions/setup-node@0000000000000000000000000000000000000000",
+            with: { "node-version": "${{ steps.node-version.outputs.value }}" },
+          },
+          {
             run: `
 node tools/npm-publication.mjs
 npm publish "$tarball"
@@ -274,6 +283,15 @@ cargo make test-wasm-release-candidate
         permissions: { contents: "read", "id-token": "write" },
         steps: [
           { uses: pin },
+          {
+            id: "node-version",
+            run: 'echo "value=$(jq -er .nodeVersion toolchains.json)" >> "$GITHUB_OUTPUT"',
+          },
+          { uses: "DeterminateSystems/determinate-nix-action@0000000000000000000000000000000000000000" },
+          {
+            uses: "actions/setup-node@0000000000000000000000000000000000000000",
+            with: { "node-version": "${{ steps.node-version.outputs.value }}" },
+          },
           {
             run: `
 node tools/npm-publication.mjs
@@ -911,6 +929,18 @@ test("textlint packageは専用tagから構築してnpmへ直接公開する", (
     ),
     /verify signatures, provenance, and fixed consumers/u,
   );
+
+  const overriddenNode = workflows();
+  const textlintSteps = overriddenNode["textlint-plugin-publish.yml"].jobs.publish.steps;
+  const nixIndex = textlintSteps.findIndex((step) =>
+    String(step.uses ?? "").startsWith("DeterminateSystems/determinate-nix-action@")
+  );
+  const [nix] = textlintSteps.splice(nixIndex, 1);
+  textlintSteps.push(nix);
+  assert.throws(
+    () => validateTextlintPluginPublication(overriddenNode, textlintNpmSmoke),
+    /set up pinned Node\.js after Nix/u,
+  );
 });
 
 test("WebAssembly packageは専用tagから構築してnpmへ直接公開する", () => {
@@ -931,6 +961,18 @@ test("WebAssembly packageは専用tagから構築してnpmへ直接公開する"
   assert.throws(
     () => validateWasmPublication(workflows(), "runWasmPackageBrowserSmoke(packageRoot)"),
     /verify signatures, provenance, and the browser package/,
+  );
+
+  const overriddenNode = workflows();
+  const wasmSteps = overriddenNode["wasm-publish.yml"].jobs.publish.steps;
+  const nixIndex = wasmSteps.findIndex((step) =>
+    String(step.uses ?? "").startsWith("DeterminateSystems/determinate-nix-action@")
+  );
+  const [nix] = wasmSteps.splice(nixIndex, 1);
+  wasmSteps.push(nix);
+  assert.throws(
+    () => validateWasmPublication(overriddenNode, wasmNpmSmoke),
+    /set up pinned Node\.js after Nix/u,
   );
 });
 
