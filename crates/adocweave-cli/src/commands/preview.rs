@@ -55,26 +55,21 @@ impl PreviewWatchAccess {
         &self,
         dependencies: &[preview::Dependency],
     ) -> BTreeMap<preview::Dependency, preview::Fingerprint> {
-        let mut session = self.access.session();
+        let mut observer = self.access.observer();
         dependencies
             .iter()
             .cloned()
             .map(|dependency| {
-                let fingerprint = match session.as_mut() {
-                    Ok(session) => {
-                        let kind = match dependency.kind() {
-                            preview::DependencyKind::Contents => ProjectObservationKind::Contents,
-                            preview::DependencyKind::ContentsNoSymlinks => {
-                                ProjectObservationKind::ContentsNoSymlinks
-                            }
-                            preview::DependencyKind::Existence => ProjectObservationKind::Existence,
-                        };
-                        preview::Fingerprint::from_observation(
-                            session.observe(dependency.path(), kind),
-                        )
+                let kind = match dependency.kind() {
+                    preview::DependencyKind::Contents => ProjectObservationKind::Contents,
+                    preview::DependencyKind::ContentsNoSymlinks => {
+                        ProjectObservationKind::ContentsNoSymlinks
                     }
-                    Err(error) => preview::Fingerprint::unavailable(&error.to_string()),
+                    preview::DependencyKind::Existence => ProjectObservationKind::Existence,
                 };
+                let fingerprint = preview::Fingerprint::from_observation(
+                    observer.observe(dependency.path(), kind),
+                );
                 (dependency, fingerprint)
             })
             .collect()

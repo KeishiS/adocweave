@@ -3,10 +3,8 @@ use std::fmt::Write as _;
 use std::path::{Component, Path, PathBuf};
 
 use adocweave::CancellationCheck;
-use adocweave_host::{
-    DerivedFilesystemRoots, IncludeFilesystemJob, LocalFilesystemPolicy, ResourceError,
-};
 
+use crate::filesystem::{FilesystemAuthority, FilesystemError};
 use crate::{
     MAX_DISTINCT_GLOB_SELECTORS, MAX_TOTAL_GLOB_PATTERN_BYTES, ProjectError, ProjectLimits,
     ProjectTarget, ProjectWarning, TargetSelectionError, project_authority_error,
@@ -26,16 +24,18 @@ enum ScanMode {
 }
 
 struct ScanState<'request> {
-    authority: &'request mut LocalFilesystemPolicy,
+    authority: &'request FilesystemAuthority,
     limits: ProjectLimits,
-    job: &'request IncludeFilesystemJob,
     warnings: &'request mut Vec<ProjectWarning>,
     scans: BTreeMap<(ScanMode, PathBuf), Vec<PathBuf>>,
+    directory_operations: &'request mut u64,
+    directory_entries: &'request mut u64,
     cancellation: &'request dyn CancellationCheck,
 }
 
 pub(crate) fn normalize_selectors(
     project_root: &Path,
+    authority: &FilesystemAuthority,
     selectors: &[ProjectTarget],
 ) -> Result<Vec<NormalizedSelector>, ProjectError> {
     let distinct_globs = selectors
@@ -74,7 +74,7 @@ pub(crate) fn normalize_selectors(
     authored.sort_by_key(|selector| selector_sort_key(selector));
     let mut normalized = authored
         .into_iter()
-        .map(|selector| normalize_selector(project_root, selector))
+        .map(|selector| normalize_selector(project_root, authority, selector))
         .collect::<Result<Vec<_>, _>>()?;
     normalized.sort();
     normalized.dedup();
@@ -93,6 +93,7 @@ fn selector_sort_key(selector: &ProjectTarget) -> (u8, String) {
 
 fn normalize_selector(
     project_root: &Path,
+    authority: &FilesystemAuthority,
     selector: &ProjectTarget,
 ) -> Result<NormalizedSelector, ProjectError> {
     match selector {
@@ -100,17 +101,21 @@ fn normalize_selector(
             unreachable!("source targets are resolved before selector normalization")
         }
         ProjectTarget::Path(path) => absolute_lexical(project_root, path)
+            .and_then(|path| authority.normalize_path(&path))
             .map(NormalizedSelector::Path)
             .map_err(project_authority_error),
         ProjectTarget::PathNoSymlinks(path) => absolute_lexical(project_root, path)
+            .and_then(|path| authority.normalize_path(&path))
             .map(NormalizedSelector::Path)
             .map_err(project_authority_error),
         ProjectTarget::Directory(path) => absolute_lexical(project_root, path)
+            .and_then(|path| authority.normalize_path(&path))
             .map(NormalizedSelector::Directory)
             .map_err(project_authority_error),
         ProjectTarget::Glob(authored) => {
             glob::Pattern::new(authored).map_err(|_| invalid_glob(authored))?;
             let absolute_pattern = absolute_lexical(project_root, Path::new(authored))
+                .and_then(|path| authority.normalize_path(&path))
                 .map_err(project_authority_error)?;
             let pattern = absolute_pattern
                 .to_str()
@@ -118,13 +123,14 @@ fn normalize_selector(
                 .to_owned();
             glob::Pattern::new(&pattern).map_err(|_| invalid_glob(authored))?;
             let scan_root = absolute_lexical(project_root, &glob_scan_root(authored))
+                .and_then(|path| authority.normalize_path(&path))
                 .map_err(project_authority_error)?;
             Ok(NormalizedSelector::Glob { pattern, scan_root })
         }
     }
 }
 
-pub(crate) fn absolute_lexical(root: &Path, path: &Path) -> Result<PathBuf, ResourceError> {
+pub(crate) fn absolute_lexical(root: &Path, path: &Path) -> Result<PathBuf, FilesystemError> {
     let input = if path.is_absolute() {
         path.to_owned()
     } else {
@@ -139,13 +145,13 @@ pub(crate) fn absolute_lexical(root: &Path, path: &Path) -> Result<PathBuf, Reso
             Component::CurDir => {}
             Component::ParentDir => {
                 if !normalized.pop() {
-                    return Err(ResourceError::OutsideRoots(input));
+                    return Err(FilesystemError::OutsideRoot(input));
                 }
             }
         }
     }
     if !normalized.is_absolute() {
-        return Err(ResourceError::PathNotAbsolute(normalized));
+        return Err(FilesystemError::PathNotAbsolute(normalized));
     }
     Ok(normalized)
 }
@@ -202,19 +208,21 @@ fn encode_os_string(value: &std::ffi::OsStr) -> String {
 
 pub(crate) fn select_targets(
     selectors: &[NormalizedSelector],
-    authority: &mut LocalFilesystemPolicy,
+    authority: &FilesystemAuthority,
     limits: ProjectLimits,
-    job: &IncludeFilesystemJob,
     warnings: &mut Vec<ProjectWarning>,
+    directory_operations: &mut u64,
+    directory_entries: &mut u64,
     cancellation: &dyn CancellationCheck,
 ) -> Result<Vec<PathBuf>, ProjectError> {
     let mut selected = BTreeSet::new();
     let mut scans = ScanState {
         authority,
         limits,
-        job,
         warnings,
         scans: BTreeMap::new(),
+        directory_operations,
+        directory_entries,
         cancellation,
     };
     for selector in selectors {
@@ -243,11 +251,11 @@ pub(crate) fn select_targets(
     Ok(selected.into_iter().collect())
 }
 
-fn require_authority(authority: &LocalFilesystemPolicy, path: &Path) -> Result<(), ProjectError> {
+fn require_authority(authority: &FilesystemAuthority, path: &Path) -> Result<(), ProjectError> {
     authority
-        .policy_for_path(path)
+        .authority_for_path(path)
         .map(|_| ())
-        .ok_or_else(|| project_authority_error(ResourceError::OutsideRoots(path.to_owned())))
+        .ok_or_else(|| project_authority_error(FilesystemError::OutsideRoot(path.to_owned())))
 }
 
 impl ScanState<'_> {
@@ -260,45 +268,23 @@ impl ScanState<'_> {
         if let Some(paths) = self.scans.get(&key) {
             return Ok(paths.clone());
         }
-        let anchor = self
+        let result = self
             .authority
-            .policy_for_path(directory)
-            .map(|policy| policy.root().to_owned())
-            .ok_or_else(|| {
-                project_authority_error(ResourceError::OutsideRoots(directory.to_owned()))
-            })?;
-        let policy = if anchor == directory {
-            self.authority
-                .access_existing([anchor], self.limits.filesystem_reads())
-        } else {
-            self.authority.access_derived(
-                &anchor,
-                DerivedFilesystemRoots {
-                    confined: vec![directory.to_owned()],
-                    independent: Vec::new(),
-                },
-                self.limits.filesystem_reads(),
+            .scan_adoc(
+                directory,
+                self.limits.max_directory_entries,
+                self.cancellation,
             )
-        }
-        .map_err(project_authority_error)?;
-        let session = policy.session().map_err(project_authority_error)?;
-        let transaction = self.job.transaction(&session).map_err(|error| {
-            if self.cancellation.is_cancelled() {
-                ProjectError::Cancelled
-            } else {
-                project_authority_error(ResourceError::from(error))
-            }
-        })?;
-        let (paths, complete) = transaction
-            .discover_adoc_paths_within_budget(|_, _| false, || self.cancellation.is_cancelled())
             .map_err(|error| {
                 if self.cancellation.is_cancelled() {
                     ProjectError::Cancelled
                 } else {
-                    project_authority_error(ResourceError::from(error))
+                    project_authority_error(error)
                 }
             })?;
-        if !complete
+        *self.directory_operations = self.directory_operations.saturating_add(result.directories);
+        *self.directory_entries = self.directory_entries.saturating_add(result.entries);
+        if !result.complete
             && !self
                 .warnings
                 .iter()
@@ -308,8 +294,8 @@ impl ScanState<'_> {
                 limit: self.limits.max_directory_entries,
             });
         }
-        self.scans.insert(key, paths.clone());
-        Ok(paths)
+        self.scans.insert(key, result.paths.clone());
+        Ok(result.paths)
     }
 }
 

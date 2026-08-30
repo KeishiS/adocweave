@@ -229,7 +229,7 @@ fn every_lint_rule_constant_is_reexported() {
 }
 
 #[test]
-fn only_project_depends_on_the_native_host_boundary() {
+fn project_owns_the_native_filesystem_boundary() {
     let root = repository_root();
     let core = fs::read_to_string(root.join("crates/adocweave/Cargo.toml")).expect("core manifest");
     let cli =
@@ -243,5 +243,6 @@ fn only_project_depends_on_the_native_host_boundary() {
     assert!(cli.contains("adocweave = { path = \"../adocweave\" }"));
     assert!(!cli.contains("adocweave-host"));
     assert!(!lsp.contains("adocweave-host"));
-    assert!(project.contains("adocweave-host = { path = \"../adocweave-host\" }"));
+    assert!(!project.contains("adocweave-host"));
+    assert!(project.contains("rustix ="));
 }

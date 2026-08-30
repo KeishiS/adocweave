@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   source:
-    name: verify
+    name: source
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -44,10 +44,41 @@ jobs:
       - name: Complete source gate
         run: nix develop .#ci -c cargo make verify
 
+  portable-project:
+    name: portable-project (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-2025]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify portable project filesystem behavior
+        shell: bash
+        run: |
+          rust_version="$(node -p "require('./toolchains.json').rustVersion")"
+          rustup toolchain install "$rust_version" --profile minimal
+          rustup run "$rust_version" cargo test --locked -p adocweave-project --all-features
+
+  verify:
+    name: verify
+    if: always()
+    needs: [source, portable-project]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require every source check
+        env:
+          SOURCE_RESULT: ${{ needs.source.result }}
+          PORTABLE_PROJECT_RESULT: ${{ needs.portable-project.result }}
+        run: test "$SOURCE_RESULT" = success && test "$PORTABLE_PROJECT_RESULT" = success
+
   security:
     name: security-audit
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [source]
+    needs: [verify]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -61,7 +92,7 @@ jobs:
   main-integrations:
     name: main-integrations
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [source, security]
+    needs: [verify, security]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -75,7 +106,7 @@ jobs:
   fuzz-smoke:
     name: fuzz-smoke
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [source, security]
+    needs: [verify, security]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -89,7 +120,7 @@ jobs:
   nix-package-check:
     name: nix-package-check
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [source, security]
+    needs: [verify, security]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:

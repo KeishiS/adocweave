@@ -1,47 +1,34 @@
 use std::collections::BTreeSet;
 
-fn direct_dependencies(manifest: &str) -> BTreeSet<&str> {
-    manifest
-        .split_once("[dependencies]\n")
-        .map(|(_, dependencies)| dependencies)
+fn direct_dependencies(manifest: &str) -> BTreeSet<String> {
+    toml::from_str::<toml::Table>(manifest)
+        .expect("valid Cargo manifest")
+        .get("dependencies")
+        .and_then(toml::Value::as_table)
+        .map(|dependencies| dependencies.keys().cloned().collect())
         .unwrap_or_default()
-        .split("\n[")
-        .next()
-        .unwrap_or_default()
-        .lines()
-        .filter_map(|line| line.split_once('=').map(|(name, _)| name.trim()))
-        .filter(|name| !name.is_empty())
-        .collect()
 }
 
 #[test]
 fn project_has_only_lower_level_crates_and_standard_glob_dependency() {
     let actual = direct_dependencies(include_str!("../Cargo.toml"));
     let expected = BTreeSet::from([
-        "adocweave",
-        "adocweave-host",
-        "glob",
-        "serde",
-        "sha2",
-        "toml",
+        "adocweave".to_owned(),
+        "glob".to_owned(),
+        "serde".to_owned(),
+        "sha2".to_owned(),
+        "toml".to_owned(),
     ]);
     assert_eq!(actual, expected);
 }
 
 #[test]
 fn lower_level_crates_do_not_depend_on_project() {
-    for (name, manifest) in [
-        ("adocweave", include_str!("../../adocweave/Cargo.toml")),
-        (
-            "adocweave-host",
-            include_str!("../../adocweave-host/Cargo.toml"),
-        ),
-    ] {
-        assert!(
-            !direct_dependencies(manifest).contains("adocweave-project"),
-            "{name} must remain below adocweave-project"
-        );
-    }
+    let manifest = include_str!("../../adocweave/Cargo.toml");
+    assert!(
+        !direct_dependencies(manifest).contains("adocweave-project"),
+        "adocweave must remain below adocweave-project"
+    );
 }
 
 #[test]
@@ -79,10 +66,9 @@ fn public_contract_does_not_name_lower_layer_types() {
             .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
             .collect::<BTreeSet<_>>();
         for forbidden in [
-            "ResourceError",
+            "FilesystemError",
             "FilesystemReadLimits",
-            "LocalFilesystemPolicy",
-            "LogicalSourceId",
+            "FilesystemAuthority",
             "adocweave_workspace",
         ] {
             assert!(

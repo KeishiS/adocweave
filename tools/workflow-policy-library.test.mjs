@@ -124,10 +124,25 @@ function ciWorkflow() {
     permissions: { actions: "read", contents: "read" },
     jobs: {
       source: { steps: [{ uses: pin }, { run: "cargo make verify" }] },
-      security: { if: main, needs: ["source"], steps: [] },
-      "main-integrations": { if: main, needs: ["source", "security"], steps: [] },
-      "fuzz-smoke": { if: main, needs: ["source", "security"], steps: [] },
-      "nix-package-check": { if: main, needs: ["source", "security"], steps: [] },
+      "portable-project": {
+        strategy: { matrix: { os: ["macos-15", "windows-2025"] } },
+        steps: [{ run: "cargo test --locked -p adocweave-project --all-features" }],
+      },
+      verify: {
+        if: "${{ always() }}",
+        needs: ["source", "portable-project"],
+        steps: [{
+          env: {
+            SOURCE_RESULT: "${{ needs.source.result }}",
+            PORTABLE_PROJECT_RESULT: "${{ needs.portable-project.result }}",
+          },
+          run: 'test "$SOURCE_RESULT" = success && test "$PORTABLE_PROJECT_RESULT" = success',
+        }],
+      },
+      security: { if: main, needs: ["verify"], steps: [] },
+      "main-integrations": { if: main, needs: ["verify", "security"], steps: [] },
+      "fuzz-smoke": { if: main, needs: ["verify", "security"], steps: [] },
+      "nix-package-check": { if: main, needs: ["verify", "security"], steps: [] },
     },
   };
 }
@@ -545,6 +560,27 @@ test("CIはPRのsource gateとmain専用gateを分離する", () => {
   validateCiGates({ "ci.yml": ci });
   delete ci.jobs["main-integrations"].if;
   assert.throws(() => validateCiGates({ "ci.yml": ci }), /main-integrations.*main-only/);
+
+  const missingPortable = ciWorkflow();
+  delete missingPortable.jobs["portable-project"];
+  assert.throws(
+    () => validateCiGates({ "ci.yml": missingPortable }),
+    /portable project gate/u,
+  );
+
+  const incompleteAggregation = ciWorkflow();
+  delete incompleteAggregation.jobs.verify.steps[0].env.PORTABLE_PROJECT_RESULT;
+  assert.throws(
+    () => validateCiGates({ "ci.yml": incompleteAggregation }),
+    /verify gate must aggregate/u,
+  );
+
+  const bypassedAggregation = ciWorkflow();
+  bypassedAggregation.jobs.security.needs = ["source"];
+  assert.throws(
+    () => validateCiGates({ "ci.yml": bypassedAggregation }),
+    /security.*verify-gated/u,
+  );
 });
 
 test("外部公開workflowはReleaseからの再利用呼出しだけを受け付ける", () => {

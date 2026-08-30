@@ -9,15 +9,8 @@ use adocweave::preprocess::{
     ResourceLookupResult,
 };
 use adocweave::{Analysis, AnalysisInputs, CancellationCheck, Engine, SourceId};
-use adocweave_host::{
-    DerivedFilesystemRoots, FilesystemDraftError, FilesystemJobError, FilesystemJobLimit,
-    FilesystemJobLimits, FilesystemReadLimits, IncludeFilesystemBudgetedOutcome,
-    IncludeFilesystemInspectionOutcome, IncludeFilesystemJob, IncludeFilesystemLimitedOutcome,
-    IncludeFilesystemPathRequest, IncludeFilesystemReadLimit, IncludeFilesystemRequest,
-    LocalFilesystemPolicy, LocalFilesystemSession, LocalTargetError, LocalTargetPolicy,
-    LogicalSourceId, ResourceError,
-};
 
+use crate::filesystem::{FilesystemAuthority, FilesystemError, RootAuthority};
 use crate::selection::{
     NormalizedSelector, absolute_lexical, identity_path, normalize_selectors, select_targets,
 };
@@ -60,8 +53,9 @@ pub fn resolve_config(
         },
         cancellation,
     )?;
-    let search_from =
-        absolute_lexical(&processor.project_root, &search_from).map_err(project_authority_error)?;
+    let search_from = absolute_lexical(&processor.project_root, &search_from)
+        .and_then(|path| processor.filesystem.normalize_path(&path))
+        .map_err(project_authority_error)?;
     let resolved = processor.resolve_config_at(&search_from, search_from_is_directory)?;
     if cancellation.is_cancelled() {
         return Err(ProjectError::Cancelled);
@@ -94,20 +88,19 @@ struct Processor<'request> {
     apply_safe_fixes: bool,
     resource_selection: crate::ProjectResourceSelection,
     limits: crate::ProjectLimits,
-    host_limits: crate::ProjectLimits,
+    filesystem_limits: crate::ProjectLimits,
     selectors: Vec<NormalizedSelector>,
     no_symlink_targets: BTreeSet<PathBuf>,
-    source_targets: BTreeSet<LogicalSourceId>,
-    authority: LocalFilesystemPolicy,
+    source_targets: BTreeSet<SourceId>,
+    authority: FilesystemAuthority,
     identity_roots: Vec<PathBuf>,
-    filesystem: LocalFilesystemSession,
-    job: IncludeFilesystemJob,
-    fixed: BTreeMap<LogicalSourceId, Vec<FixedResource>>,
+    filesystem: FilesystemAuthority,
+    fixed: BTreeMap<SourceId, Vec<FixedResource>>,
     memory_sources: BTreeMap<PathBuf, MemorySource>,
-    pathless_sources: BTreeMap<LogicalSourceId, MemorySource>,
-    source_ids_by_path: BTreeMap<PathBuf, LogicalSourceId>,
-    reserved_source_ids: BTreeMap<LogicalSourceId, Option<PathBuf>>,
-    inspections: BTreeMap<LogicalSourceId, Vec<FixedInspection>>,
+    pathless_sources: BTreeMap<SourceId, MemorySource>,
+    source_ids_by_path: BTreeMap<PathBuf, SourceId>,
+    reserved_source_ids: BTreeMap<SourceId, Option<PathBuf>>,
+    inspections: BTreeMap<SourceId, Vec<FixedInspection>>,
     configs: BTreeMap<PathBuf, Arc<LoadedProjectConfig>>,
     resolved_configs: BTreeMap<Option<PathBuf>, Arc<ProjectConfig>>,
     published_configs: BTreeMap<Option<PathBuf>, Arc<ProjectConfigSnapshot>>,
@@ -117,25 +110,69 @@ struct Processor<'request> {
     output_bytes: u64,
     memory_count: usize,
     memory_bytes: u64,
+    filesystem_usage: RequestFilesystemUsage,
+    directory_operations: u64,
+    directory_entries: u64,
     warnings: Vec<ProjectWarning>,
     cancellation: &'request dyn CancellationCheck,
 }
 
+#[derive(Default)]
+struct RequestFilesystemUsage {
+    read_operations: u64,
+    read_bytes: u64,
+    limit: Option<ProjectLimit>,
+    observations: BTreeMap<SourceId, Vec<Option<RootAuthority>>>,
+}
+
+impl RequestFilesystemUsage {
+    fn reserve(
+        &mut self,
+        source_id: &SourceId,
+        authority: Option<&RootAuthority>,
+        max_files: usize,
+    ) -> Result<(), ProjectLimit> {
+        if self
+            .observations
+            .get(source_id)
+            .is_some_and(|observations| {
+                observations
+                    .iter()
+                    .any(|observed| same_budget_authority(observed.as_ref(), authority))
+            })
+        {
+            return Ok(());
+        }
+        if self.read_operations >= u64::try_from(max_files).unwrap_or(u64::MAX) {
+            let limit = ProjectLimit::Files { limit: max_files };
+            self.limit = Some(limit);
+            return Err(limit);
+        }
+        self.observations
+            .entry(source_id.clone())
+            .or_default()
+            .push(authority.cloned());
+        self.read_operations = self.read_operations.saturating_add(1);
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug)]
 struct FixedResource {
-    source_id: LogicalSourceId,
+    source_id: SourceId,
     requested_path: PathBuf,
     path: PathBuf,
     base: Option<PathBuf>,
     no_symlinks: bool,
-    authority: Option<LocalTargetPolicy>,
+    authority: Option<RootAuthority>,
     outcome: ProjectResourceOutcome,
     origin: crate::ProjectResourceOrigin,
+    observed_bytes: u64,
 }
 
 #[derive(Clone, Debug)]
 struct MemorySource {
-    source_id: LogicalSourceId,
+    source_id: SourceId,
     source: Arc<str>,
     exposed_path: Option<PathBuf>,
     base: PathBuf,
@@ -143,15 +180,15 @@ struct MemorySource {
 
 #[derive(Clone, Debug)]
 struct FixedInspection {
-    source_id: LogicalSourceId,
+    source_id: SourceId,
     requested_path: PathBuf,
     path: PathBuf,
-    authority: Option<LocalTargetPolicy>,
+    authority: Option<RootAuthority>,
     outcome: ProjectResourceOutcome,
 }
 
 struct TargetAnalysisContext<'target> {
-    source_id: &'target LogicalSourceId,
+    source_id: &'target SourceId,
     source: &'target Arc<str>,
     config: &'target ProjectConfig,
     allowed_roots: &'target [PathBuf],
@@ -160,7 +197,7 @@ struct TargetAnalysisContext<'target> {
     include_bases: &'target mut BTreeMap<String, PathBuf>,
     lookup_bases: &'target mut BTreeMap<String, PathBuf>,
     resources: &'target mut Vec<ProjectResourceResult>,
-    filesystem: &'target mut LocalFilesystemSession,
+    filesystem: &'target mut FilesystemAuthority,
 }
 
 struct TargetConfig {
@@ -176,7 +213,7 @@ struct PreparedSource {
 }
 
 struct FinishTargetInput {
-    source_id: LogicalSourceId,
+    source_id: SourceId,
     path: PathBuf,
     replacement_source: Option<Arc<str>>,
     config: Option<Arc<LoadedProjectConfig>>,
@@ -186,7 +223,7 @@ struct FinishTargetInput {
 }
 
 struct TargetResultParts {
-    source_id: LogicalSourceId,
+    source_id: SourceId,
     path: Option<PathBuf>,
     source: Option<Arc<str>>,
     replacement_source: Option<Arc<str>>,
@@ -219,14 +256,14 @@ impl From<ProjectExpansionError> for ExpandedAnalysisFailure {
 }
 
 struct FixedReadRequest {
-    source_id: LogicalSourceId,
+    source_id: SourceId,
     path: PathBuf,
     allowance: Option<ScopeReadAllowance>,
     no_symlinks: bool,
 }
 
 struct InspectionRequest<'request> {
-    source_id: LogicalSourceId,
+    source_id: SourceId,
     path: PathBuf,
     authority: &'request Path,
     base: &'request Path,
@@ -234,7 +271,7 @@ struct InspectionRequest<'request> {
 }
 
 impl FixedInspection {
-    fn result(&self, requested_by: Option<LogicalSourceId>) -> ProjectResourceResult {
+    fn result(&self, requested_by: Option<SourceId>) -> ProjectResourceResult {
         ProjectResourceResult {
             source_id: SourceId::new(self.source_id.as_str()),
             path: self.path.clone(),
@@ -261,7 +298,7 @@ impl FixedResource {
     fn result(
         &self,
         kind: ProjectResourceKind,
-        requested_by: Option<LogicalSourceId>,
+        requested_by: Option<SourceId>,
         request_range: Option<adocweave::text::TextRange>,
     ) -> ProjectResourceResult {
         ProjectResourceResult {
@@ -301,7 +338,7 @@ impl<'request> Processor<'request> {
         let ProjectRequest {
             targets,
             sources,
-            config,
+            mut config,
             mut overrides,
             apply_safe_fixes,
             resource_selection,
@@ -309,33 +346,34 @@ impl<'request> Processor<'request> {
             limits,
         } = request;
         let (project_root, mut authority) = authority.into_parts();
+        if let ProjectConfigSelection::Explicit(path) = &mut config {
+            *path = authority
+                .normalize_path(
+                    &absolute_lexical(&project_root, path).map_err(project_authority_error)?,
+                )
+                .map_err(project_authority_error)?;
+        }
         if let Some(roots) = &mut overrides.resource_roots {
             for path in roots.iter_mut() {
                 *path = absolute_lexical(&project_root, path).map_err(project_authority_error)?;
-                if authority.policy_for_path(path).is_none() {
-                    return Err(project_authority_error(ResourceError::OutsideRoots(
-                        path.clone(),
-                    )));
-                }
+                *path = authority
+                    .normalize_path(path)
+                    .map_err(project_authority_error)?;
             }
             roots.sort();
             roots.dedup();
         }
         if let Some(path) = &mut overrides.local_target_project_root {
             *path = absolute_lexical(&project_root, path).map_err(project_authority_error)?;
-            if authority.policy_for_path(path).is_none() {
-                return Err(project_authority_error(ResourceError::OutsideRoots(
-                    path.clone(),
-                )));
-            }
+            *path = authority
+                .normalize_path(path)
+                .map_err(project_authority_error)?;
         }
         for path in &mut overrides.stylesheet_files {
             *path = absolute_lexical(&project_root, path).map_err(project_authority_error)?;
-            if authority.policy_for_path(path).is_none() {
-                return Err(project_authority_error(ResourceError::OutsideRoots(
-                    path.clone(),
-                )));
-            }
+            *path = authority
+                .normalize_path(path)
+                .map_err(project_authority_error)?;
         }
         let mut source_ids_by_path = BTreeMap::new();
         let mut memory_sources = BTreeMap::new();
@@ -349,14 +387,20 @@ impl<'request> Processor<'request> {
                 .as_ref()
                 .map(|path| absolute_lexical(&project_root, path))
                 .transpose()
+                .map_err(project_authority_error)?
+                .map(|path| authority.normalize_path(&path))
+                .transpose()
                 .map_err(project_authority_error)?;
-            let base =
-                absolute_lexical(&project_root, &source.base).map_err(project_authority_error)?;
+            let base = absolute_lexical(&project_root, &source.base)
+                .and_then(|path| authority.normalize_path(&path))
+                .map_err(project_authority_error)?;
             let authority_path = exposed_path.as_ref().unwrap_or(&base);
-            authority.policy_for_path(authority_path).ok_or_else(|| {
-                project_authority_error(ResourceError::OutsideRoots(authority_path.clone()))
-            })?;
-            let source_id = caller_source_id(&source.source_id)?;
+            authority
+                .authority_for_path(authority_path)
+                .ok_or_else(|| {
+                    project_authority_error(FilesystemError::OutsideRoot(authority_path.clone()))
+                })?;
+            let source_id = source.source_id.clone();
             if source_id.as_str().starts_with("project:")
                 || source_id.as_str().starts_with("authority:")
                 || source_id.as_str().starts_with("local-target:")
@@ -425,8 +469,7 @@ impl<'request> Processor<'request> {
         for target in targets {
             match target {
                 crate::ProjectTarget::Source(source_id) => {
-                    let host_id = caller_source_id(&source_id)?;
-                    if !reserved_source_ids.contains_key(&host_id) {
+                    if !reserved_source_ids.contains_key(&source_id) {
                         return Err(ProjectError::InvalidInput(crate::ProjectInputError::new(
                             "unknown-source-target",
                             format!(
@@ -435,13 +478,13 @@ impl<'request> Processor<'request> {
                             ),
                         )));
                     }
-                    source_targets.insert(host_id);
+                    source_targets.insert(source_id);
                 }
                 target => filesystem_targets.push(target),
             }
         }
         let targets = filesystem_targets;
-        let host_limits = crate::ProjectLimits {
+        let filesystem_limits = crate::ProjectLimits {
             resources: ProjectResourceLimits {
                 max_files: limits.resources.max_files - memory_count,
                 max_total_bytes: limits.resources.max_total_bytes - memory_bytes,
@@ -459,17 +502,16 @@ impl<'request> Processor<'request> {
         )
         .map_err(project_authority_error)?;
         let root_policy = authority
-            .policy_for_path(&project_root)
+            .authority_for_path(&project_root)
             .cloned()
             .ok_or_else(|| {
-                project_authority_error(ResourceError::OutsideRoots(project_root.clone()))
+                project_authority_error(FilesystemError::OutsideRoot(project_root.clone()))
             })?;
         let project_policy = if root_policy.root() == project_root {
             root_policy
         } else {
             root_policy
                 .derive_confined_directory(&project_root)
-                .map_err(ResourceError::from)
                 .map_err(project_authority_error)?
         };
         let project_root = project_policy.root().to_owned();
@@ -480,37 +522,21 @@ impl<'request> Processor<'request> {
                 _ => None,
             })
             .map(|path| absolute_lexical(&project_root, path).map_err(project_authority_error))
+            .map(|path| {
+                path.and_then(|path| {
+                    authority
+                        .normalize_path(&path)
+                        .map_err(project_authority_error)
+                })
+            })
             .collect::<Result<BTreeSet<_>, _>>()?;
         let retained_roots = authority.roots().to_vec();
         let identity_roots = retained_roots.clone();
         authority = authority
-            .access_existing(retained_roots, host_limits.resources.filesystem_reads())
+            .select(retained_roots)
             .map_err(project_authority_error)?;
-        let selectors = normalize_selectors(&project_root, &targets)?;
-        let filesystem = authority.session().map_err(project_authority_error)?;
-        let filesystem_reads = host_limits.resources.filesystem_reads();
-        let read_operations = u64::try_from(filesystem_reads.max_files).unwrap_or(u64::MAX);
-        // One scan session per selector, one common read session and at most one
-        // confined local-target session per document admitted by the file limit.
-        let max_sessions = limits
-            .resources
-            .max_files
-            .saturating_mul(2)
-            .saturating_add(selectors.len())
-            .saturating_add(1);
-        let job = IncludeFilesystemJob::new(FilesystemJobLimits {
-            max_read_operations: read_operations,
-            max_read_bytes: filesystem_reads.max_total_bytes,
-            max_read_probe_bytes: read_operations.max(1),
-            max_directory_operations: limits
-                .max_directory_entries
-                .saturating_add(u64::try_from(max_sessions).unwrap_or(u64::MAX)),
-            max_directory_entries: limits.max_directory_entries,
-            max_directory_probe_entries: u64::try_from(max_sessions).unwrap_or(u64::MAX).max(1),
-            max_candidate_changes: read_operations,
-            max_sessions,
-        })
-        .map_err(|error| project_authority_error(ResourceError::Job(error)))?;
+        let selectors = normalize_selectors(&project_root, &authority, &targets)?;
+        let filesystem = authority.clone();
         Ok(Self {
             project_root,
             config_selection: config,
@@ -518,14 +544,13 @@ impl<'request> Processor<'request> {
             apply_safe_fixes,
             resource_selection,
             limits,
-            host_limits,
+            filesystem_limits,
             selectors,
             no_symlink_targets,
             source_targets,
             authority,
             identity_roots,
             filesystem,
-            job,
             fixed: BTreeMap::new(),
             memory_sources,
             pathless_sources,
@@ -541,6 +566,9 @@ impl<'request> Processor<'request> {
             output_bytes: 0,
             memory_count,
             memory_bytes,
+            filesystem_usage: RequestFilesystemUsage::default(),
+            directory_operations: 0,
+            directory_entries: 0,
             warnings: Vec::new(),
             cancellation,
         })
@@ -550,10 +578,11 @@ impl<'request> Processor<'request> {
         let selectors = self.selectors.clone();
         let paths = select_targets(
             &selectors,
-            &mut self.authority,
-            self.host_limits,
-            &self.job,
+            &self.authority,
+            self.filesystem_limits,
             &mut self.warnings,
+            &mut self.directory_operations,
+            &mut self.directory_entries,
             self.cancellation,
         )?;
         if self.cancellation.is_cancelled() {
@@ -634,25 +663,25 @@ impl<'request> Processor<'request> {
     }
 
     fn finish_usage(self) -> Result<(ProjectUsage, Vec<ProjectWarning>), ProjectError> {
+        if let Some(limit) = self.filesystem_usage.limit {
+            return Err(ProjectError::Limit(limit));
+        }
         let processing_iterations = self.processing_iterations;
         let output_bytes = self.output_bytes;
-        drop(self.filesystem);
-        let usage = self.job.finish().map_err(|error| match error {
-            FilesystemJobError::Limit(limit) => {
-                ProjectError::Limit(map_job_limit(limit, self.limits))
-            }
-            error => project_authority_error(ResourceError::Job(error)),
-        })?;
         let mut warnings = self.warnings;
         warnings.sort_by_key(|warning| format!("{warning:?}"));
         Ok((
             ProjectUsage {
-                read_operations: usage
+                read_operations: self
+                    .filesystem_usage
                     .read_operations
                     .saturating_add(u64::try_from(self.memory_count).unwrap_or(u64::MAX)),
-                read_bytes: usage.read_bytes.saturating_add(self.memory_bytes),
-                directory_operations: usage.directory_operations,
-                directory_entries: usage.directory_entries,
+                read_bytes: self
+                    .filesystem_usage
+                    .read_bytes
+                    .saturating_add(self.memory_bytes),
+                directory_operations: self.directory_operations,
+                directory_entries: self.directory_entries,
                 processing_iterations,
                 output_bytes,
             },
@@ -690,7 +719,7 @@ impl<'request> Processor<'request> {
         self.inspection_scope_budgets
             .entry(scope.clone())
             .or_insert_with(|| ScopeBudget::new(config.resources.limits));
-        let primary_authority = self.filesystem.policy_for_path(&path).cloned();
+        let primary_authority = self.filesystem.authority_for_path(&path).cloned();
         let _ = self
             .inspection_scope_budgets
             .get_mut(&scope)
@@ -727,7 +756,7 @@ impl<'request> Processor<'request> {
                     config: config_snapshot,
                     resolved_config: config,
                     resources,
-                    outcome: Err(project_target_read(ResourceError::Missing(path))),
+                    outcome: Err(project_target_read(FilesystemError::Missing(path))),
                 }));
             }
             ProjectResourceOutcome::Failed(failure) => {
@@ -792,7 +821,7 @@ impl<'request> Processor<'request> {
         } else {
             vec![base.to_owned()]
         };
-        let mut include_filesystem = match self.confined_session(&allowed_roots) {
+        let mut include_filesystem = match self.confined_authority(&allowed_roots) {
             Ok(filesystem) => filesystem,
             Err(error) => {
                 return Ok(self.finish_target(FinishTargetInput {
@@ -940,7 +969,7 @@ impl<'request> Processor<'request> {
         } else {
             vec![input.base.clone()]
         };
-        let mut include_filesystem = match self.confined_session(&allowed_roots) {
+        let mut include_filesystem = match self.confined_authority(&allowed_roots) {
             Ok(filesystem) => filesystem,
             Err(error) => {
                 return Ok(self.finish_pathless_target(
@@ -1257,7 +1286,7 @@ impl<'request> Processor<'request> {
             {
                 if !configured.starts_with(&self.project_root) {
                     let error =
-                        project_authority_error(ResourceError::OutsideRoots(configured.clone()));
+                        project_authority_error(FilesystemError::OutsideRoot(configured.clone()));
                     return Err(repair_candidate.clone().map_or(error.clone(), |candidate| {
                         error.with_repair_candidate(candidate)
                     }));
@@ -1336,9 +1365,9 @@ impl<'request> Processor<'request> {
             );
             return match &fixed.outcome {
                 ProjectResourceOutcome::Missing => Err(candidate.map_or_else(
-                    || project_authority_error(ResourceError::Missing(path.clone())),
+                    || project_authority_error(FilesystemError::Missing(path.clone())),
                     |candidate| {
-                        project_authority_error(ResourceError::Missing(path.clone()))
+                        project_authority_error(FilesystemError::Missing(path.clone()))
                             .with_repair_candidate(candidate)
                     },
                 )),
@@ -1430,84 +1459,20 @@ impl<'request> Processor<'request> {
         }
     }
 
-    fn read_fixed_no_symlinks(
-        &mut self,
-        source_id: LogicalSourceId,
-        path: PathBuf,
-    ) -> FixedResource {
-        if let Some(fixed) = self
-            .fixed
-            .get(&source_id)
-            .and_then(|fixed| reusable_resource(fixed, &path, &self.filesystem, true))
-        {
-            return fixed;
-        }
-        let requested_path = path.clone();
-        let authority = self.filesystem.policy_for_path(&path).cloned();
-        let transaction = self
-            .job
-            .transaction(&self.filesystem)
-            .map_err(ResourceError::from);
-        let outcome = transaction.and_then(|mut transaction| {
-            match transaction.read_utf8_no_symlinks_within_budget(
-                IncludeFilesystemPathRequest::new(source_id.clone(), path.clone()),
-            ) {
-                IncludeFilesystemBudgetedOutcome::Found(found) => {
-                    let canonical = found.provenance().canonical_path().to_owned();
-                    let source = Arc::<str>::from(found.source());
-                    transaction
-                        .commit(&mut self.filesystem)
-                        .map_err(ResourceError::from)?;
-                    Ok((
-                        canonical.clone(),
-                        canonical.parent().map(Path::to_owned),
-                        ProjectResourceOutcome::Loaded { source },
-                    ))
-                }
-                IncludeFilesystemBudgetedOutcome::NotFound(missing) => {
-                    transaction
-                        .commit(&mut self.filesystem)
-                        .map_err(ResourceError::from)?;
-                    Ok((
-                        missing.watch_candidate().path().to_owned(),
-                        None,
-                        ProjectResourceOutcome::Missing,
-                    ))
-                }
-                IncludeFilesystemBudgetedOutcome::BudgetExhausted { error, .. } => Ok((
-                    path.clone(),
-                    None,
-                    ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(
-                        established_read_limit(error, self.limits),
-                    )),
-                )),
-                IncludeFilesystemBudgetedOutcome::Failed(failed) => {
-                    Err(ResourceError::from(failed.error().clone()))
-                }
-            }
-        });
-        let (resolved_path, base, outcome) = outcome.unwrap_or_else(|error| {
-            (
-                path.clone(),
-                None,
-                ProjectResourceOutcome::Failed(classify_resource_failure(error, self.limits)),
-            )
-        });
-        let fixed = FixedResource {
-            source_id: source_id.clone(),
-            requested_path,
-            path: resolved_path,
-            base,
-            no_symlinks: true,
-            authority,
-            outcome,
-            origin: crate::ProjectResourceOrigin::Filesystem,
-        };
-        if fixed.authority.is_some() {
-            self.fixed.entry(source_id).or_default().push(fixed.clone());
-            observe_fixed(&fixed);
-        }
-        fixed
+    fn read_fixed_no_symlinks(&mut self, source_id: SourceId, path: PathBuf) -> FixedResource {
+        read_fixed_from(
+            &mut self.fixed,
+            &self.inspections,
+            self.filesystem_limits,
+            FixedReadRequest {
+                source_id,
+                path,
+                allowance: None,
+                no_symlinks: true,
+            },
+            &self.filesystem,
+            &mut self.filesystem_usage,
+        )
     }
 
     fn analyze_target(
@@ -1574,12 +1539,12 @@ impl<'request> Processor<'request> {
                         let rejected_id = self
                             .include_request_source_id(owner, request.range())
                             .map_err(project_expansion_read)?;
-                        let error = ResourceError::OutsideRoots(path.clone());
+                        let error = FilesystemError::OutsideRoot(path.clone());
                         let fixed = self.fix_failure(
                             rejected_id,
                             path,
                             ProjectResourceFailure::Rejected(
-                                crate::ProjectResourceError::from_host(error.clone()),
+                                crate::ProjectResourceError::from_filesystem(error.clone()),
                             ),
                         );
                         resources.push(fixed.result(
@@ -1606,7 +1571,7 @@ impl<'request> Processor<'request> {
                         .source_id_for_path(&path)
                         .map_err(|error| project_expansion_read(project_error_resource(error)))?;
                     if self.resource_selection.local_targets && config.local_targets.enabled {
-                        let authority = filesystem.policy_for_path(&path).cloned();
+                        let authority = filesystem.authority_for_path(&path).cloned();
                         let _ = self
                             .inspection_scope_budgets
                             .get_mut(scope)
@@ -1629,8 +1594,8 @@ impl<'request> Processor<'request> {
                             include_id.clone(),
                             path,
                             ProjectResourceFailure::Rejected(
-                                crate::ProjectResourceError::from_host(
-                                    ResourceError::Unverifiable(authored.target),
+                                crate::ProjectResourceError::from_filesystem(
+                                    FilesystemError::Unverifiable(authored.target),
                                 ),
                             ),
                         );
@@ -1728,7 +1693,7 @@ impl<'request> Processor<'request> {
                     return Err(ProjectExpansionError::Preprocess(error).into());
                 }
                 EffectivePreprocessStep::HostError(error) => {
-                    return Err(project_expansion_read(ResourceError::Unverifiable(
+                    return Err(project_expansion_read(FilesystemError::Unverifiable(
                         error.to_string(),
                     ))
                     .into());
@@ -1737,7 +1702,7 @@ impl<'request> Processor<'request> {
                     return Err(ExpandedAnalysisFailure::Cancelled);
                 }
                 _ => {
-                    return Err(project_expansion_read(ResourceError::Unverifiable(
+                    return Err(project_expansion_read(FilesystemError::Unverifiable(
                         "unknown preprocessing state".to_owned(),
                     ))
                     .into());
@@ -1748,7 +1713,7 @@ impl<'request> Processor<'request> {
 
     fn prepare_source(
         &self,
-        source_id: &LogicalSourceId,
+        source_id: &SourceId,
         source: Arc<str>,
         config: &ProjectConfig,
     ) -> Result<PreparedSource, PreparedSourceFailure> {
@@ -1817,7 +1782,7 @@ impl<'request> Processor<'request> {
 
     fn collect_stylesheets(
         &mut self,
-        requested_by: &LogicalSourceId,
+        requested_by: &SourceId,
         config: &ProjectConfig,
         scope: &Path,
         resources: &mut Vec<ProjectResourceResult>,
@@ -1876,14 +1841,14 @@ impl<'request> Processor<'request> {
         let Some(authority) = config.local_targets.project_root.as_deref() else {
             return;
         };
-        let mut local_filesystem = match self.confined_session(&[authority.to_owned()]) {
+        let mut local_filesystem = match self.confined_authority(&[authority.to_owned()]) {
             Ok(filesystem) => filesystem,
             Err(error) => {
                 self.warnings.push(ProjectWarning::Resource {
                     path: authority.to_owned(),
                     kind: ProjectResourceKind::LocalTarget,
                     failure: ProjectResourceFailure::Rejected(
-                        crate::ProjectResourceError::from_host(error),
+                        crate::ProjectResourceError::from_filesystem(error),
                     ),
                 });
                 return;
@@ -1942,7 +1907,7 @@ impl<'request> Processor<'request> {
                         path: base.clone(),
                         kind: ProjectResourceKind::LocalTarget,
                         failure: ProjectResourceFailure::Rejected(
-                            crate::ProjectResourceError::from_host(error),
+                            crate::ProjectResourceError::from_filesystem(error),
                         ),
                     });
                     None
@@ -1957,7 +1922,7 @@ impl<'request> Processor<'request> {
                                 source_id,
                                 base.join(&target.path),
                                 ProjectResourceFailure::Rejected(
-                                    crate::ProjectResourceError::from_host(error),
+                                    crate::ProjectResourceError::from_filesystem(error),
                                 ),
                             );
                             resources.push(fixed.result(
@@ -1970,7 +1935,7 @@ impl<'request> Processor<'request> {
                             path: base.join(&target.path),
                             kind: ProjectResourceKind::LocalTarget,
                             failure: ProjectResourceFailure::Rejected(
-                                crate::ProjectResourceError::from_host(id_error),
+                                crate::ProjectResourceError::from_filesystem(id_error),
                             ),
                         }),
                     }
@@ -1997,7 +1962,7 @@ impl<'request> Processor<'request> {
                             path,
                             kind: ProjectResourceKind::LocalTarget,
                             failure: ProjectResourceFailure::Rejected(
-                                crate::ProjectResourceError::from_host(id_error),
+                                crate::ProjectResourceError::from_filesystem(id_error),
                             ),
                         }),
                     }
@@ -2014,8 +1979,8 @@ impl<'request> Processor<'request> {
                 self.fix_failure(
                     source_id,
                     path,
-                    ProjectResourceFailure::Rejected(crate::ProjectResourceError::from_host(
-                        ResourceError::Unverifiable(target.target),
+                    ProjectResourceFailure::Rejected(crate::ProjectResourceError::from_filesystem(
+                        FilesystemError::Unverifiable(target.target),
                     )),
                 )
                 .result(ProjectResourceKind::LocalTarget, requested_by, None)
@@ -2046,32 +2011,32 @@ impl<'request> Processor<'request> {
 
     fn read_fixed(
         &mut self,
-        source_id: LogicalSourceId,
+        source_id: SourceId,
         path: PathBuf,
         allowance: ScopeReadAllowance,
     ) -> FixedResource {
         read_fixed_from(
-            &self.job,
             &mut self.fixed,
             &self.inspections,
-            self.limits,
+            self.filesystem_limits,
             FixedReadRequest {
                 source_id,
                 path,
                 allowance: Some(allowance),
                 no_symlinks: false,
             },
-            &mut self.filesystem,
+            &self.filesystem,
+            &mut self.filesystem_usage,
         )
     }
 
     fn read_fixed_scoped(
         &mut self,
         scope: &Path,
-        source_id: LogicalSourceId,
+        source_id: SourceId,
         path: PathBuf,
     ) -> FixedResource {
-        let authority = self.filesystem.policy_for_path(&path).cloned();
+        let authority = self.filesystem.authority_for_path(&path).cloned();
         if let Err(limit) = self.reserve_scope(scope, &source_id, authority.as_ref()) {
             return limited_resource(source_id, path, false, authority, limit);
         }
@@ -2087,11 +2052,11 @@ impl<'request> Processor<'request> {
     fn read_document_fixed_scoped(
         &mut self,
         scope: &Path,
-        source_id: LogicalSourceId,
+        source_id: SourceId,
         path: PathBuf,
         no_symlinks: bool,
     ) -> FixedResource {
-        let authority = self.filesystem.policy_for_path(&path).cloned();
+        let authority = self.filesystem.authority_for_path(&path).cloned();
         if let Err(limit) = self.reserve_scope(scope, &source_id, authority.as_ref()) {
             return limited_resource(source_id, path, false, authority, limit);
         }
@@ -2104,17 +2069,17 @@ impl<'request> Processor<'request> {
             Err(limit) => return limited_resource(source_id, path, false, authority, limit),
         };
         let fixed = read_fixed_from(
-            &self.job,
             &mut self.fixed,
             &self.inspections,
-            self.limits,
+            self.filesystem_limits,
             FixedReadRequest {
                 source_id: source_id.clone(),
                 path: path.clone(),
                 allowance: Some(allowance),
                 no_symlinks,
             },
-            &mut self.filesystem,
+            &self.filesystem,
+            &mut self.filesystem_usage,
         );
         self.fix_scope_read_limit(scope, &source_id, authority.as_ref(), &fixed, allowance);
         self.apply_body_budget(scope, fixed, source_id, path)
@@ -2123,11 +2088,11 @@ impl<'request> Processor<'request> {
     fn read_fixed_from_scoped(
         &mut self,
         scope: &Path,
-        source_id: LogicalSourceId,
+        source_id: SourceId,
         path: PathBuf,
-        filesystem: &mut LocalFilesystemSession,
+        filesystem: &mut FilesystemAuthority,
     ) -> FixedResource {
-        let authority = filesystem.policy_for_path(&path).cloned();
+        let authority = filesystem.authority_for_path(&path).cloned();
         if let Err(limit) = self.reserve_scope(scope, &source_id, authority.as_ref()) {
             return limited_resource(source_id, path, false, authority, limit);
         }
@@ -2140,10 +2105,9 @@ impl<'request> Processor<'request> {
             Err(limit) => return limited_resource(source_id, path, false, authority, limit),
         };
         let fixed = read_fixed_from(
-            &self.job,
             &mut self.fixed,
             &self.inspections,
-            self.limits,
+            self.filesystem_limits,
             FixedReadRequest {
                 source_id: source_id.clone(),
                 path: path.clone(),
@@ -2151,6 +2115,7 @@ impl<'request> Processor<'request> {
                 no_symlinks: false,
             },
             filesystem,
+            &mut self.filesystem_usage,
         );
         self.fix_scope_read_limit(scope, &source_id, authority.as_ref(), &fixed, allowance);
         self.apply_body_budget(scope, fixed, source_id, path)
@@ -2160,7 +2125,7 @@ impl<'request> Processor<'request> {
         &mut self,
         scope: &Path,
         fixed: FixedResource,
-        source_id: LogicalSourceId,
+        source_id: SourceId,
         requested_path: PathBuf,
     ) -> FixedResource {
         let ProjectResourceOutcome::Loaded { source } = &fixed.outcome else {
@@ -2183,8 +2148,8 @@ impl<'request> Processor<'request> {
     fn reserve_scope(
         &mut self,
         scope: &Path,
-        source_id: &LogicalSourceId,
-        authority: Option<&LocalTargetPolicy>,
+        source_id: &SourceId,
+        authority: Option<&RootAuthority>,
     ) -> Result<(), ProjectLimit> {
         self.scope_budgets
             .get_mut(scope)
@@ -2195,8 +2160,8 @@ impl<'request> Processor<'request> {
     fn charge_scope_body(
         &mut self,
         scope: &Path,
-        source_id: &LogicalSourceId,
-        authority: Option<&LocalTargetPolicy>,
+        source_id: &SourceId,
+        authority: Option<&RootAuthority>,
         bytes: usize,
     ) -> Result<(), ProjectLimit> {
         self.scope_budgets
@@ -2208,22 +2173,21 @@ impl<'request> Processor<'request> {
     fn scope_read_allowance(
         &self,
         scope: &Path,
-        source_id: &LogicalSourceId,
-        authority: Option<&LocalTargetPolicy>,
+        source_id: &SourceId,
+        authority: Option<&RootAuthority>,
     ) -> Result<ScopeReadAllowance, ProjectLimit> {
-        let usage = self.job.usage().unwrap_or_default();
         let request_remaining_bytes = self
             .limits
-            .filesystem_reads()
+            .resources
             .max_total_bytes
-            .saturating_sub(usage.read_bytes);
+            .saturating_sub(self.filesystem_usage.read_bytes);
         self.scope_budgets
             .get(scope)
             .expect("a resolved configuration creates its scope budget")
             .read_allowance(
                 source_id,
                 authority,
-                self.host_limits.resources,
+                self.filesystem_limits.resources,
                 request_remaining_bytes,
             )
     }
@@ -2231,11 +2195,23 @@ impl<'request> Processor<'request> {
     fn fix_scope_read_limit(
         &mut self,
         scope: &Path,
-        source_id: &LogicalSourceId,
-        authority: Option<&LocalTargetPolicy>,
+        source_id: &SourceId,
+        authority: Option<&RootAuthority>,
         fixed: &FixedResource,
         allowance: ScopeReadAllowance,
     ) {
+        if fixed.observed_bytes > 0
+            && let Err(limit) = self
+                .scope_budgets
+                .get_mut(scope)
+                .expect("a resolved configuration creates its scope budget")
+                .charge_observed_bytes(source_id, authority, fixed.observed_bytes)
+        {
+            self.scope_budgets
+                .get_mut(scope)
+                .expect("a resolved configuration creates its scope budget")
+                .fix_limit(source_id, authority, limit);
+        }
         if allowance.scope_specific
             && matches!(
                 fixed.outcome,
@@ -2254,7 +2230,7 @@ impl<'request> Processor<'request> {
         &mut self,
         scope: &Path,
         request: InspectionRequest<'_>,
-        filesystem: &mut LocalFilesystemSession,
+        filesystem: &mut FilesystemAuthority,
     ) -> FixedInspection {
         let InspectionRequest {
             source_id,
@@ -2263,7 +2239,7 @@ impl<'request> Processor<'request> {
             base,
             target,
         } = request;
-        let budget_authority = filesystem.policy_for_path(&path).cloned();
+        let budget_authority = filesystem.authority_for_path(&path).cloned();
         if let Err(limit) = self
             .inspection_scope_budgets
             .get_mut(scope)
@@ -2308,35 +2284,27 @@ impl<'request> Processor<'request> {
             }
         }
         let requested_path = path.clone();
-        let acquired_authority = filesystem.policy_for_path(&path).cloned();
-        let outcome = self
-            .job
-            .transaction(filesystem)
-            .map_err(ResourceError::from)
-            .and_then(|mut transaction| {
-                match transaction.inspect_within(
-                    authority,
-                    IncludeFilesystemRequest::new(source_id.clone(), base, target),
-                ) {
-                    IncludeFilesystemInspectionOutcome::Found(found) => {
-                        let canonical = found.provenance().canonical_path().to_owned();
-                        transaction
-                            .commit(filesystem)
-                            .map_err(ResourceError::from)?;
-                        Ok((canonical, ProjectResourceOutcome::Present))
+        let acquired_authority = filesystem.authority_for_path(&path).cloned();
+        if let Err(limit) = self.filesystem_usage.reserve(
+            &source_id,
+            acquired_authority.as_ref(),
+            self.filesystem_limits.resources.max_files,
+        ) {
+            return limited_inspection(source_id, path, limit);
+        }
+        let outcome = filesystem
+            .authority_for_path(authority)
+            .ok_or_else(|| FilesystemError::OutsideRoot(path.clone()))
+            .and_then(|authority| authority.inspect(base, target))
+            .map_or_else(
+                |error| match error {
+                    FilesystemError::Missing(_) => {
+                        Ok((path.clone(), ProjectResourceOutcome::Missing))
                     }
-                    IncludeFilesystemInspectionOutcome::NotFound(missing) => {
-                        let candidate = missing.watch_candidate().path().to_owned();
-                        transaction
-                            .commit(filesystem)
-                            .map_err(ResourceError::from)?;
-                        Ok((candidate, ProjectResourceOutcome::Missing))
-                    }
-                    IncludeFilesystemInspectionOutcome::Failed(failed) => {
-                        Err(ResourceError::from(failed.error().clone()))
-                    }
-                }
-            });
+                    error => Err(error),
+                },
+                |canonical| Ok((canonical, ProjectResourceOutcome::Present)),
+            );
         let (path, outcome) = match outcome {
             Ok(value) => value,
             Err(error) => (
@@ -2362,7 +2330,7 @@ impl<'request> Processor<'request> {
 
     fn fix_failure(
         &mut self,
-        source_id: LogicalSourceId,
+        source_id: SourceId,
         path: PathBuf,
         failure: ProjectResourceFailure,
     ) -> FixedResource {
@@ -2375,6 +2343,7 @@ impl<'request> Processor<'request> {
             authority: None,
             outcome: ProjectResourceOutcome::Failed(failure),
             origin: crate::ProjectResourceOrigin::Filesystem,
+            observed_bytes: 0,
         }
     }
 
@@ -2388,49 +2357,27 @@ impl<'request> Processor<'request> {
         Ok(())
     }
 
-    fn confined_session(
+    fn confined_authority(
         &mut self,
         roots: &[PathBuf],
-    ) -> Result<LocalFilesystemSession, ResourceError> {
-        let mut selected = Vec::new();
-        for root in roots {
-            let anchor = self
-                .authority
-                .policy_for_path(root)
-                .map(|policy| policy.root().to_owned())
-                .ok_or_else(|| ResourceError::OutsideRoots(root.clone()))?;
-            let access = if anchor == *root {
-                self.authority
-                    .access_existing([anchor], self.host_limits.resources.filesystem_reads())?
-            } else {
-                self.authority.access_derived(
-                    &anchor,
-                    DerivedFilesystemRoots {
-                        confined: vec![root.clone()],
-                        independent: Vec::new(),
-                    },
-                    self.host_limits.resources.filesystem_reads(),
-                )?
-            };
-            selected.extend(access.roots().iter().cloned());
-        }
-        selected.sort();
-        selected.dedup();
-        self.authority
-            .access_existing(selected, self.host_limits.resources.filesystem_reads())?
-            .session()
+    ) -> Result<FilesystemAuthority, FilesystemError> {
+        derive_confined_authority(&mut self.authority, roots)
     }
 
-    fn source_id_for_path(&self, path: &Path) -> Result<LogicalSourceId, ProjectError> {
+    fn source_id_for_path(&self, path: &Path) -> Result<SourceId, ProjectError> {
         if let Some(source_id) = self.source_ids_by_path.get(path) {
             return Ok(source_id.clone());
         }
         self.filesystem_source_id_for_path(path)
     }
 
-    fn filesystem_source_id_for_path(&self, path: &Path) -> Result<LogicalSourceId, ProjectError> {
+    fn filesystem_source_id_for_path(&self, path: &Path) -> Result<SourceId, ProjectError> {
+        let path = self
+            .filesystem
+            .normalize_path(path)
+            .map_err(project_authority_error)?;
         let value = if path.starts_with(&self.project_root) {
-            format!("project:{}", identity_path(&self.project_root, path))
+            format!("project:{}", identity_path(&self.project_root, &path))
         } else {
             let (index, root) = self
                 .identity_roots
@@ -2439,15 +2386,15 @@ impl<'request> Processor<'request> {
                 .filter(|(_, root)| path.starts_with(root))
                 .max_by_key(|(_, root)| root.components().count())
                 .ok_or_else(|| {
-                    project_authority_error(ResourceError::OutsideRoots(path.to_owned()))
+                    project_authority_error(FilesystemError::OutsideRoot(path.to_owned()))
                 })?;
-            format!("authority:{index}:{}", identity_path(root, path))
+            format!("authority:{index}:{}", identity_path(root, &path))
         };
         let source_id = self
             .source_id_for_value(&value)
             .map_err(project_authority_error)?;
         if let Some(reserved_path) = self.reserved_source_ids.get(&source_id)
-            && reserved_path.as_deref() != Some(path)
+            && reserved_path.as_deref() != Some(path.as_path())
         {
             return Err(ProjectError::InvalidInput(crate::ProjectInputError::new(
                 "source-id-collision",
@@ -2460,8 +2407,8 @@ impl<'request> Processor<'request> {
         Ok(source_id)
     }
 
-    fn source_id_for_value(&self, value: &str) -> Result<LogicalSourceId, ResourceError> {
-        LogicalSourceId::new(if value.is_empty() { "." } else { value })
+    fn source_id_for_value(&self, value: &str) -> Result<SourceId, FilesystemError> {
+        Ok(SourceId::new(if value.is_empty() { "." } else { value }))
     }
 
     fn local_target_source_id(
@@ -2470,7 +2417,7 @@ impl<'request> Processor<'request> {
         base: &Path,
         kind: adocweave::LocalTargetKind,
         target: &str,
-    ) -> Result<LogicalSourceId, ResourceError> {
+    ) -> Result<SourceId, FilesystemError> {
         self.source_id_for_value(&format!(
             "local-target:{owner}:{}:{kind:?}:{target}",
             identity_path(&self.project_root, base)
@@ -2479,9 +2426,9 @@ impl<'request> Processor<'request> {
 
     fn include_request_source_id(
         &self,
-        owner: &LogicalSourceId,
+        owner: &SourceId,
         range: adocweave::text::TextRange,
-    ) -> Result<LogicalSourceId, ResourceError> {
+    ) -> Result<SourceId, FilesystemError> {
         self.source_id_for_value(&format!(
             "include-request:{}:{}:{}",
             owner.as_str(),
@@ -2489,6 +2436,31 @@ impl<'request> Processor<'request> {
             range.end().to_u32()
         ))
     }
+}
+
+fn derive_confined_authority(
+    authority: &mut FilesystemAuthority,
+    roots: &[PathBuf],
+) -> Result<FilesystemAuthority, FilesystemError> {
+    let mut staged = authority.clone();
+    let mut selected = Vec::new();
+    for root in roots {
+        let anchor = staged
+            .authority_for_path(root)
+            .map(|policy| policy.root().to_owned())
+            .ok_or_else(|| FilesystemError::OutsideRoot(root.clone()))?;
+        let access = if anchor == *root {
+            staged.select([anchor])?
+        } else {
+            staged.derive(&anchor, [root.clone()])?
+        };
+        selected.extend(access.roots().iter().cloned());
+    }
+    selected.sort();
+    selected.dedup();
+    let selected = staged.select(selected)?;
+    *authority = staged;
+    Ok(selected)
 }
 
 fn local_target_diagnostics(
@@ -2542,7 +2514,7 @@ fn local_target_diagnostics(
                         && directive.target_range == range
                         && directive.optional
                 });
-            if optional && matches!(error, LocalTargetError::Missing(_)) {
+            if optional && matches!(error, FilesystemError::Missing(_)) {
                 continue;
             }
             let code = error.diagnostic_code();
@@ -2594,7 +2566,7 @@ fn local_target_diagnostics(
         let Some(error) = local_target_error(&resource.outcome, &resource.path) else {
             continue;
         };
-        if directive.optional && matches!(error, LocalTargetError::Missing(_)) {
+        if directive.optional && matches!(error, FilesystemError::Missing(_)) {
             continue;
         }
         let range = directive.target_range;
@@ -2643,69 +2615,51 @@ fn local_target_diagnostics(
     diagnostics
 }
 
-fn local_target_error(outcome: &ProjectResourceOutcome, path: &Path) -> Option<LocalTargetError> {
+fn local_target_error(outcome: &ProjectResourceOutcome, path: &Path) -> Option<FilesystemError> {
     match outcome {
         ProjectResourceOutcome::Present
         | ProjectResourceOutcome::Loaded { .. }
         | ProjectResourceOutcome::LoadedOmitted { .. } => None,
-        ProjectResourceOutcome::Missing => Some(LocalTargetError::Missing(path.to_owned())),
+        ProjectResourceOutcome::Missing => Some(FilesystemError::Missing(path.to_owned())),
         ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(limit)) => Some(match limit {
-            ProjectLimit::Files { limit } => LocalTargetError::LimitExceeded { limit: *limit },
+            ProjectLimit::Files { limit } => FilesystemError::LimitExceeded { limit: *limit },
             ProjectLimit::ResourceBytes { .. }
             | ProjectLimit::ReadBytes { .. }
             | ProjectLimit::DirectoryEntries { .. }
             | ProjectLimit::ProcessingIterations { .. }
-            | ProjectLimit::OutputBytes { .. } => LocalTargetError::ReadLimitExceeded,
+            | ProjectLimit::OutputBytes { .. } => FilesystemError::ReadLimitExceeded,
         }),
         ProjectResourceOutcome::Failed(
             ProjectResourceFailure::Unreadable(error) | ProjectResourceFailure::Rejected(error),
-        ) => Some(match error.host().clone() {
-            ResourceError::Missing(path) => LocalTargetError::Missing(path),
-            ResourceError::PermissionDenied(path) => LocalTargetError::PermissionDenied(path),
-            ResourceError::OutsideRoots(path) => LocalTargetError::OutsideRoot(path),
-            ResourceError::NotRegularFile(path) => LocalTargetError::NotFile(path),
-            ResourceError::InvalidUtf8 { path, .. } => LocalTargetError::InvalidUtf8(path),
-            ResourceError::ResourceTooLarge(path) => LocalTargetError::ResourceTooLarge(path),
-            ResourceError::FileLimit { limit } => LocalTargetError::LimitExceeded { limit },
-            ResourceError::ByteLimit => LocalTargetError::ReadLimitExceeded,
-            ResourceError::Unverifiable(reason) => LocalTargetError::Unverifiable(reason),
-            other => LocalTargetError::Unverifiable(other.to_string()),
-        }),
+        ) => Some(error.filesystem().clone()),
     }
 }
 
-const fn local_target_message(error: &LocalTargetError) -> &'static str {
+const fn local_target_message(error: &FilesystemError) -> &'static str {
     match error {
-        LocalTargetError::Missing(_) => "local target does not exist",
-        LocalTargetError::OutsideRoot(_) => "local target is outside the project root",
-        LocalTargetError::NotFile(_) | LocalTargetError::NotDirectory(_) => {
+        FilesystemError::Missing(_) => "local target does not exist",
+        FilesystemError::OutsideRoot(_) => "local target is outside the project root",
+        FilesystemError::PathNotAbsolute(_) => "local target path is invalid",
+        FilesystemError::NotFile(_) | FilesystemError::NotDirectory(_) => {
             "local target is not a regular file"
         }
-        LocalTargetError::PermissionDenied(_) => "local target cannot be read",
-        LocalTargetError::LimitExceeded { .. } => "local target inspection limit exceeded",
-        LocalTargetError::InvalidUtf8(_)
-        | LocalTargetError::Unverifiable(_)
-        | LocalTargetError::ResourceTooLarge(_)
-        | LocalTargetError::ReadLimitExceeded => "local target cannot be verified",
+        FilesystemError::PermissionDenied(_) => "local target cannot be read",
+        FilesystemError::LimitExceeded { .. } => "local target inspection limit exceeded",
+        FilesystemError::InvalidUtf8(_)
+        | FilesystemError::Inspect { .. }
+        | FilesystemError::Unverifiable(_)
+        | FilesystemError::ResourceTooLarge(_)
+        | FilesystemError::ReadLimitExceeded => "local target cannot be verified",
     }
-}
-
-fn caller_source_id(source_id: &SourceId) -> Result<LogicalSourceId, ProjectError> {
-    LogicalSourceId::new(source_id.as_str()).map_err(|_| {
-        ProjectError::InvalidInput(crate::ProjectInputError::new(
-            "invalid-source-id",
-            "caller source ID cannot be represented by project processing",
-        ))
-    })
 }
 
 fn read_fixed_from(
-    job: &IncludeFilesystemJob,
-    fixed_resources: &mut BTreeMap<LogicalSourceId, Vec<FixedResource>>,
-    fixed_inspections: &BTreeMap<LogicalSourceId, Vec<FixedInspection>>,
+    fixed_resources: &mut BTreeMap<SourceId, Vec<FixedResource>>,
+    fixed_inspections: &BTreeMap<SourceId, Vec<FixedInspection>>,
     limits: crate::ProjectLimits,
     request: FixedReadRequest,
-    filesystem: &mut LocalFilesystemSession,
+    filesystem: &FilesystemAuthority,
+    usage: &mut RequestFilesystemUsage,
 ) -> FixedResource {
     let FixedReadRequest {
         source_id,
@@ -2717,6 +2671,41 @@ fn read_fixed_from(
         .get(&source_id)
         .and_then(|fixed| reusable_resource(fixed, &path, filesystem, no_symlinks))
     {
+        return fixed;
+    }
+    let authority = filesystem.authority_for_path(&path).cloned();
+    if let Err(limit) = usage.reserve(&source_id, authority.as_ref(), limits.resources.max_files) {
+        return limited_resource(source_id, path, no_symlinks, authority, limit);
+    }
+    if let Ok(canonical) = filesystem.inspect(&path, no_symlinks)
+        && let Some(source) = fixed_resources.values().flatten().find_map(|fixed| {
+            (fixed.path == canonical
+                && (!no_symlinks || fixed.no_symlinks)
+                && same_budget_authority(
+                    fixed.authority.as_ref(),
+                    filesystem.authority_for_path(&path),
+                ))
+            .then(|| match &fixed.outcome {
+                ProjectResourceOutcome::Loaded { source } => Some(Arc::clone(source)),
+                _ => None,
+            })?
+        })
+    {
+        let fixed = FixedResource {
+            source_id: source_id.clone(),
+            requested_path: path.clone(),
+            path: canonical.clone(),
+            base: canonical.parent().map(Path::to_owned),
+            no_symlinks,
+            authority: filesystem.authority_for_path(&path).cloned(),
+            outcome: ProjectResourceOutcome::Loaded { source },
+            origin: crate::ProjectResourceOrigin::Filesystem,
+            observed_bytes: 0,
+        };
+        fixed_resources
+            .entry(source_id)
+            .or_default()
+            .push(fixed.clone());
         return fixed;
     }
     if let Some(inspection) = fixed_inspections
@@ -2733,6 +2722,7 @@ fn read_fixed_from(
             authority: inspection.authority,
             outcome: ProjectResourceOutcome::Missing,
             origin: crate::ProjectResourceOrigin::Filesystem,
+            observed_bytes: 0,
         };
         fixed_resources
             .entry(source_id)
@@ -2740,84 +2730,66 @@ fn read_fixed_from(
             .push(fixed.clone());
         return fixed;
     }
+
     let requested_path = path.clone();
-    let authority = filesystem.policy_for_path(&path).cloned();
-    let outcome = job
-        .transaction(filesystem)
-        .map_err(ResourceError::from)
-        .and_then(|mut transaction| {
-            let request = IncludeFilesystemPathRequest::new(source_id.clone(), path.clone());
-            let outcome = match allowance {
-                Some(allowance) => {
-                    let outcome = if no_symlinks {
-                        transaction.read_utf8_no_symlinks_within_limits(request, allowance.limits)
-                    } else {
-                        transaction.read_utf8_within_limits(request, allowance.limits)
-                    };
-                    match outcome {
-                        IncludeFilesystemLimitedOutcome::Found(found) => {
-                            Ok(IncludeFilesystemBudgetedOutcome::Found(found))
-                        }
-                        IncludeFilesystemLimitedOutcome::NotFound(missing) => {
-                            Ok(IncludeFilesystemBudgetedOutcome::NotFound(missing))
-                        }
-                        IncludeFilesystemLimitedOutcome::Limit { cause, .. } => Err(match cause {
-                            IncludeFilesystemReadLimit::Additional => allowance.limit,
-                            IncludeFilesystemReadLimit::Established(error) => {
-                                established_read_limit(error, limits)
-                            }
-                        }),
-                        IncludeFilesystemLimitedOutcome::Failed(failed) => {
-                            Ok(IncludeFilesystemBudgetedOutcome::Failed(failed))
-                        }
-                    }
-                }
-                None => Ok(transaction.read_utf8_within_budget(request)),
-            };
-            match outcome {
-                Ok(IncludeFilesystemBudgetedOutcome::Found(found)) => {
-                    let canonical = found.provenance().canonical_path().to_owned();
-                    let source = Arc::<str>::from(found.source());
-                    transaction
-                        .commit(filesystem)
-                        .map_err(ResourceError::from)?;
-                    Ok((
-                        canonical.clone(),
-                        canonical.parent().map(Path::to_owned),
-                        ProjectResourceOutcome::Loaded { source },
-                    ))
-                }
-                Ok(IncludeFilesystemBudgetedOutcome::NotFound(missing)) => {
-                    let candidate = missing.watch_candidate().path().to_owned();
-                    transaction
-                        .commit(filesystem)
-                        .map_err(ResourceError::from)?;
-                    Ok((candidate, None, ProjectResourceOutcome::Missing))
-                }
-                Ok(IncludeFilesystemBudgetedOutcome::BudgetExhausted { error, .. }) => Ok((
-                    path.clone(),
-                    None,
-                    ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(
-                        established_read_limit(error, limits),
-                    )),
-                )),
-                Ok(IncludeFilesystemBudgetedOutcome::Failed(failed)) => {
-                    Err(ResourceError::from(failed.error().clone()))
-                }
-                Err(limit) => Ok((
-                    path.clone(),
-                    None,
-                    ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(limit)),
-                )),
+    let (max_bytes, exhausted_limit) = allowance.map_or_else(
+        || {
+            let remaining = limits
+                .resources
+                .max_total_bytes
+                .saturating_sub(usage.read_bytes);
+            if limits.resources.max_resource_bytes <= remaining {
+                (
+                    limits.resources.max_resource_bytes,
+                    ProjectLimit::ResourceBytes {
+                        limit: limits.resources.max_resource_bytes,
+                    },
+                )
+            } else {
+                (
+                    remaining,
+                    ProjectLimit::ReadBytes {
+                        limit: limits.resources.max_total_bytes,
+                    },
+                )
             }
-        });
-    let (resolved_path, base, outcome) = outcome.unwrap_or_else(|error| {
-        (
-            path.clone(),
-            None,
-            ProjectResourceOutcome::Failed(classify_resource_failure(error, limits)),
-        )
-    });
+        },
+        |allowance| (allowance.max_bytes, allowance.limit),
+    );
+    let mut loaded_path = None;
+    let mut observed_bytes = 0;
+    let outcome = if max_bytes == 0 {
+        if allowance.is_none_or(|allowance| !allowance.scope_specific) {
+            usage.limit = Some(exhausted_limit);
+        }
+        ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(exhausted_limit))
+    } else {
+        let read = filesystem.read_utf8(&path, max_bytes, no_symlinks);
+        observed_bytes = read.observed_bytes;
+        usage.read_bytes = usage.read_bytes.saturating_add(read.observed_bytes);
+        match read.outcome {
+            Ok(loaded) => {
+                loaded_path = Some(loaded.canonical_path().to_owned());
+                ProjectResourceOutcome::Loaded {
+                    source: Arc::from(loaded.source()),
+                }
+            }
+            Err(FilesystemError::Missing(_)) => ProjectResourceOutcome::Missing,
+            Err(FilesystemError::ResourceTooLarge(_)) => {
+                if matches!(exhausted_limit, ProjectLimit::ReadBytes { .. })
+                    && allowance.is_none_or(|allowance| !allowance.scope_specific)
+                {
+                    usage.limit = Some(exhausted_limit);
+                }
+                ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(exhausted_limit))
+            }
+            Err(error) => ProjectResourceOutcome::Failed(classify_resource_failure(error, limits)),
+        }
+    };
+    let resolved_path = loaded_path.unwrap_or_else(|| path.clone());
+    let base = matches!(outcome, ProjectResourceOutcome::Loaded { .. })
+        .then(|| resolved_path.parent().map(Path::to_owned))
+        .flatten();
     let fixed = FixedResource {
         source_id: source_id.clone(),
         requested_path,
@@ -2827,6 +2799,7 @@ fn read_fixed_from(
         authority,
         outcome,
         origin: crate::ProjectResourceOrigin::Filesystem,
+        observed_bytes,
     };
     let scope_limited = allowance.is_some_and(|allowance| {
         allowance.scope_specific
@@ -2849,7 +2822,7 @@ fn read_fixed_from(
 fn reusable_resource(
     fixed: &[FixedResource],
     requested_path: &Path,
-    filesystem: &LocalFilesystemSession,
+    filesystem: &FilesystemAuthority,
     no_symlinks: bool,
 ) -> Option<FixedResource> {
     fixed.iter().find_map(|fixed| {
@@ -2875,7 +2848,7 @@ fn reusable_resource(
 fn reusable_inspection(
     fixed: &[FixedInspection],
     requested_path: &Path,
-    filesystem: &LocalFilesystemSession,
+    filesystem: &FilesystemAuthority,
 ) -> Option<FixedInspection> {
     fixed.iter().find_map(|fixed| {
         validate_cached_authority(
@@ -2894,13 +2867,15 @@ fn reusable_inspection(
 fn resolve_lookup_path(
     target: &str,
     lookup_bases: &BTreeMap<String, PathBuf>,
-) -> Result<PathBuf, ResourceError> {
+) -> Result<PathBuf, FilesystemError> {
     let (key, base) = lookup_bases
         .iter()
         .filter(|(key, _)| target == key.as_str() || target.starts_with(&format!("{key}/")))
         .max_by_key(|(key, _)| key.len())
         .ok_or_else(|| {
-            ResourceError::Unverifiable("include target has no verified filesystem base".to_owned())
+            FilesystemError::Unverifiable(
+                "include target has no verified filesystem base".to_owned(),
+            )
         })?;
     let relative = target
         .strip_prefix(key)
@@ -2910,10 +2885,10 @@ fn resolve_lookup_path(
 }
 
 #[cfg(test)]
-fn cached_for_session(
+fn cached_for_authority(
     fixed: &FixedResource,
     requested_path: &Path,
-    filesystem: &LocalFilesystemSession,
+    filesystem: &FilesystemAuthority,
     require_no_symlinks: bool,
 ) -> FixedResource {
     let access = validate_cached_authority(
@@ -2938,21 +2913,21 @@ fn cached_for_session(
     let error = if let Err(error) = access {
         error
     } else {
-        ResourceError::Unverifiable(
+        FilesystemError::Unverifiable(
             "resource was not acquired with symbolic links forbidden".to_owned(),
         )
     };
     rejected.outcome = ProjectResourceOutcome::Failed(ProjectResourceFailure::Rejected(
-        crate::ProjectResourceError::from_host(error),
+        crate::ProjectResourceError::from_filesystem(error),
     ));
     rejected
 }
 
 #[cfg(test)]
-fn cached_inspection_for_session(
+fn cached_inspection_for_authority(
     fixed: &FixedInspection,
     requested_path: &Path,
-    filesystem: &LocalFilesystemSession,
+    filesystem: &FilesystemAuthority,
 ) -> FixedInspection {
     let access = validate_cached_authority(
         requested_path,
@@ -2969,7 +2944,7 @@ fn cached_inspection_for_session(
     rejected.requested_path = requested_path.to_owned();
     rejected.path = requested_path.to_owned();
     rejected.outcome = ProjectResourceOutcome::Failed(ProjectResourceFailure::Rejected(
-        crate::ProjectResourceError::from_host(
+        crate::ProjectResourceError::from_filesystem(
             access.expect_err("failed cache authority is retained"),
         ),
     ));
@@ -2981,33 +2956,21 @@ fn validate_cached_authority(
     acquired_requested_path: &Path,
     acquired_path: &Path,
     acquired_path_is_verified: bool,
-    acquired_authority: Option<&LocalTargetPolicy>,
-    filesystem: &LocalFilesystemSession,
-) -> Result<(), ResourceError> {
-    let requested_authority = filesystem.policy_for_path(requested_path);
+    acquired_authority: Option<&RootAuthority>,
+    filesystem: &FilesystemAuthority,
+) -> Result<(), FilesystemError> {
+    let requested_authority = filesystem.authority_for_path(requested_path);
     let same_authority = requested_authority
         .zip(acquired_authority)
         .is_some_and(|(requested, acquired)| requested.has_same_authority(acquired));
     let acquired_paths_are_valid = acquired_authority.is_some_and(|authority| {
-        acquired_requested_path.starts_with(authority.root())
-            && (!acquired_path_is_verified || acquired_path.starts_with(authority.root()))
+        authority.contains_path(acquired_requested_path)
+            && (!acquired_path_is_verified || authority.contains_path(acquired_path))
     });
     if !same_authority || !acquired_paths_are_valid {
-        return Err(ResourceError::OutsideRoots(requested_path.to_owned()));
+        return Err(FilesystemError::OutsideRoot(requested_path.to_owned()));
     }
     Ok(())
-}
-
-fn established_read_limit(
-    error: FilesystemDraftError,
-    limits: crate::ProjectLimits,
-) -> ProjectLimit {
-    match classify_resource_failure(ResourceError::from(error), limits) {
-        ProjectResourceFailure::Limit(limit) => limit,
-        ProjectResourceFailure::Unreadable(_) | ProjectResourceFailure::Rejected(_) => {
-            unreachable!("the host reports only an established filesystem read limit")
-        }
-    }
 }
 
 fn expanded_document_bytes(outcome: &Result<ProjectAnalysis, ProjectTargetError>) -> usize {
@@ -3122,20 +3085,22 @@ impl ResourceLookup for FixedLookup {
 
 struct ScopeBudget {
     limits: ProjectResourceLimits,
-    observations: BTreeMap<LogicalSourceId, Vec<BudgetObservation>>,
+    observations: BTreeMap<SourceId, Vec<BudgetObservation>>,
     files: usize,
     bytes: u64,
 }
 
 struct BudgetObservation {
-    authority: Option<LocalTargetPolicy>,
+    authority: Option<RootAuthority>,
+    observed_bytes: u64,
+    observed_bytes_charged: bool,
     body_charged: bool,
     limit: Option<ProjectLimit>,
 }
 
 #[derive(Clone, Copy)]
 struct ScopeReadAllowance {
-    limits: FilesystemReadLimits,
+    max_bytes: u64,
     limit: ProjectLimit,
     scope_specific: bool,
 }
@@ -3152,8 +3117,8 @@ impl ScopeBudget {
 
     fn reserve(
         &mut self,
-        source_id: &LogicalSourceId,
-        authority: Option<&LocalTargetPolicy>,
+        source_id: &SourceId,
+        authority: Option<&RootAuthority>,
     ) -> Result<(), ProjectLimit> {
         if self.observation(source_id, authority).is_some() {
             return Ok(());
@@ -3168,6 +3133,8 @@ impl ScopeBudget {
             .or_default()
             .push(BudgetObservation {
                 authority: authority.cloned(),
+                observed_bytes: 0,
+                observed_bytes_charged: false,
                 body_charged: false,
                 limit: None,
             });
@@ -3175,10 +3142,49 @@ impl ScopeBudget {
         Ok(())
     }
 
+    fn charge_observed_bytes(
+        &mut self,
+        source_id: &SourceId,
+        authority: Option<&RootAuthority>,
+        bytes: u64,
+    ) -> Result<(), ProjectLimit> {
+        let Some(observations) = self.observations.get_mut(source_id) else {
+            unreachable!("resource bodies are charged only after reserving their observation")
+        };
+        let Some(observation) = observations
+            .iter_mut()
+            .find(|observation| same_budget_authority(observation.authority.as_ref(), authority))
+        else {
+            unreachable!("resource bodies are charged only under their reserved authority")
+        };
+        if observation.observed_bytes_charged {
+            return Ok(());
+        }
+        let previous_bytes = self.bytes;
+        self.bytes = self.bytes.saturating_add(bytes);
+        observation.observed_bytes = bytes;
+        observation.observed_bytes_charged = true;
+        if bytes > self.limits.max_resource_bytes {
+            let limit = ProjectLimit::ResourceBytes {
+                limit: self.limits.max_resource_bytes,
+            };
+            observation.limit = Some(limit);
+            return Err(limit);
+        }
+        if previous_bytes.saturating_add(bytes) > self.limits.max_total_bytes {
+            let limit = ProjectLimit::ReadBytes {
+                limit: self.limits.max_total_bytes,
+            };
+            observation.limit = Some(limit);
+            return Err(limit);
+        }
+        Ok(())
+    }
+
     fn charge_body(
         &mut self,
-        source_id: &LogicalSourceId,
-        authority: Option<&LocalTargetPolicy>,
+        source_id: &SourceId,
+        authority: Option<&RootAuthority>,
         bytes: usize,
     ) -> Result<(), ProjectLimit> {
         let Some(observations) = self.observations.get_mut(source_id) else {
@@ -3194,6 +3200,10 @@ impl ScopeBudget {
             return Ok(());
         }
         let bytes = u64::try_from(bytes).unwrap_or(u64::MAX);
+        let unaccounted = bytes.saturating_sub(observation.observed_bytes);
+        let previous_bytes = self.bytes;
+        self.bytes = self.bytes.saturating_add(unaccounted);
+        observation.body_charged = true;
         if bytes > self.limits.max_resource_bytes {
             let limit = ProjectLimit::ResourceBytes {
                 limit: self.limits.max_resource_bytes,
@@ -3201,22 +3211,20 @@ impl ScopeBudget {
             observation.limit = Some(limit);
             return Err(limit);
         }
-        if self.bytes.saturating_add(bytes) > self.limits.max_total_bytes {
+        if previous_bytes.saturating_add(unaccounted) > self.limits.max_total_bytes {
             let limit = ProjectLimit::ReadBytes {
                 limit: self.limits.max_total_bytes,
             };
             observation.limit = Some(limit);
             return Err(limit);
         }
-        self.bytes += bytes;
-        observation.body_charged = true;
         Ok(())
     }
 
     fn observation(
         &self,
-        source_id: &LogicalSourceId,
-        authority: Option<&LocalTargetPolicy>,
+        source_id: &SourceId,
+        authority: Option<&RootAuthority>,
     ) -> Option<&BudgetObservation> {
         self.observations
             .get(source_id)?
@@ -3226,8 +3234,8 @@ impl ScopeBudget {
 
     fn read_allowance(
         &self,
-        source_id: &LogicalSourceId,
-        authority: Option<&LocalTargetPolicy>,
+        source_id: &SourceId,
+        authority: Option<&RootAuthority>,
         request_limits: ProjectResourceLimits,
         request_remaining_bytes: u64,
     ) -> Result<ScopeReadAllowance, ProjectLimit> {
@@ -3276,15 +3284,7 @@ impl ScopeBudget {
             )
         };
         Ok(ScopeReadAllowance {
-            limits: FilesystemReadLimits {
-                // Scope observations are reserved before this allowance is
-                // created. Keep the session's cumulative file ceiling here;
-                // replacing it with one would make every read after the first
-                // committed resource fail.
-                max_files: request_limits.max_files,
-                max_total_bytes: remaining_total,
-                max_resource_bytes: resource_bytes,
-            },
+            max_bytes: remaining_total.min(resource_bytes),
             limit,
             scope_specific,
         })
@@ -3292,8 +3292,8 @@ impl ScopeBudget {
 
     fn fix_limit(
         &mut self,
-        source_id: &LogicalSourceId,
-        authority: Option<&LocalTargetPolicy>,
+        source_id: &SourceId,
+        authority: Option<&RootAuthority>,
         limit: ProjectLimit,
     ) {
         let observation = self
@@ -3309,10 +3309,7 @@ impl ScopeBudget {
     }
 }
 
-fn same_budget_authority(
-    left: Option<&LocalTargetPolicy>,
-    right: Option<&LocalTargetPolicy>,
-) -> bool {
+fn same_budget_authority(left: Option<&RootAuthority>, right: Option<&RootAuthority>) -> bool {
     match (left, right) {
         (Some(left), Some(right)) => left.has_same_authority(right),
         (None, None) => true,
@@ -3321,10 +3318,10 @@ fn same_budget_authority(
 }
 
 fn limited_resource(
-    source_id: LogicalSourceId,
+    source_id: SourceId,
     path: PathBuf,
     no_symlinks: bool,
-    authority: Option<LocalTargetPolicy>,
+    authority: Option<RootAuthority>,
     limit: ProjectLimit,
 ) -> FixedResource {
     FixedResource {
@@ -3336,14 +3333,11 @@ fn limited_resource(
         authority,
         outcome: ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(limit)),
         origin: crate::ProjectResourceOrigin::Filesystem,
+        observed_bytes: 0,
     }
 }
 
-fn limited_inspection(
-    source_id: LogicalSourceId,
-    path: PathBuf,
-    limit: ProjectLimit,
-) -> FixedInspection {
+fn limited_inspection(source_id: SourceId, path: PathBuf, limit: ProjectLimit) -> FixedInspection {
     FixedInspection {
         source_id,
         requested_path: path.clone(),
@@ -3357,7 +3351,7 @@ fn memory_resource(
     source: MemorySource,
     path: PathBuf,
     no_symlinks: bool,
-    authority: Option<LocalTargetPolicy>,
+    authority: Option<RootAuthority>,
 ) -> FixedResource {
     let outcome = if authority.is_some() {
         ProjectResourceOutcome::Loaded {
@@ -3365,7 +3359,9 @@ fn memory_resource(
         }
     } else {
         ProjectResourceOutcome::Failed(ProjectResourceFailure::Rejected(
-            crate::ProjectResourceError::from_host(ResourceError::OutsideRoots(path.clone())),
+            crate::ProjectResourceError::from_filesystem(FilesystemError::OutsideRoot(
+                path.clone(),
+            )),
         ))
     };
     FixedResource {
@@ -3377,13 +3373,14 @@ fn memory_resource(
         authority,
         outcome,
         origin: crate::ProjectResourceOrigin::Input,
+        observed_bytes: 0,
     }
 }
 
 fn map_prepared_error(error: PreparedAnalysisError) -> ExpandedAnalysisFailure {
     match error {
         PreparedAnalysisError::ContractMismatch => {
-            ExpandedAnalysisFailure::Error(project_expansion_read(ResourceError::Unverifiable(
+            ExpandedAnalysisFailure::Error(project_expansion_read(FilesystemError::Unverifiable(
                 "processing contract mismatch".to_owned(),
             )))
         }
@@ -3407,65 +3404,42 @@ fn map_projection_failure(error: ProjectionFailure) -> ExpandedAnalysisFailure {
     }
 }
 
-fn project_error_resource(error: ProjectError) -> ResourceError {
+fn project_error_resource(error: ProjectError) -> FilesystemError {
     match error {
-        ProjectError::Authority(error) => error.host().clone(),
-        error => ResourceError::Unverifiable(error.to_string()),
+        ProjectError::Authority(error) => error.filesystem().clone(),
+        error => FilesystemError::Unverifiable(error.to_string()),
     }
 }
 
 fn classify_resource_failure(
-    error: ResourceError,
+    error: FilesystemError,
     limits: crate::ProjectLimits,
 ) -> ProjectResourceFailure {
     match &error {
-        ResourceError::FileLimit { limit } => {
+        FilesystemError::LimitExceeded { limit } => {
             ProjectResourceFailure::Limit(ProjectLimit::Files { limit: *limit })
         }
-        ResourceError::ByteLimit => ProjectResourceFailure::Limit(ProjectLimit::ReadBytes {
-            limit: limits.resources.max_total_bytes,
-        }),
-        ResourceError::ResourceTooLarge(_) => {
+        FilesystemError::ReadLimitExceeded => {
+            ProjectResourceFailure::Limit(ProjectLimit::ReadBytes {
+                limit: limits.resources.max_total_bytes,
+            })
+        }
+        FilesystemError::ResourceTooLarge(_) => {
             ProjectResourceFailure::Limit(ProjectLimit::ResourceBytes {
                 limit: limits.resources.max_resource_bytes,
             })
         }
-        ResourceError::Job(FilesystemJobError::Limit(limit)) => {
-            ProjectResourceFailure::Limit(map_job_limit(*limit, limits))
+        FilesystemError::PermissionDenied(_) | FilesystemError::InvalidUtf8(_) => {
+            ProjectResourceFailure::Unreadable(crate::ProjectResourceError::from_filesystem(error))
         }
-        ResourceError::PermissionDenied(_)
-        | ResourceError::Read { .. }
-        | ResourceError::InvalidUtf8 { .. } => {
-            ProjectResourceFailure::Unreadable(crate::ProjectResourceError::from_host(error))
-        }
-        _ => ProjectResourceFailure::Rejected(crate::ProjectResourceError::from_host(error)),
-    }
-}
-
-fn map_job_limit(limit: FilesystemJobLimit, limits: crate::ProjectLimits) -> ProjectLimit {
-    match limit {
-        FilesystemJobLimit::ReadOperations { .. }
-        | FilesystemJobLimit::CandidateChanges { .. }
-        | FilesystemJobLimit::Sessions { .. } => ProjectLimit::Files {
-            limit: limits.resources.max_files,
-        },
-        FilesystemJobLimit::ReadBytes { .. } | FilesystemJobLimit::ReadProbeBytes { .. } => {
-            ProjectLimit::ReadBytes {
-                limit: limits.resources.max_total_bytes,
-            }
-        }
-        FilesystemJobLimit::DirectoryOperations { .. }
-        | FilesystemJobLimit::DirectoryEntries { .. }
-        | FilesystemJobLimit::DirectoryProbeEntries { .. } => ProjectLimit::DirectoryEntries {
-            limit: limits.max_directory_entries,
-        },
+        _ => ProjectResourceFailure::Rejected(crate::ProjectResourceError::from_filesystem(error)),
     }
 }
 
 impl ProjectResourceFailure {
-    fn error(&self) -> &ResourceError {
+    fn error(&self) -> &FilesystemError {
         match self {
-            Self::Unreadable(error) | Self::Rejected(error) => error.host(),
+            Self::Unreadable(error) | Self::Rejected(error) => error.filesystem(),
             Self::Limit(_) => unreachable!("limits are handled before reading their error"),
         }
     }
@@ -3504,22 +3478,24 @@ fn observe_fixed(_: &FixedResource) {}
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "linux")]
+    use std::collections::BTreeMap;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
 
+    use crate::filesystem::{FilesystemAuthority, FilesystemError};
+    use adocweave::SourceId;
     use adocweave::preprocess::{PreparedAnalysisError, ProjectionFailure};
     use adocweave::{NeverCancel, ParseError};
-    use adocweave_host::{
-        DerivedFilesystemRoots, FilesystemReadLimits, LocalFilesystemPolicy,
-        LocalFilesystemSession, LogicalSourceId, ResourceError,
-    };
 
     use super::{
         ExpandedAnalysisFailure, FIXED_OBSERVER, FixedInspection, FixedResource,
-        cached_for_session, cached_inspection_for_session, map_prepared_error,
-        map_projection_failure,
+        cached_for_authority, cached_inspection_for_authority, derive_confined_authority,
+        map_prepared_error, map_projection_failure,
     };
+    #[cfg(target_os = "linux")]
+    use super::{FixedReadRequest, RequestFilesystemUsage, read_fixed_from};
     use crate::{
         ProjectAuthority, ProjectConfigOverrides, ProjectConfigSelection, ProjectLimits,
         ProjectParseError, ProjectRequest, ProjectResourceFailure, ProjectResourceLimits,
@@ -3543,20 +3519,17 @@ mod tests {
         ));
     }
 
-    fn filesystem_session(roots: impl IntoIterator<Item = PathBuf>) -> LocalFilesystemSession {
-        LocalFilesystemPolicy::new(roots, FilesystemReadLimits::default())
-            .expect("filesystem policy")
-            .session()
-            .expect("filesystem session")
+    fn filesystem_authority(roots: impl IntoIterator<Item = PathBuf>) -> FilesystemAuthority {
+        FilesystemAuthority::open(roots).expect("filesystem authority")
     }
 
-    fn source_id() -> LogicalSourceId {
-        LogicalSourceId::new("project:cached").expect("logical source ID")
+    fn source_id() -> SourceId {
+        SourceId::new("project:cached")
     }
 
     fn failed_outcome() -> ProjectResourceOutcome {
         ProjectResourceOutcome::Failed(ProjectResourceFailure::Rejected(
-            crate::ProjectResourceError::from_host(ResourceError::Unverifiable(
+            crate::ProjectResourceError::from_filesystem(FilesystemError::Unverifiable(
                 "fixed failure".to_owned(),
             )),
         ))
@@ -3573,9 +3546,9 @@ mod tests {
     fn loaded_resource(
         requested_path: PathBuf,
         path: PathBuf,
-        filesystem: &LocalFilesystemSession,
+        filesystem: &FilesystemAuthority,
     ) -> FixedResource {
-        let authority = filesystem.policy_for_path(&requested_path).cloned();
+        let authority = filesystem.authority_for_path(&requested_path).cloned();
         FixedResource {
             source_id: source_id(),
             requested_path,
@@ -3587,15 +3560,16 @@ mod tests {
                 source: Arc::from("loaded"),
             },
             origin: crate::ProjectResourceOrigin::Filesystem,
+            observed_bytes: 0,
         }
     }
 
     fn present_inspection(
         requested_path: PathBuf,
         path: PathBuf,
-        filesystem: &LocalFilesystemSession,
+        filesystem: &FilesystemAuthority,
     ) -> FixedInspection {
-        let authority = filesystem.policy_for_path(&requested_path).cloned();
+        let authority = filesystem.authority_for_path(&requested_path).cloned();
         FixedInspection {
             source_id: source_id(),
             requested_path,
@@ -3612,7 +3586,7 @@ mod tests {
         let second = directory.path().join("second");
         fs::create_dir(&first).expect("first root");
         fs::create_dir(&second).expect("second root");
-        let filesystem = filesystem_session([first.clone(), second.clone()]);
+        let filesystem = filesystem_authority([first.clone(), second.clone()]);
 
         for (acquired_root, other_root) in [(&first, &second), (&second, &first)] {
             let acquired_request = acquired_root.join("resource");
@@ -3620,13 +3594,13 @@ mod tests {
             let loaded =
                 loaded_resource(acquired_request.clone(), other_request.clone(), &filesystem);
             assert_rejected(
-                &cached_for_session(&loaded, &acquired_request, &filesystem, false).outcome,
+                &cached_for_authority(&loaded, &acquired_request, &filesystem, false).outcome,
             );
 
             let present =
                 present_inspection(acquired_request.clone(), other_request.clone(), &filesystem);
             assert_rejected(
-                &cached_inspection_for_session(&present, &acquired_request, &filesystem).outcome,
+                &cached_inspection_for_authority(&present, &acquired_request, &filesystem).outcome,
             );
 
             for outcome in [ProjectResourceOutcome::Missing, failed_outcome()] {
@@ -3636,12 +3610,13 @@ mod tests {
                     path: acquired_request.clone(),
                     base: None,
                     no_symlinks: false,
-                    authority: filesystem.policy_for_path(&acquired_request).cloned(),
+                    authority: filesystem.authority_for_path(&acquired_request).cloned(),
                     outcome,
                     origin: crate::ProjectResourceOrigin::Filesystem,
+                    observed_bytes: 0,
                 };
                 assert_rejected(
-                    &cached_for_session(&fixed, &other_request, &filesystem, false).outcome,
+                    &cached_for_authority(&fixed, &other_request, &filesystem, false).outcome,
                 );
             }
         }
@@ -3654,51 +3629,36 @@ mod tests {
         let child = directory.path().join("child");
         fs::create_dir(&child).expect("child root");
         let path = child.join("resource");
-        let mut policy =
-            LocalFilesystemPolicy::new([parent.clone()], FilesystemReadLimits::default())
-                .expect("parent policy");
-        let parent_filesystem = policy.session().expect("parent session");
+        let mut policy = FilesystemAuthority::open([parent.clone()]).expect("parent authority");
+        let parent_filesystem = policy.clone();
         let child_filesystem = policy
-            .access_derived(
-                &parent,
-                DerivedFilesystemRoots {
-                    confined: vec![child],
-                    independent: Vec::new(),
-                },
-                FilesystemReadLimits::default(),
-            )
-            .expect("derived child policy")
-            .session()
-            .expect("child session");
+            .derive(&parent, [child])
+            .expect("derived child authority");
 
         let loaded = loaded_resource(path.clone(), path.clone(), &parent_filesystem);
-        assert_rejected(&cached_for_session(&loaded, &path, &child_filesystem, false).outcome);
+        assert_rejected(&cached_for_authority(&loaded, &path, &child_filesystem, false).outcome);
         let present = present_inspection(path.clone(), path.clone(), &parent_filesystem);
-        assert_rejected(&cached_inspection_for_session(&present, &path, &child_filesystem).outcome);
+        assert_rejected(
+            &cached_inspection_for_authority(&present, &path, &child_filesystem).outcome,
+        );
     }
 
     #[test]
-    fn cached_authority_rejects_child_observations_under_a_parent_only_session() {
+    fn cached_authority_rejects_child_observations_under_a_parent_only_authority() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let parent = directory.path().to_owned();
         let child = parent.join("child");
         fs::create_dir(&child).expect("child root");
         let path = child.join("resource");
-        let policy =
-            LocalFilesystemPolicy::new([parent.clone(), child], FilesystemReadLimits::default())
-                .expect("nested policy");
-        let nested_filesystem = policy.session().expect("nested session");
-        let parent_filesystem = policy
-            .access_existing([parent], FilesystemReadLimits::default())
-            .expect("parent access")
-            .session()
-            .expect("parent session");
+        let policy = FilesystemAuthority::open([parent.clone(), child]).expect("nested authority");
+        let nested_filesystem = policy.clone();
+        let parent_filesystem = policy.select([parent]).expect("parent access");
 
         let loaded = loaded_resource(path.clone(), path.clone(), &nested_filesystem);
-        assert_rejected(&cached_for_session(&loaded, &path, &parent_filesystem, false).outcome);
+        assert_rejected(&cached_for_authority(&loaded, &path, &parent_filesystem, false).outcome);
         let present = present_inspection(path.clone(), path.clone(), &nested_filesystem);
         assert_rejected(
-            &cached_inspection_for_session(&present, &path, &parent_filesystem).outcome,
+            &cached_inspection_for_authority(&present, &path, &parent_filesystem).outcome,
         );
     }
 
@@ -3712,29 +3672,116 @@ mod tests {
         fs::create_dir(&child).expect("child root");
         let path = child.join("resource");
         fs::write(&path, "old").expect("old resource");
-        let mut policy =
-            LocalFilesystemPolicy::new([parent.clone()], FilesystemReadLimits::default())
-                .expect("parent policy");
-        let parent_filesystem = policy.session().expect("parent session");
+        let mut policy = FilesystemAuthority::open([parent.clone()]).expect("parent authority");
+        let parent_filesystem = policy.clone();
         let loaded = loaded_resource(path.clone(), path.clone(), &parent_filesystem);
 
         fs::rename(&child, &old_child).expect("replace old child root");
         fs::create_dir(&child).expect("replacement child root");
         fs::write(child.join("resource"), "new").expect("replacement resource");
         let child_filesystem = policy
-            .access_derived(
-                &parent,
-                DerivedFilesystemRoots {
-                    confined: vec![child],
-                    independent: Vec::new(),
-                },
-                FilesystemReadLimits::default(),
-            )
-            .expect("replacement child authority")
-            .session()
-            .expect("replacement child session");
+            .derive(&parent, [child])
+            .expect("replacement child authority");
 
-        assert_rejected(&cached_for_session(&loaded, &path, &child_filesystem, false).outcome);
+        assert_rejected(&cached_for_authority(&loaded, &path, &child_filesystem, false).outcome);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn canonical_body_is_not_reused_by_an_independently_opened_authority() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let root = directory.path().join("project");
+        let displaced = directory.path().join("opened-project");
+        fs::create_dir(&root).expect("project root");
+        let path = root.join("guide.adoc");
+        fs::write(&path, "old body").expect("old body");
+        let first = filesystem_authority([root.clone()]);
+        let limits = ProjectLimits::default();
+        let mut fixed = BTreeMap::new();
+        let inspections = BTreeMap::new();
+        let mut usage = RequestFilesystemUsage::default();
+        let old = read_fixed_from(
+            &mut fixed,
+            &inspections,
+            limits,
+            FixedReadRequest {
+                source_id: SourceId::new("old"),
+                path: path.clone(),
+                allowance: None,
+                no_symlinks: false,
+            },
+            &first,
+            &mut usage,
+        );
+        assert!(matches!(
+            old.outcome,
+            ProjectResourceOutcome::Loaded { ref source } if source.as_ref() == "old body"
+        ));
+
+        fs::rename(&root, &displaced).expect("displace opened root");
+        fs::create_dir(&root).expect("replacement root");
+        fs::write(&path, "new body").expect("new body");
+        let second = filesystem_authority([root]);
+        let new = read_fixed_from(
+            &mut fixed,
+            &inspections,
+            limits,
+            FixedReadRequest {
+                source_id: SourceId::new("new"),
+                path,
+                allowance: None,
+                no_symlinks: false,
+            },
+            &second,
+            &mut usage,
+        );
+        assert!(matches!(
+            new.outcome,
+            ProjectResourceOutcome::Loaded { ref source } if source.as_ref() == "new body"
+        ));
+        assert_eq!(usage.read_operations, 2);
+    }
+
+    #[test]
+    fn confined_authority_derivation_is_transactional() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let parent = directory.path().join("parent");
+        let child = parent.join("child");
+        let outside = directory.path().join("outside");
+        fs::create_dir_all(&child).expect("child root");
+        fs::create_dir(&outside).expect("outside root");
+        let mut authority = filesystem_authority([parent.clone()]);
+        let original = authority.roots().to_vec();
+
+        assert!(matches!(
+            derive_confined_authority(&mut authority, &[child.clone(), outside]),
+            Err(FilesystemError::OutsideRoot(_))
+        ));
+        assert_eq!(authority.roots(), original);
+        assert!(authority.authority_for_root(&child).is_none());
+    }
+
+    #[test]
+    fn confined_authority_root_limit_failure_keeps_the_previous_handles() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let parent = directory.path().join("parent");
+        fs::create_dir(&parent).expect("parent root");
+        let mut children = Vec::new();
+        for index in 0..128 {
+            let child = parent.join(index.to_string());
+            fs::create_dir(&child).expect("child root");
+            children.push(child);
+        }
+        let mut authority = filesystem_authority([parent]);
+        derive_confined_authority(&mut authority, &children[..127]).expect("128 retained roots");
+        let original = authority.roots().to_vec();
+
+        assert!(matches!(
+            derive_confined_authority(&mut authority, &[children[127].clone()]),
+            Err(FilesystemError::LimitExceeded { limit: 128 })
+        ));
+        assert_eq!(authority.roots(), original);
+        assert!(authority.authority_for_root(&children[127]).is_none());
     }
 
     #[cfg(target_os = "linux")]
@@ -3770,7 +3817,7 @@ mod tests {
                 }
             }));
         });
-        let filesystem_reads = FilesystemReadLimits::default();
+        let filesystem_reads = ProjectResourceLimits::default();
         let outcome = process(
             ProjectRequest {
                 targets: vec![
@@ -3826,7 +3873,7 @@ mod tests {
         let directory = tempfile::tempdir().expect("temporary directory");
         let root = directory.path().to_owned();
         let path = root.join("resource");
-        let filesystem = filesystem_session([root.clone()]);
+        let filesystem = filesystem_authority([root.clone()]);
 
         for outcome in [
             ProjectResourceOutcome::Loaded {
@@ -3842,12 +3889,13 @@ mod tests {
                 path: path.clone(),
                 base: path.parent().map(Path::to_owned),
                 no_symlinks: false,
-                authority: filesystem.policy_for_path(&path).cloned(),
+                authority: filesystem.authority_for_path(&path).cloned(),
                 outcome: outcome.clone(),
                 origin: crate::ProjectResourceOrigin::Filesystem,
+                observed_bytes: 0,
             };
             assert_eq!(
-                cached_for_session(&fixed, &path, &filesystem, false).outcome,
+                cached_for_authority(&fixed, &path, &filesystem, false).outcome,
                 outcome
             );
         }
@@ -3861,11 +3909,11 @@ mod tests {
                 source_id: source_id(),
                 requested_path: path.clone(),
                 path: path.clone(),
-                authority: filesystem.policy_for_path(&path).cloned(),
+                authority: filesystem.authority_for_path(&path).cloned(),
                 outcome: outcome.clone(),
             };
             assert_eq!(
-                cached_inspection_for_session(&fixed, &path, &filesystem).outcome,
+                cached_inspection_for_authority(&fixed, &path, &filesystem).outcome,
                 outcome
             );
         }
@@ -3891,7 +3939,7 @@ mod tests {
                 }
             }));
         });
-        let filesystem_reads = FilesystemReadLimits::default();
+        let filesystem_reads = ProjectResourceLimits::default();
         let result = process(
             ProjectRequest {
                 targets: vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],

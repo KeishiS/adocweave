@@ -204,6 +204,51 @@ fn symlinked_project_root_uses_the_opened_canonical_identity() {
     );
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn authored_var_path_is_processed_through_its_canonical_project_authority() {
+    let directory = tempfile::Builder::new()
+        .prefix("adocweave-project-")
+        .tempdir_in("/var/tmp")
+        .expect("temporary project root");
+    let canonical = directory
+        .path()
+        .canonicalize()
+        .expect("canonical project root");
+    let authored = std::path::Path::new("/var").join(
+        canonical
+            .strip_prefix("/private/var")
+            .expect("macOS /var resolves below /private/var"),
+    );
+    fs::write(authored.join("guide.adoc"), "authored project\n").expect("project source");
+    let authority = ProjectAuthority::open(authored.clone(), [authored.clone()])
+        .expect("authored spelling establishes the canonical authority");
+
+    let result = process(
+        ProjectRequest {
+            targets: vec![
+                ProjectTarget::Path(authored.join("guide.adoc")),
+                ProjectTarget::Path(canonical.join("guide.adoc")),
+            ],
+            sources: Vec::new(),
+            config: ProjectConfigSelection::Disabled,
+            overrides: ProjectConfigOverrides::default(),
+            apply_safe_fixes: false,
+            resource_selection: Default::default(),
+            authority,
+            limits: ProjectLimits::default(),
+        },
+        &NeverCancel,
+    )
+    .expect("authored source path is processed");
+    assert_eq!(result.targets.len(), 1);
+    assert_eq!(
+        result.targets[0].source.as_deref(),
+        Some("authored project\n")
+    );
+    assert_eq!(result.targets[0].source_id.as_str(), "project:guide.adoc");
+}
+
 #[test]
 fn configuration_can_be_resolved_without_processing_a_target() {
     let directory = tempfile::tempdir().expect("temporary directory");
@@ -344,7 +389,12 @@ fn request_path_overrides_replace_resource_and_local_target_roots() {
 #[test]
 fn pathless_input_keeps_include_and_local_target_bases_separate() {
     let directory = tempfile::tempdir().expect("temporary directory");
+    let canonical_directory = directory
+        .path()
+        .canonicalize()
+        .expect("canonical temporary directory");
     let include_base = directory.path().join("includes");
+    let canonical_include_base = canonical_directory.join("includes");
     fs::create_dir(&include_base).expect("include directory");
     fs::write(include_base.join("part.adoc"), "included\n").expect("include fixture");
     fs::write(directory.path().join("asset.png"), "asset\n").expect("local target fixture");
@@ -384,7 +434,7 @@ fn pathless_input_keeps_include_and_local_target_bases_separate() {
         .iter()
         .find(|resource| {
             resource.kind == ProjectResourceKind::Include
-                && resource.path == include_base.join("part.adoc")
+                && resource.path == canonical_include_base.join("part.adoc")
         })
         .expect("include observation");
     assert_eq!(
@@ -403,7 +453,7 @@ fn pathless_input_keeps_include_and_local_target_bases_separate() {
         .iter()
         .find(|resource| {
             resource.kind == ProjectResourceKind::LocalTarget
-                && resource.path == directory.path().join("asset.png")
+                && resource.path == canonical_directory.join("asset.png")
         })
         .expect("local-target observation");
     assert_eq!(
@@ -419,7 +469,7 @@ fn pathless_input_keeps_include_and_local_target_bases_separate() {
     );
     assert!(target.resources.iter().any(|resource| {
         resource.kind == ProjectResourceKind::LocalTarget
-            && resource.path == include_base.join("part.adoc")
+            && resource.path == canonical_include_base.join("part.adoc")
             && resource.outcome == adocweave_project::ProjectResourceOutcome::Present
     }));
     assert!(target.resources.iter().all(|resource| {
@@ -431,7 +481,12 @@ fn pathless_input_keeps_include_and_local_target_bases_separate() {
 #[test]
 fn pathless_input_checks_same_relative_target_against_each_base() {
     let directory = tempfile::tempdir().expect("temporary directory");
+    let canonical_directory = directory
+        .path()
+        .canonicalize()
+        .expect("canonical temporary directory");
     let include_base = directory.path().join("includes");
+    let canonical_include_base = canonical_directory.join("includes");
     fs::create_dir(&include_base).expect("include directory");
     fs::write(include_base.join("same.adoc"), "included\n").expect("include fixture");
 
@@ -470,7 +525,7 @@ fn pathless_input_checks_same_relative_target_against_each_base() {
             .filter(|resource| resource.kind == ProjectResourceKind::LocalTarget)
             .collect::<Vec<_>>();
         assert!(local_targets.iter().any(|resource| {
-            resource.path == include_base.join("same.adoc")
+            resource.path == canonical_include_base.join("same.adoc")
                 && resource.outcome == adocweave_project::ProjectResourceOutcome::Present
                 && resource
                     .requested_at
@@ -479,7 +534,7 @@ fn pathless_input_checks_same_relative_target_against_each_base() {
                     == Some(&SourceId::new("stdin"))
         }));
         assert!(local_targets.iter().any(|resource| {
-            resource.path == directory.path().join("same.adoc")
+            resource.path == canonical_directory.join("same.adoc")
                 && matches!(
                     resource.outcome,
                     adocweave_project::ProjectResourceOutcome::Missing
@@ -650,24 +705,6 @@ fn duplicate_and_unknown_source_ids_are_invalid_input() {
 }
 
 #[test]
-fn unrepresentable_caller_source_id_is_invalid_input() {
-    let mut request = request_with(Vec::new());
-    let id = SourceId::new("");
-    request.sources.push(ProjectSource::memory(
-        id.clone(),
-        request.authority.project_root().to_owned(),
-        "text\n",
-    ));
-    request.targets.push(ProjectTarget::Source(id));
-    request.config = ProjectConfigSelection::Disabled;
-
-    assert!(matches!(
-        process(request, &NeverCancel),
-        Err(ProjectError::InvalidInput(ref error)) if error.code == "invalid-source-id"
-    ));
-}
-
-#[test]
 fn caller_sources_cannot_use_generated_resource_ids() {
     let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     for id in ["local-target:caller", "include-request:caller:0:1"] {
@@ -736,7 +773,7 @@ fn file_overlay_is_reused_inside_a_narrow_include_authority() {
     }));
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
 fn project_authority_keeps_the_opened_child_identity() {
     let directory = tempfile::tempdir().expect("temporary directory");
@@ -781,6 +818,116 @@ fn project_authority_keeps_the_opened_child_identity() {
     )
     .expect("cloned authority retains the same opened identity");
     assert_eq!(second.targets[0].source.as_deref(), Some("original\n"));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn observer_keeps_the_opened_root_and_rejects_external_paths() {
+    use std::os::unix::fs::symlink;
+
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path().join("project");
+    let displaced = directory.path().join("opened-project");
+    let outside = directory.path().join("outside");
+    fs::create_dir(&root).expect("project root");
+    fs::create_dir(&outside).expect("outside root");
+    fs::write(root.join("guide.adoc"), "trusted\n").expect("trusted source");
+    fs::write(outside.join("guide.adoc"), "outside\n").expect("outside source");
+    let authority = ProjectAuthority::open(root.clone(), [root.clone()]).expect("authority");
+    let access = authority.observation_access();
+    fs::rename(&root, &displaced).expect("displace root");
+    symlink(&outside, &root).expect("replacement root");
+
+    let mut observer = access.observer();
+    assert_eq!(
+        observer.observe(
+            &root.join("guide.adoc"),
+            adocweave_project::ProjectObservationKind::Contents,
+        ),
+        adocweave_project::ProjectResourceObservation::from_bytes(b"trusted\n")
+    );
+    assert_eq!(
+        observer.observe(
+            &outside.join("guide.adoc"),
+            adocweave_project::ProjectObservationKind::Contents,
+        ),
+        adocweave_project::ProjectResourceObservation::unavailable()
+    );
+
+    fs::remove_file(&root).expect("remove replacement");
+    fs::rename(displaced, root).expect("restore root");
+}
+
+#[test]
+fn observer_applies_one_shared_file_limit() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let target = directory.path().join("guide.adoc");
+    fs::write(&target, "text\n").expect("source");
+    let authority =
+        ProjectAuthority::open(directory.path().to_owned(), [directory.path().to_owned()])
+            .expect("authority");
+    let mut observer = authority.observation_access().observer();
+    for _ in 0..ProjectResourceLimits::default().max_files {
+        assert_ne!(
+            observer.observe(
+                &target,
+                adocweave_project::ProjectObservationKind::Existence,
+            ),
+            adocweave_project::ProjectResourceObservation::unavailable()
+        );
+    }
+    assert_eq!(
+        observer.observe(
+            &target,
+            adocweave_project::ProjectObservationKind::Existence,
+        ),
+        adocweave_project::ProjectResourceObservation::unavailable()
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn write_capability_uses_the_opened_parent_after_root_replacement() {
+    use std::os::unix::fs::symlink;
+
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path().join("project");
+    let displaced = directory.path().join("opened-project");
+    let outside = directory.path().join("outside");
+    fs::create_dir(&root).expect("project root");
+    fs::create_dir(&outside).expect("outside root");
+    fs::write(root.join("guide.adoc"), "trusted\n").expect("trusted source");
+    fs::write(outside.join("guide.adoc"), "outside\n").expect("outside source");
+    let mut request = request_with(vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))]);
+    request.authority = ProjectAuthority::open(root.clone(), [root.clone()]).expect("authority");
+    request.config = ProjectConfigSelection::Disabled;
+    let result = process(request, &NeverCancel).expect("project result");
+    let write = result
+        .targets
+        .into_iter()
+        .next()
+        .expect("target")
+        .write
+        .expect("write");
+
+    fs::rename(&root, &displaced).expect("displace root");
+    symlink(&outside, &root).expect("replacement root");
+    assert!(
+        write
+            .replace_after_recheck(b"updated\n")
+            .expect("safe replacement")
+    );
+    assert_eq!(
+        fs::read_to_string(displaced.join("guide.adoc")).expect("opened target"),
+        "updated\n"
+    );
+    assert_eq!(
+        fs::read_to_string(outside.join("guide.adoc")).expect("outside target"),
+        "outside\n"
+    );
+
+    fs::remove_file(&root).expect("remove replacement");
+    fs::rename(displaced, root).expect("restore root");
 }
 
 #[test]

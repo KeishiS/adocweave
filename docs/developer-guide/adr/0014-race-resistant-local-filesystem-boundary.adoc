@@ -1,6 +1,11 @@
 = ADR 0014: local filesystemの競合耐性
 
-:status: accepted; safety semantics retained; state ownership amended by ADR 0041
+:status: superseded by ADR 0046
+
+== 状態
+
+ADR 0046により置換されました。Linuxのファイルハンドルを起点とするアクセスと、その他のOSにおける静的な状態を
+前提とした保証は維持します。専用のセッション、変更候補、対応関係および処理単位による状態管理は廃止しました。
 
 == 文脈
 

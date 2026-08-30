@@ -378,12 +378,10 @@ pub(crate) fn project_observations_are_current(
     access: &ProjectObservationAccess,
     cancellation: &dyn CancellationCheck,
 ) -> bool {
-    let Ok(mut session) = access.session() else {
-        return false;
-    };
+    let mut observer = access.observer();
     let mut observe = |candidate: &adocweave_project::ProjectObservationCandidate| {
         if cancellation.is_cancelled()
-            || session.observe(&candidate.path, candidate.kind) != candidate.observation
+            || observer.observe(&candidate.path, candidate.kind) != candidate.observation
         {
             return false;
         }

@@ -2,7 +2,6 @@
 members = [
   "crates/adocweave",
   "crates/adocweave-cli",
-  "crates/adocweave-host",
   "crates/adocweave-lsp",
   "crates/adocweave-project",
   "crates/adocweave-textlint",
