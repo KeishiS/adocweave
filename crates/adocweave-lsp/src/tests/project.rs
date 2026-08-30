@@ -119,9 +119,14 @@ fn project_config_creation_reanalyzes_the_document() {
 fn innermost_folder_and_file_folder_select_the_expected_authority() {
     let root = tempfile::tempdir().expect("workspace");
     let nested = root.path().join("nested");
+    let sibling = root.path().join("sibling");
     fs::create_dir(&nested).expect("nested folder");
+    fs::create_dir(&sibling).expect("sibling folder");
     let document = nested.join("guide.adoc");
-    fs::write(&document, "= Guide\n").expect("document");
+    fs::write(root.path().join("outer.txt"), "outer\n").expect("outer resource");
+    fs::write(sibling.join("secret.txt"), "secret\n").expect("sibling resource");
+    let source = "include::../outer.txt[]\ninclude::../sibling/secret.txt[]\n";
+    fs::write(&document, source).expect("document");
     let document_uri = lsp::Url::from_file_path(&document).expect("document URI");
 
     let mut nested_session = Session::default();
@@ -132,7 +137,8 @@ fn innermost_folder_and_file_folder_select_the_expected_authority() {
             "capabilities": {"workspace": {"workspaceFolders": true}},
             "workspaceFolders": [
                 workspace_folder("root", root.path()),
-                workspace_folder("nested", &nested)
+                workspace_folder("nested", &nested),
+                workspace_folder("sibling", &sibling)
             ]
         })),
     );
@@ -142,7 +148,7 @@ fn innermost_folder_and_file_folder_select_the_expected_authority() {
                 "uri": document_uri,
                 "languageId": "asciidoc",
                 "version": 1,
-                "text": "= Guide\n"
+                "text": source
             }
         })))
         .pop()
@@ -157,6 +163,51 @@ fn innermost_folder_and_file_folder_select_the_expected_authority() {
             .project_root(),
         nested
     );
+    let completed = process_project_snapshot(nested_job);
+    let crate::service::ProjectAnalysisOutcome::Processed(Ok(result)) = completed.outcome else {
+        panic!("project processing result");
+    };
+    let resources = result.targets[0]
+        .resources
+        .iter()
+        .filter(|resource| resource.kind == adocweave_project::ProjectResourceKind::Include)
+        .collect::<Vec<_>>();
+    assert_eq!(resources.len(), 1);
+    assert!(
+        resources.iter().all(|resource| {
+            matches!(
+                resource.outcome,
+                adocweave_project::ProjectResourceOutcome::Failed(
+                    adocweave_project::ProjectResourceFailure::Rejected(ref error)
+                ) if error.code == adocweave_project::ProjectResourceErrorCode::OutsideAuthority
+            )
+        }),
+        "{resources:#?}"
+    );
+
+    let sibling_job = nested_session
+        .begin_change(typed(json!({
+            "textDocument": {"uri": document_uri, "version": 2},
+            "contentChanges": [{"text": "include::../sibling/secret.txt[]\n"}]
+        })))
+        .expect("sibling request")
+        .pop()
+        .expect("sibling analysis");
+    let sibling_completed = process_project_snapshot(sibling_job);
+    let crate::service::ProjectAnalysisOutcome::Processed(Ok(sibling_result)) =
+        sibling_completed.outcome
+    else {
+        panic!("sibling project processing result");
+    };
+    assert!(sibling_result.targets[0].resources.iter().any(|resource| {
+        matches!(
+            resource.outcome,
+            adocweave_project::ProjectResourceOutcome::Failed(
+                adocweave_project::ProjectResourceFailure::Rejected(ref error)
+            ) if resource.kind == adocweave_project::ProjectResourceKind::Include
+                && error.code == adocweave_project::ProjectResourceErrorCode::OutsideAuthority
+        )
+    }));
 
     let mut file_session = Session::default();
     initialize_with_params(
@@ -173,7 +224,7 @@ fn innermost_folder_and_file_folder_select_the_expected_authority() {
                 "uri": document_uri,
                 "languageId": "asciidoc",
                 "version": 1,
-                "text": "= Guide\n"
+                "text": source
             }
         })))
         .pop()
@@ -303,4 +354,24 @@ fn watch_overflow_reanalyzes_each_open_document_once() {
             .collect::<std::collections::BTreeSet<_>>(),
         std::collections::BTreeSet::from([first_uri.as_str(), second_uri.as_str()])
     );
+}
+
+#[test]
+fn repeated_watch_events_count_toward_the_overflow_limit() {
+    let root = tempfile::tempdir().expect("workspace");
+    let document_uri =
+        lsp::Url::from_file_path(root.path().join("guide.adoc")).expect("document URI");
+    let repeated_uri =
+        lsp::Url::from_file_path(root.path().join("unrelated.txt")).expect("repeated URI");
+    let mut session = Session::default();
+    initialize_root(&mut session, root.path());
+    open(&mut session, document_uri.as_str(), 1, "= Guide\n");
+    let changes = (0..=crate::service::MAX_WORKSPACE_WATCH_CHANGES)
+        .map(|_| json!({"uri": repeated_uri, "type": 2}))
+        .collect::<Vec<_>>();
+
+    let jobs = session.handle_workspace_files_changed(typed(json!({"changes": changes})));
+
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0].uri, document_uri.as_str());
 }

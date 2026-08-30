@@ -489,12 +489,18 @@ fn adopted_project_result(
             continue;
         };
         let version = existing.as_ref().and_then(|value| value.version);
+        let generation = existing.as_ref().and_then(|value| value.generation);
         if let Some(version) = version {
             resource_versions.insert(uri.clone(), version);
         }
         sources.insert(
             resource.source_id.clone(),
-            ProjectSourceState { uri, text, version },
+            ProjectSourceState {
+                uri,
+                text,
+                version,
+                generation,
+            },
         );
     }
     let sources = Arc::new(sources);
@@ -645,11 +651,12 @@ impl Session {
                 uri: snapshot.uri.clone(),
                 text: snapshot.document_input.source.clone(),
                 version: Some(snapshot.document_input.revision.version),
+                generation: Some(snapshot.document_input.revision.generation),
             },
         );
 
         let mut next_source = 1usize;
-        for (uri, version, source) in self.documents.open_sources() {
+        for (uri, revision, source) in self.documents.open_project_sources() {
             if uri == snapshot.uri {
                 continue;
             }
@@ -690,7 +697,8 @@ impl Session {
                 ProjectSourceState {
                     uri,
                     text: source,
-                    version: Some(i64::from(version)),
+                    version: Some(revision.version),
+                    generation: Some(revision.generation),
                 },
             );
         }
@@ -748,6 +756,14 @@ impl Session {
 
     fn analysis_snapshot_is_current(&self, job: &ProjectAnalysisSnapshot) -> bool {
         self.documents.snapshot_is_current(job)
+    }
+
+    fn project_sources_are_current(&self, sources: &ProjectSourceIndex) -> bool {
+        sources
+            .open_document_revisions()
+            .all(|(uri, version, generation)| {
+                self.documents.revision_is_current(uri, version, generation)
+            })
     }
 
     #[cfg(test)]
@@ -990,16 +1006,17 @@ impl Session {
         params: lsp::DidChangeWatchedFilesParams,
     ) -> Vec<ProjectAnalysisSnapshot> {
         let mut changed = BTreeSet::new();
+        let mut event_count = 0usize;
         let mut uri_bytes = 0usize;
         for change in params.changes {
-            if changed.insert(change.uri.to_string()) {
-                uri_bytes = uri_bytes.saturating_add(change.uri.as_str().len());
-                if changed.len() > MAX_WORKSPACE_WATCH_CHANGES
-                    || uri_bytes > MAX_WORKSPACE_WATCH_URI_BYTES
-                {
-                    return self.reconfigure_open_documents();
-                }
+            event_count = event_count.saturating_add(1);
+            uri_bytes = uri_bytes.saturating_add(change.uri.as_str().len());
+            if event_count > MAX_WORKSPACE_WATCH_CHANGES
+                || uri_bytes > MAX_WORKSPACE_WATCH_URI_BYTES
+            {
+                return self.reconfigure_open_documents();
             }
+            changed.insert(change.uri.to_string());
         }
         let affected = changed
             .iter()
@@ -1084,6 +1101,9 @@ impl Session {
     ) -> ProjectAnalysisAction {
         if !self.analysis_snapshot_is_current(&completion.snapshot) {
             return ProjectAnalysisAction::Ignore;
+        }
+        if !self.project_sources_are_current(&completion.source_index) {
+            return self.retry_completion(&completion.snapshot);
         }
         if matches!(completion.outcome, ProjectAnalysisOutcome::Rejected(_)) {
             completion.observations_are_current = Some(true);

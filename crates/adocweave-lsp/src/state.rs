@@ -48,6 +48,7 @@ pub struct ProjectSourceState {
     pub uri: String,
     pub text: Arc<str>,
     pub version: Option<i64>,
+    pub generation: Option<u64>,
 }
 
 impl ProjectSourceIndex {
@@ -61,6 +62,12 @@ impl ProjectSourceIndex {
 
     pub fn source_for_uri(&self, uri: &str) -> Option<&ProjectSourceState> {
         self.by_id.values().find(|source| source.uri == uri)
+    }
+
+    pub fn open_document_revisions(&self) -> impl Iterator<Item = (&str, i64, u64)> {
+        self.by_id
+            .values()
+            .filter_map(|source| Some((source.uri.as_str(), source.version?, source.generation?)))
     }
 }
 
@@ -186,6 +193,26 @@ impl DocumentStore {
                 ))
             })
             .collect()
+    }
+
+    pub fn open_project_sources(&self) -> Vec<(String, DocumentRevision, String)> {
+        self.documents
+            .values()
+            .map(|document| {
+                (
+                    document.source_id.as_str().to_owned(),
+                    document.document_input.revision.clone(),
+                    document.document_input.source.to_string(),
+                )
+            })
+            .collect()
+    }
+
+    pub fn revision_is_current(&self, uri: &str, version: i64, generation: u64) -> bool {
+        self.documents.get(uri).is_some_and(|document| {
+            document.document_input.revision.version == version
+                && document.document_input.revision.generation == generation
+        })
     }
 
     pub fn expanded_analyses(&self) -> impl Iterator<Item = &ExpandedDocumentAnalysis> {

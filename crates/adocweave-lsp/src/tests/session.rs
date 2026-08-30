@@ -74,6 +74,99 @@ fn one_project_request_captures_primary_and_open_include_overlays() {
 }
 
 #[test]
+fn changed_overlay_retries_a_completed_project_before_adoption() {
+    let mut session = Session::default();
+    initialize(&mut session, &["utf-16"]);
+    open(&mut session, "file:///book/part.adoc", 1, "old overlay\n");
+    let root = session
+        .begin_open(typed(json!({
+            "textDocument": {
+                "uri": "file:///book/root.adoc",
+                "languageId": "asciidoc",
+                "version": 1,
+                "text": "include::part.adoc[]\n"
+            }
+        })))
+        .pop()
+        .expect("root analysis");
+    let completed = process_project_snapshot(root);
+
+    let overlay_jobs = session
+        .begin_change(typed(json!({
+            "textDocument": {"uri": "file:///book/part.adoc", "version": 2},
+            "contentChanges": [{"text": "new overlay\n"}]
+        })))
+        .expect("overlay change");
+    assert_eq!(overlay_jobs.len(), 1);
+
+    let crate::service::ProjectAnalysisAction::Retry(retry) =
+        session.project_processing_completed(completed)
+    else {
+        panic!("changed overlay must retry the completed root analysis");
+    };
+    let request = &retry
+        .prepared_request
+        .as_ref()
+        .expect("retry request")
+        .request;
+    assert!(
+        request
+            .sources
+            .iter()
+            .any(|source| source.source.as_ref() == "new overlay\n")
+    );
+    assert!(
+        session
+            .documents
+            .snapshot("file:///book/root.adoc")
+            .is_none()
+    );
+}
+
+#[test]
+fn closed_overlay_retries_a_completed_project_before_adoption() {
+    let mut session = Session::default();
+    initialize(&mut session, &["utf-16"]);
+    let overlay_uri = uri("file:///book/part.adoc");
+    open(&mut session, overlay_uri.as_str(), 1, "overlay\n");
+    let root = session
+        .begin_open(typed(json!({
+            "textDocument": {
+                "uri": "file:///book/root.adoc",
+                "languageId": "asciidoc",
+                "version": 1,
+                "text": "include::part.adoc[]\n"
+            }
+        })))
+        .pop()
+        .expect("root analysis");
+    let completed = process_project_snapshot(root);
+
+    assert!(session.close(&overlay_uri).closed);
+    let crate::service::ProjectAnalysisAction::Retry(retry) =
+        session.project_processing_completed(completed)
+    else {
+        panic!("closed overlay must retry the completed root analysis");
+    };
+    assert_eq!(
+        retry
+            .prepared_request
+            .as_ref()
+            .expect("retry request")
+            .request
+            .sources
+            .len(),
+        1
+    );
+    assert!(
+        session
+            .documents
+            .snapshot("file:///book/root.adoc")
+            .is_none()
+    );
+}
+
+#[test]
 fn project_error_uses_the_same_validation_and_adoption_path_as_success() {
     let mut session = Session::default();
     initialize(&mut session, &["utf-16"]);
