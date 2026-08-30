@@ -302,7 +302,7 @@ git push upstream vX.Y.Z
 ----
 . cargo-distのworkflowが、4つのnative成果物を構築して検査し、一つのGitHub Releaseへ添付します。
   独立版のnpmパッケージとVS Code拡張は、このReleaseに含めません。
-. Release workflowがCachixの公開workflowを呼び出します。
+. Release workflowがCachixの公開jobを実行し、書込みtokenを持たない後続jobが公開済みパッケージを取得して確認します。
 . Cachixへの公開を含むRelease workflow全体が成功し、予定されたassetを含むstableなGitHub Releaseが作成されたことを
   確認します。
   ``RELEASE_TAG=vX.Y.Z cargo make native-release-acceptance``で公開済みassetを確認し、

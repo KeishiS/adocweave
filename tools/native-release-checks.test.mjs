@@ -42,7 +42,7 @@ test("cargo-dist planは単一appとnative releaseの成果物を持つ", () => 
   assert.equal(validated.version, release.version);
   assert.deepEqual(validated.assets, expectedReleaseAssets());
   assert.equal(plan.releases.length, 1);
-  assert.match(plan.announcement_github_body, /### Rust API/);
+  assert.match(plan.announcement_github_body, /^## Release Notes\n\n### /u);
 });
 
 test("native archiveはadocweaveだけを含む", () => {
