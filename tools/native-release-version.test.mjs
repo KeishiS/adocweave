@@ -38,7 +38,6 @@ test("native版の更新後も四つの正本だけで整合性を検査でき�
     "adocweave-project",
     "adocweave-textlint",
     "adocweave-wasm",
-    "adocweave-workspace",
   ];
   const lockfile = (names, version) => names
     .map((name) => `[[package]]\nname = "${name}"\nversion = "${version}"`)

@@ -16,6 +16,7 @@
 - Include, local-target, and project-configuration observations are owned per open document. File notifications reanalyze only affected documents, while oversized notifications reanalyze each open document once without scanning the workspace.
 - The former workspace scan, recovery coordinator, scan generations, pending-change journal, and duplicate workspace resource state are removed.
 - Project configuration types, TOML validation, defaults, relative-path resolution, and schema generation now belong to `adocweave-project`. The separate `adocweave-config` crate is removed.
+- The unused `adocweave-workspace` crate is removed. One-shot project processing belongs to `adocweave-project`, while Language Server session state remains in `adocweave-lsp`.
 
 ### Rust API
 
@@ -25,6 +26,7 @@
 - `ProjectLimits` stores file count and size ceilings in `ProjectResourceLimits`, the same type returned by `ProjectConfig::resource_limits`.
 - `ProjectResourceResult.requested_at` identifies the source and optional source range that requested a related resource.
 - `HostReferenceIndex`, `HostReferenceRequest`, `NoHostReferenceIndex`, and `run_with_host_index` are removed from `adocweave-lsp`.
+- `Workspace`, `WorkspaceSnapshot`, workspace analysis drafts, resource revisions, generations, dependency graphs, and retained-resource budgets from `adocweave-workspace` are removed without compatibility aliases.
 
 ### Migration
 
@@ -34,6 +36,7 @@
 - Use `adocweave_lsp::run` or `adocweave_lsp::run_stdio` to start the Language Server. Product-specific reference indexes must be implemented outside the Language Server protocol adapter.
 - Replace `ConfigSelection` with `ProjectConfigSelection` and `ProjectOverrides` with `ProjectConfigOverrides`. Remove callers which construct or inject `ResolvedProjectConfig`; project processing now obtains configuration through `ProjectConfigSelection` and `ProjectAuthority`.
 - Move the `max_files`, `max_read_bytes`, and `max_resource_bytes` fields of `ProjectLimits` into `ProjectLimits::resources`, renaming `max_read_bytes` to `max_total_bytes`.
+- Replace `adocweave-workspace` usage with an owned `adocweave_project::ProjectRequest`. Language Server integrations should keep open-document revisions and adopted dependencies in their session instead of introducing a shared workspace state manager.
 
 ## [0.52.0] - 2026-08-30
 

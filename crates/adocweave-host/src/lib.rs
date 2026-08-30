@@ -1,7 +1,7 @@
 //! Shared native-host infrastructure for AdocWeave.
 //!
 //! This crate owns the bounded local-filesystem boundary. It deliberately does
-//! not depend on the parser core or workspace state.
+//! not depend on the parser core or long-lived application or session state.
 
 mod exit_status;
 mod filesystem_job;

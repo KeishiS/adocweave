@@ -20,7 +20,6 @@ try {
     "adocweave-project",
     "adocweave-textlint",
     "adocweave-wasm",
-    "adocweave-workspace",
   ];
   const packages = metadata.packages.filter((pkg) => expectedNames.includes(pkg.name));
   if (packages.length !== expectedNames.length) throw new Error("cargo metadata is missing a workspace package");
