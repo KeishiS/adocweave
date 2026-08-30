@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   expectedReleaseAssets,
+  validateCargoDistChangelog,
   validateDistPlan,
   validateReleaseTag,
   verifyRepository,
@@ -22,6 +23,18 @@ test("repositoryは一つのworkspace版とtagを使う", () => {
   for (const tag of [version, `adocweave-core/${release.tag}`, `adocweave-lsp/${release.tag}`, `${release.tag}-rc.1`]) {
     assert.throws(() => validateReleaseTag(tag), /exactly/);
   }
+});
+
+test("cargo-distはrepository rootのChangelogを配布物へ収録する", () => {
+  assert.equal(validateCargoDistChangelog('changelog = "CHANGELOG.md"', true), "CHANGELOG.md");
+  assert.throws(
+    () => validateCargoDistChangelog('changelog = "../../CHANGELOG.md"', true),
+    /repository-root CHANGELOG/,
+  );
+  assert.throws(
+    () => validateCargoDistChangelog('changelog = "CHANGELOG.md"', false),
+    /does not exist/,
+  );
 });
 
 test("cargo-dist planは単一appとnative releaseの成果物を持つ", () => {
