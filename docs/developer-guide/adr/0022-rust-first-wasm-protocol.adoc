@@ -63,7 +63,7 @@ Rustの型定義を正本とし、ほかの成果物を既製のlibraryで導出
   リポジトリ全体では生成器の分だけ減ります
 * 型の追加はRustの変更だけで完結します。生成器の所有型一覧という、忘れやすい二重管理がなくなります
 * 公開仕様の正本が``protocol/public-api.json``から生成TypeScript宣言へ変わります。``release-claims``と
-  ``release-contract``の照合先を移し、protocolの版と識別子は``packages/wasm/worker-protocol.mjs``が持ちます。
+  Release検査の照合先を移し、protocolの版と識別子は``packages/wasm/worker-protocol.mjs``が持ちます。
   TypeScriptの型名がRustの名前(``WasmRequest``など)になるため、公開仕様の変更としてRelease Notesへ記載します
 * 依存が増えます(``ts-rs``または``tsify``、``schemars``、場合により``ajv``)。いずれもMITまたはApache-2.0で、
   dependency governanceの許可範囲に収まります。配布するWebAssemblyへ入らないよう、schema生成のderiveは

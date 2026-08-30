@@ -70,7 +70,7 @@ NixOS以外では、同じ値をシステムの``nix.conf``へ記載します。
 
 == 配布物の選択
 
-ネイティブ実行ファイルと次の追加成果物は、``vX.Y.Z``タグのGitHub Releaseから取得します。
+ネイティブ実行ファイルは、``vX.Y.Z``タグのGitHub Releaseから取得します。
 
 [cols="2,2,2,2",options="header"]
 |===

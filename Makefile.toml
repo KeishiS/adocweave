@@ -83,9 +83,9 @@ dependencies = ["build-wasm-node"]
 command = "node"
 args = ["--test", "packages/wasm/protocol-wasm.test.mjs"]
 
-[tasks.release-contract]
+[tasks.native-release-checks]
 category = "CI entry points"
-description = "Verify the unified version, release tag, artifacts, and Cargo metadata"
+description = "Verify the native version, release tag, cargo-dist artifacts, and Cargo metadata"
 dependencies = [
   "release-version-check",
   "release-workflow-policy",
@@ -94,19 +94,45 @@ script_runner = "@shell"
 script = '''
 node --test \
   tools/generate-third-party-notices.test.mjs \
-  tools/release-contract.test.mjs \
+  tools/native-release-acceptance.test.mjs \
+  tools/native-release-checks.test.mjs \
   tools/verify-vscode-dependencies.test.mjs
 metadata="$(mktemp "${TMPDIR:-/tmp}/adocweave-release-metadata.XXXXXX.json")"
 notice="$(mktemp "${TMPDIR:-/tmp}/adocweave-third-party-notices.XXXXXX.adoc")"
 trap 'rm -f "$metadata" "$notice"' EXIT
 if [ -n "${RELEASE_TAG:-}" ]; then
-  node tools/release-contract.mjs "--tag=$RELEASE_TAG"
+  node tools/native-release-checks.mjs "--tag=$RELEASE_TAG"
 else
-  node tools/release-contract.mjs
+  node tools/native-release-checks.mjs
 fi
 cargo metadata --locked --format-version=1 > "$metadata"
 node tools/verify-cargo-release-metadata.mjs "$metadata"
 node tools/generate-third-party-notices.mjs "$notice"
+'''
+
+[tasks.native-release-acceptance]
+category = "Developer entry points"
+description = "Verify a published native GitHub Release, attestations, and installation on this host"
+script_runner = "@shell"
+script = '''
+if [ -z "${RELEASE_TAG:-}" ]; then
+  echo "RELEASE_TAG is required (for example, v0.54.1)" >&2
+  exit 2
+fi
+node tools/native-release-checks.mjs "--tag=$RELEASE_TAG"
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/adocweave-native-release.XXXXXX")"
+trap 'rm -rf "$scratch"' EXIT
+assets="$scratch/assets"
+mkdir "$assets"
+repository="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
+gh api "repos/$repository/releases/tags/$RELEASE_TAG" > "$scratch/release.json"
+gh release download "$RELEASE_TAG" --repo "$repository" --dir "$assets"
+node tools/native-release-acceptance.mjs "$RELEASE_TAG" "$scratch/release.json" "$assets"
+for asset in "$assets"/*; do
+  gh attestation verify "$asset" --repo "$repository"
+done
+NATIVE_ARTIFACT_DIR="$assets" NATIVE_MANIFEST="$assets/dist-manifest.json" \
+  node tools/local-native-check.mjs installation
 '''
 
 [tasks.release-version-check]
@@ -131,7 +157,7 @@ script_runner = "@shell"
 script = '''
 node tools/release-workflow-policy.mjs
 node --test \
-  tools/binary-cache-smoke.test.mjs \
+  tools/cachix-smoke.test.mjs \
   tools/wasm-release-budget.test.mjs \
   tools/npm-publication.test.mjs \
   tools/normalize-darwin-archives.test.mjs \
@@ -154,10 +180,10 @@ args = [
   "SC2129",
 ]
 
-[tasks.release-ci-contract]
+[tasks.native-release-ci]
 private = true
-description = "Run the release contract, workflow lint, and cargo-dist plan used by pull requests"
-dependencies = ["release-contract", "workflow-lint", "dist-plan"]
+description = "Run the native release checks, workflow lint, and cargo-dist plan used by pull requests"
+dependencies = ["native-release-checks", "workflow-lint", "dist-plan"]
 
 [tasks.platform-contract]
 private = true
@@ -687,7 +713,7 @@ dependencies = [
   "fmt-check",
   "clippy",
   "test",
-  "release-ci-contract",
+  "native-release-ci",
   "platform-contract",
   "doc-check",
   "docs-check",

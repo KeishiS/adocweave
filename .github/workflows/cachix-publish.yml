@@ -1,4 +1,4 @@
-name: Binary cache publication
+name: Cachix publication
 
 # 公開済みReleaseと同じcommitからNix package closureを構築し、Cachixへ送信する。
 # 送信後は別のrunnerでローカルでの構築を禁止し、Cachixから取得したpackageを検査する。
@@ -19,12 +19,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: binary-cache-publish-${{ inputs.tag }}
+  group: cachix-publish-${{ inputs.tag }}
   cancel-in-progress: false
 
 jobs:
   publish:
-    environment: binary-cache-publish
+    environment: cachix-publish
     strategy:
       fail-fast: false
       matrix:
@@ -110,4 +110,4 @@ jobs:
             --option max-jobs 0 \
             --option substituters https://keishis.cachix.org)"
           test -n "$package"
-          node tools/binary-cache-smoke.mjs "$package/bin/adocweave"
+          node tools/cachix-smoke.mjs "$package/bin/adocweave"

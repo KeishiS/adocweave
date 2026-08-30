@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  validateBinaryCachePublication,
+  validateCachixPublication,
   validateCiGates,
   validateExternalPublicationIsolation,
   validatePermissions,
@@ -27,7 +27,7 @@ runTextlintPluginConsumerE2E(spec);
 runTextlintPluginNpxSmoke(spec);
 `;
 
-function releaseContractWorkflow() {
+function nativeReleaseChecksWorkflow() {
   return {
     on: { workflow_call: {} },
     permissions: { contents: "read" },
@@ -38,7 +38,7 @@ function releaseContractWorkflow() {
             uses: pin,
             with: { "fetch-depth": 0, "persist-credentials": false },
           },
-          { run: "nix develop .#ci -c cargo make release-contract" },
+          { run: "nix develop .#ci -c cargo make native-release-checks" },
           {
             if: "${{ github.event_name == 'push' }}",
             env: {
@@ -81,19 +81,22 @@ function releaseWorkflow() {
         outputs: { publishing: "${{ !github.event.pull_request }}" },
         steps: [{ uses: pin }],
       },
-      "custom-release-contract": { uses: "./.github/workflows/release-contract.yml" },
-      "build-local-artifacts": { needs: ["plan", "custom-release-contract"], steps: [] },
+      "custom-native-release-checks": { uses: "./.github/workflows/native-release-checks.yml" },
+      "build-local-artifacts": { needs: ["plan", "custom-native-release-checks"], steps: [] },
       "build-global-artifacts": { needs: ["plan", "build-local-artifacts"], steps: [] },
-      "custom-native-artifact-smoke": { needs: ["plan", "build-local-artifacts"], steps: [] },
+      "custom-native-artifact-smoke": {
+        needs: ["plan", "build-local-artifacts"],
+        uses: "./.github/workflows/native-artifact-smoke.yml",
+      },
       host: {
         needs: [
           "plan",
-          "custom-release-contract",
+          "custom-native-release-checks",
           "build-local-artifacts",
           "build-global-artifacts",
           "custom-native-artifact-smoke",
         ],
-        if: "${{ always() && needs.plan.result == 'success' && needs.custom-release-contract.result == 'success' && needs.build-local-artifacts.result == 'success' && needs.build-global-artifacts.result == 'success' && needs.custom-native-artifact-smoke.result == 'success' && needs.plan.outputs.publishing == 'true' }}",
+        if: "${{ always() && needs.plan.result == 'success' && needs.custom-native-release-checks.result == 'success' && needs.build-local-artifacts.result == 'success' && needs.build-global-artifacts.result == 'success' && needs.custom-native-artifact-smoke.result == 'success' && needs.plan.outputs.publishing == 'true' }}",
         environment: "github-release",
         permissions: { attestations: "write", contents: "write", "id-token": "write" },
         steps: [
@@ -101,18 +104,15 @@ function releaseWorkflow() {
             uses: "actions/attest-build-provenance@0000000000000000000000000000000000000000",
             with: { "subject-path": "artifacts/*" },
           },
+          {
+            run: `
+rm -f artifacts/*-dist-manifest.json
+gh release create v1.2.3 artifacts/*
+`,
+          },
         ],
       },
-      "publish-binary-cache": releasePublicationJob("binary-cache-publish.yml"),
-      announce: {
-        needs: [
-          "plan",
-          "host",
-          "publish-binary-cache",
-        ],
-        if: "${{ always() && needs.host.result == 'success' && needs.publish-binary-cache.result == 'success' }}",
-        steps: [],
-      },
+      "publish-cachix": releasePublicationJob("cachix-publish.yml"),
     },
   };
 }
@@ -262,7 +262,7 @@ nix develop .#ci-browser -c node tools/wasm-npm-smoke.mjs
   };
 }
 
-function binaryCachePublicationWorkflow() {
+function cachixPublicationWorkflow() {
   const matrix = {
     "fail-fast": false,
     matrix: {
@@ -282,10 +282,10 @@ function binaryCachePublicationWorkflow() {
       },
     },
     permissions: { contents: "read" },
-    concurrency: { group: `binary-cache-${publicationTag}`, "cancel-in-progress": false },
+    concurrency: { group: `cachix-publish-${publicationTag}`, "cancel-in-progress": false },
     jobs: {
       publish: {
-        environment: "binary-cache-publish",
+        environment: "cachix-publish",
         env: { RELEASE_TAG: publicationTag, RELEASE_COMMIT: publicationCommit },
         strategy: matrix,
         steps: [
@@ -324,7 +324,7 @@ nix build ".#packages.\${NIX_SYSTEM}.default" \\
   --option fallback false \\
   --option max-jobs 0 \\
   --option substituters https://keishis.cachix.org
-node tools/binary-cache-smoke.mjs "$package/bin/adocweave"
+node tools/cachix-smoke.mjs "$package/bin/adocweave"
 `,
           },
         ],
@@ -383,14 +383,14 @@ cargo make test-vscode-release-candidate
 function workflows() {
   return {
     "release.yml": releaseWorkflow(),
-    "release-contract.yml": releaseContractWorkflow(),
+    "native-release-checks.yml": nativeReleaseChecksWorkflow(),
     "ci.yml": ciWorkflow(),
     "native-artifact-smoke.yml": {
       on: { workflow_call: {} },
       permissions: { contents: "read" },
       jobs: { smoke: { steps: [] } },
     },
-    "binary-cache-publish.yml": binaryCachePublicationWorkflow(),
+    "cachix-publish.yml": cachixPublicationWorkflow(),
     "textlint-plugin-publish.yml": textlintPluginPublicationWorkflow(),
     "wasm-publish.yml": wasmPublicationWorkflow(),
     "vscode-publish.yml": vscodePublicationWorkflow(),
@@ -400,7 +400,7 @@ function workflows() {
 function releaseFlowWorkflows(release) {
   return {
     "release.yml": release,
-    "release-contract.yml": releaseContractWorkflow(),
+    "native-release-checks.yml": nativeReleaseChecksWorkflow(),
   };
 }
 
@@ -446,18 +446,18 @@ test("ReleaseはPRでplanだけを作り、tagの成功済み成果物だけをh
   );
 });
 
-test("共通contractはstable tagがmainに含まれることをhost前に一度だけ検査する", () => {
+test("native release checksはstable tagがmainに含まれることをhost前に一度だけ検査する", () => {
   const fixtures = releaseFlowWorkflows(releaseWorkflow());
   validateReleaseFlow(fixtures, 'pr-run-mode = "plan"');
 
-  fixtures["release-contract.yml"].jobs.verify.steps[0].with["fetch-depth"] = 1;
+  fixtures["native-release-checks.yml"].jobs.verify.steps[0].with["fetch-depth"] = 1;
   assert.throws(
     () => validateReleaseFlow(fixtures, 'pr-run-mode = "plan"'),
     /fetch complete history/u,
   );
 
   const late = releaseFlowWorkflows(releaseWorkflow());
-  late["release-contract.yml"].jobs.verify.steps.reverse();
+  late["native-release-checks.yml"].jobs.verify.steps.reverse();
   assert.throws(
     () => validateReleaseFlow(late, 'pr-run-mode = "plan"'),
     /main ancestry once after tag and version checks/u,
@@ -465,11 +465,11 @@ test("共通contractはstable tagがmainに含まれることをhost前に一度
 
   const bypassed = releaseFlowWorkflows(releaseWorkflow());
   bypassed["release.yml"].jobs.host.needs = bypassed["release.yml"].jobs.host.needs.filter(
-    (job) => job !== "custom-release-contract",
+    (job) => job !== "custom-native-release-checks",
   );
   assert.throws(
     () => validateReleaseFlow(bypassed, 'pr-run-mode = "plan"'),
-    /host must wait for.*common contract/u,
+    /host must wait for.*native checks/u,
   );
 });
 
@@ -503,33 +503,40 @@ test("hostは公開する全成果物をattestation対象にする", () => {
   );
 });
 
-test("native Release成功後はnative用の公開workflowだけを呼び出して成否を集約する", () => {
+test("hostはcargo-distの最終manifestを含む成果物だけを公開する", () => {
+  const release = releaseWorkflow();
+  release.jobs.host.steps[1].run = release.jobs.host.steps[1].run.replace(
+    "rm -f artifacts/*-dist-manifest.json",
+    "rm -f artifacts/dist-manifest.json",
+  );
+  assert.throws(
+    () => validateReleaseFlow(releaseFlowWorkflows(release), 'pr-run-mode = "plan"'),
+    /preserve and publish the cargo-dist manifest/u,
+  );
+});
+
+test("native Release成功後はCachix公開workflowだけを呼び出す", () => {
   const release = releaseWorkflow();
   validateReleaseFlow(releaseFlowWorkflows(release), 'pr-run-mode = "plan"');
 
-  release.jobs["publish-binary-cache"].uses = "./.github/workflows/wasm-publish.yml";
+  release.jobs["publish-cachix"].uses = "./.github/workflows/wasm-publish.yml";
   assert.throws(
     () => validateReleaseFlow(releaseFlowWorkflows(release), 'pr-run-mode = "plan"'),
-    /publish-binary-cache must call binary-cache-publish\.yml/u,
+    /publish-cachix must call cachix-publish\.yml/u,
   );
 
-  const incomplete = releaseWorkflow();
-  incomplete.jobs.announce.needs = incomplete.jobs.announce.needs.filter(
-    (job) => job !== "publish-binary-cache",
-  );
+  const announced = releaseWorkflow();
+  announced.jobs.announce = { needs: ["host", "publish-cachix"], steps: [] };
   assert.throws(
-    () => validateReleaseFlow(releaseFlowWorkflows(incomplete), 'pr-run-mode = "plan"'),
-    /announce must wait for every external publication/u,
+    () => validateReleaseFlow(releaseFlowWorkflows(announced), 'pr-run-mode = "plan"'),
+    /must not keep an empty announce job/u,
   );
 
-  const skipped = releaseWorkflow();
-  skipped.jobs.announce.if = skipped.jobs.announce.if.replace(
-    "needs.publish-binary-cache.result == 'success'",
-    "(needs.publish-binary-cache.result == 'success' || needs.publish-binary-cache.result == 'skipped')",
-  );
+  const npm = releaseWorkflow();
+  npm.jobs["publish-wasm"] = releasePublicationJob("wasm-publish.yml", true);
   assert.throws(
-    () => validateReleaseFlow(releaseFlowWorkflows(skipped), 'pr-run-mode = "plan"'),
-    /must not report success after a skipped publication/u,
+    () => validateReleaseFlow(releaseFlowWorkflows(npm), 'pr-run-mode = "plan"'),
+    /must call only native checks, native smoke, and Cachix publication/u,
   );
 });
 
@@ -543,37 +550,37 @@ test("CIはPRのsource gateとmain専用gateを分離する", () => {
 test("外部公開workflowはReleaseからの再利用呼出しだけを受け付ける", () => {
   const fixtures = workflows();
   validateExternalPublicationIsolation(fixtures);
-  fixtures["binary-cache-publish.yml"].on.workflow_dispatch = {};
+  fixtures["cachix-publish.yml"].on.workflow_dispatch = {};
   assert.throws(
     () => validateExternalPublicationIsolation(fixtures),
-    /binary-cache-publish.*callable only/u,
+    /cachix-publish.*callable only/u,
   );
 
   const called = workflows();
-  called["binary-cache-publish.yml"].on.workflow_call.inputs.commit.required = false;
+  called["cachix-publish.yml"].on.workflow_call.inputs.commit.required = false;
   assert.throws(
     () => validateExternalPublicationIsolation(called),
-    /binary-cache-publish.*stable tag and complete commit/u,
+    /cachix-publish.*stable tag and complete commit/u,
   );
 
   const duplicateValidation = workflows();
-  duplicateValidation["binary-cache-publish.yml"].jobs.validate = { steps: [] };
+  duplicateValidation["cachix-publish.yml"].jobs.validate = { steps: [] };
   assert.throws(
     () => validateExternalPublicationIsolation(duplicateValidation),
-    /binary-cache-publish.*isolated publication jobs/u,
+    /cachix-publish.*isolated publication jobs/u,
   );
 
   const duplicateAncestry = workflows();
-  duplicateAncestry["binary-cache-publish.yml"].jobs.publish.steps.push({
+  duplicateAncestry["cachix-publish.yml"].jobs.publish.steps.push({
     run: "git merge-base --is-ancestor HEAD refs/remotes/origin/main",
   });
   assert.throws(
     () => validateExternalPublicationIsolation(duplicateAncestry),
-    /binary-cache-publish.*leave main ancestry verification.*common release contract/u,
+    /cachix-publish.*leave main ancestry verification.*native release checks/u,
   );
 
   const extraSender = workflows();
-  extraSender["binary-cache-publish.yml"].jobs.publish.steps.push({
+  extraSender["cachix-publish.yml"].jobs.publish.steps.push({
     run: 'gh api "repos/$GITHUB_REPOSITORY/dispatches"',
   });
   assert.throws(
@@ -586,7 +593,7 @@ test("Open VSXのtokenを専用workflowの公開job以外へ渡さない", () =>
   const fixtures = workflows();
   validateVscodePublication(fixtures);
 
-  fixtures["binary-cache-publish.yml"].jobs.verify.steps.push({
+  fixtures["cachix-publish.yml"].jobs.verify.steps.push({
     env: { TOKEN: "${{ secrets.OPEN_VSX_TOKEN }}" },
     run: "true",
   });
@@ -629,25 +636,25 @@ test("VS Code拡張は一つの候補を二つのregistryへ独立して公開�
 
 test("Cachix公開は二つのLinux closureを送り別のtokenなしrunnerで取得する", () => {
   const fixtures = workflows();
-  validateBinaryCachePublication(fixtures);
+  validateCachixPublication(fixtures);
 
-  fixtures["binary-cache-publish.yml"].jobs.verify.steps[2].run =
-    fixtures["binary-cache-publish.yml"].jobs.verify.steps[2].run.replace(
+  fixtures["cachix-publish.yml"].jobs.verify.steps[2].run =
+    fixtures["cachix-publish.yml"].jobs.verify.steps[2].run.replace(
       "--option max-jobs 0",
       "--option max-jobs 1",
     );
   assert.throws(
-    () => validateBinaryCachePublication(fixtures),
+    () => validateCachixPublication(fixtures),
     /acquire and smoke.*max-jobs/u,
   );
 });
 
 test("Cachixの書込みtokenを公開job以外へ渡さない", () => {
   const fixtures = workflows();
-  fixtures["binary-cache-publish.yml"].jobs.verify.steps[1].with.authToken =
+  fixtures["cachix-publish.yml"].jobs.verify.steps[1].with.authToken =
     "${{ secrets.CACHIX_AUTH_TOKEN }}";
   assert.throws(
-    () => validateBinaryCachePublication(fixtures),
+    () => validateCachixPublication(fixtures),
     /without a write token/u,
   );
 
@@ -657,8 +664,8 @@ test("Cachixの書込みtokenを公開job以外へ渡さない", () => {
     run: "true",
   });
   assert.throws(
-    () => validateBinaryCachePublication(separateFixtures),
-    /used only by binary-cache-publish/u,
+    () => validateCachixPublication(separateFixtures),
+    /used only by cachix-publish/u,
   );
 });
 
