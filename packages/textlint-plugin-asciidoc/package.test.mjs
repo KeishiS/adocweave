@@ -10,12 +10,19 @@ import {
 const manifest = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
 const toolchains = JSON.parse(readFileSync(new URL("../../toolchains.json", import.meta.url), "utf8"));
 const bridge = readFileSync(new URL("./bridge.mjs", import.meta.url), "utf8");
+const changelog = readFileSync(new URL("./CHANGELOG.md", import.meta.url), "utf8");
 
 test("public registryへ公開しruntime npm依存を持たない", () => {
   assert.equal(manifest.name, "@adocweave/textlint-plugin-asciidoc");
   assert.equal(manifest.private, undefined);
   assert.equal(manifest.publishConfig.access, "public");
   assert.deepEqual(manifest.dependencies, undefined);
+});
+
+test("package.jsonのversionを専用Changelogへ記録する", () => {
+  assert.match(manifest.version, /^\d+\.\d+\.\d+$/u);
+  assert.match(changelog, new RegExp(`^## \\[${manifest.version.replaceAll(".", "\\.")}\\]`, "mu"));
+  assert.ok(manifest.files.includes("CHANGELOG.md"));
 });
 
 test("検証した組合せを下限とする範囲で依存を受け入れる", () => {

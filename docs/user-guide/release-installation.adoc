@@ -87,8 +87,6 @@ NixOS以外では、同じ値をシステムの``nix.conf``へ記載します。
 |VS Code拡張
 3+|``adocweave-vscode-<version>.vsix``
 
-|textlint用Processor
-3+|``adocweave-textlint-plugin-asciidoc-<version>.tgz``
 |===
 
 ``<target>``には次のいずれかを指定します。
@@ -211,7 +209,8 @@ Get-Command adocweave.exe
 LinuxとmacOSでは``current``、Windowsでは``PATH``を切り替えた後に``--version --json``を確認してください。
 ロールバックの確認が終わるまで、以前のディレクトリは削除しません。
 
-WebAssemblyパッケージは独立したバージョンを持ち、npm Registryから取得します。ほかの配布物は
+WebAssemblyパッケージとtextlint用Processorは独立したバージョンを持ち、npm Registryから取得します。
+ほかの配布物は
 ``vX.Y.Z``タグのバージョンを使用します。
 エディタ拡張は起動時に実行ファイルのバージョンを比較せず、LSPの初期化で利用できる機能を判断します。
 

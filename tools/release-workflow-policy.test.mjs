@@ -5,11 +5,11 @@ import {
   validateBinaryCachePublication,
   validateCiGates,
   validateExternalPublicationIsolation,
-  validateNpmPublication,
   validatePermissions,
   validatePinnedActions,
   validateReleaseFlow,
   validateReleaseVersionCommands,
+  validateTextlintPluginPublication,
   validateWasmPublication,
 } from "./release-workflow-policy.mjs";
 
@@ -19,6 +19,11 @@ const publicationCommit = "${{ inputs.commit }}";
 const wasmNpmSmoke = `
 const args = ["audit", "signatures", "--include-attestations"];
 runWasmPackageBrowserSmoke(packageRoot);
+`;
+const textlintNpmSmoke = `
+const args = ["audit", "signatures", "--include-attestations"];
+runTextlintPluginConsumerE2E(spec);
+runTextlintPluginNpxSmoke(spec);
 `;
 
 function releaseContractWorkflow() {
@@ -99,7 +104,6 @@ function releaseWorkflow() {
       },
       "publish-binary-cache": releasePublicationJob("binary-cache-publish.yml"),
       "publish-marketplace": releasePublicationJob("marketplace-publish.yml", true),
-      "publish-npm": releasePublicationJob("npm-publish.yml", true),
       "publish-open-vsx": releasePublicationJob("open-vsx-publish.yml"),
       announce: {
         needs: [
@@ -107,10 +111,9 @@ function releaseWorkflow() {
           "host",
           "publish-binary-cache",
           "publish-marketplace",
-          "publish-npm",
           "publish-open-vsx",
         ],
-        if: "${{ always() && needs.host.result == 'success' && needs.publish-binary-cache.result == 'success' && needs.publish-marketplace.result == 'success' && needs.publish-npm.result == 'success' && needs.publish-open-vsx.result == 'success' }}",
+        if: "${{ always() && needs.host.result == 'success' && needs.publish-binary-cache.result == 'success' && needs.publish-marketplace.result == 'success' && needs.publish-open-vsx.result == 'success' }}",
         steps: [],
       },
     },
@@ -166,16 +169,53 @@ function publicationWorkflow(environment, oidc = false) {
   };
 }
 
-function npmPublicationWorkflow() {
-  const workflow = publicationWorkflow("npm-publish", true);
-  workflow.jobs.publish.environment = "npm-publish";
-  workflow.jobs.publish.steps.push({
-    run: `test $RELEASE_COMMIT = \${{ inputs.commit }}
-package_manifest=packages/textlint-plugin-asciidoc/package.json
+function textlintPluginPublicationWorkflow() {
+  return {
+    on: {
+      push: { tags: ["textlint-plugin-asciidoc/v[0-9]+.[0-9]+.[0-9]+"] },
+    },
+    permissions: { contents: "read" },
+    concurrency: {
+      group: "textlint-plugin-publish-${{ github.ref_name }}",
+      "cancel-in-progress": false,
+    },
+    jobs: {
+      candidate: {
+        steps: [
+          {
+            uses: pin,
+            with: { "fetch-depth": 0, "fetch-tags": true, "persist-credentials": false },
+          },
+          {
+            run: `
+version="$(jq -r .version packages/textlint-plugin-asciidoc/package.json)"
+test "$PACKAGE_TAG" = "textlint-plugin-asciidoc/v$version"
+git rev-parse "refs/tags/$PACKAGE_TAG^{commit}"
+git rev-parse HEAD
+git merge-base --is-ancestor "$PACKAGE_COMMIT" refs/remotes/origin/main
+cargo make test-textlint-plugin-release-candidate
+`,
+          },
+        ],
+      },
+      publish: {
+        needs: "candidate",
+        environment: "npm-publish",
+        permissions: { contents: "read", "id-token": "write" },
+        steps: [
+          { uses: pin },
+          {
+            run: `
 node tools/npm-publication.mjs
-node tools/textlint-plugin-npm-smoke.mjs`,
-  });
-  return workflow;
+npm publish "$tarball"
+test "$predicate" = "https://slsa.dev/provenance/v1"
+nix develop .#ci-browser -c node tools/textlint-plugin-npm-smoke.mjs
+`,
+          },
+        ],
+      },
+    },
+  };
 }
 
 function wasmPublicationWorkflow() {
@@ -325,7 +365,7 @@ function workflows() {
     },
     "binary-cache-publish.yml": binaryCachePublicationWorkflow(),
     "marketplace-publish.yml": marketplacePublicationWorkflow(),
-    "npm-publish.yml": npmPublicationWorkflow(),
+    "textlint-plugin-publish.yml": textlintPluginPublicationWorkflow(),
     "wasm-publish.yml": wasmPublicationWorkflow(),
     "open-vsx-publish.yml": openVsxPublicationWorkflow(),
   };
@@ -361,9 +401,9 @@ test("workflowと公開jobの権限を必要最小限に限定する", () => {
   assert.throws(() => validatePermissions(fixtures), /release\.yml host permissions/);
   delete fixtures["release.yml"].jobs.host.permissions.actions;
 
-  fixtures["release.yml"].jobs["publish-npm"].permissions["id-token"] = "read";
-  assert.throws(() => validatePermissions(fixtures), /release\.yml publish-npm permissions/);
-  fixtures["release.yml"].jobs["publish-npm"].permissions["id-token"] = "write";
+  fixtures["textlint-plugin-publish.yml"].jobs.publish.permissions["id-token"] = "read";
+  assert.throws(() => validatePermissions(fixtures), /textlint-plugin-publish\.yml publish permissions/);
+  fixtures["textlint-plugin-publish.yml"].jobs.publish.permissions["id-token"] = "write";
 
   fixtures["open-vsx-publish.yml"].jobs.publish.permissions = { contents: "write" };
   assert.throws(() => validatePermissions(fixtures), /unexpected contents: write/);
@@ -437,14 +477,14 @@ test("hostは公開する全成果物をattestation対象にする", () => {
   );
 });
 
-test("Release成功後は4つの公開workflowを直接呼び出して成否を集約する", () => {
+test("Release成功後は3つの公開workflowを直接呼び出して成否を集約する", () => {
   const release = releaseWorkflow();
   validateReleaseFlow(releaseFlowWorkflows(release), 'pr-run-mode = "plan"');
 
-  release.jobs["publish-npm"].uses = "./.github/workflows/open-vsx-publish.yml";
+  release.jobs["publish-marketplace"].uses = "./.github/workflows/open-vsx-publish.yml";
   assert.throws(
     () => validateReleaseFlow(releaseFlowWorkflows(release), 'pr-run-mode = "plan"'),
-    /publish-npm must call npm-publish\.yml/u,
+    /publish-marketplace must call marketplace-publish\.yml/u,
   );
 
   const incomplete = releaseWorkflow();
@@ -477,10 +517,10 @@ test("CIはPRのsource gateとmain専用gateを分離する", () => {
 test("外部公開workflowはReleaseからの再利用呼出しだけを受け付ける", () => {
   const fixtures = workflows();
   validateExternalPublicationIsolation(fixtures);
-  fixtures["npm-publish.yml"].on.workflow_dispatch = {};
+  fixtures["marketplace-publish.yml"].on.workflow_dispatch = {};
   assert.throws(
     () => validateExternalPublicationIsolation(fixtures),
-    /npm-publish.*callable only/u,
+    /marketplace-publish.*callable only/u,
   );
 
   const called = workflows();
@@ -498,12 +538,12 @@ test("外部公開workflowはReleaseからの再利用呼出しだけを受け�
   );
 
   const duplicateAncestry = workflows();
-  duplicateAncestry["npm-publish.yml"].jobs.publish.steps.push({
+  duplicateAncestry["marketplace-publish.yml"].jobs.publish.steps.push({
     run: "git merge-base --is-ancestor HEAD refs/remotes/origin/main",
   });
   assert.throws(
     () => validateExternalPublicationIsolation(duplicateAncestry),
-    /npm-publish.*leave main ancestry verification.*common release contract/u,
+    /marketplace-publish.*leave main ancestry verification.*common release contract/u,
   );
 
   const extraSender = workflows();
@@ -554,10 +594,10 @@ test("Marketplace公開は専用environmentとOIDCだけを使う", () => {
   );
 
   const shared = workflows();
-  shared["npm-publish.yml"].jobs.publish.environment = "marketplace-publish";
+  shared["open-vsx-publish.yml"].jobs.publish.environment = "marketplace-publish";
   assert.throws(
     () => validateExternalPublicationIsolation(shared),
-    /credentials must stay in the npm-publish environment/u,
+    /credentials must stay in the open-vsx-publish environment/u,
   );
 });
 
@@ -596,15 +636,31 @@ test("Cachixの書込みtokenを公開job以外へ渡さない", () => {
   );
 });
 
-test("native Releaseからのnpm公開はtextlint packageだけを検証する", () => {
+test("textlint packageは専用tagから構築してnpmへ直接公開する", () => {
   const fixtures = workflows();
-  validateNpmPublication(fixtures);
-  fixtures["npm-publish.yml"].on.workflow_call.inputs.package = {};
-  assert.throws(() => validateNpmPublication(fixtures), /accept only the release tag and commit/);
-  delete fixtures["npm-publish.yml"].on.workflow_call.inputs.package;
-  fixtures["npm-publish.yml"].jobs.publish.steps.at(-1).run +=
-    "\npackages/wasm/package.json";
-  assert.throws(() => validateNpmPublication(fixtures), /only the fixed textlint package/);
+  validateTextlintPluginPublication(fixtures, textlintNpmSmoke);
+
+  fixtures["textlint-plugin-publish.yml"].on.push.tags = ["v[0-9]+.[0-9]+.[0-9]+"];
+  assert.throws(
+    () => validateTextlintPluginPublication(fixtures, textlintNpmSmoke),
+    /stable textlint-plugin-asciidoc\/vX\.Y\.Z tags/u,
+  );
+
+  const releaseDependent = workflows();
+  releaseDependent["textlint-plugin-publish.yml"].jobs.publish.steps.at(-1).run +=
+    "\ngh release download";
+  assert.throws(
+    () => validateTextlintPluginPublication(releaseDependent, textlintNpmSmoke),
+    /must not depend on a native Release/u,
+  );
+
+  assert.throws(
+    () => validateTextlintPluginPublication(
+      workflows(),
+      "runTextlintPluginConsumerE2E(spec); runTextlintPluginNpxSmoke(spec);",
+    ),
+    /verify signatures, provenance, and fixed consumers/u,
+  );
 });
 
 test("WebAssembly packageは専用tagから構築してnpmへ直接公開する", () => {

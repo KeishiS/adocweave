@@ -4,12 +4,13 @@
 
 == バージョン方針
 
-すべての製品は同じバージョンを使用し、リポジトリ直下の``Cargo.toml``にある
-``workspace.package.version``を基準とします。一つの``vX.Y.Z``タグから一つのGitHub Releaseを公開します。
+ネイティブ実行ファイルとRust公開APIは、リポジトリ直下の``Cargo.toml``にある
+``workspace.package.version``を基準とします。npmパッケージとエディタ拡張は、各ディレクトリのmanifestと
+Changelogを基準とする独立したバージョンを持ちます。
 RustおよびNode.jsのバージョンはlink:../toolchains.json[toolchain manifest]を基準とします。
 
-version固有の変更内容と移行手順は
-https://github.com/KeishiS/adocweave/releases[GitHub Releases]を参照してください。
+ネイティブ版の変更内容はhttps://github.com/KeishiS/adocweave/releases[GitHub Releases]、npmパッケージと
+エディタ拡張の変更内容は各配布物のChangelogを参照してください。
 
 == ディレクトリの案内
 
