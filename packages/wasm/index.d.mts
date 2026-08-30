@@ -54,4 +54,3 @@ export declare function defaultAssetUrls(baseUrl: string | URL): {
   moduleUrl: URL;
   wasmUrl: URL;
 };
-export declare const WASM_PACKAGE_VERSION: string;

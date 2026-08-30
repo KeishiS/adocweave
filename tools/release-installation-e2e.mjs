@@ -67,7 +67,9 @@ if (runtime.platform.os !== platform.os || runtime.platform.architecture !== pla
 }
 
 const candidate = realpathSync(resolve(candidateArgument));
-const version = workspaceVersion();
+const version = kind === "wasm"
+  ? JSON.parse(readFileSync(new URL("../packages/wasm/package.json", import.meta.url), "utf8")).version
+  : workspaceVersion();
 let nativeArtifact;
 let nativeExecutable;
 if (kind === "native") {

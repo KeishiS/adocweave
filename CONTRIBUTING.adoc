@@ -254,7 +254,7 @@ required status checkを``verify``一件へ置き換えます。
 [#tag]
 == Tag
 
-安定版には``vX.Y.Z``形式のtagを使用します。リリース用Pull Requestを``main``へ統合し、そのcommitに対する
+ネイティブ版には``vX.Y.Z``形式のtagを使用します。リリース用Pull Requestを``main``へ統合し、そのcommitに対する
 release gateが成功した後にtagを作成して``upstream``へpushします。tagのpushを契機にcargo-distが成果物を構築し、
 GitHub Releaseを作成します。公開済みtagの更新と削除は行いません。tagの作成条件と公開失敗時の扱いは
 xref:docs/developer-guide/release-distribution.adoc[GitHub Releases配布仕様]を基準とします。
@@ -263,8 +263,8 @@ xref:docs/developer-guide/release-distribution.adoc[GitHub Releases配布仕様]
 
 release作業も通常の変更と同様に、短命なブランチとpull requestから開始します。
 
-. リポジトリ全体の変更について、互換性および利用者への影響に応じたSemantic Versioningのバージョンを決めます。
-  続いて、workspace版と登録済みのmanifestを一括更新します。
+. ネイティブ版の変更について、互換性および利用者への影響に応じたSemantic Versioningのバージョンを決めます。
+  続いて、workspace版と登録済みのmanifestを一括更新します。WebAssemblyパッケージの版は更新しません。
 +
 [source,console]
 ----
@@ -275,7 +275,7 @@ node tools/sync-release-version.mjs --version X.Y.Z
 更新します。更新前に部分的なバージョン変更を検出した場合は、ファイルを書き換えず停止します。
 . ``CHANGELOG.md``の先頭へ対象版の項目を追加します。利用者から見える変更、移行手順およびRustの公開APIに
   互換性のない変更がある場合は、その内容を記載します。必要な仕様文書とテスト用入力も更新してから、
-  全manifestのversionがworkspace版と一致することを検査します。
+  登録したmanifestのversionがworkspace版と一致することを検査します。
 +
 [source,console]
 ----
@@ -291,6 +291,7 @@ git tag -a vX.Y.Z -m "AdocWeave vX.Y.Z"
 git push upstream vX.Y.Z
 ----
 . cargo-distのworkflowが、4つのnative成果物と追加成果物を構築して検査し、一つのGitHub Releaseへ添付します。
+  WebAssemblyパッケージは、このReleaseに含めません。
 . Release workflowが、npm、Open VSX、Visual Studio MarketplaceおよびCachixの公開workflowを直接かつ並列に
   呼び出します。
 . 4つの外部公開を含むRelease workflow全体が成功し、予定されたassetを含むstableなGitHub Releaseが作成されたことを
@@ -317,10 +318,10 @@ xref:docs/developer-guide/release-distribution.adoc[GitHub Releases配布仕様]
 
 最初の自動公開より前に、``github-release``、``binary-cache-publish``、``marketplace-publish``、``npm-publish``および
 ``open-vsx-publish``の5つのenvironmentを作成します。各environmentのdeployment branch policyではSelected branches
-and tagsを選び、stable tagのpattern ``v*``だけを許可します。Release workflowはtag pushで動くため、``main``だけを
-許可する設定では公開jobを開始できません。Open VSXとCachixのtokenは対応するenvironmentへ移します。npmと
-Visual Studio MarketplaceのTrusted Publisherには、呼出し元workflow file``release.yml``と対応するenvironmentを
-登録します。
+and tagsを選びます。``npm-publish``では``v*``と``wasm/v*``、ほかのenvironmentでは``v*``だけを許可します。
+公開workflowはtag pushで動くため、``main``だけを許可する設定では公開jobを開始できません。Open VSXとCachixの
+tokenは対応するenvironmentへ移します。textlint用Processorのnpm Trusted PublisherとVisual Studio Marketplaceの
+Trusted Publisherには、呼出し元workflow file``release.yml``と対応するenvironmentを登録します。
 
 [#open-vsx-publication]
 === Open VSX Registryへの公開
@@ -347,36 +348,56 @@ Marketplaceが追加する署名領域はarchive全体のbyte列を変えるた�
 署名以外のfile一覧および内容が異なる場合は失敗します。公開直後にも同じ検査を行います。
 
 [#npm-publication]
-=== npm Registryへの公開
+=== textlint用Processorのnpm公開
 
 npmのscope``@adocweave``はリポジトリの保守者が所有します。所有者を失った場合の回復はnpmのsupportへ
 申請する以外になく、自助手段はありません。organizationでは2要素認証を必須にします。
 
-公開するのは、GitHub Releaseへ添付したarchiveと同じbyte列だけです。作業ツリーから``npm publish``すると
-別のbyte列が載るため、公開済みReleaseからdownloadしたfileを指定します。
+textlint用Processorは、GitHub Releaseへ添付したarchiveと同じ内容をnpmへ公開します。
 
-npmのTrusted Publisherはpackage単位の設定で、packageが実在しないと登録できません。したがってpackageごとに
-一度だけ、手元から初回公開を行います。
+npmのTrusted Publisherはpackage単位の設定で、packageが実在しないと登録できません。したがって
+``@adocweave/textlint-plugin-asciidoc``は一度だけ、手元から初回公開を行います。
 
 [source,console]
 ----
-gh release download vX.Y.Z --pattern '*.tgz' --pattern 'sha256.sum'
+gh release download vX.Y.Z --pattern 'adocweave-textlint-plugin-asciidoc-*.tgz' --pattern 'sha256.sum'
 sha256sum --check --strict sha256.sum
-npm publish PACKAGE-X.Y.Z.tgz
+npm publish adocweave-textlint-plugin-asciidoc-X.Y.Z.tgz
 ----
 
-初回公開の後、npmjs.comのpackage設定でTrusted Publisherへリポジトリ、workflow file``release.yml``、
+初回公開の後、npmjs.comのtextlint package設定でTrusted Publisherへリポジトリ、workflow file``release.yml``、
 GitHub environment``npm-publish``および許可する操作を登録します。``npm-publish.yml``は再利用workflowですが、
 OIDCが示すworkflow identityは呼出し元の``release.yml``です。登録後はOIDCで公開できるため、初回公開に使った
 資格情報を失効させます。
 Trusted Publishing経由の公開にはprovenanceが自動で付きます。
 
-npmへの公開はGitHub Releaseの公開後に自動的に始まります。一回の実行で二つのpackageを処理し、公開済みの
-packageはReleaseのarchiveと同じ内容であることを確認して送信を省略します。npmへの送信だけが失敗した場合は、
+npmへの公開はGitHub Releaseの公開後に自動的に始まります。公開済みのpackageはReleaseのarchiveと同じ内容で
+あることを確認して送信を省略します。npmへの送信だけが失敗した場合は、
 Release workflowの``Re-run failed jobs``を実行します。公開済みversionは
 integrityを確認し、未公開のpackageだけを送信します。公開後に問題が見つかった場合は
 ``npm deprecate``で警告を表示し、修正は新しいversionで行います。``unpublish``は安全上必要な場合に限ります。
 一度``unpublish``したversion番号は再利用できません。
+
+[#wasm-npm-publication]
+=== WebAssemblyパッケージの公開
+
+``@adocweave/wasm``の版は``packages/wasm/package.json``、変更内容は同じディレクトリの
+``CHANGELOG.md``を基準とします。ネイティブ版とは別にSemantic Versioningを適用し、利用者向けのAPIまたは動作が
+変わった場合だけ更新します。
+
+変更を``main``へ統合し、そのcommitの検査が成功した後、パッケージの版と一致するtagを作成します。
+
+[source,console]
+----
+git tag -a wasm/vX.Y.Z -m "@adocweave/wasm X.Y.Z"
+git push upstream wasm/vX.Y.Z
+----
+
+``wasm-publish.yml``はtagが指すcommitからパッケージを一度だけ構築して検査し、npm Trusted Publishingで直接
+公開します。GitHub Releaseには添付しません。Trusted Publisherにはworkflow file``wasm-publish.yml``と
+environment``npm-publish``を登録します。失敗した場合は同じworkflow runの``Re-run failed jobs``を使用します。
+同じ版が公開済みであれば内容を確認して送信を省略します。公開後はnpmから導入し直し、署名とprovenance、
+Node.jsおよび実ブラウザーでの動作を確認します。修正が必要な場合は新しい版を使用します。
 
 [#cachix-publication]
 === Cachixへの公開
