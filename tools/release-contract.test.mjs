@@ -22,7 +22,7 @@ test("repositoryは一つのworkspace版とtagを使う", () => {
   }
 });
 
-test("cargo-dist planは単一appと全成果物を持つ", () => {
+test("cargo-dist planは単一appとnative releaseの成果物を持つ", () => {
   const validated = validateDistPlan(plan, release.tag);
   assert.equal(validated.version, release.version);
   assert.deepEqual(validated.assets, expectedReleaseAssets(release.version));

@@ -10,11 +10,16 @@ import {
   validatePinnedActions,
   validateReleaseFlow,
   validateReleaseVersionCommands,
+  validateWasmPublication,
 } from "./release-workflow-policy.mjs";
 
 const pin = "actions/checkout@0000000000000000000000000000000000000000";
 const publicationTag = "${{ inputs.tag }}";
 const publicationCommit = "${{ inputs.commit }}";
+const wasmNpmSmoke = `
+const args = ["audit", "signatures", "--include-attestations"];
+runWasmPackageBrowserSmoke(packageRoot);
+`;
 
 function releaseContractWorkflow() {
   return {
@@ -164,15 +169,60 @@ function publicationWorkflow(environment, oidc = false) {
 function npmPublicationWorkflow() {
   const workflow = publicationWorkflow("npm-publish", true);
   workflow.jobs.publish.environment = "npm-publish";
-  workflow.jobs.publish.strategy = {
-    "fail-fast": false,
-    matrix: { package: ["textlint", "wasm"] },
-  };
   workflow.jobs.publish.steps.push({
-    env: { RELEASE_PACKAGE: "${{ matrix.package }}" },
-    run: "test $RELEASE_COMMIT = ${{ inputs.commit }}\nnode tools/npm-publication.mjs",
+    run: `test $RELEASE_COMMIT = \${{ inputs.commit }}
+package_manifest=packages/textlint-plugin-asciidoc/package.json
+node tools/npm-publication.mjs
+node tools/textlint-plugin-npm-smoke.mjs`,
   });
   return workflow;
+}
+
+function wasmPublicationWorkflow() {
+  return {
+    on: { push: { tags: ["wasm/v[0-9]+.[0-9]+.[0-9]+"] } },
+    permissions: { contents: "read" },
+    concurrency: {
+      group: "wasm-publish-${{ github.ref_name }}",
+      "cancel-in-progress": false,
+    },
+    jobs: {
+      candidate: {
+        steps: [
+          {
+            uses: pin,
+            with: { "fetch-depth": 0, "fetch-tags": true, "persist-credentials": false },
+          },
+          {
+            run: `
+version="$(jq -r .version packages/wasm/package.json)"
+test "$PACKAGE_TAG" = "wasm/v$version"
+git rev-parse "refs/tags/$PACKAGE_TAG^{commit}"
+git rev-parse HEAD
+git merge-base --is-ancestor "$PACKAGE_COMMIT" refs/remotes/origin/main
+cargo make test-wasm-release-candidate
+`,
+          },
+        ],
+      },
+      publish: {
+        needs: "candidate",
+        environment: "npm-publish",
+        permissions: { contents: "read", "id-token": "write" },
+        steps: [
+          { uses: pin },
+          {
+            run: `
+node tools/npm-publication.mjs
+npm publish "$tarball"
+test "$predicate" = "https://slsa.dev/provenance/v1"
+nix develop .#ci-browser -c node tools/wasm-npm-smoke.mjs
+`,
+          },
+        ],
+      },
+    },
+  };
 }
 
 function binaryCachePublicationWorkflow() {
@@ -276,6 +326,7 @@ function workflows() {
     "binary-cache-publish.yml": binaryCachePublicationWorkflow(),
     "marketplace-publish.yml": marketplacePublicationWorkflow(),
     "npm-publish.yml": npmPublicationWorkflow(),
+    "wasm-publish.yml": wasmPublicationWorkflow(),
     "open-vsx-publish.yml": openVsxPublicationWorkflow(),
   };
 }
@@ -545,14 +596,36 @@ test("Cachixの書込みtokenを公開job以外へ渡さない", () => {
   );
 });
 
-test("npm公開は利用者にpackageを選ばせず二つの固定対象を検証する", () => {
+test("native Releaseからのnpm公開はtextlint packageだけを検証する", () => {
   const fixtures = workflows();
   validateNpmPublication(fixtures);
   fixtures["npm-publish.yml"].on.workflow_call.inputs.package = {};
   assert.throws(() => validateNpmPublication(fixtures), /accept only the release tag and commit/);
   delete fixtures["npm-publish.yml"].on.workflow_call.inputs.package;
-  fixtures["npm-publish.yml"].jobs.publish.strategy.matrix.package = ["wasm"];
-  assert.throws(() => validateNpmPublication(fixtures), /both fixed packages/);
+  fixtures["npm-publish.yml"].jobs.publish.steps.at(-1).run +=
+    "\npackages/wasm/package.json";
+  assert.throws(() => validateNpmPublication(fixtures), /only the fixed textlint package/);
+});
+
+test("WebAssembly packageは専用tagから構築してnpmへ直接公開する", () => {
+  const fixtures = workflows();
+  validateWasmPublication(fixtures, wasmNpmSmoke);
+
+  fixtures["wasm-publish.yml"].on.push.tags = ["v[0-9]+.[0-9]+.[0-9]+"];
+  assert.throws(() => validateWasmPublication(fixtures, wasmNpmSmoke), /stable wasm\/vX\.Y\.Z tags/);
+
+  const releaseDependent = workflows();
+  releaseDependent["wasm-publish.yml"].jobs.publish.steps.at(-1).run +=
+    "\ngh release download";
+  assert.throws(
+    () => validateWasmPublication(releaseDependent, wasmNpmSmoke),
+    /must not depend on a native Release/,
+  );
+
+  assert.throws(
+    () => validateWasmPublication(workflows(), "runWasmPackageBrowserSmoke(packageRoot)"),
+    /verify signatures, provenance, and the browser package/,
+  );
 });
 
 test("release guideは単一versionの--checkと--versionだけを使う", () => {

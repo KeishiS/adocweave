@@ -2,7 +2,7 @@
 
 All notable changes to the AdocWeave Zed extension are documented here.
 
-## [0.54.0]
+## [0.55.0]
 
 - Prepared the extension for submission to the official Zed extension registry.
 - Focused this extension on Language Server integration and reused the existing

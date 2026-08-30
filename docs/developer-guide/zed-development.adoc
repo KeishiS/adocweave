@@ -4,8 +4,8 @@
 利用者向けの導入方法は
 xref:../user-guide/release-installation.adoc#zed-installation[Zedへの導入]を参照してください。
 
-AdocWeave拡張はLanguage Serverとの接続だけを提供します。AsciiDoc言語の登録と構文強調には、公式レジストリで
-公開されている https://github.com/andreicek/zed-asciidoc[``AsciiDoc``拡張]を使用します。
+AdocWeave拡張はLanguage Serverとの接続だけを提供します。AsciiDoc言語の登録と構文強調には、Zed公式レジストリの
+``AsciiDoc``拡張を使用します。
 ``extension.toml``の``language_servers.adocweave.languages = ["AsciiDoc"]``は、その拡張が登録する
 ``AsciiDoc``言語へAdocWeave Language Serverを関連付けます。これにより、同じ言語定義とTree-sitter grammarを
 二つの拡張で管理しません。

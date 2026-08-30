@@ -65,23 +65,23 @@ description = "Run all workspace tests and require generated declarations and sc
 script_runner = "@shell"
 script = '''
 # ts-rsは既存fileへ追記するため、消えた型が残らないようworkspace testの前に作り直します。
-rm -f web-worker/protocol.d.mts
+rm -f packages/wasm/protocol.d.mts
 cargo test --workspace --all-features
-git diff --exit-code -- web-worker/protocol.d.mts
+git diff --exit-code -- packages/wasm/protocol.d.mts
 '''
 
-[tasks.test-web-worker]
+[tasks.test-wasm-package]
 private = true
-description = "Run the Web Worker protocol tests"
+description = "Run the WebAssembly npm package tests"
 command = "npm"
-args = ["test", "--prefix", "web-worker"]
+args = ["test", "--prefix", "packages/wasm"]
 
 [tasks.protocol-wasm-corpus-check]
 private = true
 description = "Verify the request corpus through the generated wasm-bindgen boundary"
 dependencies = ["build-wasm-node"]
 command = "node"
-args = ["--test", "web-worker/protocol-wasm.test.mjs"]
+args = ["--test", "packages/wasm/protocol-wasm.test.mjs"]
 
 [tasks.release-contract]
 category = "CI entry points"
@@ -317,7 +317,7 @@ args = ["tools/verify-wasm-release-package.sh"]
 private = true
 description = "Compile-check the public TypeScript declarations"
 command = "tsc"
-args = ["--project", "web-worker/tsconfig.json"]
+args = ["--project", "packages/wasm/tsconfig.json"]
 
 [tasks.test-wasm-smoke]
 private = true
@@ -326,7 +326,7 @@ dependencies = ["package-wasm-release", "test-wasm-types"]
 script_runner = "@shell"
 script = '''
 node --test tools/process-lifecycle.test.mjs tools/host-executable.test.mjs
-version="$(node --input-type=module -e "import manifest from './web-worker/package.json' with { type: 'json' }; process.stdout.write(manifest.version)")"
+version="$(node --input-type=module -e "import manifest from './packages/wasm/package.json' with { type: 'json' }; process.stdout.write(manifest.version)")"
 node tools/wasm-release-smoke.mjs "target/distrib/adocweave-wasm-$version.tgz" "${ADOCWEAVE_BROWSER:-chromium}"
 '''
 
@@ -341,7 +341,6 @@ args = ["tools/wasm-bundler-smoke.sh"]
 private = true
 description = "Build and completely verify each global release candidate"
 dependencies = [
-  "test-wasm-release-candidate",
   "textlint-plugin-release-consumer-e2e",
   "test-vscode-release-determinism",
 ]
@@ -485,7 +484,7 @@ private = true
 description = "Compare native and actual WASM results over shared conformance fixtures"
 dependencies = ["build-conformance-native", "build-wasm-node"]
 command = "npm"
-args = ["run", "test:cross-runtime", "--prefix", "web-worker"]
+args = ["run", "test:cross-runtime", "--prefix", "packages/wasm"]
 
 [tasks.wasm-size]
 private = true
@@ -499,7 +498,7 @@ for artifact in target/adocweave-wasm/*; do
   bytes="$(wc -c < "$artifact")"
   echo "$bytes $artifact"
 done
-version="$(node --input-type=module -e "import manifest from './web-worker/package.json' with { type: 'json' }; process.stdout.write(manifest.version)")"
+version="$(node --input-type=module -e "import manifest from './packages/wasm/package.json' with { type: 'json' }; process.stdout.write(manifest.version)")"
 archive="target/distrib/adocweave-wasm-$version.tgz"
 echo "$(wc -c < "$archive") $archive"
 '''
@@ -629,7 +628,7 @@ private = true
 description = "Reject documentation .md files except repository metadata"
 script_runner = "@shell"
 script = '''
-unexpected="$(rg --files --hidden -g '*.md' -g '!.git/**' | rg -v '^(AGENTS\.md|CHANGELOG\.md|\.claude/skills/[^/]+/SKILL\.md|\.github/pull_request_template\.md|\.github/SECURITY\.md|editors/(vscode/README|zed/(CHANGELOG|README))\.md|packages/[^/]+/README\.md|web-worker/README\.md)$' || true)"
+unexpected="$(rg --files --hidden -g '*.md' -g '!.git/**' | rg -v '^(AGENTS\.md|CHANGELOG\.md|\.claude/skills/[^/]+/SKILL\.md|\.github/pull_request_template\.md|\.github/SECURITY\.md|editors/(vscode/README|zed/(CHANGELOG|README))\.md|packages/[^/]+/(README|CHANGELOG)\.md)$' || true)"
 if [ -n "$unexpected" ]; then
   echo "repository documentation must use .adoc except repository metadata:" >&2
   echo "$unexpected" >&2
@@ -674,7 +673,7 @@ dependencies = [
   "adoc-check",
   "textlint-repository-prose-lint",
   "html5-check",
-  "test-web-worker",
+  "test-wasm-package",
   "test-wasm-types",
   "zed-registry-contract",
   "clippy-zed",
@@ -735,15 +734,15 @@ description = "Run main integrations and candidate acceptance suites available o
 dependencies = [
   "main-gate",
   "release-global-candidate",
+  "test-wasm-release-candidate",
 ]
 
 [tasks.release-check]
 category = "Developer entry points"
-description = "Run the main gate, build publishable candidates, and report release WASM artifact sizes"
+description = "Run the main gate and build publishable candidates"
 dependencies = [
   "verify",
   "security-audit",
   "acceptance",
-  "wasm-size",
   "dist-plan",
 ]

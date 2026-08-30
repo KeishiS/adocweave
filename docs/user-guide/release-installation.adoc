@@ -70,7 +70,7 @@ NixOS以外では、同じ値をシステムの``nix.conf``へ記載します。
 
 == 配布物の選択
 
-次の配布物は同じネイティブバージョンを使用し、一つの``vX.Y.Z``タグとGitHub Releaseから取得します。
+ネイティブ実行ファイルと次の追加成果物は、``vX.Y.Z``タグのGitHub Releaseから取得します。
 
 [cols="2,2,2,2",options="header"]
 |===
@@ -83,9 +83,6 @@ NixOS以外では、同じ値をシステムの``nix.conf``へ記載します。
 |``adocweave-<target>.zip``
 |``adocweave-<target>.zip``
 |``adocweave-x86_64-pc-windows-msvc.zip``
-
-|WebAssemblyライブラリ
-3+|``adocweave-wasm-<version>.tgz``
 
 |VS Code拡張
 3+|``adocweave-vscode-<version>.vsix``
@@ -214,8 +211,8 @@ Get-Command adocweave.exe
 LinuxとmacOSでは``current``、Windowsでは``PATH``を切り替えた後に``--version --json``を確認してください。
 ロールバックの確認が終わるまで、以前のディレクトリは削除しません。
 
-native実行ファイル、WebAssembly、Zed拡張、VS Code拡張およびtextlint用Processorは、
-一つの``vX.Y.Z``タグとGitHub Releaseで公開し、同じバージョンを使用します。
+WebAssemblyパッケージは独立したバージョンを持ち、npm Registryから取得します。ほかの配布物は
+``vX.Y.Z``タグのバージョンを使用します。
 エディタ拡張は起動時に実行ファイルのバージョンを比較せず、LSPの初期化で利用できる機能を判断します。
 
 [#textlint-plugin-installation]
@@ -285,8 +282,8 @@ npm uninstall @adocweave/wasm
 [#browser-library-deployment]
 == WebAssemblyライブラリの配備
 
-``adocweave-wasm-<version>.tgz``を展開し、``worker``ディレクトリを静的配信します。公開APIは
-``worker/index.mjs``です。TypeScriptの型定義は``worker/index.d.mts``にあります。
+npmで導入した``@adocweave/wasm``の``worker``と``wasm``ディレクトリを、相対位置を保って静的配信します。
+公開APIは``worker/index.mjs``、TypeScriptの型定義は``worker/index.d.mts``です。
 
 [source,javascript]
 ----

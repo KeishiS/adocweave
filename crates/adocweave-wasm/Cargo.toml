@@ -7,7 +7,7 @@ homepage.workspace = true
 publish.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Versioned WebAssembly adapter for AdocWeave"
+description = "WebAssembly boundary for the @adocweave/wasm npm package"
 
 [dependencies]
 adocweave = { path = "../adocweave" }

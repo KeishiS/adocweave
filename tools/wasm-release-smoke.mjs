@@ -30,12 +30,19 @@ if (
 }
 
 async function main() {
-  const [archive, chromiumCommand = "chromium"] = process.argv.slice(2);
-  if (!archive) throw new Error("usage: wasm-release-smoke.mjs ARCHIVE [CHROMIUM]");
+  const [packageInput, chromiumCommand = "chromium"] = process.argv.slice(2);
+  if (!packageInput) {
+    throw new Error("usage: wasm-release-smoke.mjs PACKAGE_DIRECTORY_OR_ARCHIVE [CHROMIUM]");
+  }
+  const input = resolve(packageInput);
+  if ((await stat(input)).isDirectory()) {
+    await runWasmPackageBrowserSmoke(input, chromiumCommand);
+    return;
+  }
   const chromium = await resolveHostExecutable(chromiumCommand);
   const root = await mkdtemp(join(tmpdir(), "adocweave-browser-smoke-"));
   try {
-    await runArchiveSmoke(archive, chromium, root);
+    await runArchiveSmoke(input, chromium, root);
   } finally {
     await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
@@ -62,8 +69,25 @@ async function runArchiveSmoke(archive, chromium, root) {
   }
   const packageRoot = join(root, entries[0]);
   const archiveBytes = (await stat(archive)).size;
+  await runPackageRootSmoke(packageRoot, chromium, root, archiveBytes);
+}
+
+export async function runWasmPackageBrowserSmoke(
+  packageRoot,
+  chromiumCommand = "chromium",
+) {
+  const chromium = await resolveHostExecutable(chromiumCommand);
+  const root = await mkdtemp(join(tmpdir(), "adocweave-browser-smoke-"));
+  try {
+    await runPackageRootSmoke(resolve(packageRoot), chromium, root);
+  } finally {
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+}
+
+async function runPackageRootSmoke(packageRoot, chromium, root, archiveBytes) {
   const wasmBytes = (await stat(join(packageRoot, "wasm/adocweave_wasm_bg.wasm"))).size;
-  assertWasmArtifactSizes(archiveBytes, wasmBytes);
+  assertWasmArtifactSizes(archiveBytes ?? 0, wasmBytes);
 
   const requests = [];
   const server = createServer(async (request, response) => {
@@ -150,7 +174,10 @@ async function runArchiveSmoke(archive, chromium, root) {
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));
   }
-  console.log(`browser release smoke passed: archive=${archiveBytes} wasm=${wasmBytes}`);
+  const sizeSummary = archiveBytes === undefined
+    ? `wasm=${wasmBytes}`
+    : `archive=${archiveBytes} wasm=${wasmBytes}`;
+  console.log(`browser release smoke passed: ${sizeSummary}`);
 }
 
 export async function inspectPage(

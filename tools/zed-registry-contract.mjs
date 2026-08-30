@@ -68,6 +68,6 @@ for (const required of [
 ]) {
   assert.ok(developmentGuide.includes(required), `Zed registry submission example is missing: ${required}`);
 }
-assert.match(developmentGuide, /https:\/\/github\.com\/andreicek\/zed-asciidoc/u);
+assert.match(developmentGuide, /Zed公式レジストリの\n``AsciiDoc``拡張/u);
 
 process.stdout.write(`Zed registry contract verified: ${version}\n`);
