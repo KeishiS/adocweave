@@ -15,9 +15,9 @@ const plan = JSON.parse(execFileSync("dist", ["plan", `--tag=${release.tag}`, "-
 }));
 
 test("repositoryは一つのworkspace版とtagを使う", () => {
-  assert.deepEqual(release, { tag: "v0.51.0", version: "0.51.0" });
+  assert.deepEqual(release, { tag: "v0.52.0", version: "0.52.0" });
   assert.deepEqual(validateReleaseTag(release.tag), release);
-  for (const tag of ["0.51.0", "adocweave-cli/v0.51.0", "adocweave-lsp/v0.51.0", "v0.51.0-rc.1"]) {
+  for (const tag of ["0.52.0", "adocweave-cli/v0.52.0", "adocweave-lsp/v0.52.0", "v0.52.0-rc.1"]) {
     assert.throws(() => validateReleaseTag(tag), /exactly/);
   }
 });

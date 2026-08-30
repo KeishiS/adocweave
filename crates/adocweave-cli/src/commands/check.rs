@@ -31,7 +31,7 @@ pub(crate) struct ProjectSourceView<'source> {
 }
 
 pub(crate) fn process_project(
-    analysis: &adocweave_project::ProjectAnalysis,
+    analysis: &adocweave_project::ProjectExpandedAnalysis,
     check: &Options,
     sources: &BTreeMap<adocweave::SourceId, ProjectSourceView<'_>>,
 ) -> Result<CheckOutcome, Error> {

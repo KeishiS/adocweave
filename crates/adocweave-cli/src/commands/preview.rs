@@ -9,7 +9,7 @@ use adocweave::CancellationToken;
 use adocweave_project::{
     ConfigSelection, ProjectAuthority, ProjectError, ProjectLimits, ProjectObservationAccess,
     ProjectObservationKind, ProjectOverrides, ProjectRequest, ProjectResourceResult, ProjectSource,
-    ProjectTarget, ProjectTargetError, ProjectTargetResult, process,
+    ProjectTarget, ProjectTargetResult, process,
 };
 
 use super::html_policy::{self, StylesheetArgument};
@@ -193,7 +193,6 @@ fn build(
     merge_dependencies(&mut dependencies, &target.resources);
     match build_target(target, css, dependencies) {
         Ok(build) => Ok(build),
-        Err(BuildError::Cancelled) => Err(ProjectError::Cancelled.to_string()),
         Err(BuildError::Message(message, dependencies)) => {
             Ok(preview::Build::failure(message, dependencies))
         }
@@ -201,7 +200,6 @@ fn build(
 }
 
 enum BuildError {
-    Cancelled,
     Message(String, BTreeMap<preview::Dependency, preview::Fingerprint>),
 }
 
@@ -210,12 +208,13 @@ fn build_target(
     css: &[StylesheetArgument],
     dependencies: BTreeMap<preview::Dependency, preview::Fingerprint>,
 ) -> Result<preview::Build, BuildError> {
-    let analysis = target.outcome.as_ref().map_err(|error| match error {
-        ProjectTargetError::Analysis(
-            adocweave::preprocess::PreprocessedAnalysisError::Cancelled,
-        ) => BuildError::Cancelled,
-        _ => BuildError::Message(error.to_string(), dependencies.clone()),
-    })?;
+    let analysis = target
+        .analysis
+        .as_ref()
+        .map_err(|error| BuildError::Message(error.to_string(), dependencies.clone()))?
+        .expanded
+        .as_ref()
+        .map_err(|error| BuildError::Message(error.to_string(), dependencies.clone()))?;
     let policy = html_policy::build_project(&target.config.config, &target.resources, true, css)
         .map_err(|error| BuildError::Message(error.to_string(), dependencies.clone()))?;
     let output = html_policy::render_checked(analysis.preprocessed.analysis.document(), &policy)

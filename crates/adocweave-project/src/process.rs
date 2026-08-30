@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use adocweave::preprocess::{
     EffectivePreprocessStep, EffectiveProcessingOptions, PreparedAnalysisError, PreprocessInputs,
-    PreprocessedAnalysis, PreprocessedAnalysisError, ProjectionLimits, ResourceDocument,
-    ResourceLookup, ResourceLookupResult,
+    PreprocessedAnalysis, ProjectionFailure, ProjectionLimits, ResourceDocument, ResourceLookup,
+    ResourceLookupResult,
 };
 use adocweave::{Analysis, AnalysisInputs, CancellationCheck, Engine, SourceId};
 use adocweave_config::{ConfigSnapshot, ResolvedProjectConfig};
@@ -24,10 +24,11 @@ use crate::selection::{
 };
 use crate::{
     ConfigSelection, ProjectAnalysis, ProjectConfigRequest, ProjectConfigResult,
-    ProjectConfigSnapshot, ProjectError, ProjectLimit, ProjectOutcome, ProjectRequest,
-    ProjectResourceFailure, ProjectResourceKind, ProjectResourceOutcome, ProjectResourceResult,
-    ProjectResult, ProjectTargetError, ProjectTargetResult, ProjectUsage, ProjectWarning,
-    project_authority_error, project_config_error, project_target_read,
+    ProjectConfigSnapshot, ProjectError, ProjectExpandedAnalysis, ProjectExpansionError,
+    ProjectLimit, ProjectOutcome, ProjectParseError, ProjectRequest, ProjectResourceFailure,
+    ProjectResourceKind, ProjectResourceOutcome, ProjectResourceResult, ProjectResult,
+    ProjectTargetError, ProjectTargetResult, ProjectUsage, ProjectWarning, project_authority_error,
+    project_config_error, project_expansion_read, project_target_read,
 };
 
 pub fn process(request: ProjectRequest, cancellation: &dyn CancellationCheck) -> ProjectOutcome {
@@ -152,7 +153,6 @@ struct FixedInspection {
 struct TargetAnalysisContext<'target> {
     source_id: &'target LogicalSourceId,
     source: &'target Arc<str>,
-    source_analysis: Option<Analysis>,
     config: &'target ResolvedProjectConfig,
     allowed_roots: &'target [PathBuf],
     scope: &'target Path,
@@ -172,7 +172,7 @@ struct TargetConfig {
 struct PreparedSource {
     source: Arc<str>,
     replacement: Option<Arc<str>>,
-    analysis: Option<Analysis>,
+    analysis: Analysis,
 }
 
 struct FinishTargetInput {
@@ -194,6 +194,28 @@ struct TargetResultParts {
     config: Arc<ProjectConfigSnapshot>,
     resources: Vec<ProjectResourceResult>,
     outcome: Result<ProjectAnalysis, ProjectTargetError>,
+}
+
+enum ExpandedAnalysisFailure {
+    Error(ProjectExpansionError),
+    Cancelled,
+}
+
+enum PreparedSourceFailure {
+    Error(ProjectTargetError),
+    Cancelled,
+}
+
+impl From<ProjectTargetError> for PreparedSourceFailure {
+    fn from(error: ProjectTargetError) -> Self {
+        Self::Error(error)
+    }
+}
+
+impl From<ProjectExpansionError> for ExpandedAnalysisFailure {
+    fn from(error: ProjectExpansionError) -> Self {
+        Self::Error(error)
+    }
 }
 
 struct FixedReadRequest {
@@ -729,7 +751,8 @@ impl<'request> Processor<'request> {
             analysis: source_analysis,
         } = match self.prepare_source(&source_id, source, config.as_ref()) {
             Ok(prepared) => prepared,
-            Err(error) => {
+            Err(PreparedSourceFailure::Cancelled) => return Err(ProjectError::Cancelled),
+            Err(PreparedSourceFailure::Error(error)) => {
                 return Ok(self.finish_target(FinishTargetInput {
                     source_id,
                     path,
@@ -778,14 +801,16 @@ impl<'request> Processor<'request> {
                     config: config_snapshot,
                     resolved_config: config,
                     resources,
-                    outcome: Err(project_target_read(error)),
+                    outcome: Ok(ProjectAnalysis {
+                        primary: source_analysis,
+                        expanded: Err(project_expansion_read(error)),
+                    }),
                 }));
             }
         };
-        let mut outcome = self.analyze_target(TargetAnalysisContext {
+        let expanded = match self.analyze_target(TargetAnalysisContext {
             source_id: &source_id,
             source: &source,
-            source_analysis,
             config: config.as_ref(),
             allowed_roots: &allowed_roots,
             scope: &scope,
@@ -794,12 +819,21 @@ impl<'request> Processor<'request> {
             lookup_bases: &mut lookup_bases,
             resources: &mut resources,
             filesystem: &mut include_filesystem,
+        }) {
+            Ok(analysis) => Ok(analysis),
+            Err(ExpandedAnalysisFailure::Error(error)) => Err(error),
+            Err(ExpandedAnalysisFailure::Cancelled) => return Err(ProjectError::Cancelled),
+        };
+        let mut outcome = Ok(ProjectAnalysis {
+            primary: source_analysis,
+            expanded,
         });
         if self.resource_selection.local_targets
             && let Ok(analysis) = &mut outcome
+            && let Ok(expanded) = &mut analysis.expanded
         {
             self.collect_local_targets(
-                analysis,
+                expanded,
                 config.as_ref(),
                 &scope,
                 &bases,
@@ -814,14 +848,15 @@ impl<'request> Processor<'request> {
             .iter()
             .find_map(|resource| match &resource.outcome {
                 ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(limit))
-                    if resource.kind != ProjectResourceKind::LocalTarget =>
+                    if resource.kind == ProjectResourceKind::Include =>
                 {
                     Some(*limit)
                 }
                 _ => None,
             })
+            && let Ok(analysis) = &mut outcome
         {
-            outcome = Err(ProjectTargetError::Incomplete(limit));
+            analysis.expanded = Err(ProjectExpansionError::Incomplete(limit));
         }
         Ok(self.finish_target(FinishTargetInput {
             source_id,
@@ -876,7 +911,8 @@ impl<'request> Processor<'request> {
         } = match self.prepare_source(&input.source_id, Arc::clone(&input.source), config.as_ref())
         {
             Ok(prepared) => prepared,
-            Err(error) => {
+            Err(PreparedSourceFailure::Cancelled) => return Err(ProjectError::Cancelled),
+            Err(PreparedSourceFailure::Error(error)) => {
                 return Ok(self.finish_pathless_target(
                     input,
                     None,
@@ -912,14 +948,16 @@ impl<'request> Processor<'request> {
                     snapshot,
                     config,
                     resources,
-                    Err(project_target_read(error)),
+                    Ok(ProjectAnalysis {
+                        primary: source_analysis,
+                        expanded: Err(project_expansion_read(error)),
+                    }),
                 ));
             }
         };
-        let mut outcome = self.analyze_target(TargetAnalysisContext {
+        let expanded = match self.analyze_target(TargetAnalysisContext {
             source_id: &input.source_id,
             source: &source,
-            source_analysis,
             config: config.as_ref(),
             allowed_roots: &allowed_roots,
             scope: &scope,
@@ -928,12 +966,21 @@ impl<'request> Processor<'request> {
             lookup_bases: &mut lookup_bases,
             resources: &mut resources,
             filesystem: &mut include_filesystem,
+        }) {
+            Ok(analysis) => Ok(analysis),
+            Err(ExpandedAnalysisFailure::Error(error)) => Err(error),
+            Err(ExpandedAnalysisFailure::Cancelled) => return Err(ProjectError::Cancelled),
+        };
+        let mut outcome = Ok(ProjectAnalysis {
+            primary: source_analysis,
+            expanded,
         });
         if self.resource_selection.local_targets
             && let Ok(analysis) = &mut outcome
+            && let Ok(expanded) = &mut analysis.expanded
         {
             self.collect_local_targets(
-                analysis,
+                expanded,
                 config.as_ref(),
                 &scope,
                 &bases,
@@ -948,14 +995,15 @@ impl<'request> Processor<'request> {
             .iter()
             .find_map(|resource| match &resource.outcome {
                 ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(limit))
-                    if resource.kind != ProjectResourceKind::LocalTarget =>
+                    if resource.kind == ProjectResourceKind::Include =>
                 {
                     Some(*limit)
                 }
                 _ => None,
             })
+            && let Ok(analysis) = &mut outcome
         {
-            outcome = Err(ProjectTargetError::Incomplete(limit));
+            analysis.expanded = Err(ProjectExpansionError::Incomplete(limit));
         }
         Ok(self.finish_pathless_target(
             input,
@@ -983,41 +1031,28 @@ impl<'request> Processor<'request> {
                 .then_with(|| resource_kind_order(left.kind).cmp(&resource_kind_order(right.kind)))
                 .then_with(|| left.requested_by.cmp(&right.requested_by))
         });
-        let returned_bytes = input
+        let primary_bytes = input
             .source
             .len()
-            .saturating_add(replacement_source.as_ref().map_or(0, |source| source.len()))
-            .saturating_add(
-                outcome
-                    .as_ref()
-                    .map_or(0, |analysis| analysis.preprocessed.document.source.len()),
-            )
-            .saturating_add(
-                resources
-                    .iter()
-                    .map(|resource| match &resource.outcome {
-                        ProjectResourceOutcome::Loaded { source }
-                            if resource.kind != ProjectResourceKind::Config =>
-                        {
-                            source.len()
-                        }
-                        _ => 0,
-                    })
-                    .sum::<usize>(),
-            );
-        let total = self
-            .output_bytes
-            .saturating_add(u64::try_from(returned_bytes).unwrap_or(u64::MAX));
+            .saturating_add(replacement_source.as_ref().map_or(0, |source| source.len()));
+        let returned_bytes = primary_bytes
+            .saturating_add(expanded_document_bytes(&outcome))
+            .saturating_add(returned_resource_bytes(&resources));
+        let total = add_output_bytes(self.output_bytes, returned_bytes);
         if total > u64::from(self.limits.max_output_bytes) {
             let limit = ProjectLimit::OutputBytes {
                 limit: self.limits.max_output_bytes,
             };
-            for resource in &mut resources {
-                if matches!(resource.outcome, ProjectResourceOutcome::Loaded { .. }) {
-                    resource.outcome = ProjectResourceOutcome::LoadedOmitted { limit };
-                }
+            omit_loaded_resources(&mut resources, limit);
+            let primary_total = add_output_bytes(self.output_bytes, primary_bytes);
+            if primary_total <= u64::from(self.limits.max_output_bytes)
+                && let Ok(analysis) = &mut outcome
+            {
+                analysis.expanded = Err(ProjectExpansionError::Incomplete(limit));
+                self.output_bytes = primary_total;
+            } else {
+                outcome = Err(ProjectTargetError::Incomplete(limit));
             }
-            outcome = Err(ProjectTargetError::Incomplete(limit));
         } else {
             self.output_bytes = total;
         }
@@ -1068,37 +1103,42 @@ impl<'request> Processor<'request> {
                 .then_with(|| resource_kind_order(left.kind).cmp(&resource_kind_order(right.kind)))
                 .then_with(|| left.requested_by.cmp(&right.requested_by))
         });
-        let returned_bytes = outcome
-            .as_ref()
-            .map_or(0, |analysis| analysis.preprocessed.document.source.len())
-            .saturating_add(replacement_source.as_ref().map_or(0, |source| source.len()))
-            .saturating_add(
+        let memory_source = self.memory_sources.get(&path);
+        let original_source = memory_source
+            .map(|source| Arc::clone(&source.source))
+            .or_else(|| {
                 resources
                     .iter()
-                    .map(|resource| match &resource.outcome {
-                        ProjectResourceOutcome::Loaded { source }
-                            if resource.kind != ProjectResourceKind::Config =>
-                        {
-                            source.len()
-                        }
-                        ProjectResourceOutcome::LoadedOmitted { .. } => 0,
-                        _ => 0,
+                    .find_map(|resource| match (&resource.kind, &resource.outcome) {
+                        (
+                            ProjectResourceKind::Primary,
+                            ProjectResourceOutcome::Loaded { source },
+                        ) => Some(Arc::clone(source)),
+                        _ => None,
                     })
-                    .sum::<usize>(),
-            );
-        let total = self
-            .output_bytes
-            .saturating_add(u64::try_from(returned_bytes).unwrap_or(u64::MAX));
+            })
+            .unwrap_or_else(|| Arc::from(""));
+        let primary_bytes = original_source
+            .len()
+            .saturating_add(replacement_source.as_ref().map_or(0, |source| source.len()));
+        let returned_bytes = expanded_document_bytes(&outcome)
+            .saturating_add(replacement_source.as_ref().map_or(0, |source| source.len()))
+            .saturating_add(returned_resource_bytes(&resources));
+        let total = add_output_bytes(self.output_bytes, returned_bytes);
         if total > u64::from(self.limits.max_output_bytes) {
             let limit = ProjectLimit::OutputBytes {
                 limit: self.limits.max_output_bytes,
             };
-            for resource in &mut resources {
-                if matches!(resource.outcome, ProjectResourceOutcome::Loaded { .. }) {
-                    resource.outcome = ProjectResourceOutcome::LoadedOmitted { limit };
-                }
+            omit_loaded_resources(&mut resources, limit);
+            let primary_total = add_output_bytes(self.output_bytes, primary_bytes);
+            if primary_total <= u64::from(self.limits.max_output_bytes)
+                && let Ok(analysis) = &mut outcome
+            {
+                analysis.expanded = Err(ProjectExpansionError::Incomplete(limit));
+                self.output_bytes = primary_total;
+            } else {
+                outcome = Err(ProjectTargetError::Incomplete(limit));
             }
-            outcome = Err(ProjectTargetError::Incomplete(limit));
         } else {
             self.output_bytes = total;
         }
@@ -1119,25 +1159,11 @@ impl<'request> Processor<'request> {
                 .insert(config_key, Arc::clone(&published));
             published
         };
-        let memory_source = self.memory_sources.get(&path);
-        let original_source = memory_source
-            .map(|source| Arc::clone(&source.source))
-            .or_else(|| {
-                resources
-                    .iter()
-                    .find_map(|resource| match (&resource.kind, &resource.outcome) {
-                        (
-                            ProjectResourceKind::Primary,
-                            ProjectResourceOutcome::Loaded { source },
-                        ) => Some(Arc::clone(source)),
-                        _ => None,
-                    })
-            })
-            .unwrap_or_else(|| Arc::from(""));
         let exposed_path =
             memory_source.map_or_else(|| Some(path), |source| source.exposed_path.clone());
         let write = outcome
-            .is_ok()
+            .as_ref()
+            .is_ok_and(|analysis| analysis.expanded.is_ok())
             .then_some(())
             .and(exposed_path.as_ref())
             .and_then(|path| {
@@ -1478,11 +1504,10 @@ impl<'request> Processor<'request> {
     fn analyze_target(
         &mut self,
         context: TargetAnalysisContext<'_>,
-    ) -> Result<ProjectAnalysis, ProjectTargetError> {
+    ) -> Result<ProjectExpandedAnalysis, ExpandedAnalysisFailure> {
         let TargetAnalysisContext {
             source_id,
             source,
-            source_analysis,
             config,
             allowed_roots,
             scope,
@@ -1497,12 +1522,10 @@ impl<'request> Processor<'request> {
         preprocess.source_id = Some(SourceId::new(source_id.as_str()));
         preprocess.base_uri = Some("__adocweave_base__".to_owned());
         let options = EffectiveProcessingOptions::new(config.analysis.clone(), preprocess)
-            .map_err(|error| {
-                ProjectTargetError::Analysis(PreprocessedAnalysisError::Options(error))
-            })?;
+            .map_err(ProjectExpansionError::Options)?;
         let mut lookup = FixedLookup::default();
         self.next_iteration()
-            .map_err(ProjectTargetError::Incomplete)?;
+            .map_err(ProjectExpansionError::Incomplete)?;
         let mut step = options.preprocess_resumable(source, &lookup, self.cancellation);
         loop {
             match step {
@@ -1510,30 +1533,10 @@ impl<'request> Processor<'request> {
                     let preprocessed = options
                         .analyze_preprocessed(prepared, PreprocessInputs::default())
                         .map_err(map_prepared_error)?;
-                    let source_core_id = SourceId::new(source_id.as_str());
-                    let source_analysis = source_analysis
-                        .map_or_else(
-                            || {
-                                Engine::new(config.analysis.clone()).analyze_with(
-                                    source,
-                                    AnalysisInputs {
-                                        source_id: Some(&source_core_id),
-                                        cancellation: Some(self.cancellation),
-                                    },
-                                )
-                            },
-                            Ok,
-                        )
-                        .map_err(|error| {
-                            ProjectTargetError::Analysis(PreprocessedAnalysisError::Parse(error))
-                        })?;
                     let source_mapping = preprocessed
                         .project_origins_cancellable(ProjectionLimits::default(), self.cancellation)
-                        .map_err(|error| {
-                            project_target_read(ResourceError::Unverifiable(error.to_string()))
-                        })?;
-                    return Ok(ProjectAnalysis {
-                        source: source_analysis,
+                        .map_err(map_projection_failure)?;
+                    return Ok(ProjectExpandedAnalysis {
                         preprocessed,
                         source_mapping,
                         local_target_diagnostics: Vec::new(),
@@ -1541,25 +1544,25 @@ impl<'request> Processor<'request> {
                 }
                 EffectivePreprocessStep::NeedResource(suspended) => {
                     self.next_iteration()
-                        .map_err(ProjectTargetError::Incomplete)?;
+                        .map_err(ProjectExpansionError::Incomplete)?;
                     let request = suspended.request();
                     let target = request.target().to_owned();
                     let requested_by = request
                         .source_id()
                         .map(|id| self.source_id_for_value(id.as_str()))
                         .transpose()
-                        .map_err(project_target_read)?;
+                        .map_err(project_expansion_read)?;
                     let path = requested_by
                         .as_ref()
                         .and_then(|owner| include_bases.get(owner.as_str()))
                         .map(|base| absolute_lexical(base, Path::new(request.authored_target())))
                         .transpose()
-                        .map_err(project_target_read)?
+                        .map_err(project_expansion_read)?
                         .map_or_else(|| resolve_lookup_path(&target, lookup_bases), Ok)
-                        .map_err(project_target_read)?;
+                        .map_err(project_expansion_read)?;
                     let include_id = self
                         .source_id_for_path(&path)
-                        .map_err(|error| project_target_read(project_error_resource(error)))?;
+                        .map_err(|error| project_expansion_read(project_error_resource(error)))?;
                     if self.resource_selection.local_targets && config.local_targets.enabled {
                         let authority = filesystem.policy_for_path(&path).cloned();
                         let _ = self
@@ -1627,7 +1630,7 @@ impl<'request> Processor<'request> {
                             step = suspended.resume(response, &lookup, self.cancellation);
                             continue;
                         }
-                        return Err(project_target_read(error));
+                        return Err(project_expansion_read(error).into());
                     }
                     let fixed =
                         self.read_fixed_from_scoped(scope, include_id.clone(), path, filesystem);
@@ -1700,24 +1703,22 @@ impl<'request> Processor<'request> {
                     step = suspended.resume(response, &lookup, self.cancellation);
                 }
                 EffectivePreprocessStep::Failed(error) => {
-                    return Err(ProjectTargetError::Analysis(
-                        PreprocessedAnalysisError::Preprocess(error),
-                    ));
+                    return Err(ProjectExpansionError::Preprocess(error).into());
                 }
                 EffectivePreprocessStep::HostError(error) => {
-                    return Err(project_target_read(ResourceError::Unverifiable(
+                    return Err(project_expansion_read(ResourceError::Unverifiable(
                         error.to_string(),
-                    )));
+                    ))
+                    .into());
                 }
                 EffectivePreprocessStep::Cancelled => {
-                    return Err(ProjectTargetError::Analysis(
-                        PreprocessedAnalysisError::Cancelled,
-                    ));
+                    return Err(ExpandedAnalysisFailure::Cancelled);
                 }
                 _ => {
-                    return Err(project_target_read(ResourceError::Unverifiable(
+                    return Err(project_expansion_read(ResourceError::Unverifiable(
                         "unknown preprocessing state".to_owned(),
-                    )));
+                    ))
+                    .into());
                 }
             }
         }
@@ -1728,14 +1729,7 @@ impl<'request> Processor<'request> {
         source_id: &LogicalSourceId,
         source: Arc<str>,
         config: &ResolvedProjectConfig,
-    ) -> Result<PreparedSource, ProjectTargetError> {
-        if !self.apply_safe_fixes {
-            return Ok(PreparedSource {
-                source,
-                replacement: None,
-                analysis: None,
-            });
-        }
+    ) -> Result<PreparedSource, PreparedSourceFailure> {
         let core_id = SourceId::new(source_id.as_str());
         let analyze = |source: &str| {
             Engine::new(config.analysis.clone())
@@ -1747,10 +1741,20 @@ impl<'request> Processor<'request> {
                     },
                 )
                 .map_err(|error| {
-                    ProjectTargetError::Analysis(PreprocessedAnalysisError::Parse(error))
+                    ProjectParseError::from_parse(error)
+                        .map_or(PreparedSourceFailure::Cancelled, |error| {
+                            PreparedSourceFailure::Error(ProjectTargetError::Parse(error))
+                        })
                 })
         };
         let analysis = analyze(&source)?;
+        if !self.apply_safe_fixes {
+            return Ok(PreparedSource {
+                source,
+                replacement: None,
+                analysis,
+            });
+        }
         let edits = analysis
             .diagnostics()
             .iter()
@@ -1764,7 +1768,7 @@ impl<'request> Processor<'request> {
             return Ok(PreparedSource {
                 source,
                 replacement: None,
-                analysis: Some(analysis),
+                analysis,
             });
         }
         let fix = adocweave::output::diagnostics::Fix::new(
@@ -1785,7 +1789,7 @@ impl<'request> Processor<'request> {
         Ok(PreparedSource {
             source: Arc::clone(&fixed),
             replacement: Some(fixed),
-            analysis: Some(analysis),
+            analysis,
         })
     }
 
@@ -1834,7 +1838,7 @@ impl<'request> Processor<'request> {
 
     fn collect_local_targets(
         &mut self,
-        analysis: &mut ProjectAnalysis,
+        analysis: &mut ProjectExpandedAnalysis,
         config: &ResolvedProjectConfig,
         scope: &Path,
         bases: &BTreeMap<String, PathBuf>,
@@ -2954,6 +2958,40 @@ fn established_read_limit(
     }
 }
 
+fn expanded_document_bytes(outcome: &Result<ProjectAnalysis, ProjectTargetError>) -> usize {
+    outcome
+        .as_ref()
+        .ok()
+        .and_then(|analysis| analysis.expanded.as_ref().ok())
+        .map_or(0, |expanded| expanded.preprocessed.document.source.len())
+}
+
+fn returned_resource_bytes(resources: &[ProjectResourceResult]) -> usize {
+    resources
+        .iter()
+        .map(|resource| match &resource.outcome {
+            ProjectResourceOutcome::Loaded { source }
+                if resource.kind != ProjectResourceKind::Config =>
+            {
+                source.len()
+            }
+            _ => 0,
+        })
+        .sum()
+}
+
+fn add_output_bytes(current: u64, added: usize) -> u64 {
+    current.saturating_add(u64::try_from(added).unwrap_or(u64::MAX))
+}
+
+fn omit_loaded_resources(resources: &mut [ProjectResourceResult], limit: ProjectLimit) {
+    for resource in resources {
+        if matches!(resource.outcome, ProjectResourceOutcome::Loaded { .. }) {
+            resource.outcome = ProjectResourceOutcome::LoadedOmitted { limit };
+        }
+    }
+}
+
 fn target_result(parts: TargetResultParts) -> ProjectTargetResult {
     let TargetResultParts {
         source_id,
@@ -2973,7 +3011,7 @@ fn target_result(parts: TargetResultParts) -> ProjectTargetResult {
         write,
         config,
         resources,
-        outcome,
+        analysis: outcome,
     }
 }
 
@@ -3294,17 +3332,30 @@ fn memory_resource(
     }
 }
 
-fn map_prepared_error(error: PreparedAnalysisError) -> ProjectTargetError {
+fn map_prepared_error(error: PreparedAnalysisError) -> ExpandedAnalysisFailure {
     match error {
-        PreparedAnalysisError::ContractMismatch => project_target_read(
-            ResourceError::Unverifiable("processing contract mismatch".to_owned()),
-        ),
+        PreparedAnalysisError::ContractMismatch => {
+            ExpandedAnalysisFailure::Error(project_expansion_read(ResourceError::Unverifiable(
+                "processing contract mismatch".to_owned(),
+            )))
+        }
+        PreparedAnalysisError::Parse(adocweave::ParseError::Cancelled)
+        | PreparedAnalysisError::Cancelled => ExpandedAnalysisFailure::Cancelled,
         PreparedAnalysisError::Parse(error) => {
-            ProjectTargetError::Analysis(PreprocessedAnalysisError::Parse(error))
+            ExpandedAnalysisFailure::Error(ProjectExpansionError::Parse(
+                ProjectParseError::from_parse(error)
+                    .expect("cancelled parsing is handled separately"),
+            ))
         }
-        PreparedAnalysisError::Cancelled => {
-            ProjectTargetError::Analysis(PreprocessedAnalysisError::Cancelled)
+    }
+}
+
+fn map_projection_failure(error: ProjectionFailure) -> ExpandedAnalysisFailure {
+    match error {
+        ProjectionFailure::LimitExceeded(error) => {
+            ExpandedAnalysisFailure::Error(ProjectExpansionError::Projection(error))
         }
+        ProjectionFailure::Cancelled => ExpandedAnalysisFailure::Cancelled,
     }
 }
 
@@ -3409,20 +3460,39 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
 
-    use adocweave::NeverCancel;
+    use adocweave::preprocess::{PreparedAnalysisError, ProjectionFailure};
+    use adocweave::{NeverCancel, ParseError};
     use adocweave_host::{
         DerivedFilesystemRoots, FilesystemReadLimits, LocalFilesystemPolicy,
         LocalFilesystemSession, LogicalSourceId, ResourceError,
     };
 
     use super::{
-        FIXED_OBSERVER, FixedInspection, FixedResource, cached_for_session,
-        cached_inspection_for_session,
+        ExpandedAnalysisFailure, FIXED_OBSERVER, FixedInspection, FixedResource,
+        cached_for_session, cached_inspection_for_session, map_prepared_error,
+        map_projection_failure,
     };
     use crate::{
-        ConfigSelection, ProjectAuthority, ProjectLimits, ProjectOverrides, ProjectRequest,
-        ProjectResourceFailure, ProjectResourceOutcome, ProjectTarget, process,
+        ConfigSelection, ProjectAuthority, ProjectLimits, ProjectOverrides, ProjectParseError,
+        ProjectRequest, ProjectResourceFailure, ProjectResourceOutcome, ProjectTarget, process,
     };
+
+    #[test]
+    fn cancellation_mappings_never_create_partial_target_errors() {
+        assert_eq!(ProjectParseError::from_parse(ParseError::Cancelled), None);
+        assert!(matches!(
+            map_prepared_error(PreparedAnalysisError::Cancelled),
+            ExpandedAnalysisFailure::Cancelled
+        ));
+        assert!(matches!(
+            map_prepared_error(PreparedAnalysisError::Parse(ParseError::Cancelled)),
+            ExpandedAnalysisFailure::Cancelled
+        ));
+        assert!(matches!(
+            map_projection_failure(ProjectionFailure::Cancelled),
+            ExpandedAnalysisFailure::Cancelled
+        ));
+    }
 
     fn filesystem_session(roots: impl IntoIterator<Item = PathBuf>) -> LocalFilesystemSession {
         LocalFilesystemPolicy::new(roots, FilesystemReadLimits::default())
@@ -3802,9 +3872,12 @@ mod tests {
         FIXED_OBSERVER.with(|observer| *observer.borrow_mut() = None);
 
         let source = &result.targets[0]
-            .outcome
+            .analysis
             .as_ref()
             .expect("analysis succeeds")
+            .expanded
+            .as_ref()
+            .expect("include expansion succeeds")
             .preprocessed
             .document
             .source;

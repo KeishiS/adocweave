@@ -21,6 +21,7 @@ pub(crate) enum Error {
         source_name: String,
         source: io::Error,
     },
+    ProjectLimit(adocweave_project::ProjectLimit),
     Stylesheet(String),
     Usage(String),
 }
@@ -76,11 +77,13 @@ pub(crate) fn build_project(
             })?;
         let source = match &resource.outcome {
             adocweave_project::ProjectResourceOutcome::Loaded { source } => source,
-            adocweave_project::ProjectResourceOutcome::LoadedOmitted { .. } => {
-                return Err(Error::Stylesheet(format!(
-                    "stylesheet {} exceeds the returned output limit",
-                    path.display()
-                )));
+            adocweave_project::ProjectResourceOutcome::LoadedOmitted { limit } => {
+                return Err(Error::ProjectLimit(*limit));
+            }
+            adocweave_project::ProjectResourceOutcome::Failed(
+                adocweave_project::ProjectResourceFailure::Limit(limit),
+            ) => {
+                return Err(Error::ProjectLimit(*limit));
             }
             outcome => {
                 return Err(Error::Read {
@@ -185,6 +188,7 @@ impl std::fmt::Display for Error {
                 source_name,
                 source,
             } => write!(formatter, "could not read {source_name}: {source}"),
+            Self::ProjectLimit(limit) => limit.fmt(formatter),
             Self::Stylesheet(message) | Self::Usage(message) => formatter.write_str(message),
         }
     }

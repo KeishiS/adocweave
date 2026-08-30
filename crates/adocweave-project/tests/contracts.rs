@@ -132,10 +132,10 @@ fn safe_fixes_return_the_original_and_reanalyze_the_replacement() {
     assert_eq!(target.replacement_source.as_deref(), Some("text\n"));
     assert!(
         target
-            .outcome
+            .analysis
             .as_ref()
             .expect("fixed analysis")
-            .source
+            .primary
             .diagnostics()
             .iter()
             .all(|diagnostic| diagnostic.code.as_str() != "trailing-whitespace")
@@ -281,10 +281,10 @@ fn request_lint_overrides_apply_to_configuration_and_analysis() {
     );
     assert!(
         target
-            .outcome
+            .analysis
             .as_ref()
             .expect("analysis")
-            .source
+            .primary
             .diagnostics()
             .iter()
             .any(|diagnostic| diagnostic.code.as_str() == "macro-boundary")
@@ -378,7 +378,7 @@ fn pathless_input_keeps_include_and_local_target_bases_separate() {
 
     let result = process(request, &NeverCancel).expect("pathless input is processed");
     let target = &result.targets[0];
-    assert!(target.outcome.is_ok());
+    assert!(target.analysis.is_ok());
     let include = target
         .resources
         .iter()
@@ -550,9 +550,12 @@ fn pathless_input_does_not_replace_a_real_file_with_a_synthetic_name() {
     assert_eq!(target.path, None);
     assert!(
         target
-            .outcome
+            .analysis
             .as_ref()
             .expect("analysis")
+            .expanded
+            .as_ref()
+            .expect("include expansion succeeds")
             .preprocessed
             .document
             .source
@@ -694,9 +697,12 @@ fn file_overlay_is_reused_inside_a_narrow_include_authority() {
     let target = &result.targets[0];
     assert!(
         target
-            .outcome
+            .analysis
             .as_ref()
             .expect("analysis")
+            .expanded
+            .as_ref()
+            .expect("include expansion succeeds")
             .preprocessed
             .document
             .source
@@ -864,7 +870,7 @@ fn pathless_input_obeys_scope_and_output_limits() {
     };
     let result = process(request, &NeverCancel).expect("scope failure is target-local");
     assert!(matches!(
-        result.targets[0].outcome,
+        result.targets[0].analysis,
         Err(adocweave_project::ProjectTargetError::Incomplete(_))
     ));
     assert_eq!(result.targets[0].source, None);
@@ -998,4 +1004,45 @@ fn directory_scan_observes_cancellation_during_the_walk() {
         },
     );
     assert!(matches!(result, Err(ProjectError::Cancelled)));
+}
+
+#[test]
+fn document_cancellation_is_always_request_wide() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    fs::write(directory.path().join("part.adoc"), "included\n").expect("include fixture");
+    fs::write(
+        directory.path().join("guide.adoc"),
+        format!("{}include::part.adoc[]\n", "paragraph\n\n".repeat(128)),
+    )
+    .expect("primary fixture");
+    let mut cancelled = 0_usize;
+    let mut completed = 0_usize;
+    for limit in (1..64).chain([usize::MAX]) {
+        let mut request = request_with(vec![ProjectTarget::Path(
+            directory.path().join("guide.adoc"),
+        )]);
+        request.authority =
+            ProjectAuthority::open(directory.path().to_owned(), [directory.path().to_owned()])
+                .expect("authority");
+        request.config = ConfigSelection::Disabled;
+        request.overrides.include = Some(true);
+        match process(
+            request,
+            &CancelAfter {
+                calls: AtomicUsize::new(0),
+                limit,
+            },
+        ) {
+            Err(ProjectError::Cancelled) => cancelled += 1,
+            Ok(_) => {
+                completed += 1;
+            }
+            Err(error) => panic!("unexpected project error: {error}"),
+        }
+    }
+    assert!(cancelled > 0, "at least one checkpoint cancels the request");
+    assert!(
+        completed > 0,
+        "a later checkpoint allows the request to finish"
+    );
 }

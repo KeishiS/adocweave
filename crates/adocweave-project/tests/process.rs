@@ -3,12 +3,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use adocweave::NeverCancel;
+use adocweave::preprocess::PreprocessErrorKind;
 use adocweave_host::FilesystemReadLimits;
 use adocweave_project::{
-    ConfigSelection, ProjectAuthority, ProjectError, ProjectLimit, ProjectLimits, ProjectOverrides,
-    ProjectRequest, ProjectResourceFailure, ProjectResourceKind, ProjectResourceOutcome,
-    ProjectResourceSelection, ProjectTarget, ProjectTargetError, TargetSelectionError,
-    process as process_project,
+    ConfigSelection, ProjectAuthority, ProjectError, ProjectExpansionError, ProjectLimit,
+    ProjectLimits, ProjectOverrides, ProjectRequest, ProjectResourceErrorCode,
+    ProjectResourceFailure, ProjectResourceKind, ProjectResourceOutcome, ProjectResourceSelection,
+    ProjectTarget, ProjectTargetError, TargetSelectionError, process as process_project,
 };
 
 fn process(request: ProjectRequest) -> adocweave_project::ProjectOutcome {
@@ -62,6 +63,16 @@ fn target_path_ends(target: &adocweave_project::ProjectTargetResult, suffix: &st
         .is_some_and(|path| path.ends_with(suffix))
 }
 
+fn expansion(
+    target: &adocweave_project::ProjectTargetResult,
+) -> &Result<adocweave_project::ProjectExpandedAnalysis, ProjectExpansionError> {
+    &target
+        .analysis
+        .as_ref()
+        .expect("the primary source remains analyzed")
+        .expanded
+}
+
 #[test]
 fn processes_discovered_config_include_stylesheet_and_local_target() {
     let directory = tempfile::tempdir().expect("temporary directory");
@@ -102,9 +113,12 @@ stylesheet-files = ["styles/manual.css"]
         .iter()
         .find(|target| target_path_ends(target, "guide.adoc"))
         .expect("guide is selected");
-    let analysis = guide.outcome.as_ref().expect("guide is analyzed");
+    let analysis = guide.analysis.as_ref().expect("guide is analyzed");
     assert!(
         analysis
+            .expanded
+            .as_ref()
+            .expect("include expansion succeeds")
             .preprocessed
             .document
             .source
@@ -140,7 +154,7 @@ stylesheet-files = ["styles/manual.css"]
         .collect::<Vec<_>>();
     assert!(include_edges.contains(&("project:guide.adoc", "project:part.adoc")));
     assert!(include_edges.contains(&("project:part.adoc", "project:nested.adoc")));
-    assert!(result.targets.iter().all(|target| target.outcome.is_ok()));
+    assert!(result.targets.iter().all(|target| target.analysis.is_ok()));
 }
 
 #[test]
@@ -239,17 +253,14 @@ fn unselected_local_targets_do_not_expand_the_include_roots() {
     );
     unselected.resource_selection.local_targets = false;
     let result = process(unselected).expect("project processing remains target-local");
-    assert!(matches!(
-        result.targets[0].outcome,
-        Err(ProjectTargetError::Read(_))
-    ));
+    assert!(expansion(&result.targets[0]).is_err());
 
     let selected = process(request(
         root,
         vec![ProjectTarget::Path(PathBuf::from("docs/guide.adoc"))],
     ))
     .expect("local-target checking may use its configured root");
-    assert!(selected.targets[0].outcome.is_ok());
+    assert!(selected.targets[0].analysis.is_ok());
 }
 
 #[test]
@@ -298,7 +309,7 @@ fn missing_primary_is_confined_to_one_target() {
     ))
     .expect("request remains coherent");
     assert!(matches!(
-        result.targets[0].outcome,
+        result.targets[0].analysis,
         Err(ProjectTargetError::Read(ref error)) if error.code == adocweave_project::ProjectResourceErrorCode::Missing
     ));
     assert!(result.targets[0].resources.iter().any(|resource| {
@@ -329,11 +340,105 @@ fn processing_iteration_limit_returns_incomplete_target() {
 
     let result = process(request).expect("request remains coherent");
     assert!(matches!(
-        result.targets[0].outcome,
-        Err(ProjectTargetError::Incomplete(
+        expansion(&result.targets[0]),
+        Err(ProjectExpansionError::Incomplete(
             ProjectLimit::ProcessingIterations { limit: 1 }
         ))
     ));
+    assert_eq!(
+        result.targets[0]
+            .analysis
+            .as_ref()
+            .expect("primary analysis remains available")
+            .primary
+            .source(),
+        "include::part.adoc[]\n"
+    );
+}
+
+#[test]
+fn missing_include_keeps_the_primary_analysis() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    write(
+        directory.path().join("guide.adoc"),
+        "= Guide\n\ninclude::missing.adoc[]\n",
+    );
+    let mut request = request(
+        directory.path(),
+        vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
+    );
+    request.config = ConfigSelection::Disabled;
+    request.overrides.include = Some(true);
+
+    let result = process(request).expect("missing include remains target-local");
+    let target = &result.targets[0];
+    let analysis = target
+        .analysis
+        .as_ref()
+        .expect("the primary source remains analyzed");
+    assert_eq!(
+        analysis.primary.source(),
+        "= Guide\n\ninclude::missing.adoc[]\n"
+    );
+    let error = match &analysis.expanded {
+        Err(ProjectExpansionError::Preprocess(error)) => error,
+        other => panic!("unexpected expansion result: {other:?}"),
+    };
+    assert_eq!(error.kind, PreprocessErrorKind::MissingResource);
+    assert_eq!(error.source_id.as_ref(), Some(&target.source_id));
+    assert_eq!(error.range.start().to_usize(), 9);
+    assert_eq!(error.range.end().to_usize(), 33);
+    assert_eq!(error.requested_target.as_deref(), Some("missing.adoc"));
+    assert_eq!(
+        target.source.as_deref(),
+        Some("= Guide\n\ninclude::missing.adoc[]\n")
+    );
+    assert!(target.write.is_none());
+    assert!(target.resources.iter().any(|resource| {
+        resource.kind == ProjectResourceKind::Include
+            && resource.outcome == ProjectResourceOutcome::Missing
+    }));
+}
+
+#[test]
+fn include_outside_configured_roots_keeps_the_primary_analysis() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    fs::create_dir(directory.path().join("includes")).expect("include directory");
+    write(
+        directory.path().join(".adocweave.toml"),
+        "schema-version = 2\n[resources]\ninclude = true\nroots = [\"includes\"]\n",
+    );
+    write(
+        directory.path().join("guide.adoc"),
+        "include::outside.adoc[]\n",
+    );
+    write(directory.path().join("outside.adoc"), "outside\n");
+
+    let result = process(request(
+        directory.path(),
+        vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
+    ))
+    .expect("rejected include remains target-local");
+    let target = &result.targets[0];
+    let analysis = target
+        .analysis
+        .as_ref()
+        .expect("the primary source remains analyzed");
+    assert_eq!(analysis.primary.source(), "include::outside.adoc[]\n");
+    assert!(matches!(
+        analysis.expanded,
+        Err(ProjectExpansionError::Resource(ref error))
+            if error.code == ProjectResourceErrorCode::OutsideAuthority
+    ));
+    assert!(target.write.is_none());
+    assert!(target.resources.iter().any(|resource| {
+        resource.kind == ProjectResourceKind::Include
+            && matches!(
+                resource.outcome,
+                ProjectResourceOutcome::Failed(ProjectResourceFailure::Rejected(ref error))
+                    if error.code == ProjectResourceErrorCode::OutsideAuthority
+            )
+    }));
 }
 
 #[cfg(unix)]
@@ -362,7 +467,7 @@ fn symlinked_include_is_rejected() {
 
     let result = process(request).expect("request remains coherent");
     let target = &result.targets[0];
-    assert!(target.outcome.is_err());
+    assert!(expansion(target).is_err());
     let include = target
         .resources
         .iter()
@@ -651,9 +756,12 @@ fn external_primary_resolves_relative_include_from_its_own_authority() {
     let result = process(request).expect("external primary is processed");
     assert!(
         result.targets[0]
-            .outcome
+            .analysis
             .as_ref()
             .expect("analysis succeeds")
+            .expanded
+            .as_ref()
+            .expect("include expansion succeeds")
             .preprocessed
             .document
             .source
@@ -687,9 +795,12 @@ fn non_utf8_parent_resolves_relative_include_without_lossy_paths() {
     let result = process(request).expect("processing succeeds");
     assert!(
         result.targets[0]
-            .outcome
+            .analysis
             .as_ref()
             .expect("analysis succeeds")
+            .expanded
+            .as_ref()
+            .expect("include expansion succeeds")
             .preprocessed
             .document
             .source
@@ -746,7 +857,7 @@ fn local_target_observation_can_later_be_read_as_a_primary() {
     ))
     .expect("inspection and later read coexist");
     assert_eq!(result.targets.len(), 2);
-    assert!(result.targets.iter().all(|target| target.outcome.is_ok()));
+    assert!(result.targets.iter().all(|target| target.analysis.is_ok()));
 }
 
 #[test]
@@ -769,7 +880,7 @@ fn directory_selection_can_inspect_an_include_before_reading_it_as_a_target() {
     ))
     .expect("directory processing succeeds");
     assert_eq!(result.targets.len(), 2);
-    assert!(result.targets.iter().all(|target| target.outcome.is_ok()));
+    assert!(result.targets.iter().all(|target| target.analysis.is_ok()));
     let part = result
         .targets
         .iter()
@@ -797,9 +908,9 @@ fn one_config_scope_combines_resource_counts_across_targets() {
         vec![ProjectTarget::Directory(PathBuf::from("."))],
     ))
     .expect("request-wide authority remains available");
-    assert!(result.targets[0].outcome.is_ok());
+    assert!(result.targets[0].analysis.is_ok());
     assert!(matches!(
-        result.targets[1].outcome,
+        result.targets[1].analysis,
         Err(ProjectTargetError::Incomplete(ProjectLimit::Files {
             limit: 1
         }))
@@ -831,9 +942,9 @@ fn one_config_scope_combines_body_bytes_across_targets() {
         vec![ProjectTarget::Directory(PathBuf::from("."))],
     ))
     .expect("request-wide acquisition can exceed a configuration scope");
-    assert!(result.targets[0].outcome.is_ok());
+    assert!(result.targets[0].analysis.is_ok());
     assert!(matches!(
-        result.targets[1].outcome,
+        result.targets[1].analysis,
         Err(ProjectTargetError::Incomplete(ProjectLimit::ReadBytes {
             limit: 6
         }))
@@ -854,7 +965,7 @@ fn per_resource_scope_limit_bounds_io_and_reports_its_own_ceiling() {
 
     let result = process(request).expect("configured limit remains target-local");
     assert!(matches!(
-        result.targets[0].outcome,
+        result.targets[0].analysis,
         Err(ProjectTargetError::Incomplete(
             ProjectLimit::ResourceBytes { limit: 4 }
         ))
@@ -889,12 +1000,26 @@ fn scope_limit_is_fixed_without_rereading_one_resource_for_later_targets() {
     request.config = ConfigSelection::Explicit(PathBuf::from(".adocweave.toml"));
 
     let result = process(request).expect("scope limit remains target-local");
-    assert!(result.targets.iter().all(|target| matches!(
-        target.outcome,
-        Err(ProjectTargetError::Incomplete(
-            ProjectLimit::ResourceBytes { limit: 4 }
-        ))
-    )));
+    assert!(
+        result
+            .targets
+            .iter()
+            .all(|target| expansion(target).is_ok())
+    );
+    assert!(
+        result
+            .targets
+            .iter()
+            .all(|target| target.resources.iter().any(|resource| {
+                resource.kind == ProjectResourceKind::Stylesheet
+                    && matches!(
+                        resource.outcome,
+                        ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(
+                            ProjectLimit::ResourceBytes { limit: 4 }
+                        ))
+                    )
+            }))
+    );
     assert_eq!(result.usage.read_bytes, config.len() as u64 + 9);
 }
 
@@ -918,12 +1043,26 @@ fn simultaneous_request_resource_limit_is_cached_without_fixing_the_scope() {
     request.limits.max_resource_bytes = 1000;
 
     let result = process(request).expect("resource limit remains target-local");
-    assert!(result.targets.iter().all(|target| matches!(
-        target.outcome,
-        Err(ProjectTargetError::Incomplete(
-            ProjectLimit::ResourceBytes { limit: 1000 }
-        ))
-    )));
+    assert!(
+        result
+            .targets
+            .iter()
+            .all(|target| expansion(target).is_ok())
+    );
+    assert!(
+        result
+            .targets
+            .iter()
+            .all(|target| target.resources.iter().any(|resource| {
+                resource.kind == ProjectResourceKind::Stylesheet
+                    && matches!(
+                        resource.outcome,
+                        ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(
+                            ProjectLimit::ResourceBytes { limit: 1000 }
+                        ))
+                    )
+            }))
+    );
     assert_eq!(result.usage.read_bytes, config.len() as u64 + 1005);
 }
 
@@ -954,13 +1093,17 @@ fn cached_success_is_checked_and_charged_under_a_narrower_scope() {
         ],
     ))
     .expect("narrow scope remains target-local");
-    assert!(result.targets[0].outcome.is_ok());
-    assert!(matches!(
-        result.targets[1].outcome,
-        Err(ProjectTargetError::Incomplete(
-            ProjectLimit::ResourceBytes { limit: 4 }
-        ))
-    ));
+    assert!(result.targets[0].analysis.is_ok());
+    assert!(expansion(&result.targets[1]).is_ok());
+    assert!(result.targets[1].resources.iter().any(|resource| {
+        resource.kind == ProjectResourceKind::Stylesheet
+            && matches!(
+                resource.outcome,
+                ProjectResourceOutcome::Failed(ProjectResourceFailure::Limit(
+                    ProjectLimit::ResourceBytes { limit: 4 }
+                ))
+            )
+    }));
     assert_eq!(
         result.usage.read_bytes,
         (wide.len() + narrow.len() + 12) as u64
@@ -997,7 +1140,7 @@ fn request_resource_limit_reports_its_resource_ceiling() {
 
     let result = process(request).expect("resource limit remains target-local");
     assert!(matches!(
-        result.targets[0].outcome,
+        result.targets[0].analysis,
         Err(ProjectTargetError::Incomplete(
             ProjectLimit::ResourceBytes { limit: 4 }
         ))
@@ -1144,7 +1287,7 @@ fn nested_config_has_an_independent_resource_scope() {
         ],
     ))
     .expect("nested scopes are independent");
-    assert!(result.targets.iter().all(|target| target.outcome.is_ok()));
+    assert!(result.targets.iter().all(|target| target.analysis.is_ok()));
 }
 
 #[test]
@@ -1176,12 +1319,7 @@ fn missing_resources_reserve_scope_capacity_before_acquisition() {
             limit: 2
         }))
     ));
-    assert!(matches!(
-        result.targets[0].outcome,
-        Err(ProjectTargetError::Incomplete(ProjectLimit::Files {
-            limit: 2
-        }))
-    ));
+    assert!(expansion(&result.targets[0]).is_ok());
 }
 
 #[test]
@@ -1205,8 +1343,8 @@ fn include_and_local_target_limits_mark_the_target_incomplete() {
     ))
     .expect("configured limit remains target-local");
     assert!(matches!(
-        result.targets[0].outcome,
-        Err(ProjectTargetError::Incomplete(ProjectLimit::Files {
+        expansion(&result.targets[0]),
+        Err(ProjectExpansionError::Incomplete(ProjectLimit::Files {
             limit: 1
         }))
     ));
@@ -1234,12 +1372,15 @@ fn local_target_limit_remains_a_projected_diagnostic() {
         vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
     ))
     .expect("configured limit remains target-local");
-    assert!(result.targets[0].outcome.is_ok());
+    assert!(result.targets[0].analysis.is_ok());
     assert!(
         result.targets[0]
-            .outcome
+            .analysis
             .as_ref()
             .expect("local-target limit keeps the analysis usable")
+            .expanded
+            .as_ref()
+            .expect("include expansion succeeds")
             .local_target_diagnostics
             .iter()
             .any(|diagnostic| diagnostic.diagnostic.code.as_str() == "local-target-limit-exceeded")
@@ -1276,9 +1417,12 @@ fn include_observations_share_the_local_target_inspection_limit() {
     ))
     .expect("include and inspection limits remain target-local");
     let analysis = result.targets[0]
-        .outcome
+        .analysis
         .as_ref()
-        .expect("include remains within the document-processing limit");
+        .expect("include remains within the document-processing limit")
+        .expanded
+        .as_ref()
+        .expect("include expansion succeeds");
     assert!(analysis.local_target_diagnostics.iter().any(|diagnostic| {
         diagnostic.diagnostic.code.as_str() == "local-target-limit-exceeded"
             && diagnostic.target == "asset.dat"
@@ -1304,7 +1448,7 @@ fn failed_local_target_observation_is_reused_by_a_later_primary() {
     .expect("missing observation remains a target-local failure");
     assert_eq!(result.targets.len(), 2);
     assert!(matches!(
-        result.targets[1].outcome,
+        result.targets[1].analysis,
         Err(ProjectTargetError::Read(ref error)) if error.code == adocweave_project::ProjectResourceErrorCode::Missing
     ));
 }
@@ -1324,11 +1468,13 @@ fn returned_resource_text_is_bounded_by_the_output_limit() {
 
     let result = process(request).expect("request remains coherent");
     assert!(matches!(
-        result.targets[0].outcome,
-        Err(ProjectTargetError::Incomplete(ProjectLimit::OutputBytes {
+        expansion(&result.targets[0]),
+        Err(ProjectExpansionError::Incomplete(ProjectLimit::OutputBytes {
             limit
-        })) if limit == output_limit
+        })) if *limit == output_limit
     ));
+    assert_eq!(result.targets[0].source.as_deref(), Some("text\n"));
+    assert!(result.targets[0].write.is_none());
     assert!(
         result.targets[0]
             .resources
@@ -1341,6 +1487,64 @@ fn returned_resource_text_is_bounded_by_the_output_limit() {
             limit: ProjectLimit::OutputBytes { limit }
         } if limit == output_limit
     )));
+}
+
+#[test]
+fn include_output_limit_keeps_only_the_primary_analysis() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let primary = "include::part.adoc[]\n";
+    write(directory.path().join("guide.adoc"), primary);
+    write(directory.path().join("part.adoc"), &"x".repeat(100));
+    let mut request = request(
+        directory.path(),
+        vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
+    );
+    request.config = ConfigSelection::Disabled;
+    request.overrides.include = Some(true);
+    request.limits.max_output_bytes = u32::try_from(primary.len() + 32).expect("small fixture");
+
+    let result = process(request).expect("request remains coherent");
+    let target = &result.targets[0];
+    let analysis = target
+        .analysis
+        .as_ref()
+        .expect("the primary analysis fits the output limit");
+    assert_eq!(analysis.primary.source(), primary);
+    assert!(matches!(
+        analysis.expanded,
+        Err(ProjectExpansionError::Incomplete(ProjectLimit::OutputBytes { limit }))
+            if limit == u32::try_from(primary.len() + 32).expect("small fixture")
+    ));
+    assert!(target.write.is_none());
+    assert!(target.resources.iter().any(|resource| matches!(
+        resource.outcome,
+        ProjectResourceOutcome::LoadedOmitted {
+            limit: ProjectLimit::OutputBytes { .. }
+        }
+    )));
+}
+
+#[test]
+fn primary_output_limit_prevents_primary_analysis() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    write(directory.path().join("guide.adoc"), "text\n");
+    let mut request = request(
+        directory.path(),
+        vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
+    );
+    request.config = ConfigSelection::Disabled;
+    request.limits.max_output_bytes = 4;
+
+    let result = process(request).expect("request remains coherent");
+    let target = &result.targets[0];
+    assert!(matches!(
+        target.analysis,
+        Err(ProjectTargetError::Incomplete(ProjectLimit::OutputBytes {
+            limit: 4
+        }))
+    ));
+    assert!(target.source.is_none());
+    assert!(target.write.is_none());
 }
 
 #[test]
@@ -1386,7 +1590,7 @@ fn invalid_utf8_primary_is_reported_as_unreadable() {
     ))
     .expect("request remains coherent");
     assert!(matches!(
-        result.targets[0].outcome,
+        result.targets[0].analysis,
         Err(ProjectTargetError::Read(_))
     ));
     assert!(matches!(
@@ -1555,7 +1759,7 @@ fn external_config_authority_can_read_only_the_config_body() {
     );
     request.config = ConfigSelection::Explicit(config);
     let result = process(request).expect("external configuration body is readable");
-    assert!(result.targets[0].outcome.is_ok());
+    assert!(result.targets[0].analysis.is_ok());
 }
 
 #[cfg(unix)]
@@ -1617,7 +1821,7 @@ fn no_symlink_path_target_rejects_an_explicit_symbolic_link() {
     .expect("project result");
     let target = result.targets.first().expect("selected target");
 
-    assert!(matches!(target.outcome, Err(ProjectTargetError::Read(_))));
+    assert!(matches!(target.analysis, Err(ProjectTargetError::Read(_))));
     assert_eq!(target.resources.len(), 1);
     assert_eq!(target.resources[0].kind, ProjectResourceKind::Primary);
     let observation = target.resources[0]
@@ -1651,7 +1855,7 @@ fn unreadable_primary_retains_permission_failure() {
     fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).expect("restore read access");
     let result = result.expect("request remains coherent");
     assert!(matches!(
-        result.targets[0].outcome,
+        result.targets[0].analysis,
         Err(ProjectTargetError::Read(_))
     ));
 }
@@ -1677,7 +1881,7 @@ fn configured_include_root_cannot_cross_a_symlink() {
         vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))],
     ))
     .expect("request remains coherent");
-    assert!(result.targets[0].outcome.is_err());
+    assert!(expansion(&result.targets[0]).is_err());
 }
 
 #[cfg(unix)]
@@ -1714,7 +1918,7 @@ fn broad_cached_read_cannot_bypass_a_later_confined_include_root() {
         .iter()
         .find(|target| target_path_ends(target, "z-guide.adoc"))
         .expect("guide result");
-    assert!(guide.outcome.is_err());
+    assert!(expansion(guide).is_err());
     assert!(guide.resources.iter().any(|resource| {
         resource.kind == ProjectResourceKind::Include
             && matches!(resource.outcome, ProjectResourceOutcome::Failed(_))

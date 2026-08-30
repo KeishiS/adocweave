@@ -27,8 +27,11 @@ use adocweave::output::diagnostics::LintRuleId;
 use adocweave::output::formatter::FormatConfig;
 use adocweave::output::html::RenderPolicy;
 use adocweave::preprocess::PreprocessOptions;
-use adocweave::preprocess::{AnalysisProjection, PreprocessedAnalysis, PreprocessedAnalysisError};
-use adocweave::{Analysis, AnalysisOptions, SourceId};
+use adocweave::preprocess::{
+    AnalysisProjection, PreprocessError, PreprocessedAnalysis, ProcessingOptionsError,
+    ProjectionError,
+};
+use adocweave::{Analysis, AnalysisOptions, ParseError, SourceId};
 use adocweave_config::{ConfigError, ConfigErrorCode, ConfigSnapshot, ResolvedProjectConfig};
 use adocweave_host::{
     DerivedFilesystemRoots, FilesystemReadLimits, FilesystemReadOutcome, LocalFilesystemPolicy,
@@ -51,6 +54,10 @@ pub(crate) fn project_config_error(
 
 pub(crate) fn project_target_read(error: ResourceError) -> ProjectTargetError {
     ProjectTargetError::Read(ProjectResourceError::from_host(error))
+}
+
+pub(crate) fn project_expansion_read(error: ResourceError) -> ProjectExpansionError {
+    ProjectExpansionError::Resource(ProjectResourceError::from_host(error))
 }
 
 /// Fixed request ceiling applied before compiling or scanning glob selectors.
@@ -395,7 +402,7 @@ impl ProjectLimits {
 ///
 /// An error means the request could not establish a safe common basis, such as
 /// valid configuration or filesystem authority. Errors isolated to one target
-/// are stored in [`ProjectTargetResult::outcome`] instead.
+/// are stored in [`ProjectTargetResult::analysis`] instead.
 pub type ProjectOutcome = Result<ProjectResult, ProjectError>;
 
 /// Owned results and accounting for one completed request.
@@ -450,7 +457,11 @@ pub struct ProjectTargetResult {
     pub config: Arc<ProjectConfigSnapshot>,
     /// Files read or inspected on behalf of this target.
     pub resources: Vec<ProjectResourceResult>,
-    pub outcome: Result<ProjectAnalysis, ProjectTargetError>,
+    /// Primary-source analysis, or the failure which prevents publishing it.
+    ///
+    /// A successful value can still contain an unsuccessful include expansion
+    /// in [`ProjectAnalysis::expanded`].
+    pub analysis: Result<ProjectAnalysis, ProjectTargetError>,
 }
 
 /// Opaque authority for replacing one file observed by project processing.
@@ -495,11 +506,21 @@ impl ProjectWriteCapability {
     }
 }
 
-/// Analyses derived once from one fixed set of project inputs.
+/// Analysis of one primary source and the result of expanding its includes.
 #[derive(Debug)]
 pub struct ProjectAnalysis {
     /// Analysis of the unexpanded primary source.
-    pub source: Analysis,
+    pub primary: Analysis,
+    /// Analysis which requires include expansion and source-position mapping.
+    ///
+    /// When this is unsuccessful, [`Self::primary`] remains valid and can be
+    /// used independently.
+    pub expanded: Result<ProjectExpandedAnalysis, ProjectExpansionError>,
+}
+
+/// Analysis derived from one successful include expansion.
+#[derive(Debug)]
+pub struct ProjectExpandedAnalysis {
     /// Analysis of the include-expanded document and its source map.
     pub preprocessed: PreprocessedAnalysis,
     /// Editor-facing facts mapped back to positions in the original sources.
@@ -858,11 +879,56 @@ impl std::error::Error for ProjectInputError {}
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProjectTargetError {
     Read(ProjectResourceError),
-    Analysis(PreprocessedAnalysisError),
+    Parse(ProjectParseError),
     /// Safe edits selected from one source overlap or otherwise conflict.
     EditConflict(String),
     /// The result is incomplete and must not be presented as fully analyzed.
     Incomplete(ProjectLimit),
+}
+
+/// Failure after the primary source was read and analyzed successfully.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProjectExpansionError {
+    Resource(ProjectResourceError),
+    Options(ProcessingOptionsError),
+    Preprocess(PreprocessError),
+    Parse(ProjectParseError),
+    Projection(ProjectionError),
+    /// The expanded result is incomplete and must not be presented as complete.
+    Incomplete(ProjectLimit),
+}
+
+/// Non-cancellation failure while parsing one source.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProjectParseError {
+    LimitExceeded {
+        resource: &'static str,
+        limit: u32,
+        actual: u64,
+    },
+    Position(adocweave::text::PositionError),
+    UnsupportedSyntax,
+    InternalInvariant,
+}
+
+impl ProjectParseError {
+    pub(crate) fn from_parse(error: ParseError) -> Option<Self> {
+        match error {
+            ParseError::LimitExceeded {
+                resource,
+                limit,
+                actual,
+            } => Some(Self::LimitExceeded {
+                resource,
+                limit,
+                actual,
+            }),
+            ParseError::Position(error) => Some(Self::Position(error)),
+            ParseError::UnsupportedSyntax => Some(Self::UnsupportedSyntax),
+            ParseError::InternalInvariant => Some(Self::InternalInvariant),
+            ParseError::Cancelled => None,
+        }
+    }
 }
 
 /// Stable category for a project-owned configuration error.
@@ -1103,7 +1169,7 @@ impl fmt::Display for ProjectTargetError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Read(error) => error.fmt(formatter),
-            Self::Analysis(error) => error.fmt(formatter),
+            Self::Parse(error) => error.fmt(formatter),
             Self::EditConflict(message) => formatter.write_str(message),
             Self::Incomplete(error) => error.fmt(formatter),
         }
@@ -1114,8 +1180,63 @@ impl std::error::Error for ProjectTargetError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Read(error) => Some(error),
-            Self::Analysis(error) => Some(error),
+            Self::Parse(error) => Some(error),
             Self::EditConflict(_) => None,
+            Self::Incomplete(error) => Some(error),
+        }
+    }
+}
+
+impl fmt::Display for ProjectParseError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::LimitExceeded {
+                resource,
+                limit,
+                actual,
+            } => write!(
+                formatter,
+                "{resource} limit exceeded (limit {limit}, actual {actual})"
+            ),
+            Self::Position(error) => error.fmt(formatter),
+            Self::UnsupportedSyntax => {
+                formatter.write_str("unsupported syntax is forbidden in strict mode")
+            }
+            Self::InternalInvariant => formatter.write_str("internal parsing invariant failed"),
+        }
+    }
+}
+
+impl std::error::Error for ProjectParseError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Position(error) => Some(error),
+            Self::LimitExceeded { .. } | Self::UnsupportedSyntax | Self::InternalInvariant => None,
+        }
+    }
+}
+
+impl fmt::Display for ProjectExpansionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Resource(error) => error.fmt(formatter),
+            Self::Options(error) => error.fmt(formatter),
+            Self::Preprocess(error) => error.fmt(formatter),
+            Self::Parse(error) => error.fmt(formatter),
+            Self::Projection(error) => error.fmt(formatter),
+            Self::Incomplete(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl std::error::Error for ProjectExpansionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Resource(error) => Some(error),
+            Self::Options(error) => Some(error),
+            Self::Preprocess(error) => Some(error),
+            Self::Parse(error) => Some(error),
+            Self::Projection(error) => Some(error),
             Self::Incomplete(error) => Some(error),
         }
     }
