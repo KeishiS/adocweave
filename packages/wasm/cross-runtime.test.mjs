@@ -6,10 +6,15 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const root = resolve(here, "..");
+const root = resolve(here, "../..");
 const require = createRequire(import.meta.url);
 const wasm = require(resolve(root, "target/adocweave-wasm-node/adocweave_wasm.js"));
 const native = resolve(root, "target/debug/adocweave-conformance-native");
+
+test("conformance artifacts come from the repository target directory", () => {
+  assert.equal(resolve(root, "packages/wasm"), here);
+  assert.equal(native, resolve(root, "target/debug/adocweave-conformance-native"));
+});
 
 const cases = [
   {
