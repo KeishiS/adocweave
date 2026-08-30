@@ -123,7 +123,7 @@ jobs:
           npm publish "$tarball"
       - name: Published package and provenance verification
         run: |
-          for _attempt in {1..12}; do
+          for _attempt in {1..60}; do
             state="$(node tools/npm-publication.mjs \
               --candidate "$tarball" --name "$PACKAGE_NAME" --version "$PACKAGE_VERSION")"
             attestations="$(npm view "$PACKAGE_NAME@$PACKAGE_VERSION" dist.attestations --json 2>/dev/null || true)"
@@ -134,7 +134,7 @@ jobs:
             fi
             sleep 5
           done
-          echo "npm did not expose the verified package and provenance within 60 seconds" >&2
+          echo "npm did not expose the verified package and provenance within 5 minutes" >&2
           exit 1
       - name: Published package smoke from the npm Registry
         run: nix develop .#ci-browser -c node tools/textlint-plugin-npm-smoke.mjs
