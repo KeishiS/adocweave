@@ -177,7 +177,7 @@ JSON/WASM protocolでは既存の言語enum値``latex``を維持し、``latexmat
 
 == 公開適合性fixture
 
-利用側はlink:../../crates/adocweave/conformance/cases.json[適合性manifest]から``publicContract``を持つcaseを
+利用側はlink:../../crates/adocweave-core/conformance/cases.json[適合性manifest]から``publicContract``を持つcaseを
 選び、入力AsciiDoc、解析結果、HTML、解析診断および描画診断の対応を検査できます。caseに記録した解析条件と
 描画条件を適用し、``publicContract``のJSON pointer、HTML断片および診断codeを比較します。
 

@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
-use adocweave::SourceId;
-use adocweave::preprocess::{ResourceDocument, ResourceSnapshot};
+use adocweave_core::SourceId;
+use adocweave_core::preprocess::{ResourceDocument, ResourceSnapshot};
 
 #[cfg_attr(
     feature = "ts-rs",

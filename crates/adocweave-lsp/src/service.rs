@@ -5,10 +5,10 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use adocweave::CancellationCheck;
-use adocweave::SourceId;
-use adocweave::output::diagnostics::{RuleSettings, lint_rule};
-use adocweave::text::SourceDocument;
+use adocweave_core::CancellationCheck;
+use adocweave_core::SourceId;
+use adocweave_core::output::diagnostics::{RuleSettings, lint_rule};
+use adocweave_core::text::SourceDocument;
 use adocweave_project::{
     ProjectAuthority, ProjectConfigOverrides, ProjectConfigSelection, ProjectError,
     ProjectExpansionError, ProjectLimits, ProjectObservationAccess, ProjectRequest,
@@ -269,10 +269,10 @@ fn reject_unsupported_uri(job: &mut ProjectAnalysisSnapshot, uri: &lsp::Url) -> 
     true
 }
 
-fn zero_text_range() -> adocweave::text::TextRange {
-    adocweave::text::TextRange::new(
-        adocweave::text::TextSize::ZERO,
-        adocweave::text::TextSize::ZERO,
+fn zero_text_range() -> adocweave_core::text::TextRange {
+    adocweave_core::text::TextRange::new(
+        adocweave_core::text::TextSize::ZERO,
+        adocweave_core::text::TextSize::ZERO,
     )
     .expect("zero range")
 }
@@ -437,7 +437,7 @@ fn adopted_problem(snapshot: &ProjectAnalysisSnapshot, problem: ProjectProblem) 
     AdoptedAnalysis {
         primary: None,
         expanded: None,
-        format: adocweave::output::formatter::FormatConfig::default(),
+        format: adocweave_core::output::formatter::FormatConfig::default(),
         sources: Arc::new(ProjectSourceIndex::default()),
         problem: Some(problem),
         published_diagnostic_uris,
@@ -982,8 +982,8 @@ impl Session {
         documents
     }
 
-    fn analysis_options(&self) -> adocweave::AnalysisOptions {
-        let mut options = adocweave::AnalysisOptions::default();
+    fn analysis_options(&self) -> adocweave_core::AnalysisOptions {
+        let mut options = adocweave_core::AnalysisOptions::default();
         for code in &self.settings.enabled_rules {
             let Some(descriptor) = lint_rule(code) else {
                 continue;
@@ -1263,7 +1263,7 @@ impl Session {
     pub fn document_cancellation(
         &self,
         uri: &lsp::Url,
-    ) -> Option<Arc<adocweave::CancellationToken>> {
+    ) -> Option<Arc<adocweave_core::CancellationToken>> {
         self.documents.cancellation(uri.as_str())
     }
 
@@ -1838,6 +1838,6 @@ fn code_action_kind_requested(
     })
 }
 
-fn revision_version_i32(revision: &adocweave::DocumentRevision) -> i32 {
+fn revision_version_i32(revision: &adocweave_core::DocumentRevision) -> i32 {
     i32::try_from(revision.version).expect("LSP document versions originate as i32")
 }

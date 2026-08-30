@@ -35,7 +35,7 @@ rustup target add wasm32-wasip2
 
 [source,console]
 ----
-cargo build -p adocweave-cli
+cargo build -p adocweave
 cargo test --manifest-path editors/zed/Cargo.toml
 cargo build --manifest-path editors/zed/Cargo.toml --target wasm32-wasip2
 node tools/zed-registry-contract.mjs

@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::{Component, Path, PathBuf};
 
-use adocweave::CancellationCheck;
+use adocweave_core::CancellationCheck;
 
 use crate::filesystem::{FilesystemAuthority, FilesystemError};
 use crate::{

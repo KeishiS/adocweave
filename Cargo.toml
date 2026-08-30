@@ -1,7 +1,7 @@
 [workspace]
 members = [
+  "crates/adocweave-core",
   "crates/adocweave",
-  "crates/adocweave-cli",
   "crates/adocweave-lsp",
   "crates/adocweave-project",
   "crates/adocweave-textlint",

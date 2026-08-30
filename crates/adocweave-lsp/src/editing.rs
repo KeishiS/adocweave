@@ -2,10 +2,10 @@
 
 use std::collections::HashMap;
 
-use adocweave::Analysis;
-use adocweave::output::formatter::{self, FormatConfig};
-use adocweave::resolution::ReferenceKey;
-use adocweave::semantic::{ReferenceTarget, ReferenceTargetKind, is_valid_anchor_id};
+use adocweave_core::Analysis;
+use adocweave_core::output::formatter::{self, FormatConfig};
+use adocweave_core::resolution::ReferenceKey;
+use adocweave_core::semantic::{ReferenceTarget, ReferenceTargetKind, is_valid_anchor_id};
 use async_lsp::lsp_types as lsp;
 
 use crate::cancellation::{QueryCancellation, QueryResult};
@@ -125,7 +125,7 @@ pub(crate) fn rename_edit(
 
 #[cfg(test)]
 mod tests {
-    use adocweave::{Analysis, AnalysisOptions, AnalysisRequest, NeverCancel};
+    use adocweave_core::{Analysis, AnalysisOptions, AnalysisRequest, NeverCancel};
 
     use super::*;
 

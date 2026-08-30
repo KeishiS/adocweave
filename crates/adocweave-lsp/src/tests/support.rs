@@ -216,13 +216,15 @@ pub(super) fn validate(
     completion.observations_are_current = Some(crate::service::project_observations_are_current(
         result,
         access,
-        &adocweave::NeverCancel,
+        &adocweave_core::NeverCancel,
     ));
     completion
 }
 
 pub(super) fn apply_edits(source: &str, edits: &[lsp::TextEdit]) -> String {
-    use adocweave::text::{Position, PositionEncoding as CorePositionEncoding, SourceDocument};
+    use adocweave_core::text::{
+        Position, PositionEncoding as CorePositionEncoding, SourceDocument,
+    };
 
     let index = SourceDocument::new(source).expect("line index");
     let mut byte_edits = edits

@@ -1,8 +1,8 @@
 //! Pure Semantic Tokens projection over an adopted analysis snapshot.
 
-use adocweave::Analysis;
-use adocweave::semantic::{Inline, ReferenceTargetKind};
-use adocweave::text::{SourceDocument, TextRange};
+use adocweave_core::Analysis;
+use adocweave_core::semantic::{Inline, ReferenceTargetKind};
+use adocweave_core::text::{SourceDocument, TextRange};
 use async_lsp::lsp_types as lsp;
 
 use crate::cancellation::{QueryCancellation, QueryResult};
@@ -55,14 +55,14 @@ pub(crate) fn tokens(
         )?;
     }
     let mut inline_ranges = Vec::new();
-    adocweave::semantic::walk(analysis.document(), |node| {
-        let adocweave::semantic::SemanticNode::Inline(inline) = node else {
+    adocweave_core::semantic::walk(analysis.document(), |node| {
+        let adocweave_core::semantic::SemanticNode::Inline(inline) = node else {
             return;
         };
         match inline {
             Inline::Literal { content_range, .. }
             | Inline::Passthrough { content_range, .. }
-            | Inline::Formula(adocweave::semantic::InlineFormula { content_range, .. }) => {
+            | Inline::Formula(adocweave_core::semantic::InlineFormula { content_range, .. }) => {
                 inline_ranges.push((*content_range, 0))
             }
             Inline::Text(_)
@@ -180,7 +180,7 @@ fn push_range(
 
 #[cfg(test)]
 mod tests {
-    use adocweave::{Analysis, AnalysisOptions, AnalysisRequest, NeverCancel};
+    use adocweave_core::{Analysis, AnalysisOptions, AnalysisRequest, NeverCancel};
     use async_lsp::lsp_types as lsp;
 
     use super::{response, tokens};

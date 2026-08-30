@@ -10,7 +10,7 @@ rust-version.workspace = true
 description = "WebAssembly boundary for the @adocweave/wasm npm package"
 
 [dependencies]
-adocweave = { path = "../adocweave" }
+adocweave-core = { path = "../adocweave-core" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Serdeの入力検証専用属性は、生成するTypeScriptの型を変えません。

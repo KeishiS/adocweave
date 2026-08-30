@@ -1,16 +1,16 @@
 use std::collections::BTreeSet;
 
-use adocweave::output::diagnostics::{LintConfig, RuleSettings, Severity, lint_rule};
-use adocweave::output::html::{
+use adocweave_core::output::diagnostics::{LintConfig, RuleSettings, Severity, lint_rule};
+use adocweave_core::output::html::{
     ExternalLinkPresentation, HtmlDocumentMode, MathLanguagePolicy, RenderPolicy,
     ResourceCapabilities as CoreResourceCapabilities, RolePolicy, SourceLanguagePolicy,
     StylesheetPolicy, StylesheetSource, UnknownRole as CoreUnknownRole,
     UnknownSourceLanguage as CoreUnknownSourceLanguage,
     UnresolvedReferencePresentation as CoreUnresolvedReferencePresentation,
 };
-use adocweave::preprocess::{EffectiveProcessingOptions, PreprocessOptions, ResourceSnapshot};
-use adocweave::resolution::{ActiveUrlPolicy, AuthoredUrlPolicy};
-use adocweave::{
+use adocweave_core::preprocess::{EffectiveProcessingOptions, PreprocessOptions, ResourceSnapshot};
+use adocweave_core::resolution::{ActiveUrlPolicy, AuthoredUrlPolicy};
+use adocweave_core::{
     AnalysisLimits, AnalysisOptions, DiagnosticProfile, SourceId, SyntaxMode as CoreSyntaxMode,
     SyntaxOptions,
 };
@@ -65,10 +65,10 @@ pub(crate) fn convert(request: AnalyzeRequest) -> Result<ExecutionRequest, AdocW
         source_id: source_id.clone(),
         base_uri: resources.base_uri,
         safe_mode: match resources.safe_mode.unwrap_or_default() {
-            SafeMode::Unsafe => adocweave::preprocess::SafeMode::Unsafe,
-            SafeMode::Server => adocweave::preprocess::SafeMode::Server,
-            SafeMode::Safe => adocweave::preprocess::SafeMode::Safe,
-            SafeMode::Secure => adocweave::preprocess::SafeMode::Secure,
+            SafeMode::Unsafe => adocweave_core::preprocess::SafeMode::Unsafe,
+            SafeMode::Server => adocweave_core::preprocess::SafeMode::Server,
+            SafeMode::Safe => adocweave_core::preprocess::SafeMode::Safe,
+            SafeMode::Secure => adocweave_core::preprocess::SafeMode::Secure,
         },
         allowed_schemes: resources
             .allowed_schemes
@@ -92,7 +92,7 @@ pub(crate) fn convert(request: AnalyzeRequest) -> Result<ExecutionRequest, AdocW
         citations: resources.citations.unwrap_or_default(),
         generated_bibliography: resources.bibliography,
     };
-    let output_limits = adocweave::OutputLimits::default();
+    let output_limits = adocweave_core::OutputLimits::default();
     let render_inputs = render_input_normalization::normalize(
         render_inputs,
         &documents,
@@ -247,8 +247,8 @@ fn render_policy(options: Option<&HtmlOptions>) -> Result<RenderPolicy, AdocWeav
             .unwrap_or_else(|| vec![MathLanguage::Latex, MathLanguage::Typst])
             .into_iter()
             .map(|language| match language {
-                MathLanguage::Latex => adocweave::semantic::MathLanguage::Latex,
-                MathLanguage::Typst => adocweave::semantic::MathLanguage::Typst,
+                MathLanguage::Latex => adocweave_core::semantic::MathLanguage::Latex,
+                MathLanguage::Typst => adocweave_core::semantic::MathLanguage::Typst,
             })
             .collect(),
     };

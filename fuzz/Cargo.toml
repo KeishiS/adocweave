@@ -8,7 +8,7 @@ edition = "2024"
 cargo-fuzz = true
 
 [dependencies]
-adocweave = { path = "../crates/adocweave" }
+adocweave-core = { path = "../crates/adocweave-core" }
 libfuzzer-sys = "0.4"
 
 [workspace]

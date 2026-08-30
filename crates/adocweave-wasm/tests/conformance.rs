@@ -1,4 +1,4 @@
-use adocweave::{AnalysisOptions, Engine, NeverCancel};
+use adocweave_core::{AnalysisOptions, Engine, NeverCancel};
 use adocweave_wasm::{AnalyzeRequest, analyze_request};
 use serde_json::json;
 
@@ -34,9 +34,9 @@ fn native_and_wasm_boundary_produce_the_same_html() {
     let native = Engine::new(AnalysisOptions::default())
         .analyze(source)
         .expect("native analysis");
-    let expected = adocweave::output::html::render(
+    let expected = adocweave_core::output::html::render(
         native.document(),
-        &adocweave::output::html::RenderPolicy::default(),
+        &adocweave_core::output::html::RenderPolicy::default(),
     )
     .html;
     let request: AnalyzeRequest = serde_json::from_value(json!({

@@ -83,7 +83,7 @@ export function verifyRepository() {
   const version = checkNativeReleaseVersion();
   const dist = read("dist-workspace.toml");
   for (const required of [
-    'packages = ["adocweave-cli"]',
+    'packages = ["adocweave"]',
     'checksum = "sha256"',
     'github-attestations = true',
     'github-attestations-phase = "host"',

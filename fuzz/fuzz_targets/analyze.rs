@@ -1,7 +1,7 @@
 #![no_main]
 
-use adocweave::text::SyntaxKind;
-use adocweave::{AnalysisOptions, Engine, ParseError, semantic::SemanticNode};
+use adocweave_core::text::SyntaxKind;
+use adocweave_core::{AnalysisOptions, Engine, ParseError, semantic::SemanticNode};
 use libfuzzer_sys::fuzz_target;
 
 fn semantic_identity(node: SemanticNode<'_>) -> (&'static str, usize) {
@@ -54,7 +54,7 @@ fuzz_target!(|source: &str| {
                 assert!(source.is_char_boundary(range.end().to_usize()));
             }
             let mut semantic_nodes = std::collections::HashSet::new();
-            adocweave::semantic::walk(analysis.document(), |node| {
+            adocweave_core::semantic::walk(analysis.document(), |node| {
                 assert!(
                     semantic_nodes.insert(semantic_identity(node)),
                     "semantic node visited more than once"

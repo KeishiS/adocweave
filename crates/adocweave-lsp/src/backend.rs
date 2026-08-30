@@ -5,7 +5,7 @@ use std::num::NonZeroUsize;
 use std::ops::ControlFlow;
 use std::sync::Arc;
 
-use adocweave::{CancellationCheck, CancellationToken};
+use adocweave_core::{CancellationCheck, CancellationToken};
 use adocweave_project::process as process_project;
 use async_lsp::client_monitor::ClientProcessMonitorLayer;
 use async_lsp::concurrency::ConcurrencyLayer;

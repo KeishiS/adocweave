@@ -19,7 +19,7 @@ pub(crate) fn normalize(
     inputs: RenderInputs,
     documents: &BTreeMap<String, String>,
     source: &str,
-    analysis_limits: &adocweave::AnalysisLimits,
+    analysis_limits: &adocweave_core::AnalysisLimits,
 ) -> Result<NormalizedRenderInputs, AdocWeaveError> {
     validate_ranges(&inputs.references, source, |input| {
         (input.source_start, input.source_end)
@@ -180,10 +180,10 @@ mod tests {
         ResourceFailureKind, ResourceOutcome,
     };
 
-    fn limits(max_input_bytes: u32) -> adocweave::AnalysisLimits {
-        adocweave::AnalysisLimits {
+    fn limits(max_input_bytes: u32) -> adocweave_core::AnalysisLimits {
+        adocweave_core::AnalysisLimits {
             max_input_bytes,
-            ..adocweave::AnalysisLimits::default()
+            ..adocweave_core::AnalysisLimits::default()
         }
     }
 

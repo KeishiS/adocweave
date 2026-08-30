@@ -10,12 +10,12 @@ xref:core-profile.adoc[コアの対応範囲]、文法はxref:grammar.adoc[文�
 [source,text]
 ----
 VS Code・Zed ──LSP──> adocweave lsp
-ブラウザークライアント ──> Web Worker ──> adocweave-wasm ──> adocweave
-textlint ──> adocweave-textlint ──> adocweave
+ブラウザークライアント ──> Web Worker ──> adocweave-wasm ──> adocweave-core
+textlint ──> adocweave-textlint ──> adocweave-core
 
-adocweave-cli ──> adocweave-lsp, adocweave-project, adocweave
-adocweave-lsp ──> adocweave-project, adocweave
-adocweave-project ──> adocweave
+adocweave ──> adocweave-lsp, adocweave-project, adocweave-core
+adocweave-lsp ──> adocweave-project, adocweave-core
+adocweave-project ──> adocweave-core
 ----
 
 矢印は利用する側から利用される側へ向きます。下位コンポーネントは上位のプロトコル、実行環境または
@@ -25,7 +25,7 @@ adocweave-project ──> adocweave
 |===
 |コンポーネント |所有する責務
 
-|``adocweave``
+|``adocweave-core``
 |I/Oに依存しない構文解析、意味情報、診断、整形、出力および問い合わせ
 
 |``adocweave-project``
@@ -33,10 +33,10 @@ adocweave-project ──> adocweave
 検証済みのファイル読込権限、競合に耐えるパス検査、処理上限、対象探索、設定と関連ファイルの取得、
 有限回の解析および対象別の結果
 
-|``adocweave-cli``
-|``adocweave``のコマンド、標準入出力、ファイル操作、処理の調停および終了状態への変換
+|``adocweave``
+|コマンドライン、標準入出力、ファイル操作、処理の調停および終了状態への変換
 
-|``adocweave-lsp`` crate
+|``adocweave-lsp``
 |``adocweave lsp``から呼び出すLSPの通信、URIと位置の変換、通知順序、並行実行、接続単位の``Session``および
 クライアントへの結果公開
 

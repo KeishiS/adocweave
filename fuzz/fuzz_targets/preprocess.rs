@@ -8,11 +8,11 @@
 //! are never driven by generated input. This target supplies a resource
 //! snapshot as well, so an include can resolve and those paths run.
 
-use adocweave::preprocess::{
+use adocweave_core::preprocess::{
     PreprocessInputs, PreprocessOptions, ResourceDocument, ResourceSnapshot, SafeMode,
     preprocess_with,
 };
-use adocweave::{AnalysisOptions, Engine, SourceId};
+use adocweave_core::{AnalysisOptions, Engine, SourceId};
 use libfuzzer_sys::fuzz_target;
 
 /// Splits the input into a root document and the resources it may include.

@@ -1,0 +1,966 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use adocweave_core::output::html::{RenderPolicy, render, render_with_inputs};
+use adocweave_core::resolution::RenderInputs;
+use adocweave_core::resolution::ResolvedReference;
+use adocweave_core::resolution::ResolvedResource;
+use adocweave_core::resolution::{ReferenceKey, ResolutionFailureKind};
+use adocweave_core::{Analysis, AnalysisOptions, CancellationCheck, Engine, ParseError};
+use adocweave_core::{AnalysisInputs, AnalysisLimits};
+
+type LimitCase = (&'static str, fn(&mut AnalysisLimits));
+type BoundaryCase = (
+    &'static str,
+    &'static str,
+    u32,
+    fn(&mut AnalysisLimits, u32),
+);
+
+fn analyze_with_limits(source: &str, limits: AnalysisLimits) -> Result<Analysis, ParseError> {
+    Engine::new(AnalysisOptions {
+        syntax: adocweave_core::SyntaxOptions {
+            limits,
+            ..adocweave_core::SyntaxOptions::default()
+        },
+        ..AnalysisOptions::default()
+    })
+    .analyze(source)
+}
+
+#[test]
+fn adversarial_fixture_never_emits_active_input_or_unsafe_urls() {
+    let source = include_str!("../../../fixtures/security/adversarial.adoc");
+    let analysis = Engine::new(AnalysisOptions::default())
+        .analyze(source)
+        .expect("adversarial fixture remains bounded");
+    let output = render(analysis.document(), &RenderPolicy::default());
+    let lower = output.html.to_ascii_lowercase();
+
+    assert!(!lower.contains("<script"));
+    assert!(!lower.contains("<img"));
+    assert!(!lower.contains("href=\"javascript:"));
+    assert!(!lower.contains("href=\"data:"));
+    assert!(output.html.contains("&lt;script&gt;"));
+    assert!(output.html.contains("href=\"https://example.com/path\""));
+}
+
+#[test]
+fn relative_targets_are_valid_analysis_inputs_but_not_active_html_urls() {
+    let source = "link:../toolchains.json[toolchain manifest]\n\
+                  xref:../guide.adoc[guide]\n";
+    let analysis = Engine::new(AnalysisOptions::default())
+        .analyze(source)
+        .expect("analysis");
+
+    assert!(!analysis.diagnostics().iter().any(|diagnostic| {
+        matches!(
+            diagnostic.code.as_str(),
+            "invalid-url-scheme" | "invalid-cross-reference"
+        )
+    }));
+
+    let output = render(analysis.document(), &RenderPolicy::default());
+    assert_eq!(output.html, "<p>toolchain manifest guide</p>\n");
+    assert!(!output.html.contains("href="));
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|diagnostic| { diagnostic.code.as_str() == "invalid-url-scheme" })
+    );
+}
+
+#[test]
+fn malformed_url_syntax_is_diagnosed_and_never_activated() {
+    for target in ["http//example.com", "bad%ZZpath", "trailing%"] {
+        let source = format!("link:{target}[unsafe]");
+        let analysis = Engine::new(AnalysisOptions::default())
+            .analyze(&source)
+            .expect("analysis");
+
+        assert!(
+            analysis
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.code.as_str() == "invalid-url-scheme"),
+            "{target}"
+        );
+        assert!(
+            !render(analysis.document(), &RenderPolicy::default())
+                .html
+                .contains("href=")
+        );
+    }
+}
+
+#[test]
+fn hostile_resolver_href_is_revalidated_by_the_renderer() {
+    let source = "xref:note:item[unsafe]";
+    let analysis = Engine::new(AnalysisOptions::default())
+        .analyze(source)
+        .expect("analysis");
+    let range = analysis.references()[0].range;
+    let output = render_with_inputs(
+        analysis.document(),
+        &RenderPolicy::default(),
+        &RenderInputs::default().with_references(vec![ResolvedReference::resolved(
+            range,
+            "javascript:alert(1)",
+        )]),
+    );
+
+    assert_eq!(output.html, "<p>unsafe</p>\n");
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code.as_str() == "invalid-url-scheme")
+    );
+}
+
+#[test]
+fn hostile_resource_href_is_revalidated_by_the_renderer() {
+    let analysis = Engine::new(AnalysisOptions::default())
+        .analyze("image:asset.png[safe]")
+        .expect("analysis");
+    let range = analysis.resources()[0].range();
+    let output = render_with_inputs(
+        analysis.document(),
+        &RenderPolicy::default(),
+        &RenderInputs::default().with_resources(vec![ResolvedResource::resolved(
+            range,
+            "javascript:alert(1)",
+            "image/png".parse().expect("media type"),
+            Some(42),
+        )]),
+    );
+
+    assert_eq!(output.html, "<p>safe</p>\n");
+    assert!(!output.html.contains("<img"));
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code.as_str() == "invalid-url-scheme")
+    );
+}
+
+#[test]
+fn hostile_video_poster_is_omitted_without_disabling_safe_video() {
+    let analysis = Engine::new(AnalysisOptions::default())
+        .analyze("video:demo.mp4[Demo,poster=poster.jpg]")
+        .expect("analysis");
+    let primary = analysis
+        .resources()
+        .iter()
+        .find(|resource| resource.purpose() == adocweave_core::resolution::ResourcePurpose::Video)
+        .expect("primary");
+    let poster = analysis
+        .resources()
+        .iter()
+        .find(|resource| {
+            resource.purpose() == adocweave_core::resolution::ResourcePurpose::VideoPoster
+        })
+        .expect("poster");
+    let output = render_with_inputs(
+        analysis.document(),
+        &RenderPolicy::default(),
+        &RenderInputs::default().with_resources(vec![
+            ResolvedResource::resolved(
+                primary.range(),
+                "https://cdn.example/demo.mp4",
+                "video/mp4".parse().expect("media type"),
+                Some(42),
+            ),
+            ResolvedResource::resolved(
+                poster.range(),
+                "javascript:alert(1)",
+                "image/jpeg".parse().expect("media type"),
+                Some(42),
+            ),
+        ]),
+    );
+
+    assert!(output.html.contains("<video "));
+    assert!(!output.html.contains(" poster="));
+    assert!(!output.html.contains("javascript"));
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code.as_str() == "invalid-url-scheme")
+    );
+}
+
+#[test]
+fn hostile_stylesheet_configuration_never_reaches_the_output() {
+    use adocweave_core::output::html::{HtmlDocumentMode, StylesheetPolicy, StylesheetSource};
+
+    let analysis = Engine::new(AnalysisOptions::default())
+        .analyze("paragraph")
+        .expect("analysis");
+    let output = render(
+        analysis.document(),
+        &RenderPolicy {
+            document_mode: HtmlDocumentMode::Complete,
+            stylesheets: StylesheetPolicy {
+                sources: vec![
+                    StylesheetSource::Inline("p {}</StYlE><script>alert(1)</script>".to_owned()),
+                    StylesheetSource::External("javascript:alert(1)".to_owned()),
+                    StylesheetSource::External("https://ok.example/x.css\"onload=\"x".to_owned()),
+                ],
+                ..StylesheetPolicy::default()
+            },
+            ..RenderPolicy::default()
+        },
+    );
+
+    let lower = output.html.to_ascii_lowercase();
+    assert!(!lower.contains("<script"));
+    assert!(!lower.contains("<style"));
+    assert!(!lower.contains("javascript:"));
+    assert!(!lower.contains("onload"));
+    let codes = output
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.code.as_str())
+        .collect::<Vec<_>>();
+    assert!(codes.contains(&"invalid-stylesheet-content"));
+    assert!(codes.contains(&"invalid-stylesheet-url"));
+}
+
+/// A hostile scheme must not reach active output, whatever the host allows.
+///
+/// The stylesheet policy already guarantees this: a host that configures
+/// `javascript:` as a stylesheet URL still gets safe output. The same must hold
+/// for the URL scheme allowlist, which a host can also fill in.
+#[test]
+fn hostile_url_scheme_configuration_never_reaches_the_output() {
+    use adocweave_core::resolution::ActiveUrlPolicy;
+
+    let analysis = Engine::new(AnalysisOptions::default())
+        .analyze("javascript:alert(1)[click] vbscript:msgbox(1)[click]")
+        .expect("analysis");
+    let hostile = ["javascript", "vbscript", "data"]
+        .into_iter()
+        .map(String::from)
+        .collect();
+    let output = render(
+        analysis.document(),
+        &RenderPolicy {
+            active_urls: ActiveUrlPolicy {
+                allowed_schemes: hostile,
+                ..ActiveUrlPolicy::default()
+            },
+            ..RenderPolicy::default()
+        },
+    );
+
+    let lower = output.html.to_ascii_lowercase();
+    assert!(!lower.contains("javascript:"), "{}", output.html);
+    assert!(!lower.contains("vbscript:"), "{}", output.html);
+}
+
+#[test]
+fn heading_anchor_cannot_break_out_of_the_id_attribute() {
+    let source = "[[x\"onclick=\"alert(1)]]\n== Target\n";
+    let analysis = Engine::new(AnalysisOptions::default())
+        .analyze(source)
+        .expect("analysis");
+    let output = render(analysis.document(), &RenderPolicy::default());
+
+    // The dangerous anchor never reaches the output as raw attribute syntax:
+    // neither an attribute breakout nor an unescaped quote survives.
+    assert!(!output.html.contains("onclick="));
+    assert!(!output.html.contains("\"onclick"));
+    // A heading is still emitted, using a safe generated id.
+    assert!(output.html.contains("<h1 id=\"_target\">Target</h1>"));
+    // The unsafe anchor is rejected with a diagnostic rather than trusted.
+    assert!(
+        analysis
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.code.as_str() == "invalid-anchor")
+    );
+}
+
+#[test]
+fn tight_limits_fail_without_partial_analysis() {
+    let limits = AnalysisLimits {
+        max_input_bytes: 32,
+        max_line_bytes: 8,
+        max_list_depth: 2,
+        max_list_continuations: 1,
+        max_block_depth: 2,
+        max_inline_depth: 2,
+        max_formula_bytes: 4,
+        max_table_bytes: 8,
+        max_table_cells: 2,
+        max_table_columns: 2,
+        max_table_depth: 1,
+        max_catalog_entries: 2,
+        max_catalog_bytes: 8,
+        max_blocks: 2,
+        max_nodes: 4,
+        max_references: 1,
+        max_attributes: 1,
+        max_attribute_expansion_depth: 1,
+        max_attribute_expansion_bytes: 8,
+    };
+    for source in [
+        "a very long line",
+        "\
+one
+
+two
+
+three",
+        "https://example.com[x] https://example.com[y]",
+    ] {
+        assert!(matches!(
+            analyze_with_limits(source, limits),
+            Err(ParseError::LimitExceeded { .. })
+        ));
+    }
+}
+
+#[test]
+fn each_structural_resource_limit_rejects_the_corresponding_input() {
+    let cases: [LimitCase; 3] = [
+        (
+            "\
+one
+
+two
+",
+            |limits: &mut AnalysisLimits| limits.max_blocks = 1,
+        ),
+        (
+            "xref:note:a[] xref:note:b[]",
+            |limits: &mut AnalysisLimits| {
+                limits.max_references = 1;
+            },
+        ),
+        (
+            "\
+= Title
+:one: 1
+:two: 2
+",
+            |limits: &mut AnalysisLimits| limits.max_attributes = 1,
+        ),
+    ];
+
+    for (source, restrict) in cases {
+        let mut limits = AnalysisLimits::default();
+        restrict(&mut limits);
+        let result = analyze_with_limits(source, limits);
+        assert!(
+            matches!(result, Err(ParseError::LimitExceeded { .. })),
+            "{source:?}"
+        );
+    }
+}
+
+#[test]
+fn construction_budgets_accept_exact_boundaries_and_reject_the_next_item() {
+    let cases: [BoundaryCase; 5] = [
+        (
+            "blocks",
+            "\
+one
+
+two",
+            2_u32,
+            |limits: &mut AnalysisLimits, value| {
+                limits.max_blocks = value;
+            },
+        ),
+        (
+            "nodes",
+            "plain",
+            3_u32,
+            |limits: &mut AnalysisLimits, value| {
+                limits.max_nodes = value;
+            },
+        ),
+        (
+            "references",
+            "xref:#a[] xref:#b[]",
+            2_u32,
+            |limits: &mut AnalysisLimits, value| {
+                limits.max_references = value;
+            },
+        ),
+        (
+            "document attributes",
+            "\
+= T
+:a: 1
+:b: 2
+",
+            2_u32,
+            |limits: &mut AnalysisLimits, value| {
+                limits.max_attributes = value;
+            },
+        ),
+        (
+            "list continuations",
+            "\
+* item
++
+first
++
+second
+",
+            2_u32,
+            |limits: &mut AnalysisLimits, value| {
+                limits.max_list_continuations = value;
+            },
+        ),
+    ];
+
+    for (resource, source, exact, set_limit) in cases {
+        let mut accepted = AnalysisOptions::default();
+        set_limit(&mut accepted.syntax.limits, exact);
+        Engine::new(accepted)
+            .analyze(source)
+            .unwrap_or_else(|error| panic!("{resource} exact boundary failed: {error}"));
+
+        let mut rejected = AnalysisOptions::default();
+        set_limit(&mut rejected.syntax.limits, exact - 1);
+        match Engine::new(rejected).analyze(source) {
+            Err(ParseError::LimitExceeded {
+                resource: actual_resource,
+                limit,
+                actual,
+            }) => {
+                assert_eq!(actual_resource, resource);
+                assert_eq!(limit, exact - 1);
+                assert_eq!(actual, u64::from(exact));
+            }
+            other => panic!("{resource} over-boundary result was {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn list_continuation_metadata_obeys_exact_node_and_attribute_limits() {
+    let source = "\
+* item
++
+.Attached
+[[attached]]
+[source#source-id.role%linenums,rust]
+----
+fn main() {}
+----
+";
+
+    let minimum_nodes = (1..64)
+        .find(|maximum| {
+            analyze_with_limits(
+                source,
+                AnalysisLimits {
+                    max_nodes: *maximum,
+                    ..AnalysisLimits::default()
+                },
+            )
+            .is_ok()
+        })
+        .expect("small list continuation has a bounded node minimum");
+    assert_eq!(minimum_nodes, 9);
+    assert!(matches!(
+        analyze_with_limits(
+            source,
+            AnalysisLimits {
+                max_nodes: minimum_nodes - 1,
+                ..AnalysisLimits::default()
+            },
+        ),
+        Err(ParseError::LimitExceeded {
+            resource: "nodes",
+            limit: 8,
+            actual: 9,
+        })
+    ));
+
+    let minimum_attributes = (0..16)
+        .find(|maximum| {
+            analyze_with_limits(
+                source,
+                AnalysisLimits {
+                    max_attributes: *maximum,
+                    ..AnalysisLimits::default()
+                },
+            )
+            .is_ok()
+        })
+        .expect("small list continuation has a bounded attribute minimum");
+    assert_eq!(minimum_attributes, 6);
+    assert!(matches!(
+        analyze_with_limits(
+            source,
+            AnalysisLimits {
+                max_attributes: minimum_attributes - 1,
+                ..AnalysisLimits::default()
+            },
+        ),
+        Err(ParseError::LimitExceeded {
+            resource: "document attributes",
+            limit: 5,
+            actual: 6,
+        })
+    ));
+}
+
+#[test]
+fn list_continuation_metadata_fallback_does_not_charge_speculative_attributes() {
+    for source in ["* item\n+\n.Title\n", "* item\n+\n.Title\n\n"] {
+        let minimum_nodes = (1..16)
+            .find(|maximum| {
+                analyze_with_limits(
+                    source,
+                    AnalysisLimits {
+                        max_nodes: *maximum,
+                        max_attributes: 0,
+                        ..AnalysisLimits::default()
+                    },
+                )
+                .is_ok()
+            })
+            .expect("orphan metadata paragraph has a bounded node minimum");
+        assert_eq!(minimum_nodes, 6);
+        assert!(matches!(
+            analyze_with_limits(
+                source,
+                AnalysisLimits {
+                    max_nodes: minimum_nodes - 1,
+                    max_attributes: 0,
+                    ..AnalysisLimits::default()
+                },
+            ),
+            Err(ParseError::LimitExceeded {
+                resource: "nodes",
+                limit: 5,
+                actual: 6,
+            })
+        ));
+        analyze_with_limits(
+            source,
+            AnalysisLimits {
+                max_nodes: minimum_nodes,
+                max_attributes: 0,
+                ..AnalysisLimits::default()
+            },
+        )
+        .expect("metadata without a following block is parsed as paragraph text");
+    }
+}
+
+#[test]
+fn formula_limit_recovers_as_text_and_reports_a_diagnostic() {
+    let limits = AnalysisLimits {
+        max_formula_bytes: 4,
+        ..AnalysisLimits::default()
+    };
+    let source = "stem:[12345<script>]";
+    let analysis = analyze_with_limits(source, limits).expect("formula overflow is recoverable");
+    let html = render(analysis.document(), &RenderPolicy::default()).html;
+    let diagnostics = analysis.diagnostics();
+
+    assert!(!html.contains("<script>"));
+    assert!(html.contains("&lt;script&gt;"));
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code.as_str() == "invalid-stem")
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("size limit"))
+    );
+}
+
+#[test]
+fn list_depth_limit_recovers_with_a_diagnostic() {
+    let limits = AnalysisLimits {
+        max_list_depth: 2,
+        ..AnalysisLimits::default()
+    };
+    let source = "\
+* one
+** two
+*** three
+";
+    let analysis = analyze_with_limits(source, limits).expect("list depth overflow is recoverable");
+    let html = render(analysis.document(), &RenderPolicy::default()).html;
+    let diagnostics = analysis.diagnostics();
+
+    assert!(html.contains("three"));
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("configured limit"))
+    );
+}
+
+#[test]
+fn compound_block_depth_limit_rejects_unbounded_nesting() {
+    let limits = AnalysisLimits {
+        max_block_depth: 1,
+        ..AnalysisLimits::default()
+    };
+    let source = "\
+=====
+outer
+======
+inner
+======
+=====
+";
+
+    assert!(matches!(
+        analyze_with_limits(source, limits),
+        Err(ParseError::LimitExceeded {
+            resource: "block nesting depth",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn asciidoc_cell_uses_the_parent_table_depth_budget() {
+    let limits = AnalysisLimits {
+        max_table_depth: 1,
+        ..AnalysisLimits::default()
+    };
+    let source = "\
+[cols=a]
+|===
+|!===
+!nested
+!===
+|===
+";
+
+    assert!(matches!(
+        analyze_with_limits(source, limits),
+        Err(ParseError::LimitExceeded {
+            resource: "table nesting depth",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn asciidoc_cell_uses_the_parent_node_budget_without_speculative_inline_nodes() {
+    let source = "\
+[cols=a]
+|===
+|paragraph
+|===
+";
+    let minimum = (1..32)
+        .find(|maximum| {
+            analyze_with_limits(
+                source,
+                AnalysisLimits {
+                    max_nodes: *maximum,
+                    ..AnalysisLimits::default()
+                },
+            )
+            .is_ok()
+        })
+        .expect("small table has a bounded node minimum");
+    assert_eq!(minimum, 6);
+    assert!(matches!(
+        analyze_with_limits(
+            source,
+            AnalysisLimits {
+                max_nodes: minimum - 1,
+                ..AnalysisLimits::default()
+            },
+        ),
+        Err(ParseError::LimitExceeded {
+            resource: "nodes",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn explicit_table_columns_are_rejected_before_repeat_materialization() {
+    assert!(matches!(
+        analyze_with_limits(
+            "\
+[cols=\"1000000000*a\"]
+|===
+|value
+|===
+",
+            AnalysisLimits {
+                max_table_columns: 4,
+                ..AnalysisLimits::default()
+            },
+        ),
+        Err(ParseError::LimitExceeded {
+            resource: "table columns",
+            actual: 1_000_000_000,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn empty_table_column_specs_count_toward_the_limit() {
+    assert!(matches!(
+        analyze_with_limits(
+            "\
+[cols=\",,\"]
+|===
+|one |two |three
+|===
+",
+            AnalysisLimits {
+                max_table_columns: 2,
+                ..AnalysisLimits::default()
+            },
+        ),
+        Err(ParseError::LimitExceeded {
+            resource: "table columns",
+            limit: 2,
+            actual: 3,
+        })
+    ));
+}
+
+#[test]
+fn duplicated_table_cells_reserve_the_node_budget_before_cloning_large_content() {
+    let content = "x".repeat(256 * 1024);
+    let source = format!("|===\n100000*|{content}\n|===\n");
+    assert!(matches!(
+        analyze_with_limits(
+            &source,
+            AnalysisLimits {
+                max_nodes: 2,
+                max_table_columns: 100_000,
+                ..AnalysisLimits::default()
+            },
+        ),
+        Err(ParseError::LimitExceeded {
+            resource: "nodes",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn duplicated_table_cell_materialization_is_cooperatively_cancellable() {
+    struct CancelAfter {
+        checks: AtomicUsize,
+        threshold: usize,
+    }
+    impl CancellationCheck for CancelAfter {
+        fn is_cancelled(&self) -> bool {
+            self.checks.fetch_add(1, Ordering::Relaxed) >= self.threshold
+        }
+    }
+
+    let content = "x".repeat(64 * 1024);
+    let source = format!("|===\n100000*|{content}\n|===\n");
+    let cancellation = CancelAfter {
+        checks: AtomicUsize::new(0),
+        threshold: 64,
+    };
+    let mut options = AnalysisOptions::default();
+    options.syntax.limits.max_table_columns = 100_000;
+    let result = Engine::new(options).analyze_with(
+        &source,
+        AnalysisInputs {
+            cancellation: Some(&cancellation),
+            ..AnalysisInputs::default()
+        },
+    );
+    assert!(matches!(result, Err(ParseError::Cancelled)));
+    assert!(cancellation.checks.load(Ordering::Relaxed) <= 66);
+}
+
+#[test]
+fn malformed_table_column_repetitions_keep_the_permissive_single_column_behavior() {
+    for columns in ["x*a", "*a"] {
+        let source = format!("[cols=\"{columns}\"]\n|===\n|paragraph\n|===\n");
+        let analysis = Engine::new(AnalysisOptions::default())
+            .analyze(&source)
+            .expect("malformed repetition recovers");
+        let table = analysis
+            .document()
+            .blocks()
+            .iter()
+            .find_map(|block| match block {
+                adocweave_core::semantic::Block::Delimited(block) => match &block.content {
+                    adocweave_core::semantic::DelimitedContent::Table(table) => Some(table),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .expect("table");
+        assert_eq!(table.columns.len(), 1);
+        assert_eq!(
+            table.columns[0].style,
+            adocweave_core::semantic::TableCellStyle::AsciiDoc
+        );
+    }
+}
+
+#[test]
+fn unrepresentable_table_column_numbers_are_rejected() {
+    for (source, resource, limit, actual) in [
+        (
+            "\
+[cols=\"18446744073709551616*a\"]
+|===
+|value
+|===
+",
+            "table columns",
+            4,
+            u64::MAX,
+        ),
+        (
+            "\
+[cols=\"4294967296\"]
+|===
+|value
+|===
+",
+            "table column width",
+            u32::MAX,
+            4_294_967_296,
+        ),
+    ] {
+        assert!(matches!(
+            analyze_with_limits(
+                source,
+                AnalysisLimits {
+                    max_table_columns: 4,
+                    ..AnalysisLimits::default()
+                },
+            ),
+            Err(ParseError::LimitExceeded {
+                resource: rejected_resource,
+                limit: rejected_limit,
+                actual: rejected,
+                ..
+            }) if rejected_resource == resource
+                && rejected_limit == limit
+                && rejected == actual
+        ));
+    }
+}
+
+#[test]
+fn table_resources_are_rejected_at_the_construction_boundary() {
+    let cases = [
+        (
+            "table bytes",
+            AnalysisLimits {
+                max_table_bytes: 3,
+                ..AnalysisLimits::default()
+            },
+        ),
+        (
+            "table cells",
+            AnalysisLimits {
+                max_table_cells: 1,
+                ..AnalysisLimits::default()
+            },
+        ),
+        (
+            "table columns",
+            AnalysisLimits {
+                max_table_columns: 1,
+                ..AnalysisLimits::default()
+            },
+        ),
+        (
+            "table nesting depth",
+            AnalysisLimits {
+                max_table_depth: 0,
+                ..AnalysisLimits::default()
+            },
+        ),
+    ];
+    for (resource, limits) in cases {
+        assert!(matches!(
+            analyze_with_limits(
+                "\
+|===
+|a |b
+|===
+",
+                limits,
+            ),
+            Err(ParseError::LimitExceeded { resource: actual, .. }) if actual == resource
+        ));
+    }
+}
+
+#[test]
+fn cooperative_cancellation_returns_no_analysis_to_render() {
+    struct CancelAfter {
+        checks: AtomicUsize,
+        threshold: usize,
+    }
+    impl CancellationCheck for CancelAfter {
+        fn is_cancelled(&self) -> bool {
+            self.checks.fetch_add(1, Ordering::Relaxed) >= self.threshold
+        }
+    }
+
+    let source = "paragraph\n\n".repeat(10_000);
+    let result = Engine::new(AnalysisOptions::default()).analyze_with(
+        &source,
+        AnalysisInputs {
+            cancellation: Some(&CancelAfter {
+                checks: AtomicUsize::new(0),
+                threshold: 1,
+            }),
+            ..AnalysisInputs::default()
+        },
+    );
+    assert!(matches!(result, Err(ParseError::Cancelled)));
+}
+
+#[test]
+fn reference_failure_codes_remain_total_for_host_failures() {
+    let cases = [
+        (
+            ResolutionFailureKind::MissingTarget,
+            "missing-reference-target",
+        ),
+        (
+            ResolutionFailureKind::MissingAnchor,
+            "missing-reference-anchor",
+        ),
+        (
+            ResolutionFailureKind::AmbiguousTarget,
+            "ambiguous-reference-target",
+        ),
+        (ResolutionFailureKind::OutsideRoot, "reference-outside-root"),
+        (
+            ResolutionFailureKind::ResolverFailure,
+            "reference-resolver-failure",
+        ),
+    ];
+    for (kind, code) in cases {
+        assert_eq!(kind.diagnostic_code(), code);
+    }
+
+    let outside = ReferenceKey::Document {
+        document: "../outside.adoc".to_owned(),
+        anchor: None,
+    };
+    assert!(matches!(outside, ReferenceKey::Document { .. }));
+}

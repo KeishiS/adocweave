@@ -17,7 +17,7 @@ rustPlatform.buildRustPackage {
   inherit src;
   cargoLock.lockFile = ../Cargo.lock;
   cargoBuildFlags = [
-    "-p=adocweave-cli"
+    "-p=adocweave"
   ];
   doCheck = false;
   strictDeps = true;

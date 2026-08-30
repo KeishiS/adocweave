@@ -13,15 +13,22 @@ if (!path || process.argv.length !== 3) {
 try {
   const metadata = JSON.parse(readFileSync(path, "utf8"));
   const expectedNames = [
+    "adocweave-core",
     "adocweave",
-    "adocweave-cli",
     "adocweave-lsp",
     "adocweave-project",
     "adocweave-textlint",
     "adocweave-wasm",
   ];
-  const packages = metadata.packages.filter((pkg) => expectedNames.includes(pkg.name));
-  if (packages.length !== expectedNames.length) throw new Error("cargo metadata is missing a workspace package");
+  const packagesById = new Map(metadata.packages.map((pkg) => [pkg.id, pkg]));
+  const workspaceNames = metadata.workspace_members
+    .map((id) => packagesById.get(id)?.name)
+    .sort();
+  const expectedWorkspaceNames = [...expectedNames].sort();
+  if (JSON.stringify(workspaceNames) !== JSON.stringify(expectedWorkspaceNames)) {
+    throw new Error("cargo metadata workspace packages do not match the final six-package layout");
+  }
+  const packages = expectedNames.map((name) => metadata.packages.find((pkg) => pkg.name === name));
   const version = workspaceVersion();
   for (const pkg of packages) {
     if (pkg.version !== version) throw new Error(`${pkg.name}: cargo metadata version mismatch`);

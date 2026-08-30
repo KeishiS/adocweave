@@ -13,7 +13,7 @@ fn direct_dependencies(manifest: &str) -> BTreeSet<String> {
 fn project_has_only_lower_level_crates_and_standard_glob_dependency() {
     let actual = direct_dependencies(include_str!("../Cargo.toml"));
     let expected = BTreeSet::from([
-        "adocweave".to_owned(),
+        "adocweave-core".to_owned(),
         "glob".to_owned(),
         "serde".to_owned(),
         "sha2".to_owned(),
@@ -24,10 +24,10 @@ fn project_has_only_lower_level_crates_and_standard_glob_dependency() {
 
 #[test]
 fn lower_level_crates_do_not_depend_on_project() {
-    let manifest = include_str!("../../adocweave/Cargo.toml");
+    let manifest = include_str!("../../adocweave-core/Cargo.toml");
     assert!(
         !direct_dependencies(manifest).contains("adocweave-project"),
-        "adocweave must remain below adocweave-project"
+        "adocweave-core must remain below adocweave-project"
     );
 }
 

@@ -2,6 +2,8 @@
 
 この文書では、AdocWeaveが環境に依存せず扱う範囲、公開APIおよび処理上限を定義します。
 通常の文書作成では xref:../user-guide/syntax-support.adoc[対応しているAsciiDocの書式]を参照してください。
+ここで説明するRust APIは``adocweave-core`` crateが所有し、Rustコードからは
+``adocweave_core``という名前で参照します。
 
 == 対象範囲
 
@@ -31,7 +33,7 @@ xref:../user-guide/syntax-support.adoc[対応しているAsciiDocの書式]に�
 [#document-projection]
 == 構造情報
 
-``adocweave::output::projection``は、一つの``Analysis``から必要な構造情報だけを取得するqueryを提供します。
+``adocweave_core::output::projection``は、一つの``Analysis``から必要な構造情報だけを取得するqueryを提供します。
 各queryはHTMLを生成せず、ソースを再解析せず、ファイルシステム、ネットワーク、DBまたはアプリ固有のschemaへ
 アクセスしません。
 
@@ -211,8 +213,8 @@ source occurrenceを取得します。
 
 [source,rust]
 ----
-use adocweave::output::html::{RenderPolicy, render};
-use adocweave::{AnalysisOptions, Engine, ParseError};
+use adocweave_core::output::html::{RenderPolicy, render};
+use adocweave_core::{AnalysisOptions, Engine, ParseError};
 
 fn convert() -> Result<String, ParseError> {
     let source = "\

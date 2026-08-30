@@ -1,4 +1,4 @@
-use adocweave::CancellationCheck;
+use adocweave_core::CancellationCheck;
 
 use super::*;
 
@@ -398,7 +398,7 @@ fn open_change_and_close_update_one_session_document() {
     let source_id = document.source_id.clone();
     let analysis_source_id = document
         .analysis()
-        .and_then(adocweave::Analysis::source_id)
+        .and_then(adocweave_core::Analysis::source_id)
         .expect("project source ID");
     assert_eq!(
         document
@@ -450,7 +450,7 @@ fn open_change_and_close_update_one_session_document() {
     assert_eq!(document.source_id, source_id);
     let analysis_source_id = document
         .analysis()
-        .and_then(adocweave::Analysis::source_id)
+        .and_then(adocweave_core::Analysis::source_id)
         .expect("project source ID");
     assert_eq!(
         document

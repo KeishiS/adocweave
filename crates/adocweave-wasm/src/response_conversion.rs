@@ -1,18 +1,18 @@
 //! Direct conversion from core output types to the public WASM wire contract.
 
-use adocweave::output::diagnostics::{
+use adocweave_core::output::diagnostics::{
     Applicability as CoreApplicability, Diagnostic as CoreDiagnostic, Severity as CoreSeverity,
     sort_diagnostics,
 };
-use adocweave::output::projection::{
+use adocweave_core::output::projection::{
     self, BlockPresentationKind as CoreBlockPresentationKind, FormulaKind as CoreFormulaKind,
     ProjectedText, SearchTextKind as CoreSearchTextKind,
 };
-use adocweave::resolution::{
+use adocweave_core::resolution::{
     ReferenceKey as CoreReferenceKey, ResolutionFailureKind, ResolutionNoticeKind,
     ResolutionOutcome,
 };
-use adocweave::semantic::{
+use adocweave_core::semantic::{
     DocumentSymbol as CoreDocumentSymbol, MathLanguage as CoreMathLanguage,
     OrderedListStyle as CoreOrderedListStyle, ReferenceTargetKind as CoreReferenceTargetKind,
     SectionKind as CoreSectionKind, SymbolKind as CoreSymbolKind, TocEntry as CoreTocEntry,
@@ -95,8 +95,8 @@ fn wasm_document_symbol(symbol: CoreDocumentSymbol) -> DocumentSymbol {
 }
 
 pub(crate) fn wasm_document_projection(
-    analysis: &adocweave::Analysis,
-    inputs: &adocweave::resolution::RenderInputs,
+    analysis: &adocweave_core::Analysis,
+    inputs: &adocweave_core::resolution::RenderInputs,
 ) -> DocumentView {
     let headings = analysis
         .structure()
@@ -453,7 +453,7 @@ fn resolution_outcome(outcome: ResolutionOutcome) -> DocumentResolutionOutcome {
     }
 }
 
-pub(crate) fn wasm_text_range(range: adocweave::text::TextRange) -> TextRange {
+pub(crate) fn wasm_text_range(range: adocweave_core::text::TextRange) -> TextRange {
     TextRange {
         start: range.start().to_u32(),
         end: range.end().to_u32(),
@@ -462,7 +462,7 @@ pub(crate) fn wasm_text_range(range: adocweave::text::TextRange) -> TextRange {
 
 #[cfg(test)]
 mod tests {
-    use adocweave::resolution::{ResolutionNotice, ResolverFailure};
+    use adocweave_core::resolution::{ResolutionNotice, ResolverFailure};
 
     use super::*;
 

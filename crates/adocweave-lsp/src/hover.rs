@@ -1,11 +1,11 @@
 //! Pure Hover projection over an adopted analysis snapshot.
 
-use adocweave::Analysis;
-use adocweave::semantic as parser;
-use adocweave::semantic::{
+use adocweave_core::Analysis;
+use adocweave_core::semantic as parser;
+use adocweave_core::semantic::{
     DocumentElement, Inline, MathLanguage, document_element_at, generate_heading_ids,
 };
-use adocweave::text::TextRange;
+use adocweave_core::text::TextRange;
 use async_lsp::lsp_types as lsp;
 
 use crate::position::{PositionEncoding, range_contains_offset, range_to_lsp};
@@ -207,7 +207,7 @@ fn hover_plain_text(markdown: &str) -> String {
         .replace('`', "")
 }
 
-fn attribute_reference_hover(reference: &adocweave::semantic::AttributeReference) -> String {
+fn attribute_reference_hover(reference: &adocweave_core::semantic::AttributeReference) -> String {
     match &reference.value {
         Ok(Some(value)) => format!(
             "**attribute reference**  \nName: `{}`  \nValue: `{}`",
@@ -221,10 +221,12 @@ fn attribute_reference_hover(reference: &adocweave::semantic::AttributeReference
             "**attribute reference**  \nName: `{}`  \nResolution: `{}`",
             reference.name,
             match error {
-                adocweave::semantic::AttributeExpansionError::Undefined => "undefined",
-                adocweave::semantic::AttributeExpansionError::Cycle => "cycle",
-                adocweave::semantic::AttributeExpansionError::DepthLimitExceeded => "depth limit",
-                adocweave::semantic::AttributeExpansionError::SizeLimitExceeded => "size limit",
+                adocweave_core::semantic::AttributeExpansionError::Undefined => "undefined",
+                adocweave_core::semantic::AttributeExpansionError::Cycle => "cycle",
+                adocweave_core::semantic::AttributeExpansionError::DepthLimitExceeded =>
+                    "depth limit",
+                adocweave_core::semantic::AttributeExpansionError::SizeLimitExceeded =>
+                    "size limit",
             }
         ),
     }
@@ -235,8 +237,8 @@ fn projected_attribute_reference_at<'a>(
     uri: &lsp::Url,
     offset: u32,
 ) -> Option<(
-    &'a adocweave::semantic::AttributeReference,
-    &'a adocweave::preprocess::SourceOrigin,
+    &'a adocweave_core::semantic::AttributeReference,
+    &'a adocweave_core::preprocess::SourceOrigin,
 )> {
     project
         .projection
@@ -256,12 +258,12 @@ fn projected_attribute_reference_at<'a>(
 }
 
 fn inline_hover(
-    document: &adocweave::semantic::Document,
+    document: &adocweave_core::semantic::Document,
     offset: u32,
 ) -> Option<(String, TextRange)> {
     let mut found = None;
-    adocweave::semantic::walk(document, |node| {
-        let adocweave::semantic::SemanticNode::Inline(inline) = node else {
+    adocweave_core::semantic::walk(document, |node| {
+        let adocweave_core::semantic::SemanticNode::Inline(inline) = node else {
             return;
         };
         if range_contains_offset(inline.range(), offset) {
@@ -288,7 +290,7 @@ fn inline_hover(
                     Some(format!("**passthrough**  \nLiteral content: `{value}`"))
                 }
                 Inline::Macro(node) => match node.kind {
-                    adocweave::semantic::StandardMacroKind::Footnote => document
+                    adocweave_core::semantic::StandardMacroKind::Footnote => document
                         .catalogs()
                         .footnote_occurrence(node.range)
                         .map(|(footnote, _)| {
@@ -299,7 +301,7 @@ fn inline_hover(
                                 footnote.text
                             )
                         }),
-                    adocweave::semantic::StandardMacroKind::BibliographyAnchor => document
+                    adocweave_core::semantic::StandardMacroKind::BibliographyAnchor => document
                         .catalogs()
                         .bibliography()
                         .iter()
@@ -311,7 +313,7 @@ fn inline_hover(
                                 entry.references.len()
                             )
                         }),
-                    adocweave::semantic::StandardMacroKind::IndexTerm => document
+                    adocweave_core::semantic::StandardMacroKind::IndexTerm => document
                         .catalogs()
                         .index()
                         .iter()
@@ -338,12 +340,12 @@ fn inline_hover(
 }
 
 fn block_presentation_hover(
-    document: &adocweave::semantic::Document,
+    document: &adocweave_core::semantic::Document,
     offset: u32,
 ) -> Option<(String, TextRange)> {
     let mut found = None;
-    adocweave::semantic::walk(document, |node| {
-        let adocweave::semantic::SemanticNode::Block(block) = node else {
+    adocweave_core::semantic::walk(document, |node| {
+        let adocweave_core::semantic::SemanticNode::Block(block) = node else {
             return;
         };
         match block {
@@ -408,7 +410,7 @@ fn block_presentation_hover(
 
 #[cfg(test)]
 mod tests {
-    use adocweave::{Analysis, AnalysisOptions, AnalysisRequest, NeverCancel};
+    use adocweave_core::{Analysis, AnalysisOptions, AnalysisRequest, NeverCancel};
     use async_lsp::lsp_types as lsp;
 
     use super::{HoverPresentation, hover};

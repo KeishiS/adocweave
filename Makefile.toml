@@ -696,7 +696,7 @@ fi
 [tasks.build-adoc-check]
 private = true
 command = "cargo"
-args = ["build", "-p", "adocweave-cli", "--bin", "adocweave"]
+args = ["build", "-p", "adocweave", "--bin", "adocweave"]
 
 [tasks.adoc-check-targets]
 private = true
