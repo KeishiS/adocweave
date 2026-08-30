@@ -332,19 +332,6 @@ jobs:
       "contents": "read"
       "id-token": "write"
 
-  publish-npm:
-    needs:
-      - plan
-      - host
-    if: ${{ always() && needs.host.result == 'success' }}
-    uses: ./.github/workflows/npm-publish.yml
-    with:
-      tag: ${{ needs.plan.outputs.tag }}
-      commit: ${{ github.sha }}
-    permissions:
-      "contents": "read"
-      "id-token": "write"
-
   publish-open-vsx:
     needs:
       - plan
@@ -363,11 +350,10 @@ jobs:
       - host
       - publish-binary-cache
       - publish-marketplace
-      - publish-npm
       - publish-open-vsx
     # A stable Release run is successful only after every external publication succeeds.
     # Standard "Re-run failed jobs" retries only failed idempotent publication calls.
-    if: ${{ always() && needs.host.result == 'success' && needs.publish-binary-cache.result == 'success' && needs.publish-marketplace.result == 'success' && needs.publish-npm.result == 'success' && needs.publish-open-vsx.result == 'success' }}
+    if: ${{ always() && needs.host.result == 'success' && needs.publish-binary-cache.result == 'success' && needs.publish-marketplace.result == 'success' && needs.publish-open-vsx.result == 'success' }}
     runs-on: "ubuntu-24.04"
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
