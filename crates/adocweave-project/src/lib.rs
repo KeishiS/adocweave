@@ -283,9 +283,6 @@ pub enum ProjectTarget {
     Directory(PathBuf),
     /// Files selected by one authored glob pattern.
     Glob(String),
-    /// Supported documents found below the project root by workspace discovery
-    /// with configured excludes.
-    Workspace(PathBuf),
 }
 
 /// One fixed in-memory source and its include-resolution path.
@@ -1119,9 +1116,6 @@ impl ProjectConfig {
             max_total_bytes: limits.max_total_bytes,
             max_resource_bytes: limits.max_resource_bytes,
         }
-    }
-    pub fn workspace_excludes(&self) -> impl Iterator<Item = &str> {
-        self.inner.workspace.scan.exclude_patterns()
     }
     pub fn local_targets_enabled(&self) -> bool {
         self.inner.local_targets.enabled

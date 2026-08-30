@@ -165,6 +165,7 @@ impl ClientProfile {
 ///
 /// Carries no borrow of the service, so it can be produced on a worker and
 /// handed back to the event loop.
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct WorkspaceScan {
     loaded: crate::workspace::LoadedRoots,
@@ -286,6 +287,7 @@ pub(crate) struct WorkspaceFileEventOutcome {
     pub(crate) cancel_recovery_timer: bool,
 }
 
+#[allow(dead_code)]
 pub(crate) struct WorkspaceScanApplication {
     pub(crate) jobs: Vec<AnalysisJob>,
     pub(crate) installed: bool,
@@ -815,16 +817,17 @@ impl Session {
                 .into_iter()
                 .collect()
         };
-        // The roots are recorded here, but reading them is left to
-        // `plan_workspace_scan`. Scanning a large workspace takes long enough
-        // to be noticed, and the protocol does not require it to finish before
-        // the capabilities are returned.
         self.workspace_roots = roots
             .into_iter()
             .map(|uri| (uri.to_string(), uri))
             .collect();
+        let roots = self.workspace_roots.values().cloned().collect::<Vec<_>>();
+        let configured = self.workspace.configure_roots(&roots, &[]);
         self.advance_workspace_input_epoch();
         self.workspace_error = None;
+        if let Err(error) = configured {
+            self.set_workspace_error(error);
+        }
         self.clear_workspace_watch_errors();
         self.advance_input_revision();
         lsp::InitializeResult {
@@ -922,6 +925,9 @@ impl Session {
         if self.workspace_input_status == WorkspaceInputStatus::Rebuilding {
             self.documents.mark_project_input_pending(&job);
             return Vec::new();
+        }
+        if self.workspace_roots.is_empty() {
+            return self.configure_open_workspace();
         }
         let affected = match self.workspace.upsert_open(
             document.uri.clone(),
@@ -1275,12 +1281,12 @@ impl Session {
         if params.changes.iter().any(|change| {
             change.uri.path_segments().and_then(Iterator::last) == Some(adocweave_config::FILE_NAME)
         }) {
-            self.begin_workspace_rebuild();
+            self.advance_workspace_input_epoch();
             return WorkspaceFileEventOutcome {
-                jobs: Vec::new(),
+                jobs: self.reconfigure_open_workspace(),
                 recovery_generation: None,
-                rebuild: self.request_workspace_scan(),
-                cancel_recovery_timer: true,
+                rebuild: None,
+                cancel_recovery_timer: false,
             };
         }
 
@@ -1325,13 +1331,13 @@ impl Session {
         }
 
         let changes = self.workspace_files_changed_with_journal(params);
-        if changes.recovery_required && !changes.replay_complete {
-            self.begin_workspace_rebuild();
+        let mut jobs = changes.jobs;
+        if changes.recovery_required || !changes.replay_complete {
+            jobs.extend(self.reconfigure_open_workspace());
         }
-        let recovery_generation = self.record_workspace_changes(&changes);
         WorkspaceFileEventOutcome {
-            jobs: changes.jobs,
-            recovery_generation,
+            jobs,
+            recovery_generation: None,
             rebuild: None,
             cancel_recovery_timer: false,
         }
@@ -1367,13 +1373,6 @@ impl Session {
         }
     }
 
-    pub(crate) fn request_workspace_scan(&mut self) -> Option<WorkspaceScanStart> {
-        self.workspace_scans
-            .lock()
-            .expect("workspace scan state lock is poisoned")
-            .request_replacement()
-    }
-
     pub(crate) fn record_workspace_changes(
         &mut self,
         changes: &WorkspaceFileChanges,
@@ -1384,6 +1383,7 @@ impl Session {
             .record_workspace_changes(changes)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn workspace_scan_recovery_is_current(&self, generation: u64) -> bool {
         self.workspace_scans
             .lock()
@@ -1392,6 +1392,7 @@ impl Session {
             == Some(generation)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn request_workspace_scan_recovery(
         &mut self,
         recovery: WorkspaceScanRecovery,
@@ -1402,6 +1403,7 @@ impl Session {
             .request_recovery(recovery.generation())
     }
 
+    #[allow(dead_code)]
     pub(crate) fn complete_workspace_scan(
         &mut self,
         scanned: WorkspaceScanned,
@@ -1431,6 +1433,7 @@ impl Session {
     ///
     /// The documents open at this moment are overlaid onto the read, not the
     /// ones open when it started, so a document opened during the walk is kept.
+    #[allow(dead_code)]
     pub(crate) fn apply_workspace_scan(&mut self, scan: WorkspaceScan) -> WorkspaceScanApplication {
         let structural_rebuild = self.workspace_input_status == WorkspaceInputStatus::Rebuilding;
         let open_sources = self.documents.open_sources();
@@ -1471,6 +1474,7 @@ impl Session {
 
     /// Records an internal scan worker failure without replacing the last
     /// coherent workspace snapshot.
+    #[allow(dead_code)]
     pub fn workspace_scan_failed(&mut self, error: String) -> Vec<AnalysisJob> {
         if self.workspace_input_status == WorkspaceInputStatus::Rebuilding {
             self.set_workspace_error(error);
@@ -1577,9 +1581,9 @@ impl Session {
     pub fn workspace_folders_changed(
         &mut self,
         params: lsp::DidChangeWorkspaceFoldersParams,
-    ) -> bool {
+    ) -> Vec<AnalysisJob> {
         if !self.client.workspace_folders {
-            return false;
+            return Vec::new();
         }
         let mut roots = self.workspace_roots.clone();
         for folder in params.event.removed {
@@ -1589,12 +1593,34 @@ impl Session {
             roots.insert(folder.uri.to_string(), folder.uri);
         }
         if roots == self.workspace_roots {
-            return false;
+            return Vec::new();
         }
         self.workspace_roots = roots;
         self.active_scan_notices.clear();
-        self.begin_workspace_rebuild();
-        true
+        self.advance_workspace_input_epoch();
+        self.reconfigure_open_workspace()
+    }
+
+    fn reconfigure_open_workspace(&mut self) -> Vec<AnalysisJob> {
+        self.advance_input_revision();
+        self.configure_open_workspace()
+    }
+
+    /// Rebuilds authority and project input from the documents open now.
+    ///
+    /// With no workspace folders, each open file contributes only its parent
+    /// directory. Replacing the set on every open and close also drops the
+    /// authority for a directory after its last document closes.
+    fn configure_open_workspace(&mut self) -> Vec<AnalysisJob> {
+        let open_sources = self.documents.open_sources();
+        let parsed_open_sources = parse_open_sources(&open_sources);
+        let roots = self.workspace_roots.values().cloned().collect::<Vec<_>>();
+        let outcome = self.workspace.configure_roots(&roots, &parsed_open_sources);
+        if outcome.is_ok() {
+            self.documents.synchronize_all_project_inputs();
+        }
+        self.workspace_input_status = WorkspaceInputStatus::Ready;
+        self.finish_reload(outcome, open_sources)
     }
 
     /// Returns the effective text a workspace resource holds, if it is known.
@@ -1607,11 +1633,6 @@ impl Session {
     #[cfg(test)]
     pub fn workspace_analysis_count(&self) -> usize {
         self.workspace.resource_count()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn workspace_rebuild_is_pending(&self) -> bool {
-        self.workspace_input_status == WorkspaceInputStatus::Rebuilding
     }
 
     pub fn watched_files_registration(&self) -> Option<lsp::RegistrationParams> {
@@ -1908,6 +1929,14 @@ impl Session {
             return SessionCloseOutcome {
                 closed,
                 reanalysis_jobs: Vec::new(),
+                diagnostic_uris,
+            };
+        }
+        if closed && self.workspace_roots.is_empty() {
+            self.advance_input_revision();
+            return SessionCloseOutcome {
+                closed,
+                reanalysis_jobs: self.configure_open_workspace(),
                 diagnostic_uris,
             };
         }

@@ -608,34 +608,6 @@ fn missing_config_discovery_is_fixed_and_charged_once() {
 }
 
 #[test]
-fn workspace_excludes_apply_before_scan_but_explicit_directory_keeps_files() {
-    let directory = tempfile::tempdir().expect("temporary directory");
-    let root = directory.path();
-    fs::create_dir(root.join("generated")).expect("generated directory");
-    write(root.join("kept.adoc"), "kept\n");
-    write(root.join("generated/hidden.adoc"), "hidden\n");
-    write(
-        root.join(".adocweave.toml"),
-        "schema-version = 2\n[workspace.scan]\nexclude = [\"generated\"]\n",
-    );
-
-    let workspace = process(request(
-        root,
-        vec![ProjectTarget::Workspace(PathBuf::from("."))],
-    ))
-    .expect("workspace scan succeeds");
-    assert_eq!(workspace.targets.len(), 1);
-    assert!(target_path_ends(&workspace.targets[0], "kept.adoc"));
-
-    let explicit = process(request(
-        root,
-        vec![ProjectTarget::Directory(PathBuf::from("."))],
-    ))
-    .expect("explicit directory succeeds");
-    assert_eq!(explicit.targets.len(), 2);
-}
-
-#[test]
 fn target_results_are_stable_across_selector_order() {
     let directory = tempfile::tempdir().expect("temporary directory");
     write(directory.path().join("a.adoc"), "a\n");
@@ -670,7 +642,6 @@ fn selector_permutations_duplicates_and_overlaps_have_one_stable_result_set() {
         ProjectTarget::Path(PathBuf::from("a.adoc")),
         ProjectTarget::Directory(PathBuf::from("nested/..")),
         ProjectTarget::Glob("./*.adoc".to_owned()),
-        ProjectTarget::Workspace(PathBuf::from(".")),
     ];
     let run = |mut selectors: Vec<ProjectTarget>| {
         let first = process(request(root, selectors.clone())).expect("selectors are valid");
@@ -698,7 +669,7 @@ fn selector_errors_are_stable_across_input_order() {
     let root = directory.path();
     let selectors = vec![
         ProjectTarget::Glob("[invalid".to_owned()),
-        ProjectTarget::Workspace(PathBuf::from("../outside")),
+        ProjectTarget::Path(PathBuf::from("../outside.adoc")),
     ];
     let first = process(request(root, selectors.clone())).expect_err("selectors are invalid");
     let second = process(request(root, selectors.into_iter().rev().collect()))
@@ -776,14 +747,14 @@ fn directory_selectors_under_independent_roots_keep_stable_authority() {
 }
 
 #[test]
-fn bounded_workspace_scan_reports_partial_results() {
+fn bounded_directory_scan_reports_partial_results() {
     let directory = tempfile::tempdir().expect("temporary directory");
     fs::create_dir(directory.path().join("nested")).expect("nested directory");
     write(directory.path().join("a.adoc"), "a\n");
     write(directory.path().join("nested/b.adoc"), "b\n");
     let mut request = request(
         directory.path(),
-        vec![ProjectTarget::Workspace(PathBuf::from("."))],
+        vec![ProjectTarget::Directory(PathBuf::from("."))],
     );
     request.config = ConfigSelection::Disabled;
     request.limits.max_directory_entries = 2;
@@ -889,23 +860,6 @@ fn non_utf8_parent_resolves_relative_include_without_lossy_paths() {
             .source
             .contains("non-UTF-8 parent include")
     );
-}
-
-#[test]
-fn workspace_selector_cannot_leave_the_project_root() {
-    let project = tempfile::tempdir().expect("project directory");
-    let outside = tempfile::tempdir().expect("outside directory");
-    let mut request = request_with_roots(
-        project.path(),
-        [project.path().to_owned(), outside.path().to_owned()],
-        vec![ProjectTarget::Workspace(outside.path().to_owned())],
-    );
-    request.config = ConfigSelection::Disabled;
-    let result = process(request);
-    assert!(matches!(
-        result,
-        Err(adocweave_project::ProjectError::Authority(_))
-    ));
 }
 
 #[test]

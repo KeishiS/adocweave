@@ -36,20 +36,17 @@ fn one_owned_request_accepts_every_target_form() {
     let path = PathBuf::from("README.adoc");
     let directory = PathBuf::from("docs");
     let glob = String::from("docs/**/*.adoc");
-    let workspace = PathBuf::from("docs");
     let request = request_with(vec![
         ProjectTarget::Path(path.clone()),
         ProjectTarget::Directory(directory.clone()),
         ProjectTarget::Glob(glob.clone()),
-        ProjectTarget::Workspace(workspace.clone()),
     ]);
-    drop((path, directory, glob, workspace));
+    drop((path, directory, glob));
 
-    assert_eq!(request.targets.len(), 4);
+    assert_eq!(request.targets.len(), 3);
     assert!(matches!(request.targets[0], ProjectTarget::Path(_)));
     assert!(matches!(request.targets[1], ProjectTarget::Directory(_)));
     assert!(matches!(request.targets[2], ProjectTarget::Glob(_)));
-    assert!(matches!(request.targets[3], ProjectTarget::Workspace(_)));
 }
 
 #[test]
@@ -1003,7 +1000,7 @@ fn directory_scan_observes_cancellation_during_the_walk() {
         fs::write(child.join("guide.adoc"), "text\n").expect("scan source");
     }
     let request = ProjectRequest {
-        targets: vec![ProjectTarget::Workspace(directory.path().to_owned())],
+        targets: vec![ProjectTarget::Directory(directory.path().to_owned())],
         sources: Vec::new(),
         config: ConfigSelection::Disabled,
         overrides: ProjectOverrides::default(),

@@ -40,10 +40,10 @@ include = ["THIRD_PARTY_NOTICES.adoc"]
 
 [[dist.extra-artifacts]]
 artifacts = [
-  "target/distrib/adocweave-wasm-0.53.0.tgz",
-  "target/distrib/adocweave-textlint-plugin-asciidoc-0.53.0.tgz",
-  "target/distrib/adocweave-vscode-0.53.0.vsix",
-  "target/distrib/adocweave-zed-0.53.0.tar.xz",
+  "target/distrib/adocweave-wasm-0.54.0.tgz",
+  "target/distrib/adocweave-textlint-plugin-asciidoc-0.54.0.tgz",
+  "target/distrib/adocweave-vscode-0.54.0.vsix",
+  "target/distrib/adocweave-zed-0.54.0.tar.xz",
 ]
 build = ["nix", "develop", ".#ci-browser", "-c", "cargo", "make", "release-global-candidate"]
 

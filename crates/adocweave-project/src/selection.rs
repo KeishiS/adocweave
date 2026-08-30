@@ -3,7 +3,6 @@ use std::fmt::Write as _;
 use std::path::{Component, Path, PathBuf};
 
 use adocweave::CancellationCheck;
-use adocweave_config::WorkspaceScanSettings;
 use adocweave_host::{
     DerivedFilesystemRoots, IncludeFilesystemJob, LocalFilesystemPolicy, ResourceError,
 };
@@ -18,14 +17,12 @@ pub(crate) enum NormalizedSelector {
     Path(PathBuf),
     Directory(PathBuf),
     Glob { pattern: String, scan_root: PathBuf },
-    Workspace(PathBuf),
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum ScanMode {
     Directory,
     Glob,
-    Workspace,
 }
 
 struct ScanState<'request> {
@@ -33,7 +30,7 @@ struct ScanState<'request> {
     limits: ProjectLimits,
     job: &'request IncludeFilesystemJob,
     warnings: &'request mut Vec<ProjectWarning>,
-    scans: BTreeMap<(ScanMode, PathBuf, Vec<String>), Vec<PathBuf>>,
+    scans: BTreeMap<(ScanMode, PathBuf), Vec<PathBuf>>,
     cancellation: &'request dyn CancellationCheck,
 }
 
@@ -91,7 +88,6 @@ fn selector_sort_key(selector: &ProjectTarget) -> (u8, String) {
         ProjectTarget::PathNoSymlinks(path) => (1, format!("{path:?}")),
         ProjectTarget::Directory(path) => (2, format!("{path:?}")),
         ProjectTarget::Glob(pattern) => (3, pattern.clone()),
-        ProjectTarget::Workspace(path) => (4, format!("{path:?}")),
     }
 }
 
@@ -112,13 +108,6 @@ fn normalize_selector(
         ProjectTarget::Directory(path) => absolute_lexical(project_root, path)
             .map(NormalizedSelector::Directory)
             .map_err(project_authority_error),
-        ProjectTarget::Workspace(path) => {
-            let path = absolute_lexical(project_root, path).map_err(project_authority_error)?;
-            if !path.starts_with(project_root) {
-                return Err(project_authority_error(ResourceError::OutsideRoots(path)));
-            }
-            Ok(NormalizedSelector::Workspace(path))
-        }
         ProjectTarget::Glob(authored) => {
             glob::Pattern::new(authored).map_err(|_| invalid_glob(authored))?;
             let absolute_pattern = absolute_lexical(project_root, Path::new(authored))
@@ -216,7 +205,6 @@ pub(crate) fn select_targets(
     authority: &mut LocalFilesystemPolicy,
     limits: ProjectLimits,
     job: &IncludeFilesystemJob,
-    scan_settings: &BTreeMap<PathBuf, WorkspaceScanSettings>,
     warnings: &mut Vec<ProjectWarning>,
     cancellation: &dyn CancellationCheck,
 ) -> Result<Vec<PathBuf>, ProjectError> {
@@ -236,21 +224,13 @@ pub(crate) fn select_targets(
                 selected.insert(path.clone());
             }
             NormalizedSelector::Directory(directory) => {
-                let paths = scans.scan_once(directory, ScanMode::Directory, None)?;
-                selected.extend(paths.iter().cloned());
-            }
-            NormalizedSelector::Workspace(directory) => {
-                let paths = scans.scan_once(
-                    directory,
-                    ScanMode::Workspace,
-                    scan_settings.get(directory),
-                )?;
+                let paths = scans.scan_once(directory, ScanMode::Directory)?;
                 selected.extend(paths.iter().cloned());
             }
             NormalizedSelector::Glob { pattern, scan_root } => {
                 let pattern = glob::Pattern::new(pattern)
                     .expect("normalized selectors retain a valid glob pattern");
-                let paths = scans.scan_once(scan_root, ScanMode::Glob, None)?;
+                let paths = scans.scan_once(scan_root, ScanMode::Glob)?;
                 selected.extend(
                     paths
                         .iter()
@@ -275,16 +255,8 @@ impl ScanState<'_> {
         &mut self,
         directory: &Path,
         mode: ScanMode,
-        scan_settings: Option<&WorkspaceScanSettings>,
     ) -> Result<Vec<PathBuf>, ProjectError> {
-        let mut patterns = scan_settings
-            .into_iter()
-            .flat_map(WorkspaceScanSettings::exclude_patterns)
-            .map(str::to_owned)
-            .collect::<Vec<_>>();
-        patterns.sort();
-        patterns.dedup();
-        let key = (mode, directory.to_owned(), patterns);
+        let key = (mode, directory.to_owned());
         if let Some(paths) = self.scans.get(&key) {
             return Ok(paths.clone());
         }
@@ -318,10 +290,7 @@ impl ScanState<'_> {
             }
         })?;
         let (paths, complete) = transaction
-            .discover_adoc_paths_within_budget(
-                |_, relative| scan_settings.is_some_and(|settings| settings.excludes(relative)),
-                || self.cancellation.is_cancelled(),
-            )
+            .discover_adoc_paths_within_budget(|_, _| false, || self.cancellation.is_cancelled())
             .map_err(|error| {
                 if self.cancellation.is_cancelled() {
                     ProjectError::Cancelled
@@ -348,17 +317,6 @@ fn invalid_glob(authored: &str) -> ProjectError {
     ProjectError::TargetSelection(TargetSelectionError::InvalidGlob {
         pattern: authored.to_owned(),
     })
-}
-
-pub(crate) fn scan_root_for_selector(
-    selector: &NormalizedSelector,
-) -> Result<Option<PathBuf>, ProjectError> {
-    match selector {
-        NormalizedSelector::Workspace(path) => Ok(Some(path.clone())),
-        NormalizedSelector::Path(_)
-        | NormalizedSelector::Directory(_)
-        | NormalizedSelector::Glob { .. } => Ok(None),
-    }
 }
 
 fn glob_scan_root(pattern: &str) -> PathBuf {

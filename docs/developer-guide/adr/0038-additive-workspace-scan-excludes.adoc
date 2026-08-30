@@ -1,6 +1,6 @@
 = ADR 0038: ワークスペース走査の除外patternを組込み値へ追加
 
-:status: accepted
+:status: superseded by ADR 0044
 
 == 文脈
 

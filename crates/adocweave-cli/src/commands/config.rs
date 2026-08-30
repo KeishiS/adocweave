@@ -59,11 +59,6 @@ pub(crate) fn run_project(snapshot: &adocweave_project::ProjectConfigSnapshot) -
                 "maxTotalBytes": limits.max_total_bytes,
                 "maxResourceBytes": limits.max_resource_bytes,
             },
-            "workspace": {
-                "scan": {
-                    "exclude": config.workspace_excludes().collect::<Vec<_>>(),
-                },
-            },
             "localTargets": {
                 "enabled": config.local_targets_enabled(),
                 "projectRoot": config.local_target_root().map(path),

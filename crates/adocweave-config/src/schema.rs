@@ -7,14 +7,12 @@ use schemars::generate::SchemaSettings;
 use serde_json::{Map, Value, json};
 
 use super::{
-    MAX_WORKSPACE_SCAN_EXCLUDES, MAX_WORKSPACE_SCAN_PATTERN_CHARACTERS, ProjectConfigWire,
-    ResolvedProjectConfig, ResolvedResourceLimitPlan, SCHEMA_VERSION, SyntaxModeWire,
-    default_blank_lines,
+    ProjectConfigWire, ResolvedProjectConfig, ResolvedResourceLimitPlan, SCHEMA_VERSION,
+    SyntaxModeWire, default_blank_lines,
 };
 
 const SCHEMA_PATH: &str = "config/adocweave.schema.json";
 const SCHEMA_ID: &str = "https://github.com/KeishiS/adocweave/config/adocweave.schema.json";
-const WORKSPACE_SCAN_PATTERN: &str = r"^(?![A-Za-z]:)(?!/)(?!.*(?:^|/)\.{1,2}(?:/|$))(?:\*\*|(?:[^/\[\]{}\\*\x00-\x1F\x7F-\x9F]|\*(?!\*))+)(?:/(?:\*\*|(?:[^/\[\]{}\\*\x00-\x1F\x7F-\x9F]|\*(?!\*))+))*$";
 
 fn repository_root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -161,18 +159,6 @@ fn generated_schema() -> Value {
     }
     object_at(&mut schema, "/properties/resources/properties/roots")
         .insert("default".into(), json!([]));
-    replace(
-        &mut schema,
-        "/properties/workspace/properties/scan/properties/exclude",
-        json!({
-            "type": "array",
-            "items": { "$ref": "#/$defs/workspaceScanPattern" },
-            "maxItems": MAX_WORKSPACE_SCAN_EXCLUDES,
-            "default": [],
-            "description": "初期ワークスペース走査で組込みの除外patternへ追加するpattern。組込みの**/.git、**/.venv、**/node_modulesおよび**/targetは常に適用し、同じpatternの重複は無視します。"
-        }),
-    );
-
     object_at(&mut schema, "/properties/local-targets").insert(
         "allOf".into(),
         json!([{
@@ -204,19 +190,6 @@ fn generated_schema() -> Value {
     );
     object_at(&mut schema, "/properties/html/properties/stylesheet-files")
         .insert("default".into(), json!([]));
-
-    schema.as_object_mut().expect("root schema object").insert(
-        "$defs".into(),
-        json!({
-            "workspaceScanPattern": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": MAX_WORKSPACE_SCAN_PATTERN_CHARACTERS,
-                "pattern": WORKSPACE_SCAN_PATTERN,
-                "description": "ワークスペースルートを基準とする相対ディレクトリのパターン。区切りは`/`だけを使い、`*`と`?`は1階層、単独の`**`は複数階層に一致します。"
-            }
-        }),
-    );
 
     schema
 }
@@ -259,13 +232,6 @@ fn generated_schema_covers_the_configuration_contract() {
         .with_draft(Draft::Draft202012)
         .build(&schema)
         .expect("compile generated schema");
-    let exact_pattern_total = (0..4)
-        .map(|index| format!("{index}{}", "a".repeat(1023)))
-        .collect::<Vec<_>>();
-    let mut excessive_patterns = exact_pattern_total.clone();
-    excessive_patterns.push("b".into());
-    let exact_pattern_length = "😀".repeat(MAX_WORKSPACE_SCAN_PATTERN_CHARACTERS);
-    let excessive_pattern_length = format!("{exact_pattern_length}😀");
     let shared_cases = vec![
         ("minimal", json!({ "schema-version": SCHEMA_VERSION }), true),
         (
@@ -291,26 +257,6 @@ fn generated_schema_covers_the_configuration_contract() {
         (
             "equal resource limits",
             json!({ "schema-version": SCHEMA_VERSION, "resources": { "max-total-bytes": 1000, "max-resource-bytes": 1000 } }),
-            true,
-        ),
-        (
-            "workspace pattern total at the limit",
-            json!({ "schema-version": SCHEMA_VERSION, "workspace": { "scan": { "exclude": exact_pattern_total } } }),
-            true,
-        ),
-        (
-            "workspace pattern length at the Unicode scalar limit",
-            json!({ "schema-version": SCHEMA_VERSION, "workspace": { "scan": { "exclude": [exact_pattern_length] } } }),
-            true,
-        ),
-        (
-            "workspace pattern exceeds the Unicode scalar limit",
-            json!({ "schema-version": SCHEMA_VERSION, "workspace": { "scan": { "exclude": [excessive_pattern_length] } } }),
-            false,
-        ),
-        (
-            "workspace patterns",
-            json!({ "schema-version": SCHEMA_VERSION, "workspace": { "scan": { "exclude": [".git", "**/.venv", "build-*", "tmp/?ache"] } } }),
             true,
         ),
         (
@@ -384,31 +330,6 @@ fn generated_schema_covers_the_configuration_contract() {
             false,
         ),
         (
-            "absolute workspace pattern",
-            json!({ "schema-version": SCHEMA_VERSION, "workspace": { "scan": { "exclude": ["/target"] } } }),
-            false,
-        ),
-        (
-            "parent workspace pattern",
-            json!({ "schema-version": SCHEMA_VERSION, "workspace": { "scan": { "exclude": ["cache/../target"] } } }),
-            false,
-        ),
-        (
-            "platform-specific workspace separator",
-            json!({ "schema-version": SCHEMA_VERSION, "workspace": { "scan": { "exclude": ["cache\\target"] } } }),
-            false,
-        ),
-        (
-            "recursive wildcard inside segment",
-            json!({ "schema-version": SCHEMA_VERSION, "workspace": { "scan": { "exclude": ["cache/**target"] } } }),
-            false,
-        ),
-        (
-            "duplicate workspace pattern",
-            json!({ "schema-version": SCHEMA_VERSION, "workspace": { "scan": { "exclude": ["target", "target"] } } }),
-            true,
-        ),
-        (
             "unsupported schema version",
             json!({ "schema-version": 1 }),
             false,
@@ -425,23 +346,16 @@ fn generated_schema_covers_the_configuration_contract() {
         );
     }
 
-    for (name, config) in [
-        (
-            "excessive workspace pattern total",
-            json!({ "schema-version": SCHEMA_VERSION, "workspace": { "scan": { "exclude": excessive_patterns } } }),
-        ),
-        (
-            "resource limit exceeds total",
-            json!({ "schema-version": SCHEMA_VERSION, "resources": { "max-total-bytes": 1000, "max-resource-bytes": 1001 } }),
-        ),
-    ] {
-        assert!(validator.is_valid(&config), "schema: {name}");
-        let source = toml::to_string(&config).expect("convert test configuration to TOML");
-        assert!(
-            ResolvedProjectConfig::parse(&source, Path::new("/workspace")).is_err(),
-            "runtime: {name}"
-        );
-    }
+    let (name, config) = (
+        "resource limit exceeds total",
+        json!({ "schema-version": SCHEMA_VERSION, "resources": { "max-total-bytes": 1000, "max-resource-bytes": 1001 } }),
+    );
+    assert!(validator.is_valid(&config), "schema: {name}");
+    let source = toml::to_string(&config).expect("convert test configuration to TOML");
+    assert!(
+        ResolvedProjectConfig::parse(&source, Path::new("/workspace")).is_err(),
+        "runtime: {name}"
+    );
 }
 
 #[test]
@@ -452,9 +366,6 @@ fn generated_schema_enforces_types_enums_and_single_field_limits() {
         .build(&schema)
         .expect("compile generated schema");
     let resource_limits = ResolvedResourceLimitPlan::default().filesystem_reads;
-    let too_many_patterns = (0..=MAX_WORKSPACE_SCAN_EXCLUDES)
-        .map(|index| format!("directory-{index}"))
-        .collect::<Vec<_>>();
     let invalid = vec![
         ("missing schema version", json!({})),
         ("schema version type", json!({ "schema-version": "2" })),
@@ -497,14 +408,6 @@ fn generated_schema_enforces_types_enums_and_single_field_limits() {
         (
             "resource item ceiling",
             json!({ "schema-version": SCHEMA_VERSION, "resources": { "max-resource-bytes": resource_limits.max_resource_bytes + 1 } }),
-        ),
-        (
-            "workspace pattern count",
-            json!({ "schema-version": SCHEMA_VERSION, "workspace": { "scan": { "exclude": too_many_patterns } } }),
-        ),
-        (
-            "workspace pattern length",
-            json!({ "schema-version": SCHEMA_VERSION, "workspace": { "scan": { "exclude": ["a".repeat(MAX_WORKSPACE_SCAN_PATTERN_CHARACTERS + 1)] } } }),
         ),
         (
             "zero format limit",
