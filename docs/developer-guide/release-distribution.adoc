@@ -172,7 +172,9 @@ stable Releaseの公開後に、``release.yml``の``publish-cachix`` jobだけ�
 公開済みのtag、commitおよびworkspace版を照合し、同じcommitから``x86_64-linux``と``aarch64-linux``向けに
 構築したNix packageと依存物一式をCachixへ送信します。
 
-送信後は、書込みtokenを持たない別のrunnerがローカルでの構築を禁止し、Cachixだけから対象packageを取得します。
+送信後は、書込みtokenを持たない別のrunnerが対象packageのCachix上での存在を確認します。ローカルでの構築を禁止したまま、
+Cachixと``cache.nixos.org``から必要な内容を取得します。Cachixの公開鍵は秘密情報ではないため、GitHubのenvironmentに
+変数として登録せず、workflowへ固定します。
 取得した``adocweave``のversionと``adocweave lsp``の起動を確認します。Nix store pathは内容から決まるため、
 同じtagでworkflowを再実行しても既存の内容は変わりません。
 

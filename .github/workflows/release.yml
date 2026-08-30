@@ -405,19 +405,25 @@ jobs:
           RELEASE_COMMIT: ${{ github.sha }}
         run: test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
       - uses: DeterminateSystems/determinate-nix-action@527f17dd63d2d60d3e5552934bc84b9a33a14d11 # v3.22.2
-      - uses: cachix/cachix-action@5f2d7c5294214f71b873db4b969586b980625e71 # v17
-        with:
-          name: keishis
-          skipPush: true
       - name: Cache-only package acquisition and smoke
         env:
+          CACHIX_PUBLIC_KEY: keishis.cachix.org-1:j3UwGrrgTifYMa9Uo6fyDU8GEJBcorOzrHdkXBXruK4=
           NIX_SYSTEM: ${{ matrix.nixSystem }}
         run: |
+          expected_package="$(nix eval --raw ".#packages.${NIX_SYSTEM}.default.outPath")"
+          store_hash="$(basename "$expected_package" | cut -d- -f1)"
+          [[ "$store_hash" =~ ^[0-9abcdfghijklmnpqrsvwxyz]{32}$ ]]
+          narinfo="$RUNNER_TEMP/adocweave.narinfo"
+          curl --fail --silent --show-error --retry 5 \
+            "https://keishis.cachix.org/${store_hash}.narinfo" > "$narinfo"
+          grep -Fx "StorePath: $expected_package" "$narinfo"
+
           package="$(nix build ".#packages.${NIX_SYSTEM}.default" \
             --no-link --print-out-paths \
-            --option builders '' \
-            --option fallback false \
-            --option max-jobs 0 \
-            --option substituters https://keishis.cachix.org)"
-          test -n "$package"
+            --builders '' \
+            --no-fallback \
+            --max-jobs 0 \
+            --extra-trusted-public-keys "$CACHIX_PUBLIC_KEY" \
+            --substituters "https://keishis.cachix.org https://cache.nixos.org")"
+          test "$package" = "$expected_package"
           node tools/cachix-smoke.mjs "$package/bin/adocweave"

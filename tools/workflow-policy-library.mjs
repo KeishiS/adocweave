@@ -29,6 +29,8 @@ const CACHIX_TARGETS = [
   { runner: "ubuntu-24.04", nixSystem: "x86_64-linux" },
   { runner: "ubuntu-24.04-arm", nixSystem: "aarch64-linux" },
 ];
+const CACHIX_PUBLIC_KEY =
+  "keishis.cachix.org-1:j3UwGrrgTifYMa9Uo6fyDU8GEJBcorOzrHdkXBXruK4=";
 
 function fail(message) {
   throw new Error(message);
@@ -490,11 +492,17 @@ export function validateCachixPublication(workflows) {
 
   const verifySource = jobRuns(verify);
   for (const required of [
-    '.#packages.${NIX_SYSTEM}.default',
-    "--option builders ''",
-    "--option fallback false",
-    "--option max-jobs 0",
-    "--option substituters https://keishis.cachix.org",
+    '.#packages.${NIX_SYSTEM}.default.outPath',
+    '[[ "$store_hash" =~ ^[0-9abcdfghijklmnpqrsvwxyz]{32}$ ]]',
+    "curl --fail --silent --show-error --retry 5",
+    "https://keishis.cachix.org/${store_hash}.narinfo",
+    'grep -Fx "StorePath: $expected_package"',
+    "--builders ''",
+    "--no-fallback",
+    "--max-jobs 0",
+    '--extra-trusted-public-keys "$CACHIX_PUBLIC_KEY"',
+    '--substituters "https://keishis.cachix.org https://cache.nixos.org"',
+    'test "$package" = "$expected_package"',
     "node tools/cachix-smoke.mjs",
   ]) {
     if (!verifySource.includes(required)) {
@@ -505,13 +513,15 @@ export function validateCachixPublication(workflows) {
   const verifySmoke = (verify?.steps ?? []).find((step) =>
     String(step.run ?? "").includes("node tools/cachix-smoke.mjs")
   );
-  if (verifyCachix?.with?.name !== "keishis" || verifyCachix?.with?.skipPush !== true ||
-      verifyCachix?.with?.authToken !== undefined ||
+  if (verifyCachix !== undefined ||
       JSON.stringify(verify).includes("CACHIX_AUTH_TOKEN")) {
-    fail("release.yml verify-cachix must configure Cachix without a write token");
+    fail("release.yml verify-cachix must use only the pinned public cache identity");
   }
   if (verifySmoke?.env?.NIX_SYSTEM !== "${{ matrix.nixSystem }}") {
     fail("release.yml verify-cachix must acquire the Nix system selected by its matrix entry");
+  }
+  if (verifySmoke?.env?.CACHIX_PUBLIC_KEY !== CACHIX_PUBLIC_KEY) {
+    fail("release.yml verify-cachix must pin the trusted Cachix public key");
   }
 
   const tokenUsers = [];
