@@ -7,9 +7,9 @@ use std::time::Duration;
 
 use adocweave::CancellationToken;
 use adocweave_project::{
-    ConfigSelection, ProjectAuthority, ProjectError, ProjectLimits, ProjectObservationAccess,
-    ProjectObservationKind, ProjectOverrides, ProjectRequest, ProjectResourceResult, ProjectSource,
-    ProjectTarget, ProjectTargetResult, process,
+    ProjectAuthority, ProjectConfigOverrides, ProjectConfigSelection, ProjectError, ProjectLimits,
+    ProjectObservationAccess, ProjectObservationKind, ProjectRequest, ProjectResourceResult,
+    ProjectSource, ProjectTarget, ProjectTargetResult, process,
 };
 
 use super::html_policy::{self, StylesheetArgument};
@@ -84,8 +84,8 @@ impl PreviewWatchAccess {
 struct PreviewProjectTemplate {
     targets: Vec<ProjectTarget>,
     sources: Vec<ProjectSource>,
-    config: ConfigSelection,
-    overrides: ProjectOverrides,
+    config: ProjectConfigSelection,
+    overrides: ProjectConfigOverrides,
     apply_safe_fixes: bool,
     resource_selection: adocweave_project::ProjectResourceSelection,
     authority: ProjectAuthority,
@@ -291,7 +291,7 @@ impl std::error::Error for Error {}
 #[cfg(test)]
 mod tests {
     use adocweave_project::{
-        ConfigSelection, ProjectAuthority, ProjectLimits, ProjectOverrides,
+        ProjectAuthority, ProjectConfigOverrides, ProjectConfigSelection, ProjectLimits,
         ProjectResourceSelection, ProjectTarget,
     };
 
@@ -318,8 +318,8 @@ mod tests {
         let request = ProjectRequest {
             targets: vec![ProjectTarget::Path(PathBuf::from("manual.adoc"))],
             sources: Vec::new(),
-            config: ConfigSelection::Discover,
-            overrides: ProjectOverrides::default(),
+            config: ProjectConfigSelection::Discover,
+            overrides: ProjectConfigOverrides::default(),
             apply_safe_fixes: false,
             resource_selection: ProjectResourceSelection {
                 local_targets: true,
@@ -357,8 +357,8 @@ mod tests {
         let request = ProjectRequest {
             targets: vec![ProjectTarget::Path(PathBuf::from("manual.adoc"))],
             sources: Vec::new(),
-            config: ConfigSelection::Discover,
-            overrides: ProjectOverrides::default(),
+            config: ProjectConfigSelection::Discover,
+            overrides: ProjectConfigOverrides::default(),
             apply_safe_fixes: false,
             resource_selection: ProjectResourceSelection {
                 local_targets: true,
@@ -420,8 +420,8 @@ mod tests {
         let request = ProjectRequest {
             targets: vec![ProjectTarget::Path(PathBuf::from("manual.adoc"))],
             sources: Vec::new(),
-            config: ConfigSelection::Discover,
-            overrides: ProjectOverrides::default(),
+            config: ProjectConfigSelection::Discover,
+            overrides: ProjectConfigOverrides::default(),
             apply_safe_fixes: false,
             resource_selection: ProjectResourceSelection::default(),
             authority,
@@ -442,8 +442,8 @@ mod tests {
         let request = ProjectRequest {
             targets: vec![ProjectTarget::Path(PathBuf::from("manual.adoc"))],
             sources: Vec::new(),
-            config: ConfigSelection::Disabled,
-            overrides: ProjectOverrides::default(),
+            config: ProjectConfigSelection::Disabled,
+            overrides: ProjectConfigOverrides::default(),
             apply_safe_fixes: false,
             resource_selection: ProjectResourceSelection::default(),
             authority,
@@ -462,8 +462,8 @@ mod tests {
         let request = ProjectRequest {
             targets: vec![ProjectTarget::Directory(PathBuf::from("."))],
             sources: Vec::new(),
-            config: ConfigSelection::Disabled,
-            overrides: ProjectOverrides::default(),
+            config: ProjectConfigSelection::Disabled,
+            overrides: ProjectConfigOverrides::default(),
             apply_safe_fixes: false,
             resource_selection: ProjectResourceSelection::default(),
             authority,

@@ -14,7 +14,7 @@ const registry = JSON.parse(readFileSync(new URL("release/version-sync.json", RO
 
 test("一つのworkspace版をnative releaseのmanifestとlockfileで使用する", () => {
   assert.equal(checkReleaseVersion({ registry }), workspaceVersion());
-  assert.equal(workspaceVersion(), "0.55.0");
+  assert.equal(workspaceVersion(), "0.56.0");
 });
 
 test("同期設定は製品別の正本を持たない", () => {

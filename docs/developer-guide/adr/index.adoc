@@ -47,3 +47,4 @@ ADRは、複数の機能に影響する長期的な設計判断と、その理�
 * xref:0042-wasm-public-contract.adoc[ADR 0042: WebAssemblyの要求・応答・エラー公開仕様]
 * xref:0043-independent-distribution-units.adoc[ADR 0043: 単一のネイティブ実行ファイルと配布物ごとの公開単位]
 * xref:0044-lsp-open-document-scope.adoc[ADR 0044: Language Serverの解析対象を開いた文書へ限定]
+* xref:0045-project-owned-configuration.adoc[ADR 0045: プロジェクト設定をプロジェクト処理へ統合]

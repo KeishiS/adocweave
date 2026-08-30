@@ -7,9 +7,10 @@ use std::process::ExitCode;
 
 use adocweave::NeverCancel;
 use adocweave_project::{
-    ConfigSelection, ProjectAuthority, ProjectConfigRequest, ProjectLimits, ProjectOverrides,
-    ProjectRequest, ProjectResourceKind, ProjectResourceOutcome, ProjectResourceSelection,
-    ProjectSource, ProjectTarget, ProjectTargetResult, process, resolve_config,
+    ProjectAuthority, ProjectConfigOverrides, ProjectConfigRequest, ProjectConfigSelection,
+    ProjectLimits, ProjectRequest, ProjectResourceKind, ProjectResourceOutcome,
+    ProjectResourceSelection, ProjectSource, ProjectTarget, ProjectTargetResult, process,
+    resolve_config,
 };
 
 use crate::arguments::{Arguments, CommandOptions};
@@ -90,7 +91,7 @@ fn show_config(arguments: &Arguments, current: &Path) -> Result<ExitCode, CliErr
             search_from: current.to_owned(),
             search_from_is_directory: true,
             config: config_selection(arguments),
-            overrides: ProjectOverrides::default(),
+            overrides: ProjectConfigOverrides::default(),
             limits: ProjectLimits::default(),
         },
         &NeverCancel,
@@ -193,7 +194,7 @@ pub(crate) fn request_with_authority(
         targets,
         sources,
         config: config_selection(arguments),
-        overrides: ProjectOverrides {
+        overrides: ProjectConfigOverrides {
             include,
             enable_lint_rules: enabled_rules,
             resource_roots: (!arguments.allowed_roots.is_empty()).then(|| {
@@ -566,13 +567,13 @@ fn path_target(current: &Path, path: &Path) -> ProjectTarget {
     }
 }
 
-fn config_selection(arguments: &Arguments) -> ConfigSelection {
+fn config_selection(arguments: &Arguments) -> ProjectConfigSelection {
     if arguments.no_config {
-        ConfigSelection::Disabled
+        ProjectConfigSelection::Disabled
     } else if let Some(path) = &arguments.config_path {
-        ConfigSelection::Explicit(path.clone())
+        ProjectConfigSelection::Explicit(path.clone())
     } else {
-        ConfigSelection::Discover
+        ProjectConfigSelection::Discover
     }
 }
 
@@ -598,7 +599,10 @@ fn absolute_lexical(root: &Path, path: &Path) -> PathBuf {
 }
 
 fn read_standard_input(limits: ProjectLimits) -> Result<Vec<u8>, CliError> {
-    let limit = limits.max_resource_bytes.min(limits.max_read_bytes);
+    let limit = limits
+        .resources
+        .max_resource_bytes
+        .min(limits.resources.max_total_bytes);
     let mut input = Vec::new();
     io::stdin()
         .take(limit.saturating_add(1))
@@ -608,17 +612,17 @@ fn read_standard_input(limits: ProjectLimits) -> Result<Vec<u8>, CliError> {
             source,
         })?;
     let bytes = u64::try_from(input.len()).unwrap_or(u64::MAX);
-    if bytes > limits.max_resource_bytes {
+    if bytes > limits.resources.max_resource_bytes {
         return Err(CliError::Project(adocweave_project::ProjectError::Limit(
             adocweave_project::ProjectLimit::ResourceBytes {
-                limit: limits.max_resource_bytes,
+                limit: limits.resources.max_resource_bytes,
             },
         )));
     }
-    if bytes > limits.max_read_bytes {
+    if bytes > limits.resources.max_total_bytes {
         return Err(CliError::Project(adocweave_project::ProjectError::Limit(
             adocweave_project::ProjectLimit::ReadBytes {
-                limit: limits.max_read_bytes,
+                limit: limits.resources.max_total_bytes,
             },
         )));
     }
