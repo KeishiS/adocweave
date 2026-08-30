@@ -1,0 +1,166 @@
+= ADR 0043: 単一のネイティブ実行ファイルと配布物ごとの公開単位
+:status: accepted
+
+== 文脈
+
+xref:0040-unified-release-and-native-executable.adoc[ADR 0040]では、CLIとLanguage Serverを一つの
+``adocweave``実行ファイルへ統合すると同時に、npmパッケージとエディタ拡張を含む全配布物を一つの版と
+GitHub Releaseへまとめました。単一の実行ファイルは、導入経路とLanguage Serverの起動方法を簡単にします。
+一方、全配布物の一括公開は、変更のないパッケージや拡張にも新しい版を付け、関係のない公開先を一つの
+処理へ結び付けます。
+
+ネイティブ成果物、npmパッケージおよびエディタ拡張は、利用者が取得する場所と版を管理するファイルが
+異なります。公開単位を実装の共有範囲ではなく、利用者が選ぶ配布物とその標準的な公開先に合わせます。
+本ADRでは、OS上で直接動く``adocweave``をネイティブ実行ファイルと呼びます。
+
+== 決定
+
+[#single-native-executable]
+=== 単一のネイティブ実行ファイル
+
+CLIとLanguage Serverは、引き続き一つの``adocweave``実行ファイルで配布します。Language Serverは
+``adocweave lsp``で起動します。``adocweave-lsp``という別の実行ファイル、移行用の別名、および二つの
+実行ファイルを接続する処理は設けません。
+
+ネイティブ実行ファイルと、同じCargo workspaceにあるRust公開APIは一つの版を共有します。Rust crateは
+crates.ioへ公開せず、Rust専用の圧縮ファイルや変更履歴も設けません。Rust公開APIの変更は、ネイティブ版と
+リポジトリ直下の``CHANGELOG.md``へ記録します。
+
+[#distribution-units]
+=== 配布物ごとの版と公開先
+
+各配布物はlink:https://semver.org/lang/ja/[Semantic Versioning 2.0.0]に従う独立した版を持ちます。
+互換性の対象は、ネイティブ実行ファイルではCLI、LSPおよびRust公開API、npmパッケージでは公開するJavaScriptと
+TypeScriptのAPI、エディタ拡張では設定、コマンドおよび利用者に示す動作です。``0.Y.Z``の間は、互換性のない変更と
+互換性のある機能追加でminor、互換性を維持する修正でpatchを更新します。``1.0.0``以降は、互換性のない変更で
+majorを更新します。版の正本、変更履歴、公開を開始する識別子、正規の公開先および同じ版で公開をやり直せる範囲を
+次のように定めます。
+
+[cols="2,3,2,3,4",options="header"]
+|===
+|配布物 |版と変更履歴の正本 |公開を開始する識別子 |正規の公開先 |同じ版での再実行
+
+|ネイティブ実行ファイルとRust公開API
+|リポジトリ直下の``Cargo.toml``にある``workspace.package.version``と``CHANGELOG.md``
+|``vX.Y.Z``タグ
+|ネイティブ成果物はGitHub Release、同じコミットのNixパッケージはCachix
+|同じタグとコミットで失敗した処理だけを再実行します。公開済み成果物は置き換えません。
+
+|``@adocweave/wasm``
+|``packages/wasm/package.json``と``packages/wasm/CHANGELOG.md``
+|``wasm/vX.Y.Z``タグ
+|npm Registry
+|同じタグとコミットで再実行します。npmに同じ版がある場合は送信せず、公開後の確認だけを行います。
+
+|``@adocweave/textlint-plugin-asciidoc``
+|``packages/textlint-plugin-asciidoc/package.json``と
+``packages/textlint-plugin-asciidoc/CHANGELOG.md``
+|``textlint-plugin-asciidoc/vX.Y.Z``タグ
+|npm Registry
+|同じタグとコミットで再実行します。npmに同じ版がある場合は送信せず、公開後の確認だけを行います。
+
+|VS Code拡張
+|``editors/vscode/package.json``と``editors/vscode/CHANGELOG.md``
+|``vscode/vX.Y.Z``タグ
+|Visual Studio MarketplaceとOpen VSX Registry
+|一度構築して検査した同じVSIXを両方へ送ります。一方だけが失敗した場合は、成功した公開先へ送り直さず、
+失敗した処理だけを再実行します。
+
+|Zed拡張
+|``editors/zed/extension.toml``と``editors/zed/CHANGELOG.md``
+|専用タグは設けず、``extension.toml``の版と参照するソースコミットを使用
+|Zed拡張レジストリ
+|公開前は、同じ版とソースコミットの提出をやり直せます。公開済みの内容は置き換えません。
+|===
+
+GitHub Releaseには、cargo-distがネイティブ向けに生成する圧縮ファイル、圧縮ファイルごとのchecksumおよび標準の
+配布manifestだけを添付し、それらの成果物にArtifact Attestationを生成します。npmパッケージ、VSIXおよび
+Zed拡張の圧縮ファイルは添付しません。
+ネイティブ以外の配布物にとって、GitHub Releaseは公開経路でも公開済み成果物の保管場所でもありません。
+
+各タグは、その配布物の版と一致する場合だけ受理します。一つのタグから、関係のない配布物を公開しません。
+配布物の内容または利用者に示す互換条件が変わった場合だけ、その配布物の版を更新します。変更のない配布物は
+再構築、再公開および版の同期を行いません。配布物間の版対応表も設けません。
+
+npmパッケージは、それぞれのタグが指すコミットから構築、検査し、npm Trusted Publishingでnpm Registryへ
+直接公開します。VS Code拡張も、タグが指すコミットからVSIXを一度だけ構築、検査し、同じVSIXを二つの
+レジストリへ公開します。公開済みの版に内容の修正が必要な場合や、検査済みの成果物を再利用できない場合は、
+既存の版を置き換えず新しい版を使用します。
+
+Zed拡張は、このリポジトリをソースとして公式レジストリから``editors/zed``を参照します。公式レジストリ側では、
+ソースコミット、``path``および``extension.toml``と一致する版を記録します。登録と更新には外部リポジトリでの
+確認が必要なため、投稿をこのリポジトリの公開処理から自動化しません。
+
+[#editor-native-compatibility]
+=== エディタ拡張とネイティブ版の互換性
+
+VS Code拡張とZed拡張はLanguage Serverを同梱せず、設定、``PATH``または自動取得で選んだ``adocweave``を
+``lsp``サブコマンド付きで起動します。``adocweave lsp``を提供する最低ネイティブ版は``0.51.0``です。
+各拡張は、利用できる最低ネイティブ版を自身の利用文書と変更履歴に記録します。起動前に拡張版とネイティブ版の
+一致を検査せず、全版の組合せを列挙する対応表も持ちません。
+
+Language Serverの各機能を利用できるかは、LSPの``initialize``でLanguage Serverが示す標準capabilityから
+判断します。capabilityは、clientとLanguage Serverが初期化時に交換する、対応機能の情報です。将来AdocWeave固有の
+要求または通知を追加する場合も、その機能の有無を明示的に交換し、製品全体を独自の版番号で対応付けません。
+最低ネイティブ版を引き上げるのは、起動方法または拡張に必須の標準LSP機能が変わる場合だけとし、影響する拡張の
+版と変更履歴へ記録します。
+
+== 参考にする標準機能とOSS
+
+一つの実行ファイルからLanguage Serverを起動する構成は、
+link:https://docs.astral.sh/ruff/editors/[Ruffの``ruff server``]および
+link:https://docs.deno.com/runtime/reference/cli/lsp/[Denoの``deno lsp``]を参考にします。実行ファイルと
+エディタ拡張に異なる版を付ける判断は、
+link:https://docs.astral.sh/ruff/versioning/[Ruffの版管理]を参考にします。
+機能情報を初期化時に交換する方法は、
+link:https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#initialize[
+Language Server Protocol 3.17の``initialize``仕様]に従います。
+
+ネイティブ成果物には、link:https://axodotdev.github.io/cargo-dist/book/reference/config.html[cargo-distの
+標準的な圧縮ファイル、checksumおよびmanifest]と、
+link:https://axodotdev.github.io/cargo-dist/book/supplychain-security/attestations/github.html[GitHub Artifact
+Attestation]を使用します。npmパッケージの公開元確認には
+link:https://docs.npmjs.com/trusted-publishers/[npm Trusted Publishing]を使用します。
+
+VS Code拡張の構築と公開は
+link:https://code.visualstudio.com/api/working-with-extensions/publishing-extension[Visual Studio Codeの公開手順]、
+Visual Studio Marketplaceの認証は
+link:https://github.com/microsoft/vscode-vsce#trusted-publishing[``vsce``のTrusted Publishing]、同じVSIXの
+Open VSXへの送信は
+link:https://github.com/eclipse-openvsx/openvsx/wiki/Publishing-Extensions[Open VSXの公開手順]に従います。
+Zed拡張は、monorepo内のサブディレクトリを``path``で参照できる
+link:https://zed.dev/docs/extensions/publishing/publishing-guide[Zedの公式公開手順]に従います。
+
+== 検討した代替案
+
+**全配布物の版と公開を統一する。** 一つの版だけを管理できますが、変更のない配布物の再公開と、公開先の
+障害が無関係な配布物へ影響する状態が残るため採用しません。
+
+**CLIとLanguage Serverを別々の実行ファイルとして配布する。** 公開単位を分けられますが、同じ解析処理を使う
+二つの実行ファイルについて、成果物、導入方法およびエディタからの探索を別々に保守するため採用しません。
+
+**エディタ拡張とネイティブ版の対応表を管理する。** 版の組合せを列挙しても、個々のLSP機能を利用できるかは
+直接示せません。起動に必要な最低版と標準capabilityで判断できるため採用しません。
+
+**全配布物をGitHub Releaseへ保管してから各レジストリへ送る。** 公開元を一か所にできますが、各レジストリが
+標準で提供する版管理と公開元確認に加えて、中間成果物、共通checksumおよび再送処理が必要になるため採用しません。
+
+== 帰結
+
+利用者は、必要な配布物をその標準的な公開先から選び、配布物ごとの変更履歴で更新内容を確認できます。
+変更のないnpmパッケージとエディタ拡張には、新しい版や更新通知が発生しません。公開先の障害も、その配布物の
+再実行だけに限定できます。一方、保守者は五つの版と変更履歴を管理します。ただし、各配布物のディレクトリと
+公開先に管理範囲を閉じ、全配布物を同期する処理や版対応表は持ちません。
+
+xref:0040-unified-release-and-native-executable.adoc[ADR 0040]のうち、単一の``adocweave``実行ファイルと
+``adocweave lsp``による起動は維持します。同じ版、単一のGitHub Release、全配布物の一括公開、GitHub Releaseを
+全配布物の一次公開先とする判断、および変更のない配布物も公開する判断は本ADRで置き換えます。
+
+xref:0023-publication-boundary.adoc[ADR 0023]のうち、公開先ごとに資格情報と書込み権限を分離する判断は維持します。
+GitHub Releaseを全配布物の一次公開先とする判断と、レジストリへ同じ成果物を再送する判断は本ADRで置き換えます。
+
+xref:0027-product-release-trains.adoc[ADR 0027]の独立した公開単位、
+xref:0028-editor-language-server-boundary.adoc[ADR 0028]の実行ファイル探索とLSP capability、
+xref:0030-minimal-textlint-release-gates.adoc[ADR 0030]の固定した利用側による検査、
+xref:0032-same-run-release-publication.adoc[ADR 0032]の一つのタグ、コミットおよび公開処理の対応、ならびに
+xref:0036-no-unconsumed-sbom.adoc[ADR 0036]の利用要件がないSBOMを公開しない判断を、配布物ごとに適用します。

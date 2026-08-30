@@ -1,5 +1,5 @@
 = ADR 0032: 同一workflow runでのリリース公開
-:status: accepted; release unit amended by ADR 0040
+:status: accepted; release unit amended by ADR 0040 and ADR 0043
 
 == 文脈
 
