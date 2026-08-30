@@ -1,7 +1,5 @@
 # AdocWeave for Visual Studio Code
 
-[![Open VSX](https://img.shields.io/open-vsx/v/adocweave/adocweave-vscode?label=Open%20VSX)](https://open-vsx.org/extension/adocweave/adocweave-vscode)
-
 A Visual Studio Code extension for [AdocWeave](https://github.com/KeishiS/adocweave), an AsciiDoc processor.
 This extension provides the following features:
 
@@ -11,24 +9,28 @@ This extension provides the following features:
 
 ## Installation
 
-Install `adocweave.adocweave-vscode` from Visual Studio Marketplace or Open VSX. The official publisher is the `adocweave` namespace.
+After `adocweave.adocweave` is listed in Visual Studio Marketplace or Open VSX, install it with the command for your editor. The official publisher is the `adocweave` namespace.
 
 ```sh
-code --install-extension adocweave.adocweave-vscode
-codium --install-extension adocweave.adocweave-vscode
+code --install-extension adocweave.adocweave
+codium --install-extension adocweave.adocweave
 ```
 
-You can also install the verified VSIX from [GitHub Releases](https://github.com/KeishiS/adocweave/releases). The same extension version is published to both registries and attached to the corresponding `vX.Y.Z` release.
+Until it is listed, build and install a VSIX from a repository checkout:
 
 ```sh
-code --install-extension adocweave-vscode-<version>.vsix --force
+nix develop
+npm ci --ignore-scripts --prefix editors/vscode
+npm run package --prefix editors/vscode
+VERSION="$(node -p "require('./editors/vscode/package.json').version")"
+code --install-extension "target/distrib/adocweave-$VERSION.vsix"
 ```
 
 ## Requirements
 
-The extension starts the Language Server as `adocweave lsp`. It first uses the absolute executable path in the machine-level `adocweave.server.path` setting. When that setting is empty, it searches the extension host's `PATH` for `adocweave`. If neither is available, it downloads the latest stable native executable from the project's GitHub Releases.
+The extension requires AdocWeave 0.51.0 or later and starts the Language Server as `adocweave lsp`. It first uses the absolute executable path in the machine-level `adocweave.server.path` setting. When that setting is empty, it searches the extension host's `PATH` for `adocweave`. If neither is available, it downloads the latest stable native executable from the project's GitHub Releases.
 
-To select a version yourself, install `adocweave` by following `docs/user-guide/release-installation.adoc` and set `adocweave.server.path` to its absolute path. The extension and Language Server negotiate supported features through the standard Language Server Protocol initialization.
+To select a version yourself, install `adocweave` by following `docs/user-guide/release-installation.adoc` and set `adocweave.server.path` to its absolute path. The extension uses the capabilities announced by the Language Server during standard Language Server Protocol initialization instead of requiring matching product versions.
 
 ## License
 

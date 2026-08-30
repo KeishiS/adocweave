@@ -30,7 +30,10 @@ test("同期設定は製品別の正本を持たない", () => {
     false,
   );
   assert.equal(
-    registry.literals.some(({ path }) => path === "packages/textlint-plugin-asciidoc/package.json"),
+    registry.literals.some(({ path }) =>
+      path.startsWith("editors/vscode/") ||
+      path === "packages/textlint-plugin-asciidoc/package.json"
+    ),
     false,
   );
   assert.equal(

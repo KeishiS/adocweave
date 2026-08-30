@@ -88,7 +88,6 @@ export function requiredInstallationAssets(kind, target, version) {
   const names = {
     native: `adocweave-${target}.zip`,
     wasm: `adocweave-wasm-${version}.tgz`,
-    vscode: `adocweave-vscode-${version}.vsix`,
   };
   if (!Object.hasOwn(names, kind)) throw new Error(`unsupported installation kind: ${kind}`);
   return [names[kind]];
@@ -108,7 +107,6 @@ export function installationLayout(prefix, version, pathApi) {
     currentLink: pathApi.join(nativeRoot, "current"),
     activeMarker: pathApi.join(nativeRoot, "active-version"),
     wasmRoot: pathApi.join(shareRoot, "wasm"),
-    vscodeRoot: pathApi.join(shareRoot, "vscode"),
   };
 }
 
@@ -154,8 +152,4 @@ export function macosMinimumVersion(otoolOutput) {
 export function shouldRetryRemoval(error, platform) {
   return platform === "win32" && error instanceof Error &&
     ["EBUSY", "EMFILE", "ENFILE", "ENOTEMPTY", "EPERM"].includes(error.code);
-}
-
-export function vscodePackageContract(manifest, version) {
-  return manifest.version === version && manifest.main === "./dist/extension.cjs";
 }

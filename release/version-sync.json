@@ -2,24 +2,9 @@
   "schemaVersion": 1,
   "literals": [
     {
-      "path": "editors/vscode/package.json",
-      "template": "\"version\": \"{version}\"",
-      "count": 1
-    },
-    {
-      "path": "editors/vscode/package-lock.json",
-      "template": "\"version\": \"{version}\"",
-      "count": 2
-    },
-    {
       "path": "CHANGELOG.md",
       "template": "[{version}]",
       "count": 2
-    },
-    {
-      "path": "dist-workspace.toml",
-      "template": "-{version}",
-      "count": 1
     }
   ],
   "cargoLocks": [

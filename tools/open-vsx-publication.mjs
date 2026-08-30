@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 const DEFAULT_REGISTRY = "https://open-vsx.org";
@@ -34,6 +34,7 @@ export async function checkOpenVsxPublication({
   name,
   version,
   registryUrl = DEFAULT_REGISTRY,
+  outputPath,
   request = fetch
 }) {
   const registry = new URL(registryUrl);
@@ -88,6 +89,7 @@ export async function checkOpenVsxPublication({
   if (recorded !== expected || sha256(published) !== expected) {
     throw new Error("Open VSX contains different bytes for this extension version");
   }
+  if (outputPath !== undefined) await writeFile(outputPath, published);
   return "published";
 }
 
@@ -111,7 +113,8 @@ function parseArguments(argv) {
     namespace: take("--namespace"),
     name: take("--name"),
     version: take("--version"),
-    registryUrl: options.get("--registry") ?? DEFAULT_REGISTRY
+    registryUrl: options.get("--registry") ?? DEFAULT_REGISTRY,
+    outputPath: options.get("--output")
   };
 }
 

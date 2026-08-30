@@ -24,7 +24,7 @@ import {
 const RELEASES_URL = "https://api.github.com/repos/KeishiS/adocweave/releases?per_page=100";
 const REQUEST_HEADERS = {
   Accept: "application/vnd.github+json",
-  "User-Agent": "adocweave-vscode-extension",
+  "User-Agent": "adocweave-vscode-client",
 };
 
 export interface DownloadDependencies {

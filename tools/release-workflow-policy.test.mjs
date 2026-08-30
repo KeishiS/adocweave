@@ -10,6 +10,7 @@ import {
   validateReleaseFlow,
   validateReleaseVersionCommands,
   validateTextlintPluginPublication,
+  validateVscodePublication,
   validateWasmPublication,
 } from "./release-workflow-policy.mjs";
 
@@ -103,17 +104,13 @@ function releaseWorkflow() {
         ],
       },
       "publish-binary-cache": releasePublicationJob("binary-cache-publish.yml"),
-      "publish-marketplace": releasePublicationJob("marketplace-publish.yml", true),
-      "publish-open-vsx": releasePublicationJob("open-vsx-publish.yml"),
       announce: {
         needs: [
           "plan",
           "host",
           "publish-binary-cache",
-          "publish-marketplace",
-          "publish-open-vsx",
         ],
-        if: "${{ always() && needs.host.result == 'success' && needs.publish-binary-cache.result == 'success' && needs.publish-marketplace.result == 'success' && needs.publish-open-vsx.result == 'success' }}",
+        if: "${{ always() && needs.host.result == 'success' && needs.publish-binary-cache.result == 'success' }}",
         steps: [],
       },
     },
@@ -336,21 +333,51 @@ node tools/binary-cache-smoke.mjs "$package/bin/adocweave"
   };
 }
 
-function marketplacePublicationWorkflow() {
-  const workflow = publicationWorkflow("marketplace-publish", true);
-  workflow.jobs.publish.steps.push({
-    run: "npx vsce publish --packagePath extension.vsix --oidc",
+function vscodePublicationWorkflow() {
+  const candidate = {
+    outputs: { version: "${{ steps.contract.outputs.version }}", vsix: "${{ steps.contract.outputs.vsix }}" },
+    steps: [
+      {
+        uses: pin,
+        with: { "fetch-depth": 0, "fetch-tags": true, "persist-credentials": false },
+      },
+      {
+        run: `
+version="$(jq -r .version editors/vscode/package.json)"
+test "$PACKAGE_TAG" = "vscode/v$version"
+tag_commit="$(git rev-parse "refs/tags/$PACKAGE_TAG^{commit}")"
+test "$tag_commit" = "$PACKAGE_COMMIT"
+git rev-parse HEAD
+git merge-base --is-ancestor "$PACKAGE_COMMIT" refs/remotes/origin/main
+cargo make test-vscode-release-candidate
+`,
+      },
+      { uses: "actions/upload-artifact@0000000000000000000000000000000000000000", with: { name: "vscode-extension-candidate" } },
+    ],
+  };
+  const registryJob = (environment) => ({
+    needs: "candidate",
+    environment,
+    steps: [
+      { uses: pin },
+      { uses: "actions/download-artifact@0000000000000000000000000000000000000000", with: { name: "vscode-extension-candidate" } },
+      { id: "existing", run: "node registry-check --name adocweave --version \"$VERSION\" --output result.vsix" },
+      { if: "steps.existing.outputs.state == 'missing'", run: "publish" },
+      { run: "node registry-check --name adocweave --version \"$VERSION\" --output result.vsix\ncargo make test-vscode-published-extension" },
+    ],
   });
-  return workflow;
-}
-
-function openVsxPublicationWorkflow() {
-  const workflow = publicationWorkflow("open-vsx-publish");
-  workflow.jobs.publish.steps.push({
-    env: { OPEN_VSX_TOKEN: "${{ secrets.OPEN_VSX_TOKEN }}" },
-    run: "curl --url-query token=$OPEN_VSX_TOKEN https://open-vsx.org/api/-/publish",
-  });
-  return workflow;
+  const marketplace = registryJob("marketplace-publish");
+  marketplace.permissions = { contents: "read", "id-token": "write" };
+  marketplace.steps[3].run = "npx vsce publish --packagePath extension.vsix --oidc";
+  const openVsx = registryJob("open-vsx-publish");
+  openVsx.steps[3].env = { OVSX_PAT: "${{ secrets.OPEN_VSX_TOKEN }}" };
+  openVsx.steps[3].run = "npx ovsx publish extension.vsix";
+  return {
+    on: { push: { tags: ["vscode/v[0-9]+.[0-9]+.[0-9]+"] } },
+    permissions: { contents: "read" },
+    concurrency: { group: "vscode-publish-${{ github.ref_name }}", "cancel-in-progress": false },
+    jobs: { candidate, marketplace, "open-vsx": openVsx },
+  };
 }
 
 function workflows() {
@@ -364,10 +391,9 @@ function workflows() {
       jobs: { smoke: { steps: [] } },
     },
     "binary-cache-publish.yml": binaryCachePublicationWorkflow(),
-    "marketplace-publish.yml": marketplacePublicationWorkflow(),
     "textlint-plugin-publish.yml": textlintPluginPublicationWorkflow(),
     "wasm-publish.yml": wasmPublicationWorkflow(),
-    "open-vsx-publish.yml": openVsxPublicationWorkflow(),
+    "vscode-publish.yml": vscodePublicationWorkflow(),
   };
 }
 
@@ -405,7 +431,7 @@ test("workflowと公開jobの権限を必要最小限に限定する", () => {
   assert.throws(() => validatePermissions(fixtures), /textlint-plugin-publish\.yml publish permissions/);
   fixtures["textlint-plugin-publish.yml"].jobs.publish.permissions["id-token"] = "write";
 
-  fixtures["open-vsx-publish.yml"].jobs.publish.permissions = { contents: "write" };
+  fixtures["vscode-publish.yml"].jobs["open-vsx"].permissions = { contents: "write" };
   assert.throws(() => validatePermissions(fixtures), /unexpected contents: write/);
 });
 
@@ -477,19 +503,19 @@ test("hostは公開する全成果物をattestation対象にする", () => {
   );
 });
 
-test("Release成功後は3つの公開workflowを直接呼び出して成否を集約する", () => {
+test("native Release成功後はnative用の公開workflowだけを呼び出して成否を集約する", () => {
   const release = releaseWorkflow();
   validateReleaseFlow(releaseFlowWorkflows(release), 'pr-run-mode = "plan"');
 
-  release.jobs["publish-marketplace"].uses = "./.github/workflows/open-vsx-publish.yml";
+  release.jobs["publish-binary-cache"].uses = "./.github/workflows/wasm-publish.yml";
   assert.throws(
     () => validateReleaseFlow(releaseFlowWorkflows(release), 'pr-run-mode = "plan"'),
-    /publish-marketplace must call marketplace-publish\.yml/u,
+    /publish-binary-cache must call binary-cache-publish\.yml/u,
   );
 
   const incomplete = releaseWorkflow();
   incomplete.jobs.announce.needs = incomplete.jobs.announce.needs.filter(
-    (job) => job !== "publish-marketplace",
+    (job) => job !== "publish-binary-cache",
   );
   assert.throws(
     () => validateReleaseFlow(releaseFlowWorkflows(incomplete), 'pr-run-mode = "plan"'),
@@ -498,8 +524,8 @@ test("Release成功後は3つの公開workflowを直接呼び出して成否を�
 
   const skipped = releaseWorkflow();
   skipped.jobs.announce.if = skipped.jobs.announce.if.replace(
-    "needs.publish-open-vsx.result == 'success'",
-    "(needs.publish-open-vsx.result == 'success' || needs.publish-open-vsx.result == 'skipped')",
+    "needs.publish-binary-cache.result == 'success'",
+    "(needs.publish-binary-cache.result == 'success' || needs.publish-binary-cache.result == 'skipped')",
   );
   assert.throws(
     () => validateReleaseFlow(releaseFlowWorkflows(skipped), 'pr-run-mode = "plan"'),
@@ -517,17 +543,17 @@ test("CIはPRのsource gateとmain専用gateを分離する", () => {
 test("外部公開workflowはReleaseからの再利用呼出しだけを受け付ける", () => {
   const fixtures = workflows();
   validateExternalPublicationIsolation(fixtures);
-  fixtures["marketplace-publish.yml"].on.workflow_dispatch = {};
+  fixtures["binary-cache-publish.yml"].on.workflow_dispatch = {};
   assert.throws(
     () => validateExternalPublicationIsolation(fixtures),
-    /marketplace-publish.*callable only/u,
+    /binary-cache-publish.*callable only/u,
   );
 
   const called = workflows();
-  called["open-vsx-publish.yml"].on.workflow_call.inputs.commit.required = false;
+  called["binary-cache-publish.yml"].on.workflow_call.inputs.commit.required = false;
   assert.throws(
     () => validateExternalPublicationIsolation(called),
-    /open-vsx-publish.*stable tag and complete commit/u,
+    /binary-cache-publish.*stable tag and complete commit/u,
   );
 
   const duplicateValidation = workflows();
@@ -538,16 +564,16 @@ test("外部公開workflowはReleaseからの再利用呼出しだけを受け�
   );
 
   const duplicateAncestry = workflows();
-  duplicateAncestry["marketplace-publish.yml"].jobs.publish.steps.push({
+  duplicateAncestry["binary-cache-publish.yml"].jobs.publish.steps.push({
     run: "git merge-base --is-ancestor HEAD refs/remotes/origin/main",
   });
   assert.throws(
     () => validateExternalPublicationIsolation(duplicateAncestry),
-    /marketplace-publish.*leave main ancestry verification.*common release contract/u,
+    /binary-cache-publish.*leave main ancestry verification.*common release contract/u,
   );
 
   const extraSender = workflows();
-  extraSender["open-vsx-publish.yml"].jobs.publish.steps.push({
+  extraSender["binary-cache-publish.yml"].jobs.publish.steps.push({
     run: 'gh api "repos/$GITHUB_REPOSITORY/dispatches"',
   });
   assert.throws(
@@ -558,46 +584,46 @@ test("外部公開workflowはReleaseからの再利用呼出しだけを受け�
 
 test("Open VSXのtokenを専用workflowの公開job以外へ渡さない", () => {
   const fixtures = workflows();
-  validateExternalPublicationIsolation(fixtures);
+  validateVscodePublication(fixtures);
 
   fixtures["binary-cache-publish.yml"].jobs.verify.steps.push({
     env: { TOKEN: "${{ secrets.OPEN_VSX_TOKEN }}" },
     run: "true",
   });
   assert.throws(
-    () => validateExternalPublicationIsolation(fixtures),
-    /OPEN_VSX_TOKEN.*only by open-vsx-publish\.yml publish/u,
+    () => validateVscodePublication(fixtures),
+    /OPEN_VSX_TOKEN.*only by vscode-publish\.yml open-vsx/u,
   );
 });
 
-test("Marketplace公開は専用environmentとOIDCだけを使う", () => {
+test("VS Code拡張は一つの候補を二つのregistryへ独立して公開する", () => {
   const fixtures = workflows();
-  validateExternalPublicationIsolation(fixtures);
+  validateVscodePublication(fixtures);
 
-  const marketplaceStep = fixtures["marketplace-publish.yml"].jobs.publish.steps.find((step) =>
+  const marketplaceStep = fixtures["vscode-publish.yml"].jobs.marketplace.steps.find((step) =>
     String(step.run ?? "").includes("vsce publish")
   );
   marketplaceStep.run =
     "npx vsce publish --packagePath extension.vsix --azure-credential";
   assert.throws(
-    () => validateExternalPublicationIsolation(fixtures),
+    () => validateVscodePublication(fixtures),
     /trusted publishing with OIDC/u,
   );
 
   const azure = workflows();
-  azure["marketplace-publish.yml"].jobs.publish.steps.push({
+  azure["vscode-publish.yml"].jobs.marketplace.steps.push({
     uses: "Azure/login@0000000000000000000000000000000000000000",
   });
   assert.throws(
-    () => validateExternalPublicationIsolation(azure),
+    () => validateVscodePublication(azure),
     /trusted publishing with OIDC/u,
   );
 
   const shared = workflows();
-  shared["open-vsx-publish.yml"].jobs.publish.environment = "marketplace-publish";
+  shared["vscode-publish.yml"].jobs["open-vsx"].environment = "marketplace-publish";
   assert.throws(
-    () => validateExternalPublicationIsolation(shared),
-    /credentials must stay in the open-vsx-publish environment/u,
+    () => validateVscodePublication(shared),
+    /separate GitHub environments/u,
   );
 });
 
@@ -626,7 +652,7 @@ test("Cachixの書込みtokenを公開job以外へ渡さない", () => {
   );
 
   const separateFixtures = workflows();
-  separateFixtures["open-vsx-publish.yml"].jobs.publish.steps.push({
+  separateFixtures["vscode-publish.yml"].jobs["open-vsx"].steps.push({
     env: { TOKEN: "${{ secrets.CACHIX_AUTH_TOKEN }}" },
     run: "true",
   });
