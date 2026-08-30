@@ -40,7 +40,6 @@ include = ["THIRD_PARTY_NOTICES.adoc"]
 
 [[dist.extra-artifacts]]
 artifacts = [
-  "target/distrib/adocweave-textlint-plugin-asciidoc-0.55.0.tgz",
   "target/distrib/adocweave-vscode-0.55.0.vsix",
   "target/distrib/adocweave-zed-0.55.0.tar.xz",
 ]

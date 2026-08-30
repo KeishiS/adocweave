@@ -25,18 +25,16 @@ const MARKETPLACE_OIDC_PUBLICATION = { contents: "read", "id-token": "write" };
 const EXTERNAL_PUBLICATION_WORKFLOWS = new Set([
   "binary-cache-publish.yml",
   "marketplace-publish.yml",
-  "npm-publish.yml",
   "open-vsx-publish.yml",
 ]);
 const OIDC_PUBLICATION_WORKFLOWS = new Set([
   "marketplace-publish.yml",
-  "npm-publish.yml",
+  "textlint-plugin-publish.yml",
   "wasm-publish.yml",
 ]);
 const RELEASE_PUBLICATION_JOBS = new Map([
   ["publish-binary-cache", "binary-cache-publish.yml"],
   ["publish-marketplace", "marketplace-publish.yml"],
-  ["publish-npm", "npm-publish.yml"],
   ["publish-open-vsx", "open-vsx-publish.yml"],
 ]);
 const BINARY_CACHE_TARGETS = [
@@ -515,26 +513,75 @@ export function validateBinaryCachePublication(workflows) {
   }
 }
 
-export function validateNpmPublication(workflows) {
-  const workflow = workflows["npm-publish.yml"];
-  if (!workflow) fail("npm-publish.yml is required");
-  const inputs = workflow.on?.workflow_call?.inputs ?? {};
-  if (canonical(Object.keys(inputs).sort()) !== canonical(["commit", "tag"])) {
-    fail("npm-publish.yml workflow_call must accept only the release tag and commit");
+export function validateTextlintPluginPublication(workflows, npmSmokeSource) {
+  const name = "textlint-plugin-publish.yml";
+  const workflow = workflows[name];
+  if (!workflow) fail(`${name} is required`);
+  if (canonical(Object.keys(workflow.on ?? {})) !== canonical(["push"]) ||
+      canonical(workflow.on?.push?.tags) !==
+        canonical(["textlint-plugin-asciidoc/v[0-9]+.[0-9]+.[0-9]+"])) {
+    fail(`${name} must run only for stable textlint-plugin-asciidoc/vX.Y.Z tags`);
   }
-  const job = workflow.jobs?.publish;
-  if (job?.strategy !== undefined) {
-    fail("npm-publish.yml must publish only the fixed textlint package");
+  if (workflow.concurrency?.["cancel-in-progress"] !== false ||
+      !String(workflow.concurrency?.group ?? "").includes("${{ github.ref_name }}")) {
+    fail(`${name} must serialize idempotent publication attempts by package tag`);
   }
-  if (job.environment !== "npm-publish") {
-    fail("npm-publish.yml must use the npm-publish environment");
+  if (canonical(Object.keys(workflow.jobs ?? {}).sort()) !== canonical(["candidate", "publish"])) {
+    fail(`${name} must contain only candidate and publish jobs`);
   }
-  const source = jobRuns(job);
-  if (!source.includes("tools/npm-publication.mjs") ||
-      !source.includes("packages/textlint-plugin-asciidoc/package.json") ||
-      !source.includes("tools/textlint-plugin-npm-smoke.mjs") ||
-      JSON.stringify(job).includes("packages/wasm")) {
-    fail("npm-publish.yml must verify only the fixed textlint package before and after publication");
+  const candidate = workflow.jobs.candidate;
+  const publish = workflow.jobs.publish;
+  if (needs(candidate).length !== 0 || canonical(needs(publish)) !== canonical(["candidate"])) {
+    fail(`${name} must verify one candidate before publication`);
+  }
+  if (publish.environment !== "npm-publish") {
+    fail(`${name} must keep Trusted Publishing in the npm-publish environment`);
+  }
+  const checkout = (candidate.steps ?? []).find((step) =>
+    typeof step.uses === "string" && step.uses.startsWith("actions/checkout@")
+  );
+  if (checkout?.with?.["fetch-depth"] !== 0 || checkout?.with?.["fetch-tags"] !== true ||
+      checkout?.with?.["persist-credentials"] !== false) {
+    fail(`${name} must fetch tag and main history without checkout credentials`);
+  }
+  const candidateSource = jobRuns(candidate);
+  for (const required of [
+    "packages/textlint-plugin-asciidoc/package.json",
+    'test "$PACKAGE_TAG" = "textlint-plugin-asciidoc/v$version"',
+    'git rev-parse "refs/tags/$PACKAGE_TAG^{commit}"',
+    "git rev-parse HEAD",
+    'git merge-base --is-ancestor "$PACKAGE_COMMIT" refs/remotes/origin/main',
+    "cargo make test-textlint-plugin-release-candidate",
+  ]) {
+    if (!candidateSource.includes(required)) {
+      fail(`${name} must bind the package tag, version, source, and candidate: ${required}`);
+    }
+  }
+  const publishSource = jobRuns(publish);
+  for (const required of [
+    "tools/npm-publication.mjs",
+    'npm publish "$tarball"',
+    "https://slsa.dev/provenance/v1",
+    "nix develop .#ci-browser -c node tools/textlint-plugin-npm-smoke.mjs",
+  ]) {
+    if (!publishSource.includes(required)) {
+      fail(`${name} must publish and verify the candidate directly on npm: ${required}`);
+    }
+  }
+  const configuration = JSON.stringify(workflow);
+  if (/gh release|releases\/tags|workspace_version|adocweave-textlint\/v/iu.test(configuration)) {
+    fail(`${name} must not depend on a native Release, legacy tag, or workspace version`);
+  }
+  for (const required of [
+    '"audit"',
+    '"signatures"',
+    '"--include-attestations"',
+    "runTextlintPluginConsumerE2E",
+    "runTextlintPluginNpxSmoke",
+  ]) {
+    if (!npmSmokeSource?.includes(required)) {
+      fail(`textlint npm smoke must verify signatures, provenance, and fixed consumers: ${required}`);
+    }
   }
 }
 
@@ -626,6 +673,7 @@ export function loadWorkflowPolicyInputs() {
   return {
     distConfiguration: read("dist-workspace.toml"),
     releaseGuide: read("CONTRIBUTING.adoc"),
+    textlintNpmSmoke: read("tools/textlint-plugin-npm-smoke.mjs"),
     wasmNpmSmoke: read("tools/wasm-npm-smoke.mjs"),
     workflows: Object.fromEntries(
       Object.entries(sources).map(([name, source]) => [name, parseWorkflow(name, source)]),
@@ -637,6 +685,7 @@ export function validateReleaseWorkflowPolicy({
   workflows,
   distConfiguration,
   releaseGuide,
+  textlintNpmSmoke,
   wasmNpmSmoke,
 }) {
   validatePinnedActions(workflows);
@@ -645,7 +694,7 @@ export function validateReleaseWorkflowPolicy({
   validateCiGates(workflows);
   validateExternalPublicationIsolation(workflows);
   validateBinaryCachePublication(workflows);
-  validateNpmPublication(workflows);
+  validateTextlintPluginPublication(workflows, textlintNpmSmoke);
   validateWasmPublication(workflows, wasmNpmSmoke);
   validateReleaseVersionCommands(releaseGuide);
 }

@@ -29,6 +29,10 @@ test("同期設定は製品別の正本を持たない", () => {
     registry.literals.some(({ path }) => path === "packages/wasm/package.json"),
     false,
   );
+  assert.equal(
+    registry.literals.some(({ path }) => path === "packages/textlint-plugin-asciidoc/package.json"),
+    false,
+  );
 });
 
 test("CLI引数は一括検査と一括更新だけを受理する", () => {

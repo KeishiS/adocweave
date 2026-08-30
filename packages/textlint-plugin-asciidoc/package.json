@@ -1,6 +1,6 @@
 {
   "name": "@adocweave/textlint-plugin-asciidoc",
-  "version": "0.55.0",
+  "version": "0.54.0",
   "publishConfig": {
     "access": "public"
   },
@@ -16,6 +16,7 @@
     }
   },
   "files": [
+    "CHANGELOG.md",
     "LICENSE-APACHE",
     "LICENSE-MIT",
     "README.md",

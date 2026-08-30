@@ -149,6 +149,7 @@ async function writeManifest(cwd) {
   await writeFile(join(plugin, "package.json"), JSON.stringify({
     name: packageManifest.name,
     peerDependencies: packageManifest.peerDependencies,
+    version: packageManifest.version,
   }));
   await writeFile(
     wrapper,
