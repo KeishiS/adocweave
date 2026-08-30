@@ -8,6 +8,7 @@ import {
   validateReleaseTag,
   verifyRepository,
 } from "./native-release-checks.mjs";
+import { releaseTag, workspaceVersion } from "./native-release-version.mjs";
 
 const release = verifyRepository();
 const plan = JSON.parse(execFileSync("dist", ["plan", `--tag=${release.tag}`, "--output-format=json"], {
@@ -15,9 +16,10 @@ const plan = JSON.parse(execFileSync("dist", ["plan", `--tag=${release.tag}`, "-
 }));
 
 test("repositoryは一つのworkspace版とtagを使う", () => {
-  assert.deepEqual(release, { tag: "v0.56.0", version: "0.56.0" });
+  const version = workspaceVersion();
+  assert.deepEqual(release, { tag: releaseTag(version), version });
   assert.deepEqual(validateReleaseTag(release.tag), release);
-  for (const tag of ["0.53.0", "adocweave-cli/v0.53.0", "adocweave-lsp/v0.53.0", "v0.53.0-rc.1"]) {
+  for (const tag of [version, `adocweave-cli/${release.tag}`, `adocweave-lsp/${release.tag}`, `${release.tag}-rc.1`]) {
     assert.throws(() => validateReleaseTag(tag), /exactly/);
   }
 });
