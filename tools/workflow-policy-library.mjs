@@ -87,6 +87,29 @@ function jobRuns(job) {
     .join("\n");
 }
 
+function validateNpmPublicationRuntime(name, publish) {
+  const steps = publish?.steps ?? [];
+  const nixIndices = steps
+    .map((step, index) => ({ index, uses: String(step.uses ?? "") }))
+    .filter(({ uses }) => uses.startsWith("DeterminateSystems/determinate-nix-action@"))
+    .map(({ index }) => index);
+  const setupNodeIndices = steps
+    .map((step, index) => ({ index, step }))
+    .filter(({ step }) => String(step.uses ?? "").startsWith("actions/setup-node@"))
+    .map(({ index }) => index);
+  const publishIndex = steps.findIndex((step) =>
+    String(step.run ?? "").includes('npm publish "$tarball"')
+  );
+  if (nixIndices.length !== 1 || setupNodeIndices.length !== 1 || publishIndex < 0 ||
+      nixIndices[0] >= setupNodeIndices[0] || setupNodeIndices[0] >= publishIndex) {
+    fail(`${name} must set up pinned Node.js after Nix and before npm publication`);
+  }
+  const setupNode = steps[setupNodeIndices[0]];
+  if (setupNode.with?.["node-version"] !== "${{ steps.node-version.outputs.value }}") {
+    fail(`${name} must use the Node.js version from toolchains.json for npm publication`);
+  }
+}
+
 export function validatePinnedActions(workflows) {
   for (const [name, document] of Object.entries(workflows)) {
     for (const { location, value } of workflowUses(document)) {
@@ -561,6 +584,7 @@ export function validateTextlintPluginPublication(workflows, npmSmokeSource) {
   if (publish.environment !== "npm-publish") {
     fail(`${name} must keep Trusted Publishing in the npm-publish environment`);
   }
+  validateNpmPublicationRuntime(name, publish);
   const checkout = (candidate.steps ?? []).find((step) =>
     typeof step.uses === "string" && step.uses.startsWith("actions/checkout@")
   );
@@ -631,6 +655,7 @@ export function validateWasmPublication(workflows, npmSmokeSource) {
   if (publish.environment !== "npm-publish") {
     fail("wasm-publish.yml must keep Trusted Publishing in the npm-publish environment");
   }
+  validateNpmPublicationRuntime("wasm-publish.yml", publish);
   const checkout = (candidate.steps ?? []).find((step) =>
     typeof step.uses === "string" && step.uses.startsWith("actions/checkout@")
   );
