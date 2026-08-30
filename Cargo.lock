@@ -30,14 +30,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "adocweave-host"
-version = "0.56.0"
-dependencies = [
- "rustix",
- "tempfile",
-]
-
-[[package]]
 name = "adocweave-lsp"
 version = "0.56.0"
 dependencies = [
@@ -58,9 +50,9 @@ name = "adocweave-project"
 version = "0.56.0"
 dependencies = [
  "adocweave",
- "adocweave-host",
  "glob",
  "jsonschema",
+ "rustix",
  "schemars",
  "serde",
  "serde_json",

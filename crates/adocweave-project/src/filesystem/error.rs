@@ -1,48 +1,57 @@
-//! Failures reported by the confined local-target boundary.
+//! Failures reported by the project filesystem boundary.
 
 use std::error::Error;
 use std::fmt;
 use std::path::PathBuf;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum LocalTargetError {
+pub enum FilesystemError {
     Missing(PathBuf),
     OutsideRoot(PathBuf),
     NotFile(PathBuf),
     NotDirectory(PathBuf),
     PermissionDenied(PathBuf),
+    PathNotAbsolute(PathBuf),
     InvalidUtf8(PathBuf),
+    Inspect { path: PathBuf, source: String },
     Unverifiable(String),
     LimitExceeded { limit: usize },
     ResourceTooLarge(PathBuf),
     ReadLimitExceeded,
 }
 
-impl LocalTargetError {
+impl FilesystemError {
     pub const fn diagnostic_code(&self) -> &'static str {
         match self {
             Self::Missing(_) => "local-target-missing",
-            Self::OutsideRoot(_) => "local-target-outside-root",
+            Self::OutsideRoot(_) | Self::PathNotAbsolute(_) => "local-target-outside-root",
             Self::NotFile(_) | Self::NotDirectory(_) => "local-target-not-file",
             Self::PermissionDenied(_) => "local-target-permission-denied",
-            Self::InvalidUtf8(_) | Self::Unverifiable(_) => "local-target-unverifiable",
+            Self::InvalidUtf8(_) | Self::Inspect { .. } | Self::Unverifiable(_) => {
+                "local-target-unverifiable"
+            }
             Self::LimitExceeded { .. } => "local-target-limit-exceeded",
             Self::ResourceTooLarge(_) | Self::ReadLimitExceeded => "local-target-unverifiable",
         }
     }
 }
 
-impl fmt::Display for LocalTargetError {
+impl fmt::Display for FilesystemError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Missing(path) => write!(formatter, "local target is missing: {}", path.display()),
             Self::OutsideRoot(path) => {
                 write!(
                     formatter,
-                    "local target is outside project root: {}",
+                    "local resource is outside configured roots: {}",
                     path.display()
                 )
             }
+            Self::PathNotAbsolute(path) => write!(
+                formatter,
+                "local resource path is not absolute: {}",
+                path.display()
+            ),
             Self::NotFile(path) => {
                 write!(formatter, "local target is not a file: {}", path.display())
             }
@@ -67,6 +76,9 @@ impl fmt::Display for LocalTargetError {
                     path.display()
                 )
             }
+            Self::Inspect { path, source } => {
+                write!(formatter, "cannot inspect {}: {source}", path.display())
+            }
             Self::Unverifiable(reason) => {
                 write!(formatter, "local target cannot be verified: {reason}")
             }
@@ -81,4 +93,4 @@ impl fmt::Display for LocalTargetError {
     }
 }
 
-impl Error for LocalTargetError {}
+impl Error for FilesystemError {}

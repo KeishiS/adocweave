@@ -16,6 +16,7 @@
 //! returns all owned results before it finishes.
 
 mod config;
+mod filesystem;
 mod process;
 mod selection;
 
@@ -33,17 +34,14 @@ use adocweave::preprocess::{
     ProjectionError,
 };
 use adocweave::{Analysis, AnalysisOptions, ParseError, SourceId};
-use adocweave_host::{
-    DerivedFilesystemRoots, FilesystemReadLimits, FilesystemReadOutcome, LocalFilesystemPolicy,
-    LocalFilesystemSession, LocalTargetError, LocalTargetPolicy, LogicalSourceId, ResourceError,
-};
 use config::{ConfigError, ConfigErrorCode, LoadedProjectConfig};
+use filesystem::{FilesystemAuthority, FilesystemError, RootAuthority};
 
 pub use config::ProjectConfig;
 pub use process::{process, resolve_config};
 
-pub(crate) fn project_authority_error(error: ResourceError) -> ProjectError {
-    ProjectError::Authority(ProjectResourceError::from_host(error))
+pub(crate) fn project_authority_error(error: FilesystemError) -> ProjectError {
+    ProjectError::Authority(ProjectResourceError::from_filesystem(error))
 }
 
 pub(crate) fn project_config_error(
@@ -54,12 +52,12 @@ pub(crate) fn project_config_error(
     ProjectError::Config(ProjectConfigError::from_config(path, source, error))
 }
 
-pub(crate) fn project_target_read(error: ResourceError) -> ProjectTargetError {
-    ProjectTargetError::Read(ProjectResourceError::from_host(error))
+pub(crate) fn project_target_read(error: FilesystemError) -> ProjectTargetError {
+    ProjectTargetError::Read(ProjectResourceError::from_filesystem(error))
 }
 
-pub(crate) fn project_expansion_read(error: ResourceError) -> ProjectExpansionError {
-    ProjectExpansionError::Resource(ProjectResourceError::from_host(error))
+pub(crate) fn project_expansion_read(error: FilesystemError) -> ProjectExpansionError {
+    ProjectExpansionError::Resource(ProjectResourceError::from_filesystem(error))
 }
 
 /// Fixed request ceiling applied before compiling or scanning glob selectors.
@@ -118,7 +116,7 @@ pub struct ProjectResourceSelection {
 #[derive(Clone, Debug)]
 pub struct ProjectAuthority {
     project_root: PathBuf,
-    policy: LocalFilesystemPolicy,
+    policy: FilesystemAuthority,
 }
 
 impl ProjectAuthority {
@@ -129,38 +127,30 @@ impl ProjectAuthority {
     ) -> Result<Self, ProjectResourceError> {
         let project_root = project_root.into();
         if !project_root.is_absolute() {
-            return Err(ProjectResourceError::from_host(
-                ResourceError::PathNotAbsolute(project_root),
+            return Err(ProjectResourceError::from_filesystem(
+                FilesystemError::PathNotAbsolute(project_root),
             ));
         }
-        let filesystem_limits = ProjectLimits::default().filesystem_reads();
-        let mut policy = LocalFilesystemPolicy::new(roots, filesystem_limits)
-            .map_err(ProjectResourceError::from_host)?;
+        let mut policy =
+            FilesystemAuthority::open(roots).map_err(ProjectResourceError::from_filesystem)?;
         let project_root = project_root.canonicalize().map_err(|error| {
-            ProjectResourceError::from_host(ResourceError::Inspect {
+            ProjectResourceError::from_filesystem(FilesystemError::Inspect {
                 path: project_root.clone(),
                 source: error.to_string(),
             })
         })?;
         let anchor = policy
-            .policy_for_path(&project_root)
+            .authority_for_path(&project_root)
             .map(|value| value.root().to_owned());
         let Some(anchor) = anchor else {
-            return Err(ProjectResourceError::from_host(
-                ResourceError::OutsideRoots(project_root),
+            return Err(ProjectResourceError::from_filesystem(
+                FilesystemError::OutsideRoot(project_root),
             ));
         };
         if anchor != project_root {
             policy
-                .access_derived(
-                    &anchor,
-                    DerivedFilesystemRoots {
-                        confined: vec![project_root.clone()],
-                        independent: Vec::new(),
-                    },
-                    filesystem_limits,
-                )
-                .map_err(ProjectResourceError::from_host)?;
+                .derive(&anchor, [project_root.clone()])
+                .map_err(ProjectResourceError::from_filesystem)?;
         }
         Ok(Self {
             project_root,
@@ -179,10 +169,11 @@ impl ProjectAuthority {
     pub fn observation_access(&self) -> ProjectObservationAccess {
         ProjectObservationAccess {
             policy: self.policy.clone(),
+            limits: ProjectResourceLimits::default(),
         }
     }
 
-    pub(crate) fn into_parts(self) -> (PathBuf, LocalFilesystemPolicy) {
+    pub(crate) fn into_parts(self) -> (PathBuf, FilesystemAuthority) {
         (self.project_root, self.policy)
     }
 }
@@ -190,23 +181,19 @@ impl ProjectAuthority {
 /// Retained filesystem access for caller-owned change observation.
 #[derive(Clone, Debug)]
 pub struct ProjectObservationAccess {
-    policy: LocalFilesystemPolicy,
+    policy: FilesystemAuthority,
+    limits: ProjectResourceLimits,
 }
 
 impl ProjectObservationAccess {
     /// Starts one observation pass with one budget shared by every resource.
-    pub fn session(&self) -> Result<ProjectObservationSession, ProjectResourceError> {
-        let remaining = self.policy.limits().max_files;
-        let filesystem = self
-            .policy
-            .session()
-            .map_err(ProjectResourceError::from_host)?;
-        Ok(ProjectObservationSession {
+    pub fn observer(&self) -> ProjectObserver {
+        ProjectObserver {
             policy: self.policy.clone(),
-            filesystem,
-            remaining,
-            next_source: 0,
-        })
+            remaining_files: self.limits.max_files,
+            remaining_bytes: self.limits.max_total_bytes,
+            max_resource_bytes: self.limits.max_resource_bytes,
+        }
     }
 }
 
@@ -219,52 +206,49 @@ pub enum ProjectObservationKind {
 }
 
 /// One bounded caller-owned observation pass.
-pub struct ProjectObservationSession {
-    policy: LocalFilesystemPolicy,
-    filesystem: LocalFilesystemSession,
-    remaining: usize,
-    next_source: usize,
+pub struct ProjectObserver {
+    policy: FilesystemAuthority,
+    remaining_files: usize,
+    remaining_bytes: u64,
+    max_resource_bytes: u64,
 }
 
-impl ProjectObservationSession {
+impl ProjectObserver {
     /// Observes one path without granting access beyond the retained authority.
     pub fn observe(
         &mut self,
         path: &Path,
         kind: ProjectObservationKind,
     ) -> ProjectResourceObservation {
-        if self.remaining == 0 {
+        if self.remaining_files == 0 {
             return ProjectResourceObservation::unavailable();
         }
-        self.remaining -= 1;
-        let source_id = LogicalSourceId::new(format!("project-observation:{}", self.next_source));
-        self.next_source = self.next_source.saturating_add(1);
-        let Ok(source_id) = source_id else {
-            return ProjectResourceObservation::unavailable();
-        };
+        self.remaining_files -= 1;
         match kind {
-            ProjectObservationKind::Existence => self.policy.policy_for_path(path).map_or(
+            ProjectObservationKind::Existence => self.policy.authority_for_path(path).map_or(
                 ProjectResourceObservation::unavailable(),
                 |policy| match policy.inspect_candidate_no_symlinks(path) {
                     Ok(_) => ProjectResourceObservation::present(),
-                    Err(LocalTargetError::Missing(_)) => ProjectResourceObservation::missing(),
+                    Err(FilesystemError::Missing(_)) => ProjectResourceObservation::missing(),
                     Err(_) => ProjectResourceObservation::unavailable(),
                 },
             ),
             ProjectObservationKind::Contents | ProjectObservationKind::ContentsNoSymlinks => {
-                let result = if kind == ProjectObservationKind::ContentsNoSymlinks {
-                    self.filesystem
-                        .read_utf8_no_symlinks_outcome(source_id, path)
-                } else {
-                    self.filesystem.read_utf8_outcome(source_id, path)
-                };
-                match result {
-                    Ok(FilesystemReadOutcome::Found(source)) => {
+                let max_bytes = self.max_resource_bytes.min(self.remaining_bytes);
+                if max_bytes == 0 {
+                    return ProjectResourceObservation::unavailable();
+                }
+                let read = self.policy.read_utf8(
+                    path,
+                    max_bytes,
+                    kind == ProjectObservationKind::ContentsNoSymlinks,
+                );
+                self.remaining_bytes = self.remaining_bytes.saturating_sub(read.observed_bytes);
+                match read.outcome {
+                    Ok(source) => {
                         ProjectResourceObservation::from_bytes(source.source().as_bytes())
                     }
-                    Ok(FilesystemReadOutcome::NotFound { .. }) => {
-                        ProjectResourceObservation::missing()
-                    }
+                    Err(FilesystemError::Missing(_)) => ProjectResourceObservation::missing(),
                     Err(_) => ProjectResourceObservation::unavailable(),
                 }
             }
@@ -387,16 +371,6 @@ impl Default for ProjectLimits {
     }
 }
 
-impl ProjectLimits {
-    pub(crate) const fn filesystem_reads(self) -> FilesystemReadLimits {
-        FilesystemReadLimits {
-            max_files: self.resources.max_files,
-            max_total_bytes: self.resources.max_total_bytes,
-            max_resource_bytes: self.resources.max_resource_bytes,
-        }
-    }
-}
-
 /// Result of attempting one complete project request.
 ///
 /// An error means the request could not establish a safe common basis, such as
@@ -467,12 +441,12 @@ pub struct ProjectTargetResult {
 #[derive(Debug)]
 pub struct ProjectWriteCapability {
     path: PathBuf,
-    policy: LocalTargetPolicy,
+    policy: RootAuthority,
     original: Arc<str>,
 }
 
 impl ProjectWriteCapability {
-    pub(crate) fn new(path: PathBuf, policy: LocalTargetPolicy, original: Arc<str>) -> Self {
+    pub(crate) fn new(path: PathBuf, policy: RootAuthority, original: Arc<str>) -> Self {
         Self {
             path,
             policy,
@@ -489,8 +463,7 @@ impl ProjectWriteCapability {
     pub fn contents_match(&self) -> Result<bool, ProjectResourceError> {
         self.policy
             .candidate_contents_match(&self.path, self.original.as_bytes())
-            .map_err(ResourceError::from)
-            .map_err(ProjectResourceError::from_host)
+            .map_err(ProjectResourceError::from_filesystem)
     }
 
     /// Rechecks and replaces the observed file, consuming the capability.
@@ -500,8 +473,7 @@ impl ProjectWriteCapability {
     pub fn replace_after_recheck(self, replacement: &[u8]) -> Result<bool, ProjectResourceError> {
         self.policy
             .replace_candidate_after_recheck(&self.path, self.original.as_bytes(), replacement)
-            .map_err(ResourceError::from)
-            .map_err(ProjectResourceError::from_host)
+            .map_err(ProjectResourceError::from_filesystem)
     }
 }
 
@@ -1015,57 +987,51 @@ pub struct ProjectResourceError {
     pub code: ProjectResourceErrorCode,
     pub path: Option<PathBuf>,
     message: String,
-    host: ResourceError,
+    source: FilesystemError,
     repair_candidate: Option<Box<ProjectObservationCandidate>>,
 }
 
 impl ProjectResourceError {
-    pub(crate) fn from_host(error: ResourceError) -> Self {
+    pub(crate) fn from_filesystem(error: FilesystemError) -> Self {
         let (code, path) = match &error {
-            ResourceError::Missing(path) => (ProjectResourceErrorCode::Missing, Some(path.clone())),
-            ResourceError::PermissionDenied(path) => (
+            FilesystemError::Missing(path) => {
+                (ProjectResourceErrorCode::Missing, Some(path.clone()))
+            }
+            FilesystemError::PermissionDenied(path) => (
                 ProjectResourceErrorCode::PermissionDenied,
                 Some(path.clone()),
             ),
-            ResourceError::InvalidUtf8 { path, .. } => {
+            FilesystemError::InvalidUtf8(path) => {
                 (ProjectResourceErrorCode::InvalidUtf8, Some(path.clone()))
             }
-            ResourceError::OutsideRoots(path) => (
+            FilesystemError::OutsideRoot(path) => (
                 ProjectResourceErrorCode::OutsideAuthority,
                 Some(path.clone()),
             ),
-            ResourceError::PathNotAbsolute(path) => {
+            FilesystemError::PathNotAbsolute(path) => {
                 (ProjectResourceErrorCode::InvalidPath, Some(path.clone()))
             }
-            ResourceError::Read { path, .. } => {
+            FilesystemError::Inspect { path, .. }
+            | FilesystemError::NotFile(path)
+            | FilesystemError::NotDirectory(path) => {
                 (ProjectResourceErrorCode::ReadFailed, Some(path.clone()))
             }
-            ResourceError::Inspect { path, .. } | ResourceError::NotRegularFile(path) => {
-                (ProjectResourceErrorCode::ReadFailed, Some(path.clone()))
-            }
-            ResourceError::FileLimit { .. }
-            | ResourceError::ByteLimit
-            | ResourceError::ResourceTooLarge(_)
-            | ResourceError::Job(_) => (ProjectResourceErrorCode::Limit, None),
-            ResourceError::Unverifiable(_) => (ProjectResourceErrorCode::Unverifiable, None),
-            ResourceError::NoRoots
-            | ResourceError::InvalidRoot
-            | ResourceError::RootLimit { .. } => (ProjectResourceErrorCode::OutsideAuthority, None),
-            ResourceError::InvalidSourceId
-            | ResourceError::SessionIdentityExhausted
-            | ResourceError::ScanEntryLimit { .. } => (ProjectResourceErrorCode::Limit, None),
+            FilesystemError::LimitExceeded { .. }
+            | FilesystemError::ReadLimitExceeded
+            | FilesystemError::ResourceTooLarge(_) => (ProjectResourceErrorCode::Limit, None),
+            FilesystemError::Unverifiable(_) => (ProjectResourceErrorCode::Unverifiable, None),
         };
         Self {
             code,
             path,
             message: error.to_string(),
-            host: error,
+            source: error,
             repair_candidate: None,
         }
     }
 
-    pub(crate) fn host(&self) -> &ResourceError {
-        &self.host
+    pub(crate) fn filesystem(&self) -> &FilesystemError {
+        &self.source
     }
 }
 
@@ -1091,16 +1057,6 @@ impl Default for ProjectResourceLimits {
             max_files: 10_000,
             max_total_bytes: 50 * 1024 * 1024,
             max_resource_bytes: 10 * 1024 * 1024,
-        }
-    }
-}
-
-impl ProjectResourceLimits {
-    pub(crate) const fn filesystem_reads(self) -> FilesystemReadLimits {
-        FilesystemReadLimits {
-            max_files: self.max_files,
-            max_total_bytes: self.max_total_bytes,
-            max_resource_bytes: self.max_resource_bytes,
         }
     }
 }

@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use adocweave::NeverCancel;
 use adocweave::preprocess::PreprocessErrorKind;
-use adocweave_host::FilesystemReadLimits;
 use adocweave_project::{
     ProjectAuthority, ProjectConfigOverrides, ProjectConfigSelection, ProjectError,
     ProjectExpansionError, ProjectLimit, ProjectLimits, ProjectRequest, ProjectResourceErrorCode,
@@ -18,7 +17,7 @@ fn process(request: ProjectRequest) -> adocweave_project::ProjectOutcome {
 }
 
 fn request(root: &Path, targets: Vec<ProjectTarget>) -> ProjectRequest {
-    let filesystem_reads = FilesystemReadLimits::default();
+    let filesystem_reads = ProjectResourceLimits::default();
     ProjectRequest {
         targets,
         sources: Vec::new(),
@@ -208,10 +207,7 @@ fn invalid_configuration_keeps_the_observation_from_the_failed_request() {
     );
 
     write(&config, "schema-version = 2\n");
-    let mut observation = authority
-        .observation_access()
-        .session()
-        .expect("observation session");
+    let mut observation = authority.observation_access().observer();
     assert_ne!(
         observation.observe(&candidate.path, candidate.kind),
         candidate.observation
@@ -228,10 +224,7 @@ fn existence_observation_does_not_read_a_large_local_target_body() {
         .set_len(11 * 1024 * 1024)
         .expect("large asset length");
     let authority = ProjectAuthority::open(root, [root.to_owned()]).expect("project authority");
-    let mut observation = authority
-        .observation_access()
-        .session()
-        .expect("observation session");
+    let mut observation = authority.observation_access().observer();
 
     assert_eq!(
         observation.observe(&asset, adocweave_project::ProjectObservationKind::Existence),
@@ -870,13 +863,89 @@ fn local_target_observation_can_later_be_read_as_a_primary() {
     write(root.join("a-guide.adoc"), "image::z-resource.adoc[]\n");
     write(root.join("z-resource.adoc"), "resource body\n");
 
-    let result = process(request(
-        root,
-        vec![ProjectTarget::Directory(PathBuf::from("."))],
-    ))
-    .expect("inspection and later read coexist");
+    let mut request = request(root, vec![ProjectTarget::Directory(PathBuf::from("."))]);
+    request.limits.resources.max_files = 3;
+    let result = process(request).expect("inspection and later read share one reservation");
     assert_eq!(result.targets.len(), 2);
     assert!(result.targets.iter().all(|target| target.analysis.is_ok()));
+    assert_eq!(result.usage.read_operations, 3);
+}
+
+#[test]
+fn primary_reads_and_local_target_inspections_share_the_request_file_limit() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    write(
+        root.join(".adocweave.toml"),
+        "schema-version = 2\n[local-targets]\nenabled = true\nproject-root = \".\"\n",
+    );
+    write(root.join("guide.adoc"), "image::asset.bin[]\n");
+    write(root.join("asset.bin"), "asset\n");
+    let mut request = request(root, vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))]);
+    request.limits.resources.max_files = 2;
+
+    assert!(matches!(
+        process(request),
+        Err(ProjectError::Limit(ProjectLimit::Files { limit: 2 }))
+    ));
+}
+
+#[test]
+fn invalid_utf8_reads_are_charged_to_the_request_total() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    fs::write(directory.path().join("a.adoc"), [0xff]).expect("first invalid source");
+    fs::write(directory.path().join("b.adoc"), [0xfe]).expect("second invalid source");
+    let mut request = request(
+        directory.path(),
+        vec![
+            ProjectTarget::Path(PathBuf::from("a.adoc")),
+            ProjectTarget::Path(PathBuf::from("b.adoc")),
+        ],
+    );
+    request.config = ProjectConfigSelection::Disabled;
+    request.limits.resources = ProjectResourceLimits {
+        max_files: 2,
+        max_total_bytes: 2,
+        max_resource_bytes: 2,
+    };
+
+    let result = process(request).expect("invalid UTF-8 remains a target-local failure");
+    assert_eq!(result.usage.read_bytes, 2);
+    assert!(result.targets.iter().all(|target| {
+        matches!(
+            target.analysis,
+            Err(ProjectTargetError::Read(ref error))
+                if error.code == ProjectResourceErrorCode::InvalidUtf8
+        )
+    }));
+}
+
+#[test]
+fn invalid_utf8_reads_exhaust_the_shared_configuration_scope() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    write(
+        root.join(".adocweave.toml"),
+        "schema-version = 2\n[resources]\nmax-files = 2\nmax-total-bytes = 1\nmax-resource-bytes = 1\n",
+    );
+    for name in ["a.adoc", "b.adoc"] {
+        fs::write(root.join(name), [0xff]).expect("invalid source");
+    }
+    let result = process(request(
+        root,
+        ["a.adoc", "b.adoc"]
+            .into_iter()
+            .map(|name| ProjectTarget::Path(PathBuf::from(name)))
+            .collect(),
+    ))
+    .expect("scope exhaustion remains target-local");
+
+    assert!(matches!(
+        result.targets[1].analysis,
+        Err(ProjectTargetError::Incomplete(ProjectLimit::ReadBytes {
+            limit: 1
+        }))
+    ));
 }
 
 #[test]

@@ -51,14 +51,15 @@ CPU処理、外部I/O、実行枠の待機およびクライアントとの通�
 一度使った継続の再利用は拒否します。取得失敗時は処理を終了し、途中まで作った解析結果を公開しません。
 利用側アプリが診断を残して処理を継続する場合は、失敗したリソースの代替内容を明示的に渡します。
 
-native環境のローカルファイルは``adocweave-host``を通して読みます。許可したrootの外側、symlinkによるroot外への移動、
-不正なUTF-8および上限超過を通常の不在と区別します。検査後に未確認のパスから開き直しません。
-``adocweave-project``は取得した内容と使用量を一回の要求に固定します。Language Serverは処理結果を公開する前に
+ネイティブ環境のローカルファイルは``adocweave-project``が、要求に保持した読込権限を使って読みます。
+許可したルートディレクトリの外側、シンボリックリンクによる許可範囲外への移動、不正なUTF-8および上限超過を
+通常の不在と区別します。
+検査後に未確認のパスから開き直さず、取得した内容と使用量を一回の要求に固定します。Language Serverは処理結果を公開する前に
 文書と参照先が変わっていないことを確認し、変更済みの場合は結果を破棄して新しい要求を開始します。
 
 ファイルシステムの競合に対する保証とOSごとの差は
-xref:adr/0014-race-resistant-local-filesystem-boundary.adoc[ADR 0014]を参照してください。project設定から決まる
-rootおよび上限の現在の動作はxref:../user-guide/project-configuration.adoc[プロジェクト設定]を
+xref:adr/0046-project-owned-local-filesystem.adoc[ADR 0046]を参照してください。プロジェクト設定から決まる
+ルートディレクトリおよび上限の現在の動作はxref:../user-guide/project-configuration.adoc[プロジェクト設定]を
 基準とします。Language Serverが解析する文書とファイル監視は
 xref:language-server.adoc#lsp-workspace[Language Serverの実行仕様]を基準とします。
 

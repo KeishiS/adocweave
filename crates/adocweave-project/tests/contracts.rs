@@ -650,24 +650,6 @@ fn duplicate_and_unknown_source_ids_are_invalid_input() {
 }
 
 #[test]
-fn unrepresentable_caller_source_id_is_invalid_input() {
-    let mut request = request_with(Vec::new());
-    let id = SourceId::new("");
-    request.sources.push(ProjectSource::memory(
-        id.clone(),
-        request.authority.project_root().to_owned(),
-        "text\n",
-    ));
-    request.targets.push(ProjectTarget::Source(id));
-    request.config = ProjectConfigSelection::Disabled;
-
-    assert!(matches!(
-        process(request, &NeverCancel),
-        Err(ProjectError::InvalidInput(ref error)) if error.code == "invalid-source-id"
-    ));
-}
-
-#[test]
 fn caller_sources_cannot_use_generated_resource_ids() {
     let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     for id in ["local-target:caller", "include-request:caller:0:1"] {
@@ -736,7 +718,7 @@ fn file_overlay_is_reused_inside_a_narrow_include_authority() {
     }));
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
 fn project_authority_keeps_the_opened_child_identity() {
     let directory = tempfile::tempdir().expect("temporary directory");
@@ -781,6 +763,116 @@ fn project_authority_keeps_the_opened_child_identity() {
     )
     .expect("cloned authority retains the same opened identity");
     assert_eq!(second.targets[0].source.as_deref(), Some("original\n"));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn observer_keeps_the_opened_root_and_rejects_external_paths() {
+    use std::os::unix::fs::symlink;
+
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path().join("project");
+    let displaced = directory.path().join("opened-project");
+    let outside = directory.path().join("outside");
+    fs::create_dir(&root).expect("project root");
+    fs::create_dir(&outside).expect("outside root");
+    fs::write(root.join("guide.adoc"), "trusted\n").expect("trusted source");
+    fs::write(outside.join("guide.adoc"), "outside\n").expect("outside source");
+    let authority = ProjectAuthority::open(root.clone(), [root.clone()]).expect("authority");
+    let access = authority.observation_access();
+    fs::rename(&root, &displaced).expect("displace root");
+    symlink(&outside, &root).expect("replacement root");
+
+    let mut observer = access.observer();
+    assert_eq!(
+        observer.observe(
+            &root.join("guide.adoc"),
+            adocweave_project::ProjectObservationKind::Contents,
+        ),
+        adocweave_project::ProjectResourceObservation::from_bytes(b"trusted\n")
+    );
+    assert_eq!(
+        observer.observe(
+            &outside.join("guide.adoc"),
+            adocweave_project::ProjectObservationKind::Contents,
+        ),
+        adocweave_project::ProjectResourceObservation::unavailable()
+    );
+
+    fs::remove_file(&root).expect("remove replacement");
+    fs::rename(displaced, root).expect("restore root");
+}
+
+#[test]
+fn observer_applies_one_shared_file_limit() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let target = directory.path().join("guide.adoc");
+    fs::write(&target, "text\n").expect("source");
+    let authority =
+        ProjectAuthority::open(directory.path().to_owned(), [directory.path().to_owned()])
+            .expect("authority");
+    let mut observer = authority.observation_access().observer();
+    for _ in 0..ProjectResourceLimits::default().max_files {
+        assert_ne!(
+            observer.observe(
+                &target,
+                adocweave_project::ProjectObservationKind::Existence,
+            ),
+            adocweave_project::ProjectResourceObservation::unavailable()
+        );
+    }
+    assert_eq!(
+        observer.observe(
+            &target,
+            adocweave_project::ProjectObservationKind::Existence,
+        ),
+        adocweave_project::ProjectResourceObservation::unavailable()
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn write_capability_uses_the_opened_parent_after_root_replacement() {
+    use std::os::unix::fs::symlink;
+
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path().join("project");
+    let displaced = directory.path().join("opened-project");
+    let outside = directory.path().join("outside");
+    fs::create_dir(&root).expect("project root");
+    fs::create_dir(&outside).expect("outside root");
+    fs::write(root.join("guide.adoc"), "trusted\n").expect("trusted source");
+    fs::write(outside.join("guide.adoc"), "outside\n").expect("outside source");
+    let mut request = request_with(vec![ProjectTarget::Path(PathBuf::from("guide.adoc"))]);
+    request.authority = ProjectAuthority::open(root.clone(), [root.clone()]).expect("authority");
+    request.config = ProjectConfigSelection::Disabled;
+    let result = process(request, &NeverCancel).expect("project result");
+    let write = result
+        .targets
+        .into_iter()
+        .next()
+        .expect("target")
+        .write
+        .expect("write");
+
+    fs::rename(&root, &displaced).expect("displace root");
+    symlink(&outside, &root).expect("replacement root");
+    assert!(
+        write
+            .replace_after_recheck(b"updated\n")
+            .expect("safe replacement")
+    );
+    assert_eq!(
+        fs::read_to_string(displaced.join("guide.adoc")).expect("opened target"),
+        "updated\n"
+    );
+    assert_eq!(
+        fs::read_to_string(outside.join("guide.adoc")).expect("outside target"),
+        "outside\n"
+    );
+
+    fs::remove_file(&root).expect("remove replacement");
+    fs::rename(displaced, root).expect("restore root");
 }
 
 #[test]

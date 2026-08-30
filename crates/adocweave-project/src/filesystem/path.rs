@@ -11,27 +11,27 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use super::error::LocalTargetError;
+use super::error::FilesystemError;
 
 #[cfg(not(target_os = "linux"))]
 pub(super) fn reject_symlink_components(
     root: &Path,
     candidate: &Path,
-) -> Result<(), LocalTargetError> {
+) -> Result<(), FilesystemError> {
     let relative = candidate
         .strip_prefix(root)
-        .map_err(|_| LocalTargetError::OutsideRoot(candidate.to_owned()))?;
+        .map_err(|_| FilesystemError::OutsideRoot(candidate.to_owned()))?;
     let mut current = root.to_owned();
     for component in relative.components() {
         let Component::Normal(name) = component else {
-            return Err(LocalTargetError::Unverifiable(
+            return Err(FilesystemError::Unverifiable(
                 candidate.to_string_lossy().into_owned(),
             ));
         };
         current.push(name);
         match fs::symlink_metadata(&current) {
             Ok(metadata) if metadata.file_type().is_symlink() => {
-                return Err(LocalTargetError::OutsideRoot(current));
+                return Err(FilesystemError::OutsideRoot(current));
             }
             Ok(_) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
@@ -42,12 +42,12 @@ pub(super) fn reject_symlink_components(
 }
 
 #[cfg(target_os = "linux")]
-pub(super) fn classify_errno(path: &Path, source: rustix::io::Errno) -> LocalTargetError {
+pub(super) fn classify_errno(path: &Path, source: rustix::io::Errno) -> FilesystemError {
     if source == rustix::io::Errno::XDEV {
-        return LocalTargetError::OutsideRoot(path.to_owned());
+        return FilesystemError::OutsideRoot(path.to_owned());
     }
     if source == rustix::io::Errno::NOTDIR {
-        return LocalTargetError::NotDirectory(path.to_owned());
+        return FilesystemError::NotDirectory(path.to_owned());
     }
     classify_io(
         path.to_owned(),
@@ -55,14 +55,14 @@ pub(super) fn classify_errno(path: &Path, source: rustix::io::Errno) -> LocalTar
     )
 }
 
-pub(super) fn decode_relative_path(target: &str) -> Result<PathBuf, LocalTargetError> {
+pub(super) fn decode_relative_path(target: &str) -> Result<PathBuf, FilesystemError> {
     if target.is_empty()
         || target.starts_with(['/', '\\'])
         || target.contains('\\')
         || target.contains(':')
         || target.chars().any(char::is_control)
     {
-        return Err(LocalTargetError::Unverifiable(target.to_owned()));
+        return Err(FilesystemError::Unverifiable(target.to_owned()));
     }
     let bytes = target.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
@@ -74,18 +74,18 @@ pub(super) fn decode_relative_path(target: &str) -> Result<PathBuf, LocalTargetE
             continue;
         }
         if index + 2 >= bytes.len() {
-            return Err(LocalTargetError::Unverifiable(target.to_owned()));
+            return Err(FilesystemError::Unverifiable(target.to_owned()));
         }
         let (Some(high), Some(low)) = (hex(bytes[index + 1]), hex(bytes[index + 2])) else {
-            return Err(LocalTargetError::Unverifiable(target.to_owned()));
+            return Err(FilesystemError::Unverifiable(target.to_owned()));
         };
         decoded.push(high * 16 + low);
         index += 3;
     }
-    let decoded = String::from_utf8(decoded)
-        .map_err(|_| LocalTargetError::Unverifiable(target.to_owned()))?;
+    let decoded =
+        String::from_utf8(decoded).map_err(|_| FilesystemError::Unverifiable(target.to_owned()))?;
     if decoded.contains(':') || decoded.contains('\\') || decoded.chars().any(char::is_control) {
-        return Err(LocalTargetError::Unverifiable(target.to_owned()));
+        return Err(FilesystemError::Unverifiable(target.to_owned()));
     }
     Ok(PathBuf::from(decoded))
 }
@@ -94,7 +94,7 @@ pub(super) fn normalize_below_root(
     root: &Path,
     base: &Path,
     relative: &Path,
-) -> Result<PathBuf, LocalTargetError> {
+) -> Result<PathBuf, FilesystemError> {
     let mut candidate = base.to_owned();
     for component in relative.components() {
         match component {
@@ -102,16 +102,16 @@ pub(super) fn normalize_below_root(
             Component::CurDir => {}
             Component::ParentDir => {
                 if candidate == root || !candidate.pop() || !candidate.starts_with(root) {
-                    return Err(LocalTargetError::OutsideRoot(candidate));
+                    return Err(FilesystemError::OutsideRoot(candidate));
                 }
             }
             Component::RootDir | Component::Prefix(_) => {
-                return Err(LocalTargetError::OutsideRoot(candidate));
+                return Err(FilesystemError::OutsideRoot(candidate));
             }
         }
     }
     if candidate == base && relative.as_os_str().is_empty() {
-        return Err(LocalTargetError::Unverifiable(
+        return Err(FilesystemError::Unverifiable(
             relative.to_string_lossy().into_owned(),
         ));
     }
@@ -122,7 +122,7 @@ pub(super) fn normalize_below_root(
 pub(super) fn reject_dangling_symlink_escape(
     root: &Path,
     candidate: &Path,
-) -> Result<(), LocalTargetError> {
+) -> Result<(), FilesystemError> {
     reject_dangling_symlink_escape_inner(root, candidate, &mut BTreeSet::new(), 0)
 }
 
@@ -132,16 +132,16 @@ fn reject_dangling_symlink_escape_inner(
     candidate: &Path,
     visited: &mut BTreeSet<PathBuf>,
     depth: usize,
-) -> Result<(), LocalTargetError> {
+) -> Result<(), FilesystemError> {
     const MAX_SYMLINK_DEPTH: usize = 64;
     if depth > MAX_SYMLINK_DEPTH {
-        return Err(LocalTargetError::Unverifiable(format!(
+        return Err(FilesystemError::Unverifiable(format!(
             "local target symlink depth exceeds {MAX_SYMLINK_DEPTH}: {}",
             candidate.display()
         )));
     }
     if !candidate.starts_with(root) {
-        return Err(LocalTargetError::OutsideRoot(candidate.to_owned()));
+        return Err(FilesystemError::OutsideRoot(candidate.to_owned()));
     }
     let metadata = match fs::symlink_metadata(candidate) {
         Ok(metadata) => metadata,
@@ -156,7 +156,7 @@ fn reject_dangling_symlink_escape_inner(
         return Ok(());
     }
     if !visited.insert(candidate.to_owned()) {
-        return Err(LocalTargetError::Unverifiable(format!(
+        return Err(FilesystemError::Unverifiable(format!(
             "local target symlink cycle: {}",
             candidate.display()
         )));
@@ -196,7 +196,7 @@ pub(super) fn normalize_absolute(path: &Path) -> PathBuf {
 pub(super) fn ensure_existing_ancestor_is_inside(
     root: &Path,
     candidate: &Path,
-) -> Result<(), LocalTargetError> {
+) -> Result<(), FilesystemError> {
     let mut ancestor = candidate.parent();
     while let Some(path) = ancestor {
         reject_dangling_symlink_escape(root, path)?;
@@ -205,7 +205,7 @@ pub(super) fn ensure_existing_ancestor_is_inside(
                 return if canonical.starts_with(root) {
                     Ok(())
                 } else {
-                    Err(LocalTargetError::OutsideRoot(canonical))
+                    Err(FilesystemError::OutsideRoot(canonical))
                 };
             }
             Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
@@ -214,7 +214,7 @@ pub(super) fn ensure_existing_ancestor_is_inside(
             Err(source) => return Err(classify_io(path.to_owned(), source)),
         }
     }
-    Err(LocalTargetError::Unverifiable(
+    Err(FilesystemError::Unverifiable(
         candidate.to_string_lossy().into_owned(),
     ))
 }
@@ -228,10 +228,10 @@ const fn hex(value: u8) -> Option<u8> {
     }
 }
 
-pub(super) fn classify_io(path: PathBuf, source: std::io::Error) -> LocalTargetError {
+pub(super) fn classify_io(path: PathBuf, source: std::io::Error) -> FilesystemError {
     match source.kind() {
-        std::io::ErrorKind::NotFound => LocalTargetError::Missing(path),
-        std::io::ErrorKind::PermissionDenied => LocalTargetError::PermissionDenied(path),
-        _ => LocalTargetError::Unverifiable(format!("{}: {source}", path.display())),
+        std::io::ErrorKind::NotFound => FilesystemError::Missing(path),
+        std::io::ErrorKind::PermissionDenied => FilesystemError::PermissionDenied(path),
+        _ => FilesystemError::Unverifiable(format!("{}: {source}", path.display())),
     }
 }

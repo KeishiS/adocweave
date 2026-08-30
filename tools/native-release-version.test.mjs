@@ -33,7 +33,6 @@ test("native版の更新後も四つの正本だけで整合性を検査でき�
   const packages = [
     "adocweave",
     "adocweave-cli",
-    "adocweave-host",
     "adocweave-lsp",
     "adocweave-project",
     "adocweave-textlint",

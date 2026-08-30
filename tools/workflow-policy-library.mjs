@@ -332,13 +332,36 @@ export function validateCiGates(workflows) {
     fail("CI source gate must run cargo make verify for every CI event");
   }
 
+  const portableProject = jobs["portable-project"];
+  const portableSystems = portableProject?.strategy?.matrix?.os ?? [];
+  if (!portableProject || portableProject.if !== undefined || needs(portableProject).length !== 0 ||
+      canonical(portableSystems) !== canonical(["macos-15", "windows-2025"]) ||
+      !jobRuns(portableProject).includes("cargo test --locked -p adocweave-project --all-features")) {
+    fail("CI portable project gate must test macOS and Windows for every CI event");
+  }
+
+  const verify = jobs.verify;
+  const verifyStep = (verify?.steps ?? []).find((step) =>
+    canonical(step.env) === canonical({
+      SOURCE_RESULT: "${{ needs.source.result }}",
+      PORTABLE_PROJECT_RESULT: "${{ needs.portable-project.result }}",
+    })
+  );
+  const verifyRun = String(verifyStep?.run ?? "");
+  if (!verify || condition(verify) !== "always()" ||
+      canonical(needs(verify)) !== canonical(["source", "portable-project"]) ||
+      !verifyRun.includes('test "$SOURCE_RESULT" = success') ||
+      !verifyRun.includes('test "$PORTABLE_PROJECT_RESULT" = success')) {
+    fail("CI verify gate must aggregate the Linux source and portable project checks");
+  }
+
   const expectedMainJobs = ["security", "main-integrations", "fuzz-smoke", "nix-package-check"];
   for (const jobName of expectedMainJobs) {
     const job = jobs[jobName];
     const mainOnly = condition(job);
     if (!job || !mainOnly.includes("github.event_name == 'push'") ||
-        !mainOnly.includes("github.ref == 'refs/heads/main'") || !needs(job).includes("source")) {
-      fail(`CI ${jobName} must be a source-gated main-only job`);
+        !mainOnly.includes("github.ref == 'refs/heads/main'") || !needs(job).includes("verify")) {
+      fail(`CI ${jobName} must be a verify-gated main-only job`);
     }
   }
   for (const jobName of ["main-integrations", "fuzz-smoke", "nix-package-check"]) {

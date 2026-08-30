@@ -15,7 +15,6 @@ try {
   const expectedNames = [
     "adocweave",
     "adocweave-cli",
-    "adocweave-host",
     "adocweave-lsp",
     "adocweave-project",
     "adocweave-textlint",
