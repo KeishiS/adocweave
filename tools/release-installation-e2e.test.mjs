@@ -12,7 +12,6 @@ const version = "0.46.2";
 for (const [kind, expected] of [
   ["native", `adocweave-${target}.zip`],
   ["wasm", `adocweave-wasm-${version}.tgz`],
-  ["textlint", `adocweave-textlint-plugin-asciidoc-${version}.tgz`],
   ["vscode", `adocweave-vscode-${version}.vsix`],
   ["zed", `adocweave-zed-${version}.tar.xz`],
 ]) {

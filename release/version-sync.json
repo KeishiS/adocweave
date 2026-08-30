@@ -2,11 +2,6 @@
   "schemaVersion": 1,
   "literals": [
     {
-      "path": "packages/textlint-plugin-asciidoc/package.json",
-      "template": "\"version\": \"{version}\"",
-      "count": 1
-    },
-    {
       "path": "editors/vscode/package.json",
       "template": "\"version\": \"{version}\"",
       "count": 1
@@ -34,7 +29,7 @@
     {
       "path": "dist-workspace.toml",
       "template": "-{version}",
-      "count": 3
+      "count": 2
     }
   ],
   "cargoLocks": [
