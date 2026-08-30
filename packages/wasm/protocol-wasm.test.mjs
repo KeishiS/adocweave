@@ -9,10 +9,21 @@ import { PROTOCOL_SCHEMA_VERSION } from "./worker-protocol.mjs";
 import { analysisPayload } from "./analysis.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const root = resolve(here, "..");
+const repositoryRoot = resolve(here, "../..");
 const require = createRequire(import.meta.url);
-const wasmModule = resolve(root, "target/adocweave-wasm-node/adocweave_wasm.js");
+const wasmModule = resolve(
+  repositoryRoot,
+  "target/adocweave-wasm-node/adocweave_wasm.js",
+);
 const wasm = require(wasmModule);
+
+test("generated wasm-bindgen module comes from the repository target directory", () => {
+  assert.equal(resolve(repositoryRoot, "packages/wasm"), here);
+  assert.equal(
+    wasmModule,
+    resolve(repositoryRoot, "target/adocweave-wasm-node/adocweave_wasm.js"),
+  );
+});
 
 function wasmError(operation) {
   try {
