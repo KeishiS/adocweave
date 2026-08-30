@@ -11,8 +11,12 @@ attestationの確認はxref:../user-guide/release-installation.adoc[インスト
 |===
 |対象 |正本
 
-|ネイティブ版
+|ネイティブ実行ファイルのバージョン
 |リポジトリ直下のlink:../../Cargo.toml[Cargo workspaceの``package.version``]
+
+|Zed拡張のバージョン
+|link:../../editors/zed/extension.toml[``editors/zed/extension.toml``の``version``]。変更内容は
+link:../../editors/zed/CHANGELOG.md[Zed拡張のChangelog]に記録します。
 
 |WebAssemblyパッケージの版
 |link:../../packages/wasm/package.json[``packages/wasm/package.json``]。変更内容は
@@ -26,7 +30,7 @@ link:../../editors/vscode/CHANGELOG.md[拡張のChangelog]に記録します。
 |link:../../packages/textlint-plugin-asciidoc/package.json[``packages/textlint-plugin-asciidoc/package.json``]。
 変更内容はlink:../../packages/textlint-plugin-asciidoc/CHANGELOG.md[パッケージのChangelog]に記録します。
 
-|native成果物、対象環境、追加成果物および公開方法
+|native成果物、対象環境および公開方法
 |link:../../dist-workspace.toml[cargo-distのworkspace設定]と各配布packageの``dist.toml``
 
 |一回の公開で計画した成果物と処理
@@ -38,7 +42,7 @@ link:../../editors/vscode/CHANGELOG.md[拡張のChangelog]に記録します。
 |RustとNode.jsの構築版
 |link:../../toolchains.json[toolchain manifest]
 
-|人が記述するバージョン固有の変更
+|ネイティブ版と同じ版で公開する成果物の変更
 |link:../../CHANGELOG.md[Changelog]。cargo-distが対応するバージョンの内容をGitHub Release本文へ取り込みます。
 |===
 
@@ -50,17 +54,18 @@ link:../../editors/vscode/CHANGELOG.md[拡張のChangelog]に記録します。
 == 配布単位
 
 ネイティブ実行ファイルは、一つのcommit、一つの``vX.Y.Z``タグおよび一つのGitHub Releaseを公開単位とします。
-WebAssemblyパッケージ、textlint用ProcessorおよびVS Code拡張は独立した版を持ち、それぞれ
-``wasm/vX.Y.Z``、``textlint-plugin-asciidoc/vX.Y.Z``および``vscode/vX.Y.Z``タグから標準のレジストリへ
-直接公開します。いずれの配布物も同じバージョン番号を別の内容へ再利用しません。
+WebAssemblyパッケージ、textlint用Processor、VS Code拡張およびZed拡張は独立した版を持ちます。
+WebAssemblyパッケージ、textlint用ProcessorおよびVS Code拡張は、それぞれ``wasm/vX.Y.Z``、
+``textlint-plugin-asciidoc/vX.Y.Z``および``vscode/vX.Y.Z``タグから標準のレジストリへ直接公開します。
+Zed拡張は、公式Zed拡張レジストリが``editors/zed``のソースを構築して配布します。
+いずれの配布物も同じバージョン番号を別の内容へ再利用しません。
 
 cargo-distは、OSとCPU architectureごとの``adocweave-<target>.zip``をnative成果物として構築します。
-Zed拡張は追加成果物として同じplanとGitHub Releaseへ含めます。GitHubが自動生成するsource archiveは
-検証対象の成果物に含めません。
+GitHubが自動生成するsource archiveは検証対象の成果物に含めません。
 
 WebAssemblyパッケージとtextlint用Processorは、それぞれの専用workflowで一度だけ構築して検査し、その成果物を
 npm Registryへ送ります。VS Code拡張は専用workflowでVSIXを一度だけ構築して検査し、同じ成果物を
-Open VSX RegistryとVisual Studio Marketplaceへ送ります。Zed拡張はGitHub Releaseへの添付だけを対象とします。
+Open VSX RegistryとVisual Studio Marketplaceへ送ります。registry向けに構築し直しません。
 Rust crateはcrates.ioへ公開しません。
 
 Visual Studio Marketplaceは公開後のVSIXへ署名情報を追加するため、取得したVSIX archive全体のbyte列は送信元と
@@ -96,8 +101,8 @@ xref:core-profile.adoc#wasm-api[WebAssembly API]を基準とし、Worker内部�
 直接依存しない公開入口を提供します。
 
 VS Code拡張とZed拡張はLanguage Serverを同梱しません。設定で指定した絶対path、``PATH``、自動取得の順で
-``adocweave``を選び、``lsp``引数を付けて起動します。自動取得では同じGitHub Releaseの
-``adocweave-<target>.zip``を使用します。現在の選択規則と手動導入方法は利用者向け文書を基準とし、
+``adocweave``を選び、``lsp``引数を付けて起動します。Zed拡張は最新の安定版GitHub Releaseにある
+``adocweave-<target>.zip``を使用し、拡張版との一致を求めません。現在の選択規則と手動導入方法は利用者向け文書を基準とし、
 この分担の理由はxref:adr/0028-editor-language-server-boundary.adoc[ADR 0028]を参照してください。
 VS Code拡張が起動できる最低ネイティブ版は``0.51.0``です。拡張版とネイティブ版の一致は求めず、利用できる
 機能はLanguage Serverが``initialize``応答で示す標準LSP capabilityから判断します。
@@ -114,7 +119,7 @@ xref:adr/0036-no-unconsumed-sbom.adoc[ADR 0036]を参照してください。
 [#distribution-integrity]
 == 完全性と来歴
 
-cargo-distのplanは、workspaceのバージョン、``vX.Y.Z``タグ、native成果物、ネイティブ版の追加成果物および実行jobを確定します。
+cargo-distのplanは、workspaceのバージョン、``vX.Y.Z``タグ、native成果物および実行jobを確定します。
 各構築jobが出力する標準dist-manifestを集約し、公開時に最終的な標準dist-manifestを生成します。planまたは
 dist-manifestにないfile、欠落したfile、異なるバージョンおよび異なるsource commitを受理しません。
 
@@ -184,8 +189,8 @@ xref:adr/0023-publication-boundary.adoc#publication-authority[ADR 0023]を参照
 
 公開前検査に成功した``main``のcommitへ``vX.Y.Z``タグを作成すると、cargo-distのRelease workflowが起動します。
 共通のrelease contractは、checkout時に``origin/main``を含む履歴を取得し、tag、commitおよびworkspace版の対応と、
-tagのcommitが``main``に含まれることを``host``より前に一度だけ検査します。workflowはplanを生成し、native成果物と
-追加成果物を構築して検査した後、一つのGitHub Releaseへ公開します。
+tagのcommitが``main``に含まれることを``host``より前に一度だけ検査します。workflowはplanを生成し、native成果物を
+構築して検査した後、一つのGitHub Releaseへ公開します。
 異なるworkflow runや手元の成果物を途中で混在させません。Release作成に成功すると、Release workflow内の公開jobが
 Cachix用の``workflow_call``専用workflowを呼び出します。呼出し先へはplanで確定したtagと
 Releaseを作成した完全なcommit SHAだけを渡します。各公開jobはstableなRelease、tagのcommit、checkoutしたcommit、
@@ -228,8 +233,7 @@ Pull Requestではsource、試験、生成fileおよび文書を標準の``verif
 実行して、workspace版、成果物およびjobの構成を検査しますが、配布成果物は構築しません。
 
 ``main``ではcross target、fuzz、Nix packageなどの統合検査を行います。ネイティブ版のRelease workflowでは固定したtagとcommitに
-対してplanを再生成し、対象OSでnative成果物を構築します。ネイティブ版の追加成果物は専用の構築処理で作成し、cargo-distの
-標準dist-manifestへ統合します。完成成果物は対象OS、ブラウザー、エディタまたは固定consumerで検査します。
+対してplanを再生成し、対象OSでnative成果物を構築します。完成成果物は対象OSで検査します。
 VS Code拡張は専用タグのworkflowでVSIXの再現性、導入、更新、ロールバックおよびLanguage Server接続を検査します。
 textlint用Processorは、それぞれの公開workflowで候補を構築し、公開前後に対応する利用側で検査します。
 WebAssemblyパッケージも専用の公開workflowで候補を構築し、公開前後に対応する利用側で検査します。

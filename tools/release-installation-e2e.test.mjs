@@ -12,7 +12,6 @@ const version = "0.46.2";
 for (const [kind, expected] of [
   ["native", `adocweave-${target}.zip`],
   ["wasm", `adocweave-wasm-${version}.tgz`],
-  ["zed", `adocweave-zed-${version}.tar.xz`],
 ]) {
   test(`${kind}は対応する一つのassetだけを要求する`, () => {
     const required = requiredInstallationAssets(kind, target, version);

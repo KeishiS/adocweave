@@ -113,7 +113,6 @@ export function updateReleaseVersion({ root = ROOT, registry, version, runComman
 
   runCommand("cargo", ["generate-lockfile"], root);
   runCommand("cargo", ["generate-lockfile", "--manifest-path", "fuzz/Cargo.toml"], root);
-  runCommand("cargo", ["generate-lockfile", "--manifest-path", "editors/zed/Cargo.toml"], root);
   const updated = checkReleaseVersion({ root, registry });
   process.stdout.write(`release versionを${current}から${updated}へ同期しました\n`);
   return { current, version: updated };

@@ -26,13 +26,12 @@ export function validateReleaseTag(tag, version = workspaceVersion()) {
   return { tag, version };
 }
 
-export function expectedReleaseAssets(version = workspaceVersion()) {
+export function expectedReleaseAssets() {
   return [
     ...TARGETS.flatMap((target) => [
       `adocweave-${target}.zip`,
       `adocweave-${target}.zip.sha256`,
     ]),
-    `adocweave-zed-${version}.tar.xz`,
     "sha256.sum",
   ].sort();
 }
@@ -49,7 +48,7 @@ export function validateDistPlan(plan, tag = releaseTag()) {
     fail("dist plan must contain the unified adocweave app");
   }
   const actualAssets = [...(release.artifacts ?? [])].sort();
-  const expectedAssets = expectedReleaseAssets(version);
+  const expectedAssets = expectedReleaseAssets();
   if (JSON.stringify(actualAssets) !== JSON.stringify(expectedAssets)) {
     fail("dist plan release asset set mismatch");
   }

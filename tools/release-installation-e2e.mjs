@@ -56,7 +56,7 @@ if (!kind || !candidateArgument || !target) {
   process.exit(2);
 }
 
-const installationKinds = new Set(["native", "wasm", "zed"]);
+const installationKinds = new Set(["native", "wasm"]);
 if (!installationKinds.has(kind)) {
   throw new Error(`unsupported installation E2E kind: ${kind}`);
 }
@@ -104,7 +104,6 @@ const {
   wasmRoot,
   currentLink,
   versionRoot,
-  zedRoot,
 } = installationLayout(prefix, version, runtime.pathApi);
 const previousRoot = join(prefix, "lib", "adocweave", `${version}-previous-fixture`);
 
@@ -239,17 +238,6 @@ function installWasm() {
   renameSync(extracted, wasmRoot);
 }
 
-function installZed() {
-  const archiveRoot = `adocweave-zed-${version}`;
-  const extracted = extract(
-    archive(`${archiveRoot}.tar.xz`),
-    join(scratch, "extract", "zed"),
-    archiveRoot,
-  );
-  mkdirSync(dirname(zedRoot), { recursive: true });
-  renameSync(extracted, zedRoot);
-}
-
 async function verifyWasmContract() {
   const modulePath = join(wasmRoot, "wasm", "adocweave_wasm.js");
   const wasmPath = join(wasmRoot, "wasm", "adocweave_wasm_bg.wasm");
@@ -328,7 +316,6 @@ try {
   const native = kind === "native";
   if (native) installNative(nativeArtifact, nativeExecutable);
   else if (kind === "wasm") installWasm();
-  else if (kind === "zed") installZed();
   const executables = native ? [nativeExecutable] : [];
   if (native) {
     cpSync(versionRoot, previousRoot, { recursive: true });
@@ -363,9 +350,6 @@ try {
     if (!existsSync(join(wasmRoot, "wasm", "adocweave_wasm_bg.wasm"))) throw new Error("WASM is missing");
     await verifyWasmContract();
   }
-  if (kind === "zed") {
-    if (!existsSync(join(zedRoot, "extension.toml"))) throw new Error("Zed extension manifest is missing");
-  }
   if (native) {
     for (const executable of executables) rmSync(join(binDirectory, executable));
     if (runtime.platform.os !== "win32") rmSync(currentLink);
@@ -373,7 +357,7 @@ try {
     rmSync(versionRoot, { recursive: true });
     rmSync(previousRoot, { recursive: true });
   }
-  if (["wasm", "zed"].includes(kind)) {
+  if (kind === "wasm") {
     rmSync(join(prefix, "share", "adocweave", version), { recursive: true });
   }
   for (const directory of [

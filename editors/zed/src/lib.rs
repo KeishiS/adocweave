@@ -2,11 +2,11 @@ use zed_extension_api as zed;
 
 mod acquire;
 
-use acquire::{asset_name, latest_lsp_release, target_triple, AcquiredServer};
+use acquire::{asset_name, target_triple, AcquiredServer};
 
 const SERVER_NAME: &str = "adocweave";
 const SERVER_EXECUTABLE: &str = "adocweave";
-const RELEASES_URL: &str = "https://api.github.com/repos/KeishiS/adocweave/releases?per_page=100";
+const REPOSITORY: &str = "KeishiS/adocweave";
 const DOCUMENTATION: &str =
     "https://github.com/KeishiS/adocweave/blob/main/docs/user-guide/release-installation.adoc";
 
@@ -25,7 +25,7 @@ impl zed::Extension for AdocWeaveExtension {
         worktree: &zed::Worktree,
     ) -> zed::Result<zed::Command> {
         let settings = zed::settings::LspSettings::for_worktree(SERVER_NAME, worktree)?;
-        // 利用者が導入した実行ファイルを常に優先し、自動取得は最後の手段にする。
+        // Always prefer a user-managed executable and use automatic acquisition last.
         let command =
             if let Some(path) = configured_server_path(settings, zed::current_platform().0)? {
                 path
@@ -52,14 +52,23 @@ impl AdocWeaveExtension {
             id,
             &zed::LanguageServerInstallationStatus::CheckingForUpdate,
         );
-        let executable = match fetch_releases().and_then(|body| latest_lsp_release(&body)) {
+        let executable = match zed::latest_github_release(
+            REPOSITORY,
+            zed::GithubReleaseOptions {
+                require_assets: true,
+                pre_release: false,
+            },
+        ) {
             Ok(release) => {
-                let asset = release.asset(&asset_name(&target)).ok_or_else(|| {
-                    format!(
-                        "AdocWeave Language Server {} に {target} の成果物がありません。導入手順は {DOCUMENTATION} を参照してください",
+                let expected_asset = asset_name(&target);
+                let asset = release
+                    .assets
+                    .iter()
+                    .find(|asset| asset.name == expected_asset)
+                    .ok_or_else(|| format!(
+                        "AdocWeave release {} does not include an archive for {target}. See {DOCUMENTATION}",
                         release.version
-                    )
-                })?;
+                    ))?;
                 let directory = version_directory(&release.version, &target);
                 let executable = executable_path(&directory, os);
                 if !is_file(&executable) {
@@ -67,15 +76,15 @@ impl AdocWeaveExtension {
                         id,
                         &zed::LanguageServerInstallationStatus::Downloading,
                     );
-                    // Zedの拡張APIにはchecksumを検証する手段がない。完全性はTLSだけに依存する。
+                    // The Zed extension API cannot verify checksums, so integrity relies on TLS.
                     zed::download_file(
-                        &asset.browser_download_url,
+                        &asset.download_url,
                         &directory,
                         zed::DownloadedFileType::Zip,
                     )
                     .map_err(|error| {
                         format!(
-                            "AdocWeave Language Serverを取得できませんでした：{error}。導入手順は {DOCUMENTATION} を参照してください"
+                            "Could not download the AdocWeave Language Server: {error}. See {DOCUMENTATION}"
                         )
                     })?;
                     zed::make_file_executable(&executable)?;
@@ -86,26 +95,11 @@ impl AdocWeaveExtension {
                 });
                 executable
             }
-            // 取得済みの版があれば、GitHubへ到達できなくても起動できる。
+            // A downloaded release remains usable when GitHub is temporarily unavailable.
             Err(error) => downloaded_executable(os, &target).ok_or(error)?,
         };
         Ok(executable)
     }
-}
-
-fn fetch_releases() -> Result<String, String> {
-    let request = zed::http_client::HttpRequest::builder()
-        .method(zed::http_client::HttpMethod::Get)
-        .url(RELEASES_URL)
-        .header("Accept", "application/vnd.github+json")
-        .header("User-Agent", "adocweave-zed-extension")
-        .build()?;
-    let response = request.fetch().map_err(|error| {
-        format!(
-            "GitHubのrelease一覧を取得できませんでした：{error}。導入手順は {DOCUMENTATION} を参照してください"
-        )
-    })?;
-    String::from_utf8(response.body).map_err(|_| "GitHubの応答をUTF-8として読めません".to_owned())
 }
 
 fn version_directory(version: &str, target: &str) -> String {
@@ -124,7 +118,7 @@ fn is_file(path: &str) -> bool {
     std::fs::metadata(path).is_ok_and(|stat| stat.is_file())
 }
 
-/// 取得済みの版のうち、実行ファイルが残っているものを一つ返します。
+/// Returns one downloaded version whose executable still exists.
 fn downloaded_executable(os: zed::Os, target: &str) -> Option<String> {
     let mut found: Option<String> = None;
     for entry in std::fs::read_dir(".").ok()?.flatten() {
@@ -143,7 +137,7 @@ fn downloaded_executable(os: zed::Os, target: &str) -> Option<String> {
     found
 }
 
-/// 取得した版だけを残します。消さないと更新のたびに作業ディレクトリが増え続けます。
+/// Keeps only the selected download so updates do not grow the work directory indefinitely.
 fn remove_other_versions(keep: &str) {
     let Ok(entries) = std::fs::read_dir(".") else {
         return;

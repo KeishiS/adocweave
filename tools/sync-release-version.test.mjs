@@ -36,6 +36,18 @@ test("同期設定は製品別の正本を持たない", () => {
     ),
     false,
   );
+  assert.equal(
+    registry.literals.some(({ path }) => path === "editors/zed/Cargo.toml"),
+    false,
+  );
+  assert.equal(
+    registry.literals.some(({ path }) => path === "editors/zed/extension.toml"),
+    false,
+  );
+  assert.equal(
+    registry.cargoLocks.some(({ path }) => path === "editors/zed/Cargo.lock"),
+    false,
+  );
 });
 
 test("CLI引数は一括検査と一括更新だけを受理する", () => {

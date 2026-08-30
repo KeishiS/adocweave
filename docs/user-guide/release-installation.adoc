@@ -84,9 +84,6 @@ NixOS以外では、同じ値をシステムの``nix.conf``へ記載します。
 |``adocweave-<target>.zip``
 |``adocweave-x86_64-pc-windows-msvc.zip``
 
-|Zed開発拡張
-3+|``adocweave-zed-<version>.tar.xz``
-
 |===
 
 ``<target>``には次のいずれかを指定します。
@@ -336,11 +333,13 @@ VS Code拡張とZed拡張は、必要なLanguage Serverを自動取得します�
 [#zed-installation]
 === Zedへの導入
 
-Zed Extension Galleryへは公開していません。Releaseの``adocweave-zed-<version>.tar.xz``を展開し、
-``Install Dev Extension``または``zed: install dev extension``から展開先を選択します。
+ZedのExtensions画面から、言語認識と構文強調を提供する``AsciiDoc``拡張を導入します。続いてこのリポジトリを取得し、
+``Install Dev Extension``または``zed: install dev extension``から``editors/zed``を選択します。
+この開発用拡張がLanguage Serverとの接続を提供します。
 
 Language Serverの場所を指定する場合は、``lsp.adocweave.binary.path``へ絶対パスを設定します。
-拡張を更新する場合は、新しい版を展開してdev extensionの参照先を変更します。
+指定がなければ``PATH``を確認し、見つからない場合は最新の安定版GitHub Releaseから対応するネイティブ実行ファイルを
+取得します。拡張とネイティブ実行ファイルのバージョンは一致していなくても構いません。
 
 [#vscode-installation]
 === VS Codeへの導入
