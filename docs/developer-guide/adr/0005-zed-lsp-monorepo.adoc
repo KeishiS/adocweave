@@ -1,5 +1,5 @@
 = ADR 0005: Zed LSPのmonorepo管理
-:status: accepted; release unit amended by ADR 0027 and ADR 0040; editor/LSP boundary amended by ADR 0028
+:status: accepted; release unit amended by ADR 0027, ADR 0040, and ADR 0043; editor/LSP boundary amended by ADR 0028
 
 == 文脈
 
@@ -13,8 +13,9 @@ releaseのバージョン、binary provenance、LSP protocol、Tree-sitter query
 == 決定
 
 Zed拡張とLanguage ServerはAdocWeave monorepoに維持し、独立repositoryを導入しません。Zed固有の責務は
-monorepo内に局所化します。各製品はxref:0027-product-release-trains.adoc[ADR 0027]に従って独立して公開し、
-拡張はxref:0028-editor-language-server-boundary.adoc[ADR 0028]に従ってLanguage Serverを取得しません。
+monorepo内に局所化します。Zed拡張の版と公開先は
+xref:0043-independent-distribution-units.adoc[ADR 0043]に従い、拡張は
+xref:0028-editor-language-server-boundary.adoc[ADR 0028]に従ってLanguage Serverを取得しません。
 
 == 非採用案
 
@@ -37,5 +38,5 @@ repository間で調整する運用費用が、現在の開発規模に対して�
 
 == 帰結
 
-一つのcommitでコア、Language ServerおよびZed拡張の横断変更を確認できます。各製品のversionとReleaseは
-独立したまま、Zed固有の変更と試験をmonorepo内へ局所化できます。
+一つのcommitでコア、Language ServerおよびZed拡張の横断変更を確認できます。Zed拡張は独立した版を持ち、
+公式レジストリからmonorepo内のsourceを参照します。Zed固有の変更と試験はmonorepo内へ局所化できます。

@@ -1,5 +1,5 @@
 = ADR 0030: textlintの責務分担と配布検査の最小化
-:status: accepted; pull request gate amended by ADR 0031; releaseメタデータ amended by ADR 0036
+:status: accepted; gate amended by ADR 0031; metadata amended by ADR 0036; publication amended by ADR 0043
 
 == 文脈
 
