@@ -15,6 +15,12 @@ JSON Schemaはエディタでの入力支援に必要です。一方、除外pat
 
 == 決定
 
+[NOTE]
+====
+ここでいう``adocweave-config``はxref:0045-project-owned-configuration.adoc[ADR 0045]で廃止し、現在は
+``adocweave-project``が同じ役割を持ちます。Rustの型をSchemaの正本とする判断は維持しています。
+====
+
 ``adocweave-config``の非公開wire型をプロジェクト設定構造の正本とします。テストを構築するときだけ
 ``schemars``からJSON Schema Draft 2020-12を生成し、項目名、型、列挙値、未知の項目の拒否および
 ``serde``の既定値を反映します。Schema固有の説明、正規表現、動的なLint rule名および共有定数由来の上限は、

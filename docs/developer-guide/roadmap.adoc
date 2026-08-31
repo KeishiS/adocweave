@@ -33,11 +33,17 @@ RenovateによるNix依存更新は、手動更新が継続的な負担となっ
 
 == 実施しない公開経路
 
-Zed Extension Gallery、crates.io、npm RegistryへのCLI公開およびOSのpackage managerへの
-登録・公開は行いません。次のIssueは実装候補ではなく、この判断と過去の検討内容を残す記録として
-保留します。
+Rust libraryのcrates.ioへの公開、CLIのnpm Registryへの公開、およびOSのpackage managerへの登録と公開は
+行いません。次のIssueは実装候補ではなく、この判断と過去の検討内容を残す記録として保留します。
 
 * https://github.com/KeishiS/adocweave/issues/86[Homebrew・WinGet・Scoopの評価]
+
+Zed拡張レジストリは2026-08-30に方針を改め、公開する対象としました。通常のZedから拡張を導入するには
+公式レジストリへの登録が必要であり、GitHub Releaseへ圧縮ファイルを添付してもその代わりにならないためです。
+現在の公開先はxref:adr/0043-independent-distribution-units.adoc[ADR 0043]、提出の手順は
+xref:zed-development.adoc[Zed拡張の開発]に記載しています。作業は
+https://github.com/KeishiS/adocweave/issues/848[Zed拡張を公式レジストリへ提出できる構成にする]で
+管理します。
 
 Visual Studio Marketplaceは2026-08-28に方針を改め、公開する対象としました。Open VSX Registryを
 利用しないVisual Studio Codeでは、拡張の発見と自動更新を利用できなかったためです。作業は

@@ -21,6 +21,12 @@ CLI、Language Serverおよびエディタadapterは、解析、Lint、include�
 resource、local target、formatterおよびHTMLの責務別sectionを持ち、変換後もADR 0009の責務分担を
 維持します。
 
+[NOTE]
+====
+``adocweave-config`` crateはxref:0045-project-owned-configuration.adoc[ADR 0045]で廃止し、この責務は
+``adocweave-project``が持ちます。コアcrateがTOML、filesystemおよび設定探索へ依存しない判断は維持しています。
+====
+
 プロジェクト設定名は``.adocweave.toml``とし、``schema-version = 1``を必須にします。すべての階層で
 未知field、未知のschemaバージョン、重複keyおよび不正なLint ruleを拒否します。v1では継承、環境変数展開、
 homeディレクトリの展開、command置換およびremote設定を提供しません。

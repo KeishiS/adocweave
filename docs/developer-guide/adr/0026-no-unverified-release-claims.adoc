@@ -1,5 +1,5 @@
 = ADR 0026: 未検査の変更なし宣言をRelease Notesへ生成しない
-:status: accepted; Rust API release ledger superseded by ADR 0027
+:status: accepted; Rust API release ledger superseded by ADR 0043
 
 == 文脈
 
@@ -19,7 +19,7 @@ Release Notesへ、外部から利用する仕様が前の版から変わって�
 
 機械生成する内容は、現在の正本から直接決まる値に限定します。CLI引数、Language Server protocol、設定Schema、
 WASM protocolなどの変更内容、利用者への影響および移行方法は、人が``CHANGELOG.md``へ記載します。
-公開Rust APIの差分台帳を維持しない判断はxref:0027-product-release-trains.adoc[ADR 0027]で置き換えました。
+公開Rust APIの差分台帳を維持しない判断はxref:0043-independent-distribution-units.adoc[ADR 0043]で置き換えました。
 
 この決定は、ADR 0022のうち生成TypeScript宣言を``release-claims``でtag間比較する部分を改訂します。
 Rustの型からTypeScript宣言を生成し、その宣言を現在の公開仕様とする決定は維持します。

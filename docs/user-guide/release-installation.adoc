@@ -16,7 +16,7 @@
 
 |Webアプリへの組込み
 |xref:#wasm-npm-installation[WebAssemblyパッケージの導入]、
-xref:#browser-library-deployment[WebAssemblyライブラリの配備]
+xref:#wasm-library-deployment[WebAssemblyライブラリの配備]
 
 |ZedまたはVS Codeで使用
 |xref:#editor-language-server[エディタからLanguage Serverを使う]
@@ -274,7 +274,7 @@ APIの詳細はxref:../developer-guide/core-profile.adoc#wasm-api[WebAssembly AP
 npm uninstall @adocweave/wasm
 ----
 
-[#browser-library-deployment]
+[#wasm-library-deployment]
 == WebAssemblyライブラリの配備
 
 npmで導入した``@adocweave/wasm``の``worker``と``wasm``ディレクトリを、相対位置を保って静的配信します。
