@@ -99,6 +99,10 @@ async fn request_handler_panic_returns_an_internal_error_and_allows_clean_shutdo
 async fn protocol_async_lsp_transport_runs_typed_lifecycle_and_features() {
     use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
+    let project = TestProject::new();
+    let document_uri =
+        project.document("typed.adoc", "[[part]]\n= Typed path\n\n<<part>>\ntext  \n");
+    let document_target = format!("{document_uri}#part");
     let (server_stream, client_stream) = tokio::io::duplex(64 * 1024);
     let (server_read, server_write) = tokio::io::split(server_stream);
     let server = run(server_read.compat(), server_write.compat_write());
@@ -151,7 +155,7 @@ async fn protocol_async_lsp_transport_runs_typed_lifecycle_and_features() {
                 "jsonrpc":"2.0",
                 "method":"textDocument/didOpen",
                 "params":{"textDocument":{
-                    "uri":"file:///typed.adoc",
+                    "uri":document_uri,
                     "languageId":"asciidoc",
                     "version":1,
                     "text":"[[part]]\n= Typed path\n\n<<part>>\ntext  \n"
@@ -169,7 +173,7 @@ async fn protocol_async_lsp_transport_runs_typed_lifecycle_and_features() {
                 "jsonrpc":"2.0",
                 "id":3,
                 "method":"textDocument/documentSymbol",
-                "params":{"textDocument":{"uri":"file:///typed.adoc"}}
+                "params":{"textDocument":{"uri":document_uri}}
             }),
         )
         .await;
@@ -184,7 +188,7 @@ async fn protocol_async_lsp_transport_runs_typed_lifecycle_and_features() {
                 "id":10,
                 "method":"textDocument/hover",
                 "params":{
-                    "textDocument":{"uri":"file:///typed.adoc"},
+                    "textDocument":{"uri":document_uri},
                     "position":{"line":1,"character":3}
                 }
             }),
@@ -201,7 +205,7 @@ async fn protocol_async_lsp_transport_runs_typed_lifecycle_and_features() {
                 "id":11,
                 "method":"textDocument/completion",
                 "params":{
-                    "textDocument":{"uri":"file:///typed.adoc"},
+                    "textDocument":{"uri":document_uri},
                     "position":{"line":3,"character":3}
                 }
             }),
@@ -218,7 +222,7 @@ async fn protocol_async_lsp_transport_runs_typed_lifecycle_and_features() {
                 "id":12,
                 "method":"textDocument/codeAction",
                 "params":{
-                    "textDocument":{"uri":"file:///typed.adoc"},
+                    "textDocument":{"uri":document_uri},
                     "range":{
                         "start":{"line":4,"character":0},
                         "end":{"line":4,"character":6}
@@ -238,7 +242,7 @@ async fn protocol_async_lsp_transport_runs_typed_lifecycle_and_features() {
                 "id":13,
                 "method":"textDocument/formatting",
                 "params":{
-                    "textDocument":{"uri":"file:///typed.adoc"},
+                    "textDocument":{"uri":document_uri},
                     "options":{"tabSize":4,"insertSpaces":true}
                 }
             }),
@@ -256,7 +260,7 @@ async fn protocol_async_lsp_transport_runs_typed_lifecycle_and_features() {
                 "id":20,
                 "method":"textDocument/prepareRename",
                 "params":{
-                    "textDocument":{"uri":"file:///typed.adoc"},
+                    "textDocument":{"uri":document_uri},
                     "position":{"line":0,"character":3}
                 }
             }),
@@ -272,7 +276,7 @@ async fn protocol_async_lsp_transport_runs_typed_lifecycle_and_features() {
                 "id":14,
                 "method":"textDocument/rename",
                 "params":{
-                    "textDocument":{"uri":"file:///typed.adoc"},
+                    "textDocument":{"uri":document_uri},
                     "position":{"line":0,"character":3},
                     "newName":"renamed"
                 }
@@ -280,7 +284,7 @@ async fn protocol_async_lsp_transport_runs_typed_lifecycle_and_features() {
         )
         .await;
         assert!(
-            read_message(&mut client_read).await["result"]["changes"]["file:///typed.adoc"]
+            read_message(&mut client_read).await["result"]["changes"][document_uri.as_str()]
                 .is_array()
         );
         write_message(
@@ -290,7 +294,7 @@ async fn protocol_async_lsp_transport_runs_typed_lifecycle_and_features() {
                 "id":6,
                 "method":"textDocument/definition",
                 "params":{
-                    "textDocument":{"uri":"file:///typed.adoc"},
+                    "textDocument":{"uri":document_uri},
                     "position":{"line":3,"character":3}
                 }
             }),
@@ -298,7 +302,7 @@ async fn protocol_async_lsp_transport_runs_typed_lifecycle_and_features() {
         .await;
         assert_eq!(
             read_message(&mut client_read).await["result"]["uri"],
-            "file:///typed.adoc"
+            document_uri.as_str()
         );
         write_message(
             &mut client_write,
@@ -306,7 +310,7 @@ async fn protocol_async_lsp_transport_runs_typed_lifecycle_and_features() {
                 "jsonrpc":"2.0",
                 "id":7,
                 "method":"textDocument/semanticTokens/full",
-                "params":{"textDocument":{"uri":"file:///typed.adoc"}}
+                "params":{"textDocument":{"uri":document_uri}}
             }),
         )
         .await;
@@ -321,13 +325,13 @@ async fn protocol_async_lsp_transport_runs_typed_lifecycle_and_features() {
                 "jsonrpc":"2.0",
                 "id":8,
                 "method":"textDocument/documentLink",
-                "params":{"textDocument":{"uri":"file:///typed.adoc"}}
+                "params":{"textDocument":{"uri":document_uri}}
             }),
         )
         .await;
         assert_eq!(
             read_message(&mut client_read).await["result"][0]["target"],
-            "file:///typed.adoc#part"
+            document_target
         );
         write_message(
             &mut client_write,
@@ -336,7 +340,7 @@ async fn protocol_async_lsp_transport_runs_typed_lifecycle_and_features() {
                 "id":9,
                 "method":"textDocument/references",
                 "params":{
-                    "textDocument":{"uri":"file:///typed.adoc"},
+                    "textDocument":{"uri":document_uri},
                     "position":{"line":0,"character":3},
                     "context":{"includeDeclaration":false}
                 }

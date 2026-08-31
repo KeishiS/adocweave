@@ -10,23 +10,71 @@ pub(super) fn uri(value: &str) -> lsp::Url {
     value.parse().expect("valid URI")
 }
 
+pub(super) struct TestProject {
+    root: std::path::PathBuf,
+    _directory: tempfile::TempDir,
+}
+
+impl TestProject {
+    pub(super) fn new() -> Self {
+        let directory = tempfile::tempdir().expect("project directory");
+        let root = directory
+            .path()
+            .canonicalize()
+            .expect("canonical project directory");
+        Self {
+            root,
+            _directory: directory,
+        }
+    }
+
+    pub(super) fn root(&self) -> &std::path::Path {
+        &self.root
+    }
+
+    pub(super) fn path(&self, name: &str) -> std::path::PathBuf {
+        self.root.join(name)
+    }
+
+    pub(super) fn uri(&self, name: &str) -> lsp::Url {
+        lsp::Url::from_file_path(self.path(name)).expect("document URI")
+    }
+
+    pub(super) fn document(&self, name: &str, source: &str) -> lsp::Url {
+        let path = self.path(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("document directory");
+        }
+        std::fs::write(&path, source).expect("document");
+        self.uri(name)
+    }
+
+    pub(super) fn open(
+        &self,
+        service: &mut Session,
+        name: &str,
+        version: i32,
+        source: &str,
+    ) -> lsp::Url {
+        let document_uri = self.document(name, source);
+        open(service, document_uri.as_str(), version, source);
+        document_uri
+    }
+}
+
 pub(super) struct IncludeFixture {
     pub root_uri: lsp::Url,
     pub include_uri: lsp::Url,
-    _directory: tempfile::TempDir,
+    _project: TestProject,
 }
 
 impl IncludeFixture {
     pub(super) fn new(root_source: &str, include_source: &str) -> Self {
-        let directory = tempfile::tempdir().expect("project directory");
-        let root = directory.path().join("root.adoc");
-        let include = directory.path().join("part.adoc");
-        std::fs::write(&root, root_source).expect("root document");
-        std::fs::write(&include, include_source).expect("included document");
+        let project = TestProject::new();
         Self {
-            root_uri: lsp::Url::from_file_path(root).expect("root URI"),
-            include_uri: lsp::Url::from_file_path(include).expect("include URI"),
-            _directory: directory,
+            root_uri: project.document("root.adoc", root_source),
+            include_uri: project.document("part.adoc", include_source),
+            _project: project,
         }
     }
 }
@@ -274,16 +322,16 @@ pub(super) fn apply_edits(source: &str, edits: &[lsp::TextEdit]) -> String {
     output
 }
 
-pub(super) fn open_reference_workspace(service: &mut Session) {
-    open(
+pub(super) fn open_reference_workspace(service: &mut Session, project: &TestProject) {
+    project.open(
         service,
-        "file:///a.adoc",
+        "a.adoc",
         1,
         "[[target]]\n== Target\n\nSee <<target>> and xref:b.adoc#other[B].\nhttps://example.com[Site]\n",
     );
-    open(
+    project.open(
         service,
-        "file:///b.adoc",
+        "b.adoc",
         1,
         "[[other]]\n== Other\n\nxref:a.adoc#target[A]\n",
     );

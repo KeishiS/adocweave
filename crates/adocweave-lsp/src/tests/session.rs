@@ -19,12 +19,14 @@ fn initialize_params(roots: &[&str]) -> lsp::InitializeParams {
 
 #[test]
 fn one_session_owns_connection_lifecycle_and_cancellation() {
+    let project = TestProject::new();
+    let document = project.document("guide.adoc", "= Guide\n");
     let mut session = Session::default();
     session.initialize(&initialize_params(&[]));
 
     let jobs = session.begin_open(typed(json!({
         "textDocument": {
-            "uri": "file:///guide.adoc",
+            "uri": document,
             "languageId": "asciidoc",
             "version": 1,
             "text": "= Guide\n"
@@ -296,12 +298,14 @@ fn changed_unreferenced_overlay_is_not_retried_or_retained() {
 
 #[test]
 fn project_error_uses_the_same_validation_and_adoption_path_as_success() {
+    let project = TestProject::new();
+    let document = project.document("guide.adoc", "= Guide\n");
     let mut session = Session::default();
     initialize(&mut session, &["utf-16"]);
     let job = session
         .begin_open(typed(json!({
             "textDocument": {
-                "uri": "file:///guide.adoc",
+                "uri": document,
                 "languageId": "asciidoc",
                 "version": 1,
                 "text": "= Guide\n"
@@ -331,7 +335,7 @@ fn project_error_uses_the_same_validation_and_adoption_path_as_success() {
     assert_eq!(
         session
             .documents
-            .get("file:///guide.adoc")
+            .get(document.as_str())
             .and_then(|document| document.project_problem.as_ref())
             .map(|problem| problem.code.as_str()),
         Some("project-target-error")
@@ -340,9 +344,10 @@ fn project_error_uses_the_same_validation_and_adoption_path_as_success() {
 
 #[test]
 fn closing_document_discards_project_worker_completion() {
+    let project = TestProject::new();
     let mut session = Session::default();
     initialize(&mut session, &["utf-16"]);
-    let document_uri = uri("file:///guide.adoc");
+    let document_uri = project.document("guide.adoc", "= Guide\n");
     let job = session
         .begin_open(typed(json!({
             "textDocument": {
@@ -401,13 +406,14 @@ fn session_tracks_multiple_workspace_roots() {
 
 #[test]
 fn open_change_and_close_update_one_session_document() {
+    let project = TestProject::new();
     let mut session = Session::default();
     initialize(&mut session, &["utf-16"]);
 
-    open(&mut session, "file:///guide.adoc", 3, "= Old\n");
+    let document_uri = project.open(&mut session, "guide.adoc", 3, "= Old\n");
     let document = session
         .documents
-        .get("file:///guide.adoc")
+        .get(document_uri.as_str())
         .expect("open document");
     assert_eq!(document.document_input.revision.version, 3);
     assert_eq!(document.document_input.source.as_ref(), "= Old\n");
@@ -422,15 +428,15 @@ fn open_change_and_close_update_one_session_document() {
             .as_ref()
             .and_then(|view| view.sources.get(analysis_source_id))
             .map(|source| source.uri.as_str()),
-        Some("file:///guide.adoc")
+        Some(document_uri.as_str())
     );
-    assert!(session.documents.snapshot("file:///guide.adoc").is_some());
+    assert!(session.documents.snapshot(document_uri.as_str()).is_some());
 
     let open_generation = document.document_input.revision.generation;
     assert!(
         !change(
             &mut session,
-            "file:///guide.adoc",
+            document_uri.as_str(),
             3,
             json!([{"text": "= Ignored\n"}])
         )
@@ -439,7 +445,7 @@ fn open_change_and_close_update_one_session_document() {
     assert_eq!(
         session
             .documents
-            .get("file:///guide.adoc")
+            .get(document_uri.as_str())
             .expect("open document")
             .document_input
             .revision
@@ -450,7 +456,7 @@ fn open_change_and_close_update_one_session_document() {
     assert!(
         change(
             &mut session,
-            "file:///guide.adoc",
+            document_uri.as_str(),
             4,
             json!([{"text": "= New\n"}])
         )
@@ -458,7 +464,7 @@ fn open_change_and_close_update_one_session_document() {
     );
     let document = session
         .documents
-        .get("file:///guide.adoc")
+        .get(document_uri.as_str())
         .expect("changed document");
     assert_eq!(document.document_input.revision.version, 4);
     assert!(document.document_input.revision.generation > open_generation);
@@ -478,13 +484,13 @@ fn open_change_and_close_update_one_session_document() {
     );
 
     let cancellation = session
-        .document_cancellation(&uri("file:///guide.adoc"))
+        .document_cancellation(&document_uri)
         .expect("document cancellation");
-    let outcome = session.close(&uri("file:///guide.adoc"));
+    let outcome = session.close(&document_uri);
     assert!(outcome.closed);
     assert!(outcome.reanalysis_jobs.is_empty());
     assert!(cancellation.is_cancelled());
-    assert!(session.documents.get("file:///guide.adoc").is_none());
+    assert!(session.documents.get(document_uri.as_str()).is_none());
 }
 
 #[test]

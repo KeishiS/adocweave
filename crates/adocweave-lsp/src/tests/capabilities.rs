@@ -25,6 +25,7 @@ fn initialize_negotiates_encoding_and_advertises_existing_features() {
 
 #[test]
 fn minimal_client_never_receives_capability_gated_response_shapes() {
+    let project = TestProject::new();
     let mut service = Session::default();
     let params = typed(json!({
         "processId": null,
@@ -41,15 +42,15 @@ fn minimal_client_never_receives_capability_gated_response_shapes() {
     // A client that cannot ask before renaming is not told to ask.
     assert_eq!(capabilities["renameProvider"], true);
 
-    open(
+    let document = project.open(
         &mut service,
-        "file:///minimal.adoc",
+        "minimal.adoc",
         7,
         "= Minimal\n\n== Child\n\nhttps://example.com\n\ntext  \n",
     );
     let symbols = serde_json::to_value(
         service
-            .document_symbols(&uri("file:///minimal.adoc"))
+            .document_symbols(&document)
             .expect("symbols")
             .expect("response"),
     )
@@ -60,7 +61,7 @@ fn minimal_client_never_receives_capability_gated_response_shapes() {
 
     let hover = serde_json::to_value(
         service
-            .hover(&uri("file:///minimal.adoc"), lsp::Position::new(0, 3))
+            .hover(&document, lsp::Position::new(0, 3))
             .expect("hover")
             .expect("response"),
     )
@@ -73,31 +74,28 @@ fn minimal_client_never_receives_capability_gated_response_shapes() {
             .contains("**")
     );
 
-    let diagnostics = service
-        .diagnostics(&uri("file:///minimal.adoc"))
-        .expect("diagnostics");
+    let diagnostics = service.diagnostics(&document).expect("diagnostics");
     assert_eq!(diagnostics.version, None);
     assert!(
-        all_code_actions(&service, &uri("file:///minimal.adoc"))
+        all_code_actions(&service, &document)
             .expect("actions")
             .expect("response")
             .is_empty()
     );
     let links = service
-        .document_links(&uri("file:///minimal.adoc"))
+        .document_links(&document)
         .expect("links")
         .expect("response");
     assert!(links.iter().all(|link| link.tooltip.is_none()));
     assert_eq!(
-        service
-            .semantic_tokens(&uri("file:///minimal.adoc"))
-            .expect("semantic tokens"),
+        service.semantic_tokens(&document).expect("semantic tokens"),
         None
     );
 }
 
 #[test]
 fn client_preferences_select_plaintext_hover_and_unversioned_code_action_edits() {
+    let project = TestProject::new();
     let mut service = Session::default();
     let params = typed(json!({
         "processId": null,
@@ -116,11 +114,11 @@ fn client_preferences_select_plaintext_hover_and_unversioned_code_action_edits()
         }
     }));
     initialize_with_params(&mut service, params);
-    open(&mut service, "file:///mixed.adoc", 4, "= Mixed\n\ntext  \n");
+    let document = project.open(&mut service, "mixed.adoc", 4, "= Mixed\n\ntext  \n");
 
     let hover = serde_json::to_value(
         service
-            .hover(&uri("file:///mixed.adoc"), lsp::Position::new(0, 3))
+            .hover(&document, lsp::Position::new(0, 3))
             .expect("hover")
             .expect("response"),
     )
@@ -134,13 +132,13 @@ fn client_preferences_select_plaintext_hover_and_unversioned_code_action_edits()
     );
 
     let actions = serde_json::to_value(
-        all_code_actions(&service, &uri("file:///mixed.adoc"))
+        all_code_actions(&service, &document)
             .expect("actions")
             .expect("response"),
     )
     .expect("serialize");
     assert!(!actions.as_array().expect("actions").is_empty());
-    assert!(actions[0]["edit"]["changes"]["file:///mixed.adoc"].is_array());
+    assert!(actions[0]["edit"]["changes"][document.as_str()].is_array());
     assert!(actions[0]["edit"].get("documentChanges").is_none());
     assert!(actions[0].get("isPreferred").is_none());
 }
