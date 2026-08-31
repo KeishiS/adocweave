@@ -1093,6 +1093,36 @@ fn missing_command_displays_usage_and_fails() {
 }
 
 #[test]
+fn allow_root_rejects_a_relative_path_that_leaves_the_filesystem_root() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-escaping-root-{unique}"));
+    std::fs::create_dir(&root).expect("create project");
+    std::fs::write(root.join("manual.adoc"), "= Title\n").expect("write document");
+
+    // More parent components than the working directory has. A normalizer that ignores the
+    // overflow widens the allowed directory all the way to the filesystem root.
+    let escaping = "../".repeat(root.components().count() + 4);
+    let output = adocweave()
+        .current_dir(&root)
+        .args(["convert", "--allow-root", &escaping, "manual.adoc"])
+        .output()
+        .expect("escaping allow-root");
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("leaves the filesystem root"),
+        "unexpected message: {stderr}"
+    );
+
+    std::fs::remove_dir_all(root).expect("remove project");
+}
+
+#[test]
 fn unknown_options_are_rejected_and_double_dash_accepts_hyphenated_paths() {
     let unknown_root = adocweave()
         .arg("--unknown")

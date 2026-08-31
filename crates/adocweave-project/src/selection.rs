@@ -130,6 +130,11 @@ fn normalize_selector(
     }
 }
 
+/// Resolves `path` against `root` without touching the filesystem.
+///
+/// A relative path is joined to `root`. `.` is dropped and `..` removes the preceding component.
+/// A `..` that would leave the filesystem root is rejected instead of being clamped, so a caller
+/// never receives a wider directory than the one it asked for.
 pub(crate) fn absolute_lexical(root: &Path, path: &Path) -> Result<PathBuf, FilesystemError> {
     let input = if path.is_absolute() {
         path.to_owned()

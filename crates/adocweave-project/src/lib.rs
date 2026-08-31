@@ -40,6 +40,15 @@ use filesystem::{FilesystemAuthority, FilesystemError, RootAuthority};
 pub use config::ProjectConfig;
 pub use process::{process, resolve_config};
 
+/// Resolves `path` against `root` without touching the filesystem.
+///
+/// A relative path is joined to `root`. `.` is dropped and `..` removes the preceding component.
+/// A `..` that would leave the filesystem root is rejected instead of being clamped, so a caller
+/// never receives a wider directory than the one it asked for.
+pub fn absolute_path(root: &Path, path: &Path) -> Result<PathBuf, ProjectError> {
+    selection::absolute_lexical(root, path).map_err(project_authority_error)
+}
+
 pub(crate) fn project_authority_error(error: FilesystemError) -> ProjectError {
     ProjectError::Authority(ProjectResourceError::from_filesystem(error))
 }
