@@ -39,8 +39,12 @@ link:../../editors/vscode/CHANGELOG.md[拡張のChangelog]に記録します。
 |構築後の成果物、checksumおよび公開先
 |cargo-distが生成する標準dist-manifest
 
-|RustとNode.jsの構築版
+|root workspaceのRustとNode.jsの構築版
 |link:../../toolchains.json[toolchain manifest]
+
+|Zed拡張が対応する最小Rust版
+|link:../../editors/zed/Cargo.toml[Zed拡張のmanifest]。公式レジストリの構築環境に合わせ、
+root workspaceとは別に管理します。
 
 |ネイティブ版の変更
 |link:../../CHANGELOG.md[Changelog]。cargo-distが対応するバージョンの内容をGitHub Release本文へ取り込みます。
@@ -240,10 +244,11 @@ xref:adr/0032-same-run-release-publication.adoc[ADR 0032]を参照してくだ�
 [#distribution-verification]
 == 段階ごとの検証
 
-Pull Requestではsource、試験、生成fileおよび文書を標準の``verify``で検査します。cargo-distは``dist plan``を
-実行して、workspace版、成果物およびjobの構成を検査しますが、配布成果物は構築しません。
+Pull Requestでは標準source検査、macOSとWindowsのProject試験、およびZed公式レジストリ用の
+``wasm32-wasip2``向け構築を別のjobで実行し、必須checkの``verify``へ結果をまとめます。cargo-distは``dist plan``で
+workspace版、成果物およびjobの構成を検査しますが、配布成果物は構築しません。
 
-``main``ではcross target、fuzz、Nix packageなどの統合検査を行います。ネイティブ版のRelease workflowでは固定したtagとcommitに
+``main``ではそのほかのcross target、fuzz、Nix packageなどの統合検査を行います。ネイティブ版のRelease workflowでは固定したtagとcommitに
 対してplanを再生成し、対象OSでnative成果物を構築します。完成成果物は対象OSで検査します。
 VS Code拡張は専用タグのworkflowでVSIXの再現性、導入、更新、ロールバックおよびLanguage Server接続を検査します。
 textlint用Processorは、それぞれの公開workflowで候補を構築し、公開前後に対応する利用側で検査します。

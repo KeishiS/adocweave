@@ -7,7 +7,9 @@
 ネイティブ実行ファイルとRust公開APIは、リポジトリ直下の``Cargo.toml``にある
 ``workspace.package.version``を基準とします。npmパッケージとエディタ拡張は、各ディレクトリのmanifestと
 Changelogを基準とする独立したバージョンを持ちます。
-RustおよびNode.jsのバージョンはlink:../toolchains.json[toolchain manifest]を基準とします。
+root workspaceのRustとNode.jsのバージョンはlink:../toolchains.json[toolchain manifest]を基準とします。
+Zed拡張が対応する最小Rust版は、公式レジストリの構築環境に合わせて
+link:../editors/zed/Cargo.toml[拡張のmanifest]で別に指定します。
 
 ネイティブ版の変更内容はhttps://github.com/KeishiS/adocweave/releases[GitHub Releases]、npmパッケージと
 エディタ拡張の変更内容は各配布物のChangelogを参照してください。

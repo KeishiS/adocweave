@@ -8,11 +8,4 @@ GitHub Issueを参照してください。
 https://github.com/KeishiS/adocweave/releases[GitHub Releases]のRelease Notesに記録します。
 このページには完了したmilestoneの履歴を残しません。
 
-== Zed拡張の公式レジストリ対応
-
-公式レジストリへ提出できるように、公式レジストリの要件に沿って拡張を構築できることと、
-開発用拡張でLanguage Serverの機能が動作することを確認しています。
-現在の公開方針はxref:adr/0043-independent-distribution-units.adoc[ADR 0043]、提出の手順は
-xref:zed-development.adoc[Zed拡張の開発]に記載しています。作業は
-https://github.com/KeishiS/adocweave/issues/848[Zed拡張を公式レジストリへ提出できる構成にする]で
-管理します。
+現在、ここに掲載する主要な未完了作業はありません。

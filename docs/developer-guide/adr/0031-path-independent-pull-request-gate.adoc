@@ -18,18 +18,15 @@ Pull Requestの検査範囲を狭めるため、Gitが追跡するすべてのpa
 
 == 決定
 
-すべてのPull Requestに、変更pathに依存しない一つの標準source gateを適用します。このgateはローカルの
-``cargo make verify``と同じ検査を実行し、表示するcheck名を``verify``とします。書式、lint、test、生成fileの差分、
-人が書いた文書および配布metadataの検査を省略しません。
+すべてのPull Requestに、変更pathに依存しない検査を適用します。ローカルの``cargo make verify``と同じsource検査に加え、
+macOSとWindowsのProjectおよびLanguage Server試験、Zed公式レジストリが使用するRust 1.90での
+``wasm32-wasip2``向け構築を別のjobで実行します。必須checkの``verify``は、これらの終了状態をまとめて確認します。
 
-Pull Requestでは配布candidateを構築しません。cross targetの構築、実際のOSやBrowserを使う統合検査、fuzz、
-Nixパッケージ検査、未公開製品の配布成果物の構築および成果物を使うruntime受入検査は、``main``へ統合したcommitで実行します。
-公開workflowは``main``で同じgateを再実行し、同じrunで選択製品のcandidateを構築します。
+Pull Requestでは配布candidateを構築しません。Zedの構築は公式レジストリの環境で構築できることの検査であり、公開用の
+成果物として保持しません。そのほかのcross target、実際のOSやBrowserを使う統合検査、fuzz、Nixパッケージ検査、
+配布成果物の構築および成果物を使うruntime受入検査は、``main``へ統合したcommitで実行します。
 
-追跡pathの分類表と分類漏れの監査を設けません。Pull Requestのsource検査条件を真偽値として各jobへ渡す構成、
-実行しない代わりのstep、
-および``success``と``skipped``を最後に照合する集約jobも設けません。Pull Requestの成否は標準source gate自身の
-終了状態で決まります。
+追跡pathの分類表と分類漏れの監査を設けません。変更pathから実行条件を判定せず、すべてのPull Requestで同じjobを実行します。
 
 ブランチ保護が要求するstatus contextは``verify``の一つとします。従来の集約jobも同じ表示名を使用していたため、
 ``verify``だけを要求しているrulesetでは変更が不要です。古い構成の``quality``配下のcheckを個別に要求している環境では、
@@ -41,17 +38,17 @@ Nixパッケージ検査、未公開製品の配布成果物の構築および�
 **既知のdirectoryだけを大まかに分類する。** 分類表は短くなりますが、新しいdirectoryをどちらへ含めるかという判断と、
 分類漏れを防ぐ監査は残ります。
 
-**高価な検査だけをpathで選ぶ。** source gateとcandidate gateで異なる到達関係を保守する必要があり、
-実行条件と集約jobを削除できません。
+**高価な検査だけをpathで選ぶ。** source検査と追加jobで異なる到達関係を保守する必要があり、
+実行条件が増えます。
 
 **すべての成果物をPull Requestでも構築する。** 構成は単純ですが、複数OS、実Browserおよび全配布物の構築時間を
-すべてのPull Requestへ課します。統合前は決定的なsource検査を行い、環境と成果物を使う検査は``main``へ分離します。
+すべてのPull Requestへ課します。統合前はsourceと対応環境に固有の小さい試験を行い、成果物を使う検査は``main``へ分離します。
 
 == 帰結
 
-新しいfileやdirectoryを追加しても、CI分類表へ登録する作業は発生しません。すべてのPull Requestが同じsource検査を
-通るため、検査を実行しなかった理由と``skipped``の組合せを調べる必要もなくなります。
+新しいfileやdirectoryを追加しても、CI分類表へ登録する作業は発生しません。すべてのPull Requestが同じ検査を通ります。
+ローカルの``cargo make verify``はsource検査だけを再現し、OS別の試験とZed公式レジストリ用の構築はCIで確認します。
 
-一方、cross target、実統合、fuzz、Nixおよび配布candidateの失敗は``main``への統合後に判明します。
+そのほかのcross target、実統合、fuzz、Nixおよび配布candidateの失敗は``main``への統合後に判明します。
 ``main``へのpushではmain gateを実行します。公開時は同じgateに続けて選択製品の全targetと成果物を検査し、
 失敗したrunを公開しません。このcandidateの扱いはxref:0032-same-run-release-publication.adoc[ADR 0032]で改訂します。
