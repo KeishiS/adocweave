@@ -343,8 +343,8 @@ Language Serverの場所を指定する場合は、``lsp.adocweave.binary.path``
 [#vscode-installation]
 === VS Codeへの導入
 
-``adocweave.adocweave``がOpen VSX RegistryまたはVisual Studio Marketplaceに掲載されている場合は、
-使用するエディタに対応するコマンドで導入できます。発行者は``adocweave``です。
+``adocweave.adocweave``はOpen VSX RegistryとVisual Studio Marketplaceから導入できます。
+発行者は``adocweave``です。使用するエディタに対応するコマンドを実行します。
 
 [source,console]
 ----
@@ -352,7 +352,7 @@ codium --install-extension adocweave.adocweave
 code --install-extension adocweave.adocweave
 ----
 
-まだ掲載されていない場合は、リポジトリをcheckoutし、ルートでVSIXを構築して導入します。
+開発中または未公開の版を試す場合は、リポジトリをcheckoutし、ルートでVSIXを構築して導入します。
 
 [source,console]
 ----
@@ -367,7 +367,7 @@ code --install-extension "target/distrib/adocweave-$VERSION.vsix"
 native実行ファイルの版を一致させる必要はありません。利用できる機能は、Language Serverが初期化時に示す
 LSP capabilityに基づいて決まります。capabilityは、Language Serverが対応している機能をエディタへ伝える情報です。
 
-レジストリへの掲載後に特定の拡張版を導入する場合は、拡張IDの後ろに版を指定します。
+特定の拡張版を導入する場合は、拡張IDの後ろに版を指定します。
 
 [source,console]
 ----
