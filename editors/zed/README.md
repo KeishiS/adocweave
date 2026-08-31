@@ -4,25 +4,26 @@
 
 # AdocWeave for Zed
 
-AdocWeave adds diagnostics, navigation, formatting, and other Language Server
-features to AsciiDoc documents in Zed. It starts the single `adocweave`
-executable with the `lsp` subcommand.
+[![CI](https://github.com/KeishiS/adocweave/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/KeishiS/adocweave/actions/workflows/ci.yml?query=branch%3Amain)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-Install Zed's `AsciiDoc` extension first. That extension provides the AsciiDoc
-language and syntax highlighting; AdocWeave attaches its Language Server to the
-existing `AsciiDoc` language instead of duplicating those files.
+AdocWeave adds diagnostics, navigation, completion, and formatting to AsciiDoc documents in Zed.
 
-The extension looks for the Language Server in this order:
+## Installation
+
+Install the `AsciiDoc` extension from Zed's Extensions view first. It provides the language definition and syntax highlighting required by AdocWeave.
+
+AdocWeave is not yet available from the official Zed extension registry. To use a repository checkout, choose **Install Dev Extension** and select the `editors/zed` directory.
+
+## Language Server
+
+The extension requires AdocWeave 0.51.0 or later. It uses the first available executable from:
 
 1. The absolute path in `lsp.adocweave.binary.path`.
-2. `adocweave` on the environment inherited by Zed.
-3. The latest stable native release from the AdocWeave GitHub repository.
+2. `adocweave` in the environment inherited by Zed.
+3. The latest stable AdocWeave release, downloaded automatically.
 
-Automatic download supports Linux x86_64 and ARM64, macOS ARM64, and Windows
-x86_64. AdocWeave 0.51.0 or newer is required. The extension and the native
-executable have independent versions and do not need to match.
-
-To use a specific executable, add its absolute path to Zed settings:
+The extension and executable versions do not need to match. To use a specific executable, add its absolute path to Zed settings:
 
 ```json
 {
@@ -36,15 +37,12 @@ To use a specific executable, add its absolute path to Zed settings:
 }
 ```
 
-Install `AsciiDoc` from the Zed Extensions view. If `AdocWeave` is also listed
-there, install it from that view. To use a repository checkout directly, choose
-**Install Dev Extension** and select this `editors/zed` directory.
+See [Installation and updates](https://github.com/KeishiS/adocweave/blob/main/docs/user-guide/release-installation.adoc#zed-installation) to install or verify the executable yourself.
 
-The extension does not bundle the Language Server. Zed's extension API does not
-expose downloaded bytes for checksum verification, so automatic download relies
-on HTTPS. Install and verify the native archive yourself when stronger integrity
-checks are required.
+## Development
+
+See [Zed extension development](https://github.com/KeishiS/adocweave/blob/main/docs/developer-guide/zed-development.adoc) for build, test, and manual verification instructions.
 
 ## License
 
-The extension is available under the [MIT License](LICENSE).
+Licensed under the [MIT License](LICENSE).

@@ -1,37 +1,40 @@
+<p align="center">
+  <img src="resources/icon.png" width="128" height="128" alt="AdocWeave icon">
+</p>
+
 # AdocWeave for Visual Studio Code
 
-A Visual Studio Code extension for [AdocWeave](https://github.com/KeishiS/adocweave), an AsciiDoc processor.
-This extension provides the following features:
+[![Visual Studio Marketplace](https://img.shields.io/badge/VS%20Marketplace-install-007ACC?logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=adocweave.adocweave)
+[![Open VSX](https://img.shields.io/open-vsx/v/adocweave/adocweave?label=Open%20VSX)](https://open-vsx.org/extension/adocweave/adocweave)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](LICENSE)
 
-- Syntax highlighting
-- Diagnostics
-- Formatting
+AdocWeave adds AsciiDoc syntax highlighting, diagnostics, navigation, completion, and formatting to Visual Studio Code and compatible editors.
 
 ## Installation
 
-Install `adocweave.adocweave` from Visual Studio Marketplace or Open VSX with the command for your editor. The official publisher is the `adocweave` namespace.
+Install `adocweave.adocweave` from the [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=adocweave.adocweave) or [Open VSX](https://open-vsx.org/extension/adocweave/adocweave). The official publisher is `adocweave`.
 
 ```sh
 code --install-extension adocweave.adocweave
 codium --install-extension adocweave.adocweave
 ```
 
-To try a development or unpublished version, build and install a VSIX from a repository checkout:
+## Language Server
 
-```sh
-nix develop
-npm ci --ignore-scripts --prefix editors/vscode
-npm run package --prefix editors/vscode
-VERSION="$(node -p "require('./editors/vscode/package.json').version")"
-code --install-extension "target/distrib/adocweave-$VERSION.vsix"
-```
+The extension requires AdocWeave 0.51.0 or later. It uses the first available executable from:
 
-## Requirements
+1. The absolute path in the machine-level `adocweave.server.path` setting.
+2. `adocweave` on the extension host's `PATH`.
+3. The latest stable AdocWeave release, downloaded automatically.
 
-The extension requires AdocWeave 0.51.0 or later and starts the Language Server as `adocweave lsp`. It first uses the absolute executable path in the machine-level `adocweave.server.path` setting. When that setting is empty, it searches the extension host's `PATH` for `adocweave`. If neither is available, it downloads the latest stable native executable from the project's GitHub Releases.
+The extension and executable versions do not need to match. After changing `adocweave.server.path`, run **AdocWeave: Restart Language Server**.
 
-To select a version yourself, install `adocweave` by following `docs/user-guide/release-installation.adoc` and set `adocweave.server.path` to its absolute path. The extension uses the capabilities announced by the Language Server during standard Language Server Protocol initialization instead of requiring matching product versions.
+See [Installation and updates](https://github.com/KeishiS/adocweave/blob/main/docs/user-guide/release-installation.adoc#vscode-installation) to install or verify the executable yourself.
+
+## Development
+
+See [VS Code extension development](https://github.com/KeishiS/adocweave/blob/main/docs/developer-guide/vscode-development.adoc) to build and test a repository checkout.
 
 ## License
 
-MIT OR Apache-2.0
+Licensed under [MIT OR Apache-2.0](LICENSE).
