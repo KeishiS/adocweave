@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::io::{self, Read as _};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use adocweave_core::NeverCancel;
 use adocweave_project::{
@@ -123,7 +123,7 @@ pub(crate) fn request_with_authority(
     let mut sources = Vec::new();
     if let Some(input) = &arguments.input {
         for path in std::iter::once(input).chain(&arguments.additional_inputs) {
-            targets.push(path_target(current, path));
+            targets.push(path_target(current, path)?);
         }
         targets.extend(
             arguments
@@ -148,10 +148,10 @@ pub(crate) fn request_with_authority(
             valid_up_to: error.utf8_error().valid_up_to(),
         })?;
         let source_id = adocweave_core::SourceId::new("<stdin>");
-        let base = arguments.stdin_base.as_ref().map_or_else(
-            || current.to_owned(),
-            |path| absolute_lexical(current, path),
-        );
+        let base = match arguments.stdin_base.as_ref() {
+            Some(path) => absolute_path(current, path)?,
+            None => current.to_owned(),
+        };
         sources.push(ProjectSource::memory(source_id.clone(), base, source));
         targets.push(ProjectTarget::Source(source_id));
     }
@@ -169,11 +169,11 @@ pub(crate) fn request_with_authority(
             .iter()
             .filter_map(|value| match value {
                 commands::html_policy::StylesheetArgument::File(path) => {
-                    Some(absolute_lexical(current, path))
+                    Some(absolute_path(current, path))
                 }
                 commands::html_policy::StylesheetArgument::Url(_) => None,
             })
-            .collect(),
+            .collect::<Result<Vec<_>, _>>()?,
         _ => Vec::new(),
     };
     let enabled_rules = match &arguments.command {
@@ -190,6 +190,22 @@ pub(crate) fn request_with_authority(
             CommandOptions::Convert { .. } | CommandOptions::Preview { .. }
         ),
     };
+    let resource_roots = if arguments.allowed_roots.is_empty() {
+        None
+    } else {
+        Some(
+            arguments
+                .allowed_roots
+                .iter()
+                .map(|path| absolute_path(current, path))
+                .collect::<Result<Vec<_>, _>>()?,
+        )
+    };
+    let local_target_project_root = arguments
+        .project_root
+        .as_ref()
+        .map(|path| absolute_path(current, path))
+        .transpose()?;
     Ok(ProjectRequest {
         targets,
         sources,
@@ -197,17 +213,8 @@ pub(crate) fn request_with_authority(
         overrides: ProjectConfigOverrides {
             include,
             enable_lint_rules: enabled_rules,
-            resource_roots: (!arguments.allowed_roots.is_empty()).then(|| {
-                arguments
-                    .allowed_roots
-                    .iter()
-                    .map(|path| absolute_lexical(current, path))
-                    .collect()
-            }),
-            local_target_project_root: arguments
-                .project_root
-                .as_ref()
-                .map(|path| absolute_lexical(current, path)),
+            resource_roots,
+            local_target_project_root,
             stylesheet_files,
         },
         apply_safe_fixes: matches!(
@@ -513,14 +520,16 @@ pub(crate) fn project_authority(
     arguments: &Arguments,
     current: &Path,
 ) -> Result<ProjectAuthority, CliError> {
-    ProjectAuthority::open(current.to_owned(), authority_roots(arguments, current))
+    ProjectAuthority::open(current.to_owned(), authority_roots(arguments, current)?)
         .map_err(|error| CliError::Project(adocweave_project::ProjectError::Authority(error)))
 }
 
-pub(crate) fn authority_roots(arguments: &Arguments, current: &Path) -> BTreeSet<PathBuf> {
+pub(crate) fn authority_roots(
+    arguments: &Arguments,
+    current: &Path,
+) -> Result<BTreeSet<PathBuf>, CliError> {
     let mut roots = BTreeSet::from([current.to_owned()]);
-    let mut add_directory = |path: &Path| {
-        let path = absolute_lexical(current, path);
+    let mut add_directory = |path: PathBuf| {
         if !path.starts_with(current) {
             roots.insert(path);
         }
@@ -531,19 +540,19 @@ pub(crate) fn authority_roots(arguments: &Arguments, current: &Path) -> BTreeSet
         .chain(arguments.project_root.iter())
         .chain(arguments.stdin_base.iter())
     {
-        add_directory(path);
+        add_directory(absolute_path(current, path)?);
     }
     if let Some(config) = &arguments.config_path {
-        let path = absolute_lexical(current, config);
-        add_directory(path.parent().unwrap_or(current));
+        let path = absolute_path(current, config)?;
+        add_directory(path.parent().unwrap_or(current).to_owned());
     }
     for path in arguments.input.iter().chain(&arguments.additional_inputs) {
-        let path = absolute_lexical(current, path);
+        let path = absolute_path(current, path)?;
         let directory = fs::symlink_metadata(&path)
             .ok()
             .filter(|metadata| metadata.is_dir())
             .map_or_else(|| path.parent().unwrap_or(current), |_| path.as_path());
-        add_directory(directory);
+        add_directory(directory.to_owned());
     }
     if let CommandOptions::Convert { css, .. } | CommandOptions::Preview { css, .. } =
         &arguments.command
@@ -552,20 +561,22 @@ pub(crate) fn authority_roots(arguments: &Arguments, current: &Path) -> BTreeSet
             commands::html_policy::StylesheetArgument::File(path) => Some(path),
             commands::html_policy::StylesheetArgument::Url(_) => None,
         }) {
-            let path = absolute_lexical(current, path);
-            add_directory(path.parent().unwrap_or(current));
+            let path = absolute_path(current, path)?;
+            add_directory(path.parent().unwrap_or(current).to_owned());
         }
     }
-    roots
+    Ok(roots)
 }
 
-fn path_target(current: &Path, path: &Path) -> ProjectTarget {
-    let absolute = absolute_lexical(current, path);
-    if fs::symlink_metadata(&absolute).is_ok_and(|metadata| metadata.is_dir()) {
-        ProjectTarget::Directory(path.to_owned())
-    } else {
-        ProjectTarget::Path(path.to_owned())
-    }
+fn path_target(current: &Path, path: &Path) -> Result<ProjectTarget, CliError> {
+    let absolute = absolute_path(current, path)?;
+    Ok(
+        if fs::symlink_metadata(&absolute).is_ok_and(|metadata| metadata.is_dir()) {
+            ProjectTarget::Directory(path.to_owned())
+        } else {
+            ProjectTarget::Path(path.to_owned())
+        },
+    )
 }
 
 fn config_selection(arguments: &Arguments) -> ProjectConfigSelection {
@@ -578,25 +589,13 @@ fn config_selection(arguments: &Arguments) -> ProjectConfigSelection {
     }
 }
 
-fn absolute_lexical(root: &Path, path: &Path) -> PathBuf {
-    let input = if path.is_absolute() {
-        path.to_owned()
-    } else {
-        root.join(path)
-    };
-    let mut normalized = PathBuf::new();
-    for component in input.components() {
-        match component {
-            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
-                normalized.push(component.as_os_str());
-            }
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normalized.pop();
-            }
-        }
-    }
-    normalized
+fn absolute_path(current: &Path, path: &Path) -> Result<PathBuf, CliError> {
+    adocweave_project::absolute_path(current, path).map_err(|_| {
+        CliError::Path(format!(
+            "The path leaves the filesystem root: {}",
+            path.display()
+        ))
+    })
 }
 
 fn read_standard_input(limits: ProjectLimits) -> Result<Vec<u8>, CliError> {
