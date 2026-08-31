@@ -32,11 +32,11 @@ Lintルールの公開識別子には閉じたenumではなく``LintRuleId``を�
 URL検査は次の責務へ分けます。
 
 * 文書に記述された対象を診断する``AuthoredUrlPolicy``
-* HTMLへ出力する記述値およびresolver出力を再検査する``ActiveUrlPolicy``
+* HTMLへ出力する記述値および利用側アプリから受け取った解決結果を再検査する``ActiveUrlPolicy``
 * filesystem上のroot、symlinkおよび実在性を検査するホスト側のlocal path policy
 
-解析cache keyは入力本文、``SourceId``および``AnalysisOptions``から生成します。HTMLの表示設定と
-``ActiveUrlPolicy``は含めません。
+利用側アプリが解析結果をキャッシュする場合は、入力本文、``SourceId``および``AnalysisOptions``から
+キーを生成します。HTMLの表示設定と``ActiveUrlPolicy``は含めません。
 WASM protocolでは解析設定と描画設定を別のobjectとして表し、同じ責務分担を維持します。この配置は
 xref:0042-wasm-public-contract.adoc[ADR 0042]で改訂しました。
 
@@ -52,5 +52,5 @@ Lintルールと出力機能を追加しても構文解析設定を変更する�
 v0.11.0ではRust APIとWASM protocolに破壊的変更が発生します。移行時は旧``ParseOptions``、
 `LintRule`、``UrlPolicy``および平坦なWASM ``options``を新しい責務別の型へ置き換えます。
 
-単一の不変な``Analysis``、コアからの外部I/O排除、ホストによるresolver出力の再検査および
+単一の不変な``Analysis``、コアからの外部I/O排除、利用側アプリから受け取った解決結果の再検査および
 package version完全一致の要件は変更しません。

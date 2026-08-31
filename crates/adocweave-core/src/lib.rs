@@ -174,14 +174,14 @@ pub mod preprocess {
     };
 }
 
-/// Host-provided reference, resource and citation resolution contracts.
+/// Host-provided reference, resource and citation resolution values.
 pub mod resolution {
     pub use crate::citation::{CitationOutcome, CitationSegment, ResolvedCitation};
     pub use crate::generated_bibliography::{GeneratedBibliography, GeneratedBibliographyEntry};
     pub use crate::reference::{
-        DocumentCandidate, ReferenceKey, ReferenceQuery, ReferenceResolver, ResolutionCacheKey,
-        ResolutionFailureKind, ResolutionNotice, ResolutionNoticeKind, ResolutionOutcome,
-        ResolvedReference, ResolverFailure, ResolverFuture, ReverseReference, query_from_reference,
+        ReferenceKey, ReferenceQuery, ResolutionFailureKind, ResolutionNotice,
+        ResolutionNoticeKind, ResolutionOutcome, ResolvedReference, ResolverFailure,
+        query_from_reference,
     };
     pub use crate::render::{
         RenderInputDomain, RenderInputProblem, RenderInputProblemKind, RenderInputUsage,
@@ -189,8 +189,8 @@ pub mod resolution {
     };
     pub use crate::resource::{
         InvalidMediaType, MediaFamily, MediaType, ResolvedResource, ResourceFailure,
-        ResourceFailureKind, ResourceFuture, ResourceOutcome, ResourcePurpose, ResourceQuery,
-        ResourceReference, ResourceResolver, ResourceValue,
+        ResourceFailureKind, ResourceOutcome, ResourcePurpose, ResourceQuery, ResourceReference,
+        ResourceValue,
     };
     pub use crate::url::{ActiveUrlPolicy, AuthoredUrlPolicy, UrlDecision, UrlProvenance};
 }
@@ -211,7 +211,7 @@ pub use core::{
     Analysis, AnalysisInputs, AnalysisOptions, CancellationCheck, CancellationToken,
     DiagnosticProfile, Engine, NeverCancel, ParseError, SourceId, SyntaxOptions,
 };
-pub use execution::{AnalysisCacheKey, AnalysisRequest, AnalysisResult, DocumentRevision};
+pub use execution::{AnalysisRequest, AnalysisResult, DocumentRevision};
 pub use limits::{AnalysisLimits, OutputLimits, SyntaxMode};
 pub use local_target::{LocalTargetKind, LocalTargetReference, LocalTargetSyntax};
 
