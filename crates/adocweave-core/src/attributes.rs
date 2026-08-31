@@ -538,14 +538,6 @@ impl AttributeEnvironment {
         })
     }
 
-    pub fn expand_at_event(
-        &self,
-        text: &str,
-        position: AttributePosition,
-    ) -> Result<String, AttributeExpansionError> {
-        self.expand_with(text, |name| self.resolve_at_event(name, position))
-    }
-
     pub fn expand_at(
         &self,
         text: &str,

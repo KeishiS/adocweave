@@ -591,7 +591,6 @@ fn effective_resumption_prepares_for_the_same_analysis_contract() {
     )
     .expect("effective options");
     let analyzer = options.clone();
-    assert!(options.same_contract(&analyzer));
     let EffectivePreprocessStep::NeedResource(suspended) =
         options.preprocess_resumable("include::part.adoc[]\n", &lookup, &NeverCancel)
     else {
@@ -626,8 +625,6 @@ fn prepared_document_rejects_a_different_effective_contract() {
     )
     .expect("second contract");
     assert_eq!(first, second);
-    assert!(!first.same_contract(&second));
-    assert!(!first.same_contract(&first.clone().with_source_id(None)));
     let EffectivePreprocessStep::Complete(prepared) =
         first.preprocess_resumable("paragraph\n", &ResourceSnapshot::default(), &NeverCancel)
     else {

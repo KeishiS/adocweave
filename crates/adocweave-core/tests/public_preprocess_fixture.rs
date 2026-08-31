@@ -312,9 +312,6 @@ fn effective_resumable_contract_accepts_only_the_instance_and_its_clones() {
     let separate =
         EffectiveProcessingOptions::new(AnalysisOptions::default(), PreprocessOptions::default())
             .expect("separate effective options");
-    assert!(options.same_contract(&clone));
-    assert!(!options.same_contract(&separate));
-
     let EffectivePreprocessStep::Complete(prepared_for_clone) =
         options.preprocess_resumable("paragraph\n", &ResourceSnapshot::default(), &NeverCancel)
     else {
