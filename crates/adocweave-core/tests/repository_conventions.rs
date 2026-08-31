@@ -1,6 +1,7 @@
-//! Conventions this crate promises to the rest of the repository: lint modules
-//! stay behind the diagnostic sink, every tracked document parses losslessly,
-//! and the published rule catalog matches what the crate re-exports.
+//! Repository-wide conventions that require the complete checkout: tracked
+//! documents parse losslessly, the published lint catalog matches the public
+//! constants, crate dependencies follow the intended direction, and the core
+//! stays independent from host APIs.
 
 use std::collections::BTreeSet;
 use std::fs;
