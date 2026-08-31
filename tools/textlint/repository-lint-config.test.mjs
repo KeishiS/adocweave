@@ -15,7 +15,7 @@ const targets = {
 };
 
 const terminology = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   forbiddenTerms: [
     {
       id: "sample",
@@ -24,7 +24,8 @@ const terminology = {
       message: "別の表現を検討してください。",
       documentation: "docs/developer-guide/terminology.adoc#sample"
     }
-  ]
+  ],
+  warningTerms: []
 };
 
 test("文書を執筆対象、除外対象、未分類へ分ける", () => {
@@ -95,9 +96,11 @@ test("リポジトリ用規則を安定した順序で組み立てる", () => {
       "no-invalid-control-character",
       "no-unmatched-pair",
       "no-zero-width-spaces",
-      "adocweave-terminology"
+      "adocweave-terminology",
+      "adocweave-terminology-warning"
     ]
   );
+  assert.deepEqual(rules.at(-1).options, { severity: "warning" });
   assert.deepEqual(rules[0].options, {
     preferInHeader: "",
     preferInBody: "ですます",

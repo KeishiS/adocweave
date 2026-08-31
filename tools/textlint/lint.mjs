@@ -23,7 +23,7 @@ if (classified.unknown.length > 0) {
   const rules = createRepositoryRules(terminology);
 
   const kernel = new TextlintKernel();
-  let violations = 0;
+  let errors = 0;
   for (const path of classified.authored) {
     const absolute = `${repositoryRoot}${path}`;
     const source = readFileSync(absolute, "utf8");
@@ -40,13 +40,17 @@ if (classified.unknown.length > 0) {
       throw new Error(`校正処理が文書を書き換えました: ${path}`);
     }
     for (const message of result.messages) {
-      violations += 1;
+      if (message.severity === 2) errors += 1;
+      const severity = message.severity === 1
+        ? "warning"
+        : message.severity === 2 ? "error" : "info";
       console.error(
-        `${path}:${message.line}:${message.column}: ${message.message} (${message.ruleId})`
+        `${path}:${message.line}:${message.column}: ${severity}: ` +
+        `${message.message} (${message.ruleId})`
       );
     }
   }
-  if (violations > 0) {
+  if (errors > 0) {
     process.exitCode = 1;
   }
 }

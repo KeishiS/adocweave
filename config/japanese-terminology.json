@@ -1,5 +1,5 @@
 {
-    "schemaVersion": 1,
+    "schemaVersion": 2,
     "forbiddenTerms": [
         {
             "id": "legal-contract-metaphor",
@@ -70,6 +70,15 @@
             "match": "substring",
             "message": "JSON、schema、manifestなど、プログラムが処理する対象を具体的に記載してください。",
             "documentation": "docs/developer-guide/terminology.adoc#abstract-machine-readable"
+        }
+    ],
+    "warningTerms": [
+        {
+            "id": "version-wording-review",
+            "term": "版",
+            "match": "substring",
+            "message": "\"バージョン\"の意味であれば\"バージョン\"を使ってください。",
+            "documentation": "docs/developer-guide/terminology.adoc#version-wording-review"
         }
     ]
 }
