@@ -1,5 +1,9 @@
 = ADR 0006: stable tagへの直接公開
-:status: superseded by ADR 0023
+:status: 置換済み。ADR 0023により置換
 
-この判断はxref:0023-publication-boundary.adoc[ADR 0023: 公開と配布の境界]に置き換えました。
+== 状態
+
+{status}
+
+この判断はxref:0023-publication-boundary.adoc[ADR 0023: 公開先と配布方法]に置き換えました。
 現在の公開手順と保証はxref:../release-distribution.adoc[配布仕様]を参照してください。

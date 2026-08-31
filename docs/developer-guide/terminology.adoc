@@ -37,13 +37,69 @@ link:../../config/japanese-terminology.json[`config/japanese-terminology.json`]�
 起こさせます。
 
 何と書くかは、その箇所が何を指しているかによります。公開して維持する範囲、維持することの保証、
-設定どうしの整合条件、適合しているかの判定、あるいは``release-contract``のようなtask名の一部と、
+設定どうしの整合条件、適合しているかの判定、あるいはtask名の一部と、
 指すものが異なります。前後の文と対応する実装を読んでから決めてください。
 
 これまでに見つかった表現です。一覧は網羅ではありません。
 
 公開契約、現行契約、契約項目、互換契約、処理契約、契約判定、release契約、契約fixture、HTML契約、
 配布契約、属性契約
+--
+
+[#katakana-editor-long-vowel]
+`エディター`::
++
+--
+一般名詞として文書編集用のソフトウェアを指す場合は、末尾を伸ばさず``エディタ``と記載します。
+製品名、設定名およびコード上の識別子は原綴りを保ちます。
+--
+
+[#katakana-header-long-vowel]
+`ヘッダー`::
++
+--
+文書や通信データの先頭に置く情報を指す場合は、末尾を伸ばさず``ヘッダ``と記載します。
+製品名、設定名およびコード上の識別子は原綴りを保ちます。
+--
+
+[#abstract-resource-limit]
+`資源上限`::
++
+--
+何を制限するのかが分からないため使いません。ファイル件数、読込量、入れ子の深さ、展開後のバイト数など、
+上限を設ける対象を具体的に記載します。
+--
+
+[#byte-count-notation]
+`byte数`::
++
+--
+日本語の地の文では、単位名をカタカナで表し、``バイト数``と記載します。識別子、型名および設定名は
+原綴りを保ちます。
+--
+
+[#abstract-projection]
+`投影`::
++
+--
+何を何へ対応付けるのか、どの情報へ変換するのかが分からないため使いません。位置の対応付け、解析結果の取得、
+構造情報への変換など、実際の動作を具体的に記載します。
+--
+
+[#english-projection]
+`projection`::
++
+--
+日本語の地の文では使いません。取得または変換する情報を具体的に記載します。識別子、型名、設定名および
+コード内の名前は原綴りを保ちます。
+--
+
+[#abstract-machine-readable]
+`機械可読`::
++
+--
+何をどのプログラムが処理するのか分からないため使いません。JSON、schema、manifest、生成した型定義など、
+対象となる形式またはファイルを具体的に記載します。
 --
 // textlint-enable adocweave-terminology
 
@@ -73,7 +129,7 @@ link:../../config/japanese-terminology.json[`config/japanese-terminology.json`]�
 | 版を指す「バージョン」
 
 | target
-| ``--local-targets``、``target``ディレクトリ、``local-target-unverifiable``
+| ``--project-root``、``target``ディレクトリ、``local-target-unverifiable``
 | 指し示す先としての「参照先」
 
 | file
@@ -89,9 +145,8 @@ link:../../config/japanese-terminology.json[`config/japanese-terminology.json`]�
 | 使いません。いずれも設定名に対応するため原綴りを保ちます
 
 | generation
-| ``DocumentRevision``の解析世代、workspaceの有効状態世代、filesystem resource bindingの世代、
-  走査回復の世代など、crateごとに別の識別子を指します
-| 「世代」。同名で意味が異なるため、文書ではどのcrateのどの状態機械の世代かを必ず特定します
+| ``DocumentRevision``の解析世代やfilesystem resource bindingの世代など、異なる識別子を指します
+| 「世代」。同名で意味が異なるため、文書では対象となる識別子を必ず特定します
 |===
 
 == 単純に置き換える語
@@ -100,7 +155,7 @@ link:../../config/japanese-terminology.json[`config/japanese-terminology.json`]�
 
 directory → ディレクトリ、path → パス、package → パッケージ、release → リリース、
 workspace → ワークスペース、repository → リポジトリ、branch → ブランチ、commit → コミット、
-tag → タグ、cache → キャッシュ、log → ログ、option → オプション、boundary → 境界、
+tag → タグ、cache → キャッシュ、log → ログ、option → オプション、
 limit → 上限、default → 既定、snapshot → スナップショット、build → ビルド、test → テスト、
 runner → ランナー、toolchain → ツールチェーン
 

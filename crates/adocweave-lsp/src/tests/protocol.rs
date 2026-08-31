@@ -1,9 +1,108 @@
 use super::*;
 
+#[test]
+fn stdio_errors_separate_protocol_and_runtime_failures() {
+    let protocol = StdioError::new(async_lsp::Error::Protocol("initialize rejected".to_owned()));
+    assert_eq!(protocol.kind(), StdioErrorKind::Protocol);
+
+    let runtime = StdioError::new(async_lsp::Error::Io(std::io::Error::new(
+        std::io::ErrorKind::BrokenPipe,
+        "closed output",
+    )));
+    assert_eq!(runtime.kind(), StdioErrorKind::Runtime);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn request_handler_panic_returns_an_internal_error_and_allows_clean_shutdown() {
+    // Test builds unwind, so this verifies the existing request middleware only.
+    // Uncaught panics in a distribution build remain subject to its panic profile.
+    use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+
+    let (server_stream, client_stream) = tokio::io::duplex(64 * 1024);
+    let (server_read, server_write) = tokio::io::split(server_stream);
+    let server = run(server_read.compat(), server_write.compat_write());
+    let (client_read, mut client_write) = tokio::io::split(client_stream);
+    let mut client_read = BufReader::new(client_read);
+
+    let client = async {
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc":"2.0",
+                "id":1,
+                "method":"initialize",
+                "params":{
+                    "processId":null,
+                    "rootUri":null,
+                    "capabilities":full_capabilities(&["utf-16"])
+                }
+            }),
+        )
+        .await;
+        assert_eq!(read_message(&mut client_read).await["id"], 1);
+        write_message(
+            &mut client_write,
+            &json!({"jsonrpc":"2.0","method":"initialized","params":{}}),
+        )
+        .await;
+        let registration = read_message(&mut client_read).await;
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc":"2.0",
+                "id":registration["id"].clone(),
+                "result":null
+            }),
+        )
+        .await;
+
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc":"2.0",
+                "id":2,
+                "method":"adocweave/testRequestHandlerPanic",
+                "params":null
+            }),
+        )
+        .await;
+        let panic_response = read_message(&mut client_read).await;
+        assert_eq!(panic_response["id"], 2);
+        assert_eq!(panic_response["error"]["code"], -32603);
+        assert!(
+            panic_response["error"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("intentional request handler panic"))
+        );
+
+        write_message(
+            &mut client_write,
+            &json!({"jsonrpc":"2.0","id":3,"method":"shutdown","params":null}),
+        )
+        .await;
+        assert_eq!(read_message(&mut client_read).await["id"], 3);
+        write_message(
+            &mut client_write,
+            &json!({"jsonrpc":"2.0","method":"exit","params":null}),
+        )
+        .await;
+    };
+
+    let (server_result, ()) = tokio::join!(server, client);
+    assert!(
+        server_result.is_ok(),
+        "recovered request panic: {server_result:?}"
+    );
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn protocol_async_lsp_transport_runs_typed_lifecycle_and_features() {
     use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
+    let project = TestProject::new();
+    let document_uri =
+        project.document("typed.adoc", "[[part]]\n= Typed path\n\n<<part>>\ntext  \n");
+    let document_target = format!("{document_uri}#part");
     let (server_stream, client_stream) = tokio::io::duplex(64 * 1024);
     let (server_read, server_write) = tokio::io::split(server_stream);
     let server = run(server_read.compat(), server_write.compat_write());
@@ -56,7 +155,7 @@ async fn protocol_async_lsp_transport_runs_typed_lifecycle_and_features() {
                 "jsonrpc":"2.0",
                 "method":"textDocument/didOpen",
                 "params":{"textDocument":{
-                    "uri":"file:///typed.adoc",
+                    "uri":document_uri,
                     "languageId":"asciidoc",
                     "version":1,
                     "text":"[[part]]\n= Typed path\n\n<<part>>\ntext  \n"
@@ -74,7 +173,7 @@ async fn protocol_async_lsp_transport_runs_typed_lifecycle_and_features() {
                 "jsonrpc":"2.0",
                 "id":3,
                 "method":"textDocument/documentSymbol",
-                "params":{"textDocument":{"uri":"file:///typed.adoc"}}
+                "params":{"textDocument":{"uri":document_uri}}
             }),
         )
         .await;
@@ -89,7 +188,7 @@ async fn protocol_async_lsp_transport_runs_typed_lifecycle_and_features() {
                 "id":10,
                 "method":"textDocument/hover",
                 "params":{
-                    "textDocument":{"uri":"file:///typed.adoc"},
+                    "textDocument":{"uri":document_uri},
                     "position":{"line":1,"character":3}
                 }
             }),
@@ -106,7 +205,7 @@ async fn protocol_async_lsp_transport_runs_typed_lifecycle_and_features() {
                 "id":11,
                 "method":"textDocument/completion",
                 "params":{
-                    "textDocument":{"uri":"file:///typed.adoc"},
+                    "textDocument":{"uri":document_uri},
                     "position":{"line":3,"character":3}
                 }
             }),
@@ -123,7 +222,7 @@ async fn protocol_async_lsp_transport_runs_typed_lifecycle_and_features() {
                 "id":12,
                 "method":"textDocument/codeAction",
                 "params":{
-                    "textDocument":{"uri":"file:///typed.adoc"},
+                    "textDocument":{"uri":document_uri},
                     "range":{
                         "start":{"line":4,"character":0},
                         "end":{"line":4,"character":6}
@@ -143,7 +242,7 @@ async fn protocol_async_lsp_transport_runs_typed_lifecycle_and_features() {
                 "id":13,
                 "method":"textDocument/formatting",
                 "params":{
-                    "textDocument":{"uri":"file:///typed.adoc"},
+                    "textDocument":{"uri":document_uri},
                     "options":{"tabSize":4,"insertSpaces":true}
                 }
             }),
@@ -161,7 +260,7 @@ async fn protocol_async_lsp_transport_runs_typed_lifecycle_and_features() {
                 "id":20,
                 "method":"textDocument/prepareRename",
                 "params":{
-                    "textDocument":{"uri":"file:///typed.adoc"},
+                    "textDocument":{"uri":document_uri},
                     "position":{"line":0,"character":3}
                 }
             }),
@@ -177,7 +276,7 @@ async fn protocol_async_lsp_transport_runs_typed_lifecycle_and_features() {
                 "id":14,
                 "method":"textDocument/rename",
                 "params":{
-                    "textDocument":{"uri":"file:///typed.adoc"},
+                    "textDocument":{"uri":document_uri},
                     "position":{"line":0,"character":3},
                     "newName":"renamed"
                 }
@@ -185,7 +284,7 @@ async fn protocol_async_lsp_transport_runs_typed_lifecycle_and_features() {
         )
         .await;
         assert!(
-            read_message(&mut client_read).await["result"]["changes"]["file:///typed.adoc"]
+            read_message(&mut client_read).await["result"]["changes"][document_uri.as_str()]
                 .is_array()
         );
         write_message(
@@ -195,7 +294,7 @@ async fn protocol_async_lsp_transport_runs_typed_lifecycle_and_features() {
                 "id":6,
                 "method":"textDocument/definition",
                 "params":{
-                    "textDocument":{"uri":"file:///typed.adoc"},
+                    "textDocument":{"uri":document_uri},
                     "position":{"line":3,"character":3}
                 }
             }),
@@ -203,7 +302,7 @@ async fn protocol_async_lsp_transport_runs_typed_lifecycle_and_features() {
         .await;
         assert_eq!(
             read_message(&mut client_read).await["result"]["uri"],
-            "file:///typed.adoc"
+            document_uri.as_str()
         );
         write_message(
             &mut client_write,
@@ -211,7 +310,7 @@ async fn protocol_async_lsp_transport_runs_typed_lifecycle_and_features() {
                 "jsonrpc":"2.0",
                 "id":7,
                 "method":"textDocument/semanticTokens/full",
-                "params":{"textDocument":{"uri":"file:///typed.adoc"}}
+                "params":{"textDocument":{"uri":document_uri}}
             }),
         )
         .await;
@@ -226,13 +325,13 @@ async fn protocol_async_lsp_transport_runs_typed_lifecycle_and_features() {
                 "jsonrpc":"2.0",
                 "id":8,
                 "method":"textDocument/documentLink",
-                "params":{"textDocument":{"uri":"file:///typed.adoc"}}
+                "params":{"textDocument":{"uri":document_uri}}
             }),
         )
         .await;
         assert_eq!(
             read_message(&mut client_read).await["result"][0]["target"],
-            "file:///typed.adoc#part"
+            document_target
         );
         write_message(
             &mut client_write,
@@ -241,7 +340,7 @@ async fn protocol_async_lsp_transport_runs_typed_lifecycle_and_features() {
                 "id":9,
                 "method":"textDocument/references",
                 "params":{
-                    "textDocument":{"uri":"file:///typed.adoc"},
+                    "textDocument":{"uri":document_uri},
                     "position":{"line":0,"character":3},
                     "context":{"includeDeclaration":false}
                 }
@@ -596,31 +695,11 @@ async fn protocol_preserves_json_rpc_ids_errors_and_notification_silence() {
     let (server_result, ()) = tokio::join!(server, client);
     server_result.expect("clean exit");
 }
-
 #[tokio::test(flavor = "current_thread")]
-async fn protocol_reports_an_incomplete_scan_once_without_document_diagnostics() {
+async fn protocol_workspace_rejection_keeps_document_sync_and_connection_current() {
     use std::time::Duration;
 
     use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
-
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!("adocweave-protocol-scan-notice-{unique}"));
-    fs::create_dir_all(&root).expect("workspace");
-    let config_path = root.join(adocweave_config::FILE_NAME);
-    fs::write(
-        &config_path,
-        "schema-version = 2\n[resources]\nmax-files = 1\n",
-    )
-    .expect("configuration");
-    for name in ["a.adoc", "b.adoc", "c.adoc"] {
-        fs::write(root.join(name), "text\n").expect("document");
-    }
-    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
-    let document_uri = lsp::Url::from_file_path(root.join("a.adoc")).expect("document URI");
-    let config_uri = lsp::Url::from_file_path(&config_path).expect("configuration URI");
 
     let (server_stream, client_stream) = tokio::io::duplex(64 * 1024);
     let (server_read, server_write) = tokio::io::split(server_stream);
@@ -637,10 +716,10 @@ async fn protocol_reports_an_incomplete_scan_once_without_document_diagnostics()
                 "method": "initialize",
                 "params": {
                     "processId": null,
-                    "rootUri": root_uri,
+                    "rootUri": null,
                     "capabilities": {
-                        "workspace": {
-                            "didChangeWatchedFiles": {"dynamicRegistration": true}
+                        "textDocument": {
+                            "publishDiagnostics": {"versionSupport": true}
                         }
                     }
                 }
@@ -654,42 +733,7 @@ async fn protocol_reports_an_incomplete_scan_once_without_document_diagnostics()
         )
         .await;
 
-        let mut registered = false;
-        let mut first_notice = None;
-        while !registered || first_notice.is_none() {
-            let message = read_message(&mut client_read).await;
-            match message["method"].as_str() {
-                Some("client/registerCapability") => {
-                    write_message(
-                        &mut client_write,
-                        &json!({
-                            "jsonrpc": "2.0",
-                            "id": message["id"].clone(),
-                            "result": null
-                        }),
-                    )
-                    .await;
-                    registered = true;
-                }
-                Some("window/showMessage") => {
-                    assert!(
-                        first_notice.is_none(),
-                        "scan notice was sent more than once"
-                    );
-                    first_notice = Some(typed::<lsp::ShowMessageParams>(message["params"].clone()));
-                }
-                method => panic!("unexpected server message before scan completion: {method:?}"),
-            }
-        }
-        let first_notice = first_notice.expect("scan notice");
-        assert_eq!(first_notice.typ, lsp::MessageType::WARNING);
-        assert!(first_notice.message.contains("resources.max-files"));
-        assert!(
-            first_notice
-                .message
-                .contains(config_path.to_string_lossy().as_ref())
-        );
-
+        let document_uri = "untitled:current-input";
         write_message(
             &mut client_write,
             &json!({
@@ -699,55 +743,76 @@ async fn protocol_reports_an_incomplete_scan_once_without_document_diagnostics()
                     "uri": document_uri,
                     "languageId": "asciidoc",
                     "version": 1,
-                    "text": "text\n"
+                    "text": "= Before\n"
                 }}
             }),
         )
         .await;
-        let initial_diagnostics = loop {
-            let message = read_message(&mut client_read).await;
-            assert_ne!(message["method"], "window/showMessage");
-            if message["method"] == "textDocument/publishDiagnostics" {
-                let params = typed::<lsp::PublishDiagnosticsParams>(message["params"].clone());
-                if params.uri == document_uri {
-                    break params;
-                }
-            }
-        };
-        assert!(initial_diagnostics.diagnostics.iter().all(|diagnostic| {
-            diagnostic.code
-                != Some(lsp::NumberOrString::String(
-                    "workspace-scan-incomplete".to_owned(),
-                ))
-                && !diagnostic.message.contains("resources.max-files")
-        }));
+        let opened = read_message(&mut client_read).await;
+        assert_eq!(opened["method"], "textDocument/publishDiagnostics");
+        assert_eq!(opened["params"]["version"], 1);
+        assert!(
+            opened["params"]["diagnostics"]
+                .as_array()
+                .is_some_and(|diagnostics| diagnostics
+                    .iter()
+                    .any(|diagnostic| { diagnostic["code"] == "unsupported-uri" }))
+        );
 
         write_message(
             &mut client_write,
             &json!({
                 "jsonrpc": "2.0",
-                "method": "workspace/didChangeWatchedFiles",
-                "params": {"changes": [{"uri": config_uri, "type": 2}]}
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": document_uri, "version": 2},
+                    "contentChanges": [{"text": "= After\n"}]
+                }
             }),
         )
         .await;
-        loop {
-            let message = read_message(&mut client_read).await;
-            assert_ne!(message["method"], "window/showMessage");
-            if message["method"] == "textDocument/publishDiagnostics" {
-                let params = typed::<lsp::PublishDiagnosticsParams>(message["params"].clone());
-                if params.uri == document_uri {
-                    break;
-                }
-            }
-        }
+        let changed = read_message(&mut client_read).await;
+        assert_eq!(changed["method"], "textDocument/publishDiagnostics");
+        assert_eq!(changed["params"]["version"], 2);
+        assert!(
+            changed["params"]["diagnostics"]
+                .as_array()
+                .is_some_and(|diagnostics| diagnostics
+                    .iter()
+                    .any(|diagnostic| { diagnostic["code"] == "unsupported-uri" }))
+        );
 
         write_message(
             &mut client_write,
-            &json!({"jsonrpc": "2.0", "id": 2, "method": "shutdown", "params": null}),
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/documentSymbol",
+                "params": {"textDocument": {"uri": document_uri}}
+            }),
         )
         .await;
-        assert_eq!(read_message(&mut client_read).await["id"], 2);
+        assert_eq!(read_message(&mut client_read).await["result"], json!([]));
+
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didClose",
+                "params": {"textDocument": {"uri": document_uri}}
+            }),
+        )
+        .await;
+        let closed = read_message(&mut client_read).await;
+        assert_eq!(closed["method"], "textDocument/publishDiagnostics");
+        assert_eq!(closed["params"]["uri"], document_uri);
+
+        write_message(
+            &mut client_write,
+            &json!({"jsonrpc": "2.0", "id": 3, "method": "shutdown", "params": null}),
+        )
+        .await;
+        assert_eq!(read_message(&mut client_read).await["id"], 3);
         write_message(
             &mut client_write,
             &json!({"jsonrpc": "2.0", "method": "exit", "params": null}),
@@ -761,7 +826,6 @@ async fn protocol_reports_an_incomplete_scan_once_without_document_diagnostics()
     .await
     .expect("protocol timeout");
     server_result.expect("clean exit");
-    fs::remove_dir_all(root).expect("cleanup");
 }
 
 #[cfg(unix)]

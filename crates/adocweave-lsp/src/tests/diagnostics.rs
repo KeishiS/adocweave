@@ -7,12 +7,11 @@ fn diagnostics_use_current_version_codes_and_unicode_positions() {
         (PositionEncoding::Utf8, 10, 11),
         (PositionEncoding::Utf16, 5, 6),
     ] {
-        let mut service = LanguageService::default();
+        let project = TestProject::new();
+        let mut service = Session::default();
         service.position_encoding = encoding;
-        open(&mut service, "file:///unicode.adoc", 3, text);
-        let diagnostics = service
-            .diagnostics(&uri("file:///unicode.adoc"))
-            .expect("diagnostics");
+        let document = project.open(&mut service, "unicode.adoc", 3, text);
+        let diagnostics = service.diagnostics(&document).expect("diagnostics");
         assert_eq!(diagnostics.version, Some(3));
         assert_eq!(
             diagnostics.diagnostics[0].code,
@@ -30,18 +29,17 @@ fn diagnostics_use_current_version_codes_and_unicode_positions() {
 
 #[test]
 fn link_and_xref_diagnostics_share_ranges_and_quick_fixes() {
-    let mut service = LanguageService::default();
+    let project = TestProject::new();
+    let mut service = Session::default();
     initialize(&mut service, &["utf-16"]);
-    open(
+    let document = project.open(
         &mut service,
-        "file:///references.adoc",
+        "references.adoc",
         2,
         "日😀 link:guide.adoc[Guide]\nxref:data.json[Data]\n",
     );
 
-    let diagnostics = service
-        .diagnostics(&uri("file:///references.adoc"))
-        .expect("diagnostics");
+    let diagnostics = service.diagnostics(&document).expect("diagnostics");
     assert_eq!(diagnostics.version, Some(2));
     assert_eq!(
         diagnostics.diagnostics.len(),
@@ -71,7 +69,7 @@ fn link_and_xref_diagnostics_share_ranges_and_quick_fixes() {
     );
 
     let actions = serde_json::to_value(
-        all_code_actions(&service, &uri("file:///references.adoc"))
+        all_code_actions(&service, &document)
             .expect("actions")
             .expect("response"),
     )
@@ -88,14 +86,16 @@ fn link_and_xref_diagnostics_share_ranges_and_quick_fixes() {
 
 #[test]
 fn opt_in_macro_boundary_diagnostic_uses_lsp_positions() {
-    let mut service = LanguageService::default();
+    let project = TestProject::new();
+    let mut service = Session::default();
     service.position_encoding = PositionEncoding::Utf16;
     service
         .update_configuration(json!({"enabledRules": ["macro-boundary"]}))
         .expect("configuration");
+    let document = project.document("macro-boundary.adoc", "日😀xref:guide.adoc[Guide]\n");
     let mut jobs = service.begin_open(typed(json!({
         "textDocument": {
-            "uri": "file:///macro-boundary.adoc",
+            "uri": document,
             "languageId": "asciidoc",
             "version": 4,
             "text": "日😀xref:guide.adoc[Guide]\n"
@@ -104,9 +104,7 @@ fn opt_in_macro_boundary_diagnostic_uses_lsp_positions() {
     let job = jobs.pop().expect("analysis job");
     adopt(&mut service, job);
 
-    let diagnostics = service
-        .diagnostics(&uri("file:///macro-boundary.adoc"))
-        .expect("diagnostics");
+    let diagnostics = service.diagnostics(&document).expect("diagnostics");
     let boundary = diagnostics
         .diagnostics
         .iter()
@@ -123,16 +121,15 @@ fn opt_in_macro_boundary_diagnostic_uses_lsp_positions() {
 
 #[test]
 fn diagnostics_preserve_invalid_explicit_ordered_number_ranges() {
-    let mut service = LanguageService::default();
-    open(
+    let project = TestProject::new();
+    let mut service = Session::default();
+    let document = project.open(
         &mut service,
-        "file:///ordered-list.adoc",
+        "ordered-list.adoc",
         1,
         "4294967296. overflow\n0. zero\n",
     );
-    let diagnostics = service
-        .diagnostics(&uri("file:///ordered-list.adoc"))
-        .expect("diagnostics");
+    let diagnostics = service.diagnostics(&document).expect("diagnostics");
 
     assert_eq!(diagnostics.diagnostics.len(), 2);
     assert!(diagnostics.diagnostics.iter().all(|diagnostic| {
@@ -146,16 +143,15 @@ fn diagnostics_preserve_invalid_explicit_ordered_number_ranges() {
 
 #[test]
 fn diagnostics_preserve_invalid_table_presentation_ranges() {
-    let mut service = LanguageService::default();
-    open(
+    let project = TestProject::new();
+    let mut service = Session::default();
+    let document = project.open(
         &mut service,
-        "file:///table.adoc",
+        "table.adoc",
         1,
         "[frame=ends,frame=sides,grid=diagonal,width=75%,options=autowidth]\n|===\n|cell\n|===\n",
     );
-    let diagnostics = service
-        .diagnostics(&uri("file:///table.adoc"))
-        .expect("diagnostics");
+    let diagnostics = service.diagnostics(&document).expect("diagnostics");
 
     assert_eq!(diagnostics.diagnostics.len(), 3);
     assert!(diagnostics.diagnostics.iter().all(|diagnostic| {
@@ -166,10 +162,10 @@ fn diagnostics_preserve_invalid_table_presentation_ranges() {
 
 #[test]
 fn close_clears_diagnostics() {
-    let mut service = LanguageService::default();
-    let document_uri = uri("file:///a.adoc");
-    open(&mut service, document_uri.as_str(), 1, "bad ");
-    assert!(service.close(&document_uri).0);
+    let project = TestProject::new();
+    let mut service = Session::default();
+    let document_uri = project.open(&mut service, "a.adoc", 1, "bad ");
+    assert!(service.close(&document_uri).closed);
     let diagnostics = service.diagnostics(&document_uri).expect("clear");
     assert!(diagnostics.diagnostics.is_empty());
     assert_eq!(diagnostics.version, None);

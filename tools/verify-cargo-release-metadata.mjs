@@ -2,41 +2,36 @@ import { readFileSync } from "node:fs";
 import process from "node:process";
 
 import toolchains from "../toolchains.json" with { type: "json" };
-import { productRelease } from "./release-policy.mjs";
+import { workspaceVersion } from "./native-release-version.mjs";
 
-const [path, zedPath] = process.argv.slice(2);
-if (!path || !zedPath) {
-  process.stderr.write("usage: node tools/verify-cargo-release-metadata.mjs ROOT_METADATA_JSON ZED_METADATA_JSON\n");
+const [path] = process.argv.slice(2);
+if (!path || process.argv.length !== 3) {
+  process.stderr.write("usage: node tools/verify-cargo-release-metadata.mjs ROOT_METADATA_JSON\n");
   process.exit(2);
 }
 
 try {
   const metadata = JSON.parse(readFileSync(path, "utf8"));
-  const zedMetadata = JSON.parse(readFileSync(zedPath, "utf8"));
   const expectedNames = [
+    "adocweave-core",
     "adocweave",
-    "adocweave-cli",
-    "adocweave-host",
     "adocweave-lsp",
+    "adocweave-project",
     "adocweave-textlint",
-    "adocweave-textlint-wasm",
     "adocweave-wasm",
   ];
-  const packages = metadata.packages.filter((pkg) => expectedNames.includes(pkg.name));
-  if (packages.length !== expectedNames.length) throw new Error("cargo metadata is missing a workspace package");
-  // workspace versionはlib製品の版そのものなので、製品の正本から照合する。
-  const libraryVersion = productRelease("lib").version;
-  const versions = {
-    adocweave: libraryVersion,
-    "adocweave-cli": productRelease("cli").version,
-    "adocweave-host": libraryVersion,
-    "adocweave-lsp": productRelease("lsp").version,
-    "adocweave-textlint": libraryVersion,
-    "adocweave-textlint-wasm": productRelease("textlint").version,
-    "adocweave-wasm": productRelease("wasm").version,
-  };
+  const packagesById = new Map(metadata.packages.map((pkg) => [pkg.id, pkg]));
+  const workspaceNames = metadata.workspace_members
+    .map((id) => packagesById.get(id)?.name)
+    .sort();
+  const expectedWorkspaceNames = [...expectedNames].sort();
+  if (JSON.stringify(workspaceNames) !== JSON.stringify(expectedWorkspaceNames)) {
+    throw new Error("cargo metadata workspace packages do not match the final six-package layout");
+  }
+  const packages = expectedNames.map((name) => metadata.packages.find((pkg) => pkg.name === name));
+  const version = workspaceVersion();
   for (const pkg of packages) {
-    if (pkg.version !== versions[pkg.name]) throw new Error(`${pkg.name}: cargo metadata version mismatch`);
+    if (pkg.version !== version) throw new Error(`${pkg.name}: cargo metadata version mismatch`);
     if (pkg.repository !== "https://github.com/KeishiS/adocweave" || pkg.homepage !== pkg.repository) {
       throw new Error(`${pkg.name}: cargo metadata repository mismatch`);
     }
@@ -47,11 +42,6 @@ try {
     if (pkg.rust_version !== toolchains.rustVersion) {
       throw new Error(`${pkg.name}: cargo metadata Rust version mismatch`);
     }
-  }
-  const zed = zedMetadata.packages.find((pkg) => pkg.name === "adocweave-zed");
-  if (!zed) throw new Error("cargo metadata is missing the Zed package");
-  if (zed.rust_version !== toolchains.rustVersion) {
-    throw new Error("adocweave-zed: cargo metadata Rust version mismatch");
   }
   process.stdout.write("cargo release metadata verified\n");
 } catch (error) {

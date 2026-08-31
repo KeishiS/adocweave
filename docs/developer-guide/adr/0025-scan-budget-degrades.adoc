@@ -1,5 +1,16 @@
 = ADR 0025: 走査の上限超過で部分結果を残す
-:status: accepted
+:status: 置換済み。ADR 0044および0046により置換
+
+== 状態
+
+{status}
+
+[NOTE]
+====
+Language Serverの初期走査はxref:0044-lsp-open-document-scope.adoc[ADR 0044]で廃止しました。本文に現れる
+``adocweave-host`` crateもxref:0046-project-owned-local-filesystem.adoc[ADR 0046]で廃止し、ファイル操作は
+``adocweave-project``が持ちます。以下は廃止前の判断です。
+====
 
 == 背景
 
@@ -34,7 +45,7 @@ Language Serverの初期走査は、ディレクトリの項目数が10万件に
 すでに読み終えた文書はそのまま登録します。文書を開いたときの解析ではこの上限を従来どおり適用します。
 include先を欠いた文書は別の文書であり、部分的な結果を正しい解析として扱えないためです。
 
-上限に達したことは、``window/showMessage``のWarningとしてエディターへ送ります。文面には
+上限に達したことは、``window/showMessage``のWarningとしてエディタへ送ります。文面には
 ``workspace.scan.exclude``で除外できることを含めます。従来のerror診断
 (``workspace-resource-error``)は権限と整合性の失敗のために残します。
 

@@ -27,10 +27,7 @@
 
       toolchains = builtins.fromJSON (builtins.readFile ./toolchains.json);
       inherit (toolchains) rustVersion nodeVersion;
-      cliVersion =
-        (builtins.fromTOML (builtins.readFile ./crates/adocweave-cli/Cargo.toml)).package.version;
-      lspVersion =
-        (builtins.fromTOML (builtins.readFile ./crates/adocweave-lsp/Cargo.toml)).package.version;
+      version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace.package.version;
 
       toolchain = import ./nix/toolchain.nix { inherit nixpkgs rust-overlay; };
       inherit (toolchain)
@@ -50,7 +47,7 @@
           default = import ./nix/package.nix {
             inherit pkgs;
             src = self;
-            inherit cliVersion rustVersion stableRust;
+            inherit version rustVersion stableRust;
           };
         }
       );
@@ -61,11 +58,6 @@
           program = "${self.packages.${system}.default}/bin/adocweave";
           meta.description = "Run the AdocWeave command-line converter";
         };
-        adocweave-lsp = {
-          type = "app";
-          program = "${self.packages.${system}.default}/bin/adocweave-lsp";
-          meta.description = "Run the AdocWeave Language Server";
-        };
       });
 
       checks = forAllPackageSystems (
@@ -73,7 +65,7 @@
         import ./nix/checks.nix {
           pkgs = mkPkgs system;
           package = self.packages.${system}.default;
-          inherit cliVersion lspVersion;
+          inherit version;
         }
       );
 

@@ -1,5 +1,9 @@
 = ADR 0032: 同一workflow runでのリリース公開
-:status: accepted
+:status: 一部有効。公開単位はADR 0040および0043により改訂
+
+== 状態
+
+{status}
 
 == 文脈
 
@@ -25,10 +29,13 @@
 製品tag、Releaseの不在、checksumおよび成果物集合を再検査します。候補SHAの入力、過去runの検索、別runからのdownload、
 artifactの再アップロードは行いません。
 
-書き込み権限とOIDCは、``github-release`` Environmentを使う公開jobだけに付与します。Environmentにはrequired reviewerを
-設定し、deployment branchを``main``へ限定します。承認待ちのrunを新しいpushで取り消しません。
+書き込み権限とOIDCは、対応するEnvironmentを使う公開jobだけに付与します。Environmentにはrequired reviewerを
+設定します。native ReleaseとCachixのEnvironmentは``main``だけを許可し、native Release workflowは``main``から
+手動実行します。独立したパッケージの公開workflowは各製品のstable tagから起動し、対応するEnvironmentもそのtagだけを
+許可します。承認待ちのrunを新しいpushで取り消しません。
 
-Open VSXとCachixへの後続公開はGitHub Releaseを入力とする独立workflowにします。通常は同じrunから呼び出しますが、
+Open VSX、Visual Studio Marketplace、npmおよびCachixへの後続公開はGitHub Releaseを入力とする
+独立workflowにします。通常は同じrunから呼び出しますが、
 送信だけが失敗した場合は公開済みtagを指定して単独で再実行できます。後続workflowは、GitHub Releaseがdraftでも
 prereleaseでもないことと、tagがcheckoutしたcommitを指すことを送信前に検査します。
 
@@ -53,4 +60,4 @@ tag refも削除します。他者が変更したtagやReleaseは削除しませ
 構築しないため、全未公開製品を毎回構築する負担はなくなります。
 
 ADR 0023、0027、0028および0031にある候補SHA、過去candidateの再利用、``main`` pushでの全candidate構築に関する決定を
-本ADRで置き換えます。製品別Release、成果物を作り直さない公開、GitHub Environmentによる権限境界は維持します。
+本ADRで置き換えます。製品別Release、成果物を作り直さない公開、GitHub Environmentによる権限制限は維持します。

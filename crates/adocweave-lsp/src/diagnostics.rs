@@ -2,8 +2,8 @@
 
 use std::collections::HashMap;
 
-use adocweave::output::diagnostics::{Applicability, Diagnostic, Severity};
-use adocweave::text::{SourceDocument, TextRange};
+use adocweave_core::output::diagnostics::{Applicability, Diagnostic, Severity};
+use adocweave_core::text::{SourceDocument, TextRange};
 use async_lsp::lsp_types as lsp;
 
 use crate::position::{PositionEncoding, range_to_lsp, ranges_intersect};
@@ -88,19 +88,6 @@ pub(super) fn project_problem(
     )
 }
 
-pub(super) fn workspace_error(message: &str) -> lsp::Diagnostic {
-    lsp::Diagnostic {
-        range: lsp::Range::default(),
-        severity: Some(lsp::DiagnosticSeverity::ERROR),
-        code: Some(lsp::NumberOrString::String(
-            "workspace-resource-error".to_owned(),
-        )),
-        source: Some("adocweave-project".to_owned()),
-        message: message.to_owned(),
-        ..lsp::Diagnostic::default()
-    }
-}
-
 struct DiagnosticFields<'a> {
     range: TextRange,
     severity: Severity,
@@ -156,7 +143,7 @@ pub(super) fn canonicalize(diagnostics: &mut Vec<lsp::Diagnostic>) {
 pub(super) fn quick_fixes(
     uri: &lsp::Url,
     version: i32,
-    analysis: &adocweave::Analysis,
+    analysis: &adocweave_core::Analysis,
     requested_range: lsp::Range,
     encoding: PositionEncoding,
     capabilities: QuickFixCapabilities,
@@ -226,7 +213,7 @@ pub(super) fn quick_fixes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use adocweave::text::{TextRange, TextSize};
+    use adocweave_core::text::{TextRange, TextSize};
 
     fn range(start: usize, end: usize) -> TextRange {
         TextRange::new(
@@ -242,12 +229,12 @@ mod tests {
         let document = SourceDocument::new(source).expect("source document");
         let uri = lsp::Url::parse("file:///diagnostics.adoc").expect("URI");
         let diagnostic = Diagnostic {
-            id: adocweave::output::diagnostics::DiagnosticId::new("second"),
-            code: adocweave::output::diagnostics::DiagnosticCode::new("duplicate"),
+            id: adocweave_core::output::diagnostics::DiagnosticId::new("second"),
+            code: adocweave_core::output::diagnostics::DiagnosticCode::new("duplicate"),
             severity: Severity::Warning,
             message: "second definition".to_owned(),
             range: range(22, 28),
-            related: vec![adocweave::output::diagnostics::RelatedInformation {
+            related: vec![adocweave_core::output::diagnostics::RelatedInformation {
                 message: "first definition".to_owned(),
                 range: range(8, 13),
             }],
@@ -264,7 +251,11 @@ mod tests {
         assert_eq!(related[0].location.uri, uri);
         assert_eq!(related[0].location.range.start, lsp::Position::new(0, 4));
 
-        let mut diagnostics = vec![utf8.clone(), workspace_error("workspace"), utf8];
+        let zero = lsp::Diagnostic {
+            message: "project".to_owned(),
+            ..lsp::Diagnostic::default()
+        };
+        let mut diagnostics = vec![utf8.clone(), zero, utf8];
         canonicalize(&mut diagnostics);
         assert_eq!(diagnostics.len(), 2);
         assert_eq!(diagnostics[0].range, lsp::Range::default());
@@ -273,7 +264,7 @@ mod tests {
     #[test]
     fn quick_fix_conversion_preserves_ranges_versions_and_preference() {
         let source = "==Title\ntext  \n";
-        let analysis = adocweave::Engine::new(adocweave::AnalysisOptions::default())
+        let analysis = adocweave_core::Engine::new(adocweave_core::AnalysisOptions::default())
             .analyze(source)
             .expect("analysis");
         let uri = lsp::Url::parse("file:///fix.adoc").expect("URI");

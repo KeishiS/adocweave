@@ -1,0 +1,152 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  npm_config_fetch_retries: "3"
+  npm_config_fetch_retry_maxtimeout: "30000"
+  npm_config_fetch_timeout: "120000"
+
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  source:
+    name: source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: DeterminateSystems/determinate-nix-action@527f17dd63d2d60d3e5552934bc84b9a33a14d11 # v3.22.2
+      - name: Locked toolchain exposure for dependency caching
+        run: nix develop .#ci -c bash -c 'command -v cargo' | xargs dirname >> "$GITHUB_PATH"
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          prefix-key: source
+          key: ${{ hashFiles('flake.lock', 'flake.nix', 'nix/**/*.nix') }}
+          workspaces: |
+            . -> target
+            editors/zed -> target
+          cache-bin: "false"
+          cache-on-failure: "false"
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      - name: Complete source gate
+        run: nix develop .#ci -c cargo make verify
+
+  portable-project:
+    name: portable-project (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-2025]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify portable project and Language Server filesystem behavior
+        shell: bash
+        run: |
+          rust_version="$(node -p "require('./toolchains.json').rustVersion")"
+          rustup toolchain install "$rust_version" --profile minimal
+          rustup run "$rust_version" cargo test --locked -p adocweave-project -p adocweave-lsp --all-features
+
+  zed-registry:
+    name: zed-registry
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build with the official Zed registry Rust version
+        shell: bash
+        run: |
+          # The official registry builds extensions with Rust 1.90.
+          rustup toolchain install 1.90 --profile minimal --target wasm32-wasip2
+          rustup run 1.90 cargo build --locked --release \
+            --manifest-path editors/zed/Cargo.toml --target wasm32-wasip2
+
+  verify:
+    name: verify
+    if: always()
+    needs: [source, portable-project, zed-registry]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require every source check
+        env:
+          SOURCE_RESULT: ${{ needs.source.result }}
+          PORTABLE_PROJECT_RESULT: ${{ needs.portable-project.result }}
+          ZED_REGISTRY_RESULT: ${{ needs.zed-registry.result }}
+        run: |
+          test "$SOURCE_RESULT" = success
+          test "$PORTABLE_PROJECT_RESULT" = success
+          test "$ZED_REGISTRY_RESULT" = success
+
+  security:
+    name: security-audit
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [verify]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: DeterminateSystems/determinate-nix-action@527f17dd63d2d60d3e5552934bc84b9a33a14d11 # v3.22.2
+      - name: Audit distributed dependencies
+        run: nix develop .#ci -c cargo make security-audit
+
+  main-integrations:
+    name: main-integrations
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [verify, security]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: DeterminateSystems/determinate-nix-action@527f17dd63d2d60d3e5552934bc84b9a33a14d11 # v3.22.2
+      - name: Complete main integrations
+        run: nix develop .#ci-integrations -c cargo make main-integrations
+
+  fuzz-smoke:
+    name: fuzz-smoke
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [verify, security]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: DeterminateSystems/determinate-nix-action@527f17dd63d2d60d3e5552934bc84b9a33a14d11 # v3.22.2
+      - name: Fuzz known corpus
+        run: nix develop .#ci-fuzz -c cargo make fuzz-smoke
+
+  nix-package-check:
+    name: nix-package-check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [verify, security]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: DeterminateSystems/determinate-nix-action@527f17dd63d2d60d3e5552934bc84b9a33a14d11 # v3.22.2
+      - name: Build and verify Nix package
+        run: nix flake check

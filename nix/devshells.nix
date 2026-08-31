@@ -51,6 +51,7 @@ let
     yq-go
     zip
     unzip
+    zizmor
   ];
 
   # The VS Code extension host is a downloaded Electron binary rather than a Nix
@@ -92,7 +93,6 @@ let
     pkgs.mkShell (
       {
         packages = commonPackages ++ [ rust ] ++ extra ++ lib.optionals htmlValidator [ pkgs.validator-nu ];
-        ADOCWEAVE_DIST_BIN = "${pkgs.cargo-dist}/bin/dist";
       }
       // lib.optionalAttrs htmlValidator {
         ADOCWEAVE_HTML_VALIDATOR = "${pkgs.validator-nu}/bin/vnu";

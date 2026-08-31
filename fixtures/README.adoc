@@ -7,14 +7,14 @@ fixtureは担当機能ごとに分類する。各機能ディレクトリには�
 - `*.diagnostics.json`: 期待する診断
 - `*.formatted.adoc`: 期待するFormatter出力
 
-各fixtureは一つの動作へ集中させる。内容を表す名前を使い、正常、不正、不完全、境界値の
+各fixtureは一つの動作へ集中させる。内容を表す名前を使い、正常、不正、不完全、上限・下限付近の値の
 入力を別ファイルとして追加する。
 
 `release/core.adoc`は機能横断のコアリリースfixtureである。期待HTMLを同じディレクトリへ
 置き、CLI、Lint、Formatterのテストで同じソースを使う。
 
-runtime横断fixtureのmanifestは、core crateが所有するruntime間の公開仕様として
-`../crates/adocweave/conformance/cases.json`に置きます。readerはこの固定pathを直接読み、
+runtime横断fixtureのmanifestは、``adocweave-core`` crateが所有するruntime間の公開仕様として
+`../crates/adocweave-core/conformance/cases.json`に置きます。readerはこの固定pathを直接読み、
 `sourceFile`と各`expected*File`をfixture rootである`fixtures/conformance/`を基準に解決します。
 readerのpathを再掲する台帳は置きません。
 

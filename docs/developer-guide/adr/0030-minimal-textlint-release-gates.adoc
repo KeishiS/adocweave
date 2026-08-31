@@ -1,5 +1,9 @@
-= ADR 0030: textlint境界と配布検査の最小化
-:status: accepted; pull request gate amended by ADR 0031; release metadata amended by ADR 0036
+= ADR 0030: textlintの責務分担と配布検査の最小化
+:status: 一部有効。検査はADR 0031、メタデータはADR 0036、公開方法はADR 0043により改訂
+
+== 状態
+
+{status}
 
 == 文脈
 
@@ -24,16 +28,17 @@ JavaScriptと固定同梱するWebAssemblyの間では、component versionを交
 調べる定期workflowは設けません。再現性を調べる手動taskは、検証済みcandidateと1回のclean rebuildを比較します。
 Pull Requestのgateには含めません。
 
-公開後は、GitHub Releaseの実URLから取得したarchiveを``sha256.sum``と照合し、その実URLを``npx``へ指定して
-単発実行します。完成archiveの構造は公開前に同じbyte列へ対して検証済みであるため、公開後に再検証しません。
+パッケージ版と一致する``textlint-plugin-asciidoc/vX.Y.Z``タグからcandidateを構築し、固定consumerで検査した
+同じarchiveをnpmへ直接公開します。公開後はnpm Registryから導入し、署名とprovenance、固定consumerおよび
+``npx``による単発実行を確認します。完成archiveの構造は公開前に検証済みであるため、公開後に再検証しません。
 
 == 検討した代替案
 
 **OSごとの導入matrixを維持する。** パッケージのJavaScriptとNode.js向けWebAssemblyは固定consumerが同じ公開入口から
-実行します。OS別の処理を持たないため、runnerを増やさず一つの環境で境界を検査します。
+実行します。OS別の処理を持たないため、runnerを増やさず一つの環境でコンポーネント間の接続を検査します。
 
 **candidateと公開後の両方で``npx``を実行する。** 公開前の固定consumerがパッケージの動作を検査します。
-``npx``はGitHub Releaseの実URLから取得できることを確認する公開後の経路に限定します。
+``npx``はnpm Registryで公開したパッケージを取得できることを確認する公開後の経路に限定します。
 
 **最新依存関係を定期的に解決する。** 対応範囲は固定consumerとpackage metadataで明示します。
 その範囲外の依存関係を定期的に観測するworkflowは、公開保証やmerge条件に含めません。
@@ -44,6 +49,6 @@ textlint用candidateの検査は、完成archiveの検証と固定consumer E2E�
 検査対象のarchiveと責務が一意になり、同じ性質を別のrunnerや入口から繰り返し検査しません。
 
 再現性の追加調査と公開後の取得経路は残りますが、標準source gateから分離します。ADR 0017およびADR 0023のうち、
-textlint用パッケージの検査回数と実行環境に関する決定を本ADRで置き換えます。GitHub Releaseで``.tgz``を配布し、
-実行時依存を持たせず、checksum、第三者依存の通知およびArtifact Attestationを生成する決定は維持します。
+textlint用パッケージの検査回数と実行環境に関する決定を本ADRで置き換えます。パッケージに実行時依存を持たせず、
+第三者依存の通知を含める決定は維持します。公開元の確認にはnpm Trusted Publishingを使用します。
 SBOMを公開しない判断はxref:0036-no-unconsumed-sbom.adoc[ADR 0036]で置き換えました。

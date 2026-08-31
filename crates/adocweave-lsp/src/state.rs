@@ -1,67 +1,145 @@
 //! Versioned document state and generation-checked analysis adoption.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use adocweave::preprocess::{AnalysisProjection, PreprocessedDocument};
-use adocweave::text::TextRange;
-use adocweave::{
-    Analysis, AnalysisOptions, AnalysisRequest, AnalysisResult, CancellationCheck,
-    CancellationToken, DocumentRevision, SourceId,
+#[cfg(test)]
+use adocweave_core::AnalysisResult;
+use adocweave_core::preprocess::{AnalysisProjection, PreprocessedDocument};
+use adocweave_core::text::TextRange;
+use adocweave_core::{
+    Analysis, AnalysisOptions, CancellationCheck, CancellationToken, DocumentRevision, SourceId,
 };
+use adocweave_project::{ProjectLocalTargetDiagnostic, ProjectObservationAccess, ProjectRequest};
 
-use crate::workspace::WorkspaceInput;
+#[derive(Debug)]
+pub struct ProjectAnalysisSnapshot {
+    pub uri: String,
+    pub document_input: DocumentAnalysisInput,
+    pub cancellation: Arc<CancellationToken>,
+    pub project_problem: Option<ProjectProblem>,
+    pub prepared_request: Option<PreparedProjectRequest>,
+    pub previously_published_diagnostic_uris: BTreeSet<String>,
+}
+
+#[derive(Debug)]
+pub struct PreparedProjectRequest {
+    pub request: ProjectRequest,
+    pub source_index: ProjectSourceIndex,
+    pub observation_access: ProjectObservationAccess,
+}
 
 #[derive(Clone, Debug)]
-pub struct AnalysisJob {
+pub struct DocumentAnalysisInput {
+    pub revision: DocumentRevision,
+    pub source: Arc<str>,
+    pub options: AnalysisOptions,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ProjectSourceIndex {
+    by_id: BTreeMap<SourceId, ProjectSourceState>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ProjectSourceState {
     pub uri: String,
-    pub request: AnalysisRequest,
-    pub cancellation: Arc<CancellationToken>,
-    pub workspace: Option<WorkspaceInput>,
-    pub workspace_problem: Option<WorkspaceProblem>,
+    pub text: Arc<str>,
+    pub version: Option<i64>,
+    pub generation: Option<u64>,
+}
+
+impl ProjectSourceIndex {
+    pub fn insert(&mut self, source_id: SourceId, source: ProjectSourceState) {
+        self.by_id.insert(source_id, source);
+    }
+
+    pub fn get(&self, source_id: &SourceId) -> Option<&ProjectSourceState> {
+        self.by_id.get(source_id)
+    }
+
+    pub fn source_for_uri(&self, uri: &str) -> Option<&ProjectSourceState> {
+        self.by_id.values().find(|source| source.uri == uri)
+    }
+
+    pub fn open_document_revisions(&self) -> impl Iterator<Item = (&str, i64, u64)> {
+        self.by_id
+            .values()
+            .filter_map(|source| Some((source.uri.as_str(), source.version?, source.generation?)))
+    }
+
+    pub fn retain(&mut self, source_ids: &BTreeSet<SourceId>) {
+        self.by_id
+            .retain(|source_id, _| source_ids.contains(source_id));
+    }
 }
 
 #[derive(Clone, Debug)]
 pub struct DocumentState {
-    pub uri: String,
-    pub request: AnalysisRequest,
+    pub source_id: SourceId,
+    pub document_input: DocumentAnalysisInput,
     pub view: Option<Arc<DocumentView>>,
-    pub workspace_problem: Option<WorkspaceProblem>,
+    pub project_problem: Option<ProjectProblem>,
+    published_diagnostic_uris: BTreeSet<String>,
     cancellation: Arc<CancellationToken>,
 }
 
 #[derive(Debug)]
 pub struct DocumentView {
-    pub root: Arc<Analysis>,
-    pub expanded: Option<Arc<WorkspaceAnalysis>>,
-    pub format: adocweave::output::formatter::FormatConfig,
+    pub primary: Arc<Analysis>,
+    pub expanded: Option<Arc<ExpandedDocumentAnalysis>>,
+    pub format: adocweave_core::output::formatter::FormatConfig,
+    pub sources: Arc<ProjectSourceIndex>,
+}
+
+pub struct AdoptedAnalysis {
+    pub primary: Option<Analysis>,
+    pub expanded: Option<ExpandedDocumentAnalysis>,
+    pub format: adocweave_core::output::formatter::FormatConfig,
+    pub sources: Arc<ProjectSourceIndex>,
+    pub problem: Option<ProjectProblem>,
+    pub published_diagnostic_uris: BTreeSet<String>,
 }
 
 #[cfg(test)]
 impl DocumentState {
     pub fn analysis(&self) -> Option<&Analysis> {
-        self.view.as_ref().map(|view| view.root.as_ref())
+        self.view.as_ref().map(|view| view.primary.as_ref())
     }
+}
 
-    pub fn workspace_analysis(&self) -> Option<&WorkspaceAnalysis> {
-        self.view.as_ref()?.expanded.as_deref()
+impl DocumentState {
+    fn published_diagnostic_uris(&self, document_uri: &str) -> BTreeSet<String> {
+        let mut uris = self.published_diagnostic_uris.clone();
+        uris.insert(document_uri.to_owned());
+        uris
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct WorkspaceProblem {
-    pub source_id: Option<String>,
+pub struct ProjectProblem {
+    pub document_uri: Option<String>,
     pub range: TextRange,
     pub code: String,
     pub message: String,
 }
 
 #[derive(Debug)]
-pub struct WorkspaceAnalysis {
+pub struct ExpandedDocumentAnalysis {
     pub document: Arc<PreprocessedDocument>,
     pub analysis: Arc<Analysis>,
     pub projection: Arc<AnalysisProjection>,
     pub resource_versions: BTreeMap<String, i64>,
+    pub local_target_diagnostics: Vec<ProjectLocalTargetDiagnostic>,
+    pub sources: Arc<ProjectSourceIndex>,
+}
+
+impl ExpandedDocumentAnalysis {
+    pub fn uri_for_source_id(&self, source_id: &SourceId) -> Option<&str> {
+        self.sources
+            .get(source_id)
+            .map(|source| source.uri.as_str())
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -69,7 +147,7 @@ pub struct DocumentSnapshot {
     pub uri: String,
     pub revision: DocumentRevision,
     pub analysis: Arc<Analysis>,
-    pub format: adocweave::output::formatter::FormatConfig,
+    pub format: adocweave_core::output::formatter::FormatConfig,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -92,17 +170,10 @@ impl DocumentStore {
 
     pub fn snapshot(&self, uri: &str) -> Option<DocumentSnapshot> {
         let document = self.documents.get(uri)?;
-        if document
-            .workspace_problem
-            .as_ref()
-            .is_some_and(|problem| problem.code == "workspace-input-error")
-        {
-            return None;
-        }
         Some(DocumentSnapshot {
-            uri: document.uri.clone(),
-            revision: document.request.revision.clone(),
-            analysis: document.view.as_ref()?.root.clone(),
+            uri: document.source_id.as_str().to_owned(),
+            revision: document.document_input.revision.clone(),
+            analysis: document.view.as_ref()?.primary.clone(),
             format: document.view.as_ref()?.format,
         })
     }
@@ -110,7 +181,7 @@ impl DocumentStore {
     pub fn snapshots(&self) -> Vec<DocumentSnapshot> {
         self.documents
             .values()
-            .filter_map(|document| self.snapshot(&document.uri))
+            .filter_map(|document| self.snapshot(document.source_id.as_str()))
             .collect()
     }
 
@@ -119,24 +190,55 @@ impl DocumentStore {
             .values()
             .filter_map(|document| {
                 Some((
-                    document.uri.clone(),
-                    i32::try_from(document.request.revision.version).ok()?,
-                    document.request.source.to_string(),
+                    document.source_id.as_str().to_owned(),
+                    i32::try_from(document.document_input.revision.version).ok()?,
+                    document.document_input.source.to_string(),
                 ))
             })
             .collect()
     }
 
-    pub fn workspace_analyses(&self) -> impl Iterator<Item = &WorkspaceAnalysis> {
+    pub fn open_project_sources(&self) -> Vec<(String, DocumentRevision, String)> {
+        self.documents
+            .values()
+            .map(|document| {
+                (
+                    document.source_id.as_str().to_owned(),
+                    document.document_input.revision.clone(),
+                    document.document_input.source.to_string(),
+                )
+            })
+            .collect()
+    }
+
+    pub fn revision_is_current(&self, uri: &str, version: i64, generation: u64) -> bool {
+        self.documents.get(uri).is_some_and(|document| {
+            document.document_input.revision.version == version
+                && document.document_input.revision.generation == generation
+        })
+    }
+
+    pub fn expanded_analyses(&self) -> impl Iterator<Item = &ExpandedDocumentAnalysis> {
         self.documents
             .values()
             .filter_map(|document| document.view.as_ref()?.expanded.as_deref())
     }
 
-    pub fn workspace_problems(&self) -> impl Iterator<Item = &WorkspaceProblem> {
+    pub fn project_problems(&self) -> impl Iterator<Item = &ProjectProblem> {
         self.documents
             .values()
-            .filter_map(|document| document.workspace_problem.as_ref())
+            .filter_map(|document| document.project_problem.as_ref())
+    }
+
+    pub fn adopted_source(&self, uri: &str) -> Option<&str> {
+        self.documents.values().find_map(|document| {
+            document
+                .view
+                .as_ref()?
+                .sources
+                .source_for_uri(uri)
+                .map(|source| source.text.as_ref())
+        })
     }
 
     pub fn cancellation(&self, uri: &str) -> Option<Arc<CancellationToken>> {
@@ -145,14 +247,27 @@ impl DocumentStore {
             .map(|document| document.cancellation.clone())
     }
 
-    pub fn job_is_current(&self, job: &AnalysisJob) -> bool {
-        self.documents.get(&job.uri).is_some_and(|document| {
-            document.request.revision == job.request.revision && !job.cancellation.is_cancelled()
+    pub fn published_diagnostic_uris(&self, uri: &str) -> BTreeSet<String> {
+        self.documents
+            .get(uri)
+            .map(|document| document.published_diagnostic_uris(uri))
+            .unwrap_or_default()
+    }
+
+    pub fn snapshot_is_current(&self, snapshot: &ProjectAnalysisSnapshot) -> bool {
+        self.documents.get(&snapshot.uri).is_some_and(|document| {
+            document.document_input.revision == snapshot.document_input.revision
+                && !snapshot.cancellation.is_cancelled()
         })
     }
 
     #[cfg(test)]
-    pub fn begin_open(&mut self, uri: String, version: i32, text: String) -> AnalysisJob {
+    pub fn begin_open(
+        &mut self,
+        uri: String,
+        version: i32,
+        text: String,
+    ) -> ProjectAnalysisSnapshot {
         self.begin_open_with_options(uri, version, text, AnalysisOptions::default())
     }
 
@@ -162,97 +277,120 @@ impl DocumentStore {
         version: i32,
         text: String,
         options: AnalysisOptions,
-    ) -> AnalysisJob {
+    ) -> ProjectAnalysisSnapshot {
         if let Some(previous) = self.documents.get(&uri) {
             previous.cancellation.cancel();
         }
-        let job = self.new_job(uri.clone(), version, text, options);
+        let source_id = SourceId::new(uri.clone());
+        let snapshot = self.new_snapshot(uri.clone(), source_id.clone(), version, text, options);
         Arc::make_mut(&mut self.documents).insert(
             uri.clone(),
             DocumentState {
-                uri,
-                request: job.request.clone(),
+                source_id,
+                document_input: snapshot.document_input.clone(),
                 view: None,
-                workspace_problem: None,
-                cancellation: job.cancellation.clone(),
+                project_problem: None,
+                published_diagnostic_uris: BTreeSet::from([uri]),
+                cancellation: snapshot.cancellation.clone(),
             },
         );
-        job
+        snapshot
     }
 
-    pub fn begin_change(&mut self, uri: &str, version: i32, text: String) -> Option<AnalysisJob> {
+    pub fn begin_change(
+        &mut self,
+        uri: &str,
+        version: i32,
+        text: String,
+    ) -> Option<ProjectAnalysisSnapshot> {
         let current = self.documents.get(uri)?;
-        if i64::from(version) <= current.request.revision.version {
+        if i64::from(version) <= current.document_input.revision.version {
             return None;
         }
-        let options = current.request.options.clone();
+        let options = current.document_input.options.clone();
+        let source_id = current.source_id.clone();
         current.cancellation.cancel();
-        let job = self.new_job(uri.to_owned(), version, text, options);
-        self.install_job(uri, &job);
-        Some(job)
+        let snapshot = self.new_snapshot(uri.to_owned(), source_id, version, text, options);
+        self.install_snapshot(uri, &snapshot);
+        Some(snapshot)
     }
 
-    pub fn begin_reanalysis(&mut self, uri: &str) -> Option<AnalysisJob> {
+    pub fn begin_reanalysis(&mut self, uri: &str) -> Option<ProjectAnalysisSnapshot> {
         let current = self.documents.get(uri)?;
         current.cancellation.cancel();
-        let version = i32::try_from(current.request.revision.version).ok()?;
-        let text = current.request.source.to_string();
-        let options = current.request.options.clone();
-        let job = self.new_job(uri.to_owned(), version, text, options);
-        self.install_job(uri, &job);
-        Some(job)
+        let version = i32::try_from(current.document_input.revision.version).ok()?;
+        let text = current.document_input.source.to_string();
+        let options = current.document_input.options.clone();
+        let source_id = current.source_id.clone();
+        let snapshot = self.new_snapshot(uri.to_owned(), source_id, version, text, options);
+        self.install_snapshot(uri, &snapshot);
+        Some(snapshot)
     }
 
-    pub fn reconfigure(&mut self, uri: &str, options: AnalysisOptions) -> Option<AnalysisJob> {
+    pub fn reconfigure(
+        &mut self,
+        uri: &str,
+        options: AnalysisOptions,
+    ) -> Option<ProjectAnalysisSnapshot> {
         let current = self.documents.get(uri)?;
         current.cancellation.cancel();
-        let version = i32::try_from(current.request.revision.version).ok()?;
-        let text = current.request.source.to_string();
-        let job = self.new_job(uri.to_owned(), version, text, options);
-        self.install_job(uri, &job);
-        Some(job)
+        let version = i32::try_from(current.document_input.revision.version).ok()?;
+        let text = current.document_input.source.to_string();
+        let source_id = current.source_id.clone();
+        let snapshot = self.new_snapshot(uri.to_owned(), source_id, version, text, options);
+        self.install_snapshot(uri, &snapshot);
+        Some(snapshot)
     }
 
-    /// Replaces an existing document's pending request with `job`, clearing the
-    /// prior analysis view and workspace problem.
-    fn install_job(&mut self, uri: &str, job: &AnalysisJob) {
+    /// Replaces an existing document's pending request with `snapshot`, clearing the
+    /// prior analysis view and project problem.
+    fn install_snapshot(&mut self, uri: &str, snapshot: &ProjectAnalysisSnapshot) {
         let current = Arc::make_mut(&mut self.documents)
             .get_mut(uri)
             .expect("document existence checked");
-        current.request = job.request.clone();
+        current.document_input = snapshot.document_input.clone();
         current.view = None;
-        current.workspace_problem = None;
-        current.cancellation = job.cancellation.clone();
+        current.project_problem = None;
+        current.cancellation = snapshot.cancellation.clone();
     }
 
     #[cfg(test)]
-    pub fn adopt(&mut self, job: &AnalysisJob, result: AnalysisResult) -> Adoption {
+    pub fn adopt(
+        &mut self,
+        snapshot: &ProjectAnalysisSnapshot,
+        result: AnalysisResult,
+    ) -> Adoption {
         self.adopt_with_format(
-            job,
+            snapshot,
             result,
-            adocweave::output::formatter::FormatConfig::default(),
+            adocweave_core::output::formatter::FormatConfig::default(),
         )
     }
 
+    #[cfg(test)]
     pub fn adopt_with_format(
         &mut self,
-        job: &AnalysisJob,
+        snapshot: &ProjectAnalysisSnapshot,
         result: AnalysisResult,
-        format: adocweave::output::formatter::FormatConfig,
+        format: adocweave_core::output::formatter::FormatConfig,
     ) -> Adoption {
-        let Some(document) = self.documents.get(&job.uri) else {
+        let Some(document) = self.documents.get(&snapshot.uri) else {
             return Adoption::Closed;
         };
-        if !result.is_current(&document.request.revision, job.cancellation.as_ref()) {
+        if !result.is_current(
+            &document.document_input.revision,
+            snapshot.cancellation.as_ref(),
+        ) {
             return Adoption::Stale;
         }
         let document = Arc::make_mut(&mut self.documents)
-            .get_mut(&job.uri)
+            .get_mut(&snapshot.uri)
             .expect("document existence checked");
         document.view = Some(Arc::new(DocumentView {
-            root: Arc::new(result.analysis),
+            primary: Arc::new(result.analysis),
             expanded: None,
             format,
+            sources: Arc::new(ProjectSourceIndex::default()),
         }));
         Adoption::Adopted
     }
@@ -260,54 +398,39 @@ impl DocumentStore {
     /// Confirms the document for `job` still exists and its revision has not
     /// been superseded or cancelled, returning the terminal [`Adoption`] on
     /// failure.
-    fn ensure_current(&self, job: &AnalysisJob) -> Result<(), Adoption> {
-        let Some(document) = self.documents.get(&job.uri) else {
+    fn ensure_current(&self, snapshot: &ProjectAnalysisSnapshot) -> Result<(), Adoption> {
+        let Some(document) = self.documents.get(&snapshot.uri) else {
             return Err(Adoption::Closed);
         };
-        if document.request.revision != job.request.revision || job.cancellation.is_cancelled() {
+        if document.document_input.revision != snapshot.document_input.revision
+            || snapshot.cancellation.is_cancelled()
+        {
             return Err(Adoption::Stale);
         }
         Ok(())
     }
 
-    pub fn adopt_workspace(&mut self, job: &AnalysisJob, analysis: WorkspaceAnalysis) -> Adoption {
-        if let Err(adoption) = self.ensure_current(job) {
-            return adoption;
-        }
-        let document = Arc::make_mut(&mut self.documents)
-            .get_mut(&job.uri)
-            .expect("document existence checked");
-        let Some(view) = &document.view else {
-            return Adoption::Stale;
-        };
-        document.view = Some(Arc::new(DocumentView {
-            root: view.root.clone(),
-            expanded: Some(Arc::new(analysis)),
-            format: view.format,
-        }));
-        document.workspace_problem = None;
-        Adoption::Adopted
-    }
-
-    pub fn adopt_workspace_problem(
+    pub fn complete_analysis(
         &mut self,
-        job: &AnalysisJob,
-        problem: WorkspaceProblem,
+        snapshot: &ProjectAnalysisSnapshot,
+        analysis: AdoptedAnalysis,
     ) -> Adoption {
-        if let Err(adoption) = self.ensure_current(job) {
+        if let Err(adoption) = self.ensure_current(snapshot) {
             return adoption;
         }
         let document = Arc::make_mut(&mut self.documents)
-            .get_mut(&job.uri)
+            .get_mut(&snapshot.uri)
             .expect("document existence checked");
-        if let Some(view) = &document.view {
-            document.view = Some(Arc::new(DocumentView {
-                root: view.root.clone(),
-                expanded: None,
-                format: view.format,
-            }));
-        }
-        document.workspace_problem = Some(problem);
+        document.view = analysis.primary.map(|primary| {
+            Arc::new(DocumentView {
+                primary: Arc::new(primary),
+                expanded: analysis.expanded.map(Arc::new),
+                format: analysis.format,
+                sources: analysis.sources,
+            })
+        });
+        document.project_problem = analysis.problem;
+        document.published_diagnostic_uris = analysis.published_diagnostic_uris;
         Adoption::Adopted
     }
 
@@ -328,39 +451,53 @@ impl DocumentStore {
         }
     }
 
-    fn new_job(
+    fn new_snapshot(
         &mut self,
         uri: String,
+        source_id: SourceId,
         version: i32,
         text: String,
         options: AnalysisOptions,
-    ) -> AnalysisJob {
-        self.next_generation = self.next_generation.saturating_add(1);
-        let request = AnalysisRequest::new(
-            Some(SourceId::new(uri.clone())),
-            i64::from(version),
-            self.next_generation,
-            text,
+    ) -> ProjectAnalysisSnapshot {
+        let previously_published_diagnostic_uris = self.published_diagnostic_uris(&uri);
+        self.next_generation = self
+            .next_generation
+            .checked_add(1)
+            .expect("document analysis generation exhausted");
+        let document_input = DocumentAnalysisInput {
+            revision: DocumentRevision {
+                source_id: Some(source_id),
+                version: i64::from(version),
+                generation: self.next_generation,
+            },
+            source: Arc::from(text),
             options,
-        );
-        AnalysisJob {
+        };
+        ProjectAnalysisSnapshot {
             uri,
-            request,
+            document_input,
             cancellation: Arc::new(CancellationToken::new()),
-            workspace: None,
-            workspace_problem: None,
+            project_problem: None,
+            prepared_request: None,
+            previously_published_diagnostic_uris,
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use adocweave::{CancellationCheck, NeverCancel};
+    use adocweave_core::{CancellationCheck, NeverCancel};
 
-    use super::{Adoption, AnalysisJob, DocumentStore};
+    use super::{Adoption, DocumentStore, ProjectAnalysisSnapshot};
 
-    fn analyze(job: &AnalysisJob) -> adocweave::AnalysisResult {
-        job.request.analyze(&NeverCancel).expect("analysis")
+    fn analyze(snapshot: &ProjectAnalysisSnapshot) -> adocweave_core::AnalysisResult {
+        adocweave_core::AnalysisRequest {
+            revision: snapshot.document_input.revision.clone(),
+            source: snapshot.document_input.source.clone(),
+            options: snapshot.document_input.options.clone(),
+        }
+        .analyze(&NeverCancel)
+        .expect("analysis")
     }
 
     #[test]
@@ -379,7 +516,7 @@ mod tests {
         assert_eq!(snapshot.revision.version, 2);
         assert_eq!(
             snapshot.revision.generation,
-            new.request.revision.generation
+            new.document_input.revision.generation
         );
         assert_eq!(snapshot.analysis.source(), "= New");
     }
@@ -436,5 +573,15 @@ mod tests {
                 .source(),
             "= New"
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "document analysis generation exhausted")]
+    fn analysis_generation_is_never_reused_after_exhaustion() {
+        let mut store = DocumentStore {
+            next_generation: u64::MAX,
+            ..DocumentStore::default()
+        };
+        let _ = store.begin_open("file:///a.adoc".to_owned(), 1, "= A".to_owned());
     }
 }

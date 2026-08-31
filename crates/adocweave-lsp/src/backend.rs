@@ -5,156 +5,99 @@ use std::num::NonZeroUsize;
 use std::ops::ControlFlow;
 use std::sync::Arc;
 
-use adocweave::{CancellationCheck, CancellationToken};
-use adocweave_host::IncludeFilesystemJob;
+use adocweave_core::{CancellationCheck, CancellationToken};
+use adocweave_project::process as process_project;
 use async_lsp::client_monitor::ClientProcessMonitorLayer;
 use async_lsp::concurrency::ConcurrencyLayer;
-use async_lsp::lsp_types::{
-    MessageType, PublishDiagnosticsParams, ShowMessageParams, Url, notification, request,
-};
+use async_lsp::lsp_types::{PublishDiagnosticsParams, Url, notification, request};
 use async_lsp::panic::CatchUnwindLayer;
 use async_lsp::router::Router;
 use async_lsp::tracing::TracingLayer;
 use async_lsp::{ClientSocket, ErrorCode, ResponseError};
 use serde_json::Value;
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::sync::Semaphore;
 use tower::ServiceBuilder;
 
 use crate::cancellation::{QueryCancellation, QueryError, QueryResult};
 use crate::lifecycle::ProtocolLifecycleLayer;
-use crate::service::LanguageService;
-use crate::state::{Adoption, AnalysisJob, WorkspaceProblem};
-use crate::workspace::{AnalyzedRoot, WorkspaceScanNotice, document_analysis_job_limits};
-use crate::workspace_scan::{
-    WorkspaceRecoveryTimerUpdate, WorkspaceScanCoordinator, WorkspaceScanRecovery,
-    WorkspaceScanRecoveryTimer, WorkspaceScanStart, WorkspaceScanTransition, WorkspaceScanned,
+use crate::service::{
+    ProjectAnalysisAction, ProjectAnalysisCompletion, ProjectAnalysisOutcome, Session,
+    project_observations_are_current,
 };
-use crate::{HostReferenceIndex, NoHostReferenceIndex};
+use crate::state::{ProjectAnalysisSnapshot, ProjectSourceIndex};
 
 const MAX_CONCURRENT_REQUESTS: usize = 16;
 const MAX_CONCURRENT_ANALYSES: usize = 2;
-const WATCH_SCAN_RECOVERY_DEBOUNCE_MS: u64 = 100;
+
+#[cfg(test)]
+pub(crate) enum RequestHandlerPanic {}
+
+#[cfg(test)]
+impl request::Request for RequestHandlerPanic {
+    type Params = ();
+    type Result = ();
+
+    const METHOD: &'static str = "adocweave/testRequestHandlerPanic";
+}
+
+#[cfg(test)]
+async fn request_handler_panic() -> Result<(), ResponseError> {
+    panic!("intentional request handler panic")
+}
 
 pub(crate) struct Backend {
     client: ClientSocket,
-    service: LanguageService,
+    session: Session,
     cpu_limit: Arc<Semaphore>,
-    analysis_tasks: BTreeMap<String, AnalysisTask>,
-    workspace_analysis_gate: Arc<Semaphore>,
-    workspace_scans: WorkspaceScanCoordinator,
-    workspace_scan_recovery_timer: WorkspaceScanRecoveryTimer,
+    analysis_workers: BTreeMap<String, AnalysisWorker>,
 }
 
-struct AnalysisTask {
-    generation: u64,
+struct AnalysisWorker {
+    cancellation: Arc<CancellationToken>,
     handle: tokio::task::JoinHandle<()>,
 }
 
-struct AnalysisCompleted {
-    job: AnalysisJob,
-    result: Result<adocweave::AnalysisResult, String>,
-    workspace_result: Option<Result<AnalyzedRoot, WorkspaceProblem>>,
-    workspace_permit: Option<OwnedSemaphorePermit>,
-}
+struct ProjectProcessingCompleted(ProjectAnalysisCompletion);
 
-pub(crate) fn workspace_analysis_gate(
-    job: &AnalysisJob,
-    gate: &Arc<Semaphore>,
-) -> Option<Arc<Semaphore>> {
-    job.workspace.as_ref().map(|_| Arc::clone(gate))
-}
-
-/// Runs one workspace analysis to completion on a worker thread.
-///
-/// Missing includes are read as the preprocessor asks for them, inside one
-/// filesystem job that bounds the reads of the whole analysis. The analysis is
-/// never restarted for an include, so a document with many of them costs one
-/// preprocess rather than one per include.
-///
-/// A run that fails is still returned rather than turned into an error here.
-/// The failure belongs to the result: adopting it is what keeps the file
-/// watcher watching the includes the run asked for, so repairing a broken
-/// include still reaches the document waiting for it.
-pub(crate) fn analyze_workspace_root(
-    workspace: &crate::workspace::WorkspaceResources,
-    job: &AnalysisJob,
-    input: &crate::workspace::WorkspaceInput,
-) -> Result<AnalyzedRoot, WorkspaceProblem> {
-    let filesystem_job = IncludeFilesystemJob::new(document_analysis_job_limits())
-        .map_err(|error| workspace_input_problem(error.to_string()))?;
-    let analyzed = workspace
-        .analyze_root_detached(
-            input,
-            &job.request.options,
-            job.cancellation.as_ref(),
-            filesystem_job,
-        )
-        .map_err(workspace_input_problem)?;
-    Ok(analyzed)
-}
-
-pub(crate) fn workspace_input_problem(message: String) -> WorkspaceProblem {
-    WorkspaceProblem {
-        source_id: None,
-        range: zero_range(),
-        code: "workspace-input-error".to_owned(),
-        message,
-    }
-}
+struct ProjectValidationCompleted(ProjectAnalysisCompletion);
 
 impl Backend {
     pub(crate) fn router(
         client: ClientSocket,
     ) -> impl async_lsp::LspService<Response = Value, Error = ResponseError> {
-        Self::router_with_index(client, Arc::new(NoHostReferenceIndex))
-    }
-
-    pub(crate) fn router_with_index(
-        client: ClientSocket,
-        host_index: Arc<dyn HostReferenceIndex>,
-    ) -> impl async_lsp::LspService<Response = Value, Error = ResponseError> {
         let process_monitor = client.clone();
         let mut router = Router::new(Self {
             client,
-            service: LanguageService::with_host_index(host_index),
+            session: Session::default(),
             cpu_limit: Arc::new(Semaphore::new(MAX_CONCURRENT_ANALYSES)),
-            analysis_tasks: BTreeMap::new(),
-            workspace_analysis_gate: Arc::new(Semaphore::new(1)),
-            workspace_scans: WorkspaceScanCoordinator::default(),
-            workspace_scan_recovery_timer: WorkspaceScanRecoveryTimer::default(),
+            analysis_workers: BTreeMap::new(),
         });
 
         router
             .request::<request::Initialize, _>(|state, params| {
-                let response = state.service.initialize(&params);
+                let response = state.session.initialize(&params);
                 async move { Ok(response) }
             })
             .notification::<notification::Initialized>(|state, _| {
                 state.register_dynamic_capabilities();
-                // The workspace walk runs on a worker rather than here, so the
-                // event loop answers requests while every `.adoc` file below
-                // the roots is read.
-                state.schedule_workspace_scan();
                 ControlFlow::Continue(())
             })
             .request::<request::Shutdown, _>(|state, _| {
                 state.cancel_all_analysis();
-                state.invalidate_workspace_scan();
                 async move { Ok(()) }
             })
             .notification::<notification::Exit>(|state, _| {
                 state.cancel_all_analysis();
-                state.invalidate_workspace_scan();
                 ControlFlow::Continue(())
             })
             .notification::<notification::DidOpenTextDocument>(|state, params| {
-                for job in state.service.begin_open(params) {
+                for job in state.session.begin_open(params) {
                     state.schedule_analysis(job);
                 }
                 ControlFlow::Continue(())
             })
             .notification::<notification::DidChangeTextDocument>(|state, params| {
-                match state.service.begin_change(params) {
+                match state.session.begin_change(params) {
                     Ok(jobs) => {
                         for job in jobs {
                             state.schedule_analysis(job);
@@ -168,7 +111,7 @@ impl Backend {
                 state.publish_current_diagnostics(params.text_document.uri)
             })
             .notification::<notification::DidChangeConfiguration>(|state, params| {
-                if let Ok(jobs) = state.service.update_configuration(params.settings) {
+                if let Ok(jobs) = state.session.update_configuration(params.settings) {
                     for job in jobs {
                         state.schedule_analysis(job);
                     }
@@ -176,39 +119,40 @@ impl Backend {
                 ControlFlow::Continue(())
             })
             .notification::<notification::DidChangeWatchedFiles>(|state, params| {
-                let project_configuration_changed = params.changes.iter().any(|change| {
-                    change.uri.path_segments().and_then(Iterator::last)
-                        == Some(adocweave_config::FILE_NAME)
-                });
-                if project_configuration_changed {
-                    state.schedule_workspace_scan();
-                } else {
-                    let changes = state.service.workspace_files_changed_with_journal(params);
-                    let recovery_generation =
-                        state.workspace_scans.record_workspace_changes(&changes);
-                    if let Some(generation) = recovery_generation {
-                        state.schedule_workspace_scan_recovery(generation);
-                    }
-                    for job in changes.jobs {
-                        state.schedule_analysis(job);
-                    }
+                for job in state.session.handle_workspace_files_changed(params) {
+                    state.schedule_analysis(job);
                 }
                 ControlFlow::Continue(())
             })
             .notification::<notification::DidChangeWorkspaceFolders>(|state, params| {
-                if state.service.workspace_folders_changed(params) {
-                    state.schedule_workspace_scan();
+                for job in state.session.workspace_folders_changed(params) {
+                    state.schedule_analysis(job);
                 }
                 ControlFlow::Continue(())
             })
             .notification::<notification::DidCloseTextDocument>(|state, params| {
                 let uri = params.text_document.uri;
                 state.cancel_analysis(uri.as_str());
-                let (_, jobs) = state.service.close(&uri);
-                for job in jobs {
+                let outcome = state.session.close(&uri);
+                if !outcome.closed {
+                    return ControlFlow::Continue(());
+                }
+                for job in outcome.reanalysis_jobs {
                     state.schedule_analysis(job);
                 }
-                state.publish_current_diagnostics(uri)
+                for diagnostic_uri in outcome.diagnostic_uris {
+                    let Ok(diagnostic_uri) = diagnostic_uri.parse() else {
+                        return ControlFlow::Break(Err(async_lsp::Error::Routing(format!(
+                            "invalid diagnostic URI: {diagnostic_uri}"
+                        ))));
+                    };
+                    if let ControlFlow::Break(error) =
+                        state.publish_current_diagnostics(diagnostic_uri)
+                    {
+                        return ControlFlow::Break(error);
+                    }
+                }
+                ControlFlow::Continue(())
             })
             .request::<request::DocumentSymbolRequest, _>(|state, params| {
                 state.cpu_request(
@@ -318,59 +262,15 @@ impl Backend {
                     },
                 )
             })
-            .event::<AnalysisCompleted>(|state, completed| state.analysis_completed(completed))
-            .event::<WorkspaceScanned>(|state, scanned| {
-                let Some(transition) = state.workspace_scans.complete(&mut state.service, scanned)
-                else {
-                    return ControlFlow::Continue(());
-                };
-                let WorkspaceScanTransition {
-                    jobs,
-                    notices,
-                    next,
-                    recovery_timer,
-                } = transition;
-                // What the scan could not finish concerns the workspace, not
-                // any one document, so it is announced instead of marking every
-                // open file with a diagnostic nobody can act on from there.
-                if let Some(message) = scan_notice_message(&notices) {
-                    let _ = state
-                        .client
-                        .notify::<notification::ShowMessage>(ShowMessageParams {
-                            typ: MessageType::WARNING,
-                            message,
-                        });
-                }
-                for job in jobs {
-                    state.schedule_analysis(job);
-                }
-                if let Some(next) = next {
-                    state.spawn_workspace_scan(next);
-                }
-                match recovery_timer {
-                    WorkspaceRecoveryTimerUpdate::Keep => {}
-                    WorkspaceRecoveryTimerUpdate::Cancel => {
-                        state.cancel_workspace_scan_recovery();
-                    }
-                    WorkspaceRecoveryTimerUpdate::Arm(generation) => {
-                        state.schedule_workspace_scan_recovery(generation);
-                    }
-                }
-                ControlFlow::Continue(())
+            .event::<ProjectProcessingCompleted>(|state, completed| {
+                state.project_processing_completed(completed)
             })
-            .event::<WorkspaceScanRecovery>(|state, recovery| {
-                let generation = recovery.generation();
-                if state.workspace_scans.debouncing_generation() != Some(generation) {
-                    return ControlFlow::Continue(());
-                }
-                if !state.workspace_scan_recovery_timer.complete(generation) {
-                    return ControlFlow::Continue(());
-                }
-                if let Some(start) = state.workspace_scans.request_recovery(generation) {
-                    state.spawn_workspace_scan(start);
-                }
-                ControlFlow::Continue(())
+            .event::<ProjectValidationCompleted>(|state, completed| {
+                state.project_validation_completed(completed)
             });
+
+        #[cfg(test)]
+        router.request::<RequestHandlerPanic, _>(|_, ()| request_handler_panic());
 
         ServiceBuilder::new()
             .layer(TracingLayer::default())
@@ -384,7 +284,7 @@ impl Backend {
     }
 
     fn register_dynamic_capabilities(&mut self) {
-        let Some(params) = self.service.watched_files_registration() else {
+        let Some(params) = self.session.watched_files_registration() else {
             return;
         };
         let client = self.client.clone();
@@ -403,10 +303,10 @@ impl Backend {
     ) -> impl std::future::Future<Output = Result<T, ResponseError>> + Send + use<T, F>
     where
         T: Send + 'static,
-        F: FnOnce(&LanguageService, &Url, &QueryCancellation) -> QueryResult<T> + Send + 'static,
+        F: FnOnce(&Session, &Url, &QueryCancellation) -> QueryResult<T> + Send + 'static,
     {
-        let cancellation = self.service.document_cancellation(&uri);
-        let service = self.service.clone();
+        let cancellation = self.session.document_cancellation(&uri);
+        let service = self.session.clone();
         let limit = self.cpu_limit.clone();
         async move {
             run_cpu_request(limit, cancellation, move |cancellation| {
@@ -416,192 +316,183 @@ impl Backend {
         }
     }
 
-    /// Reads the workspace roots on a worker and installs the result later.
-    ///
-    /// The walk takes time proportional to the workspace, so running it here
-    /// would stop the event loop from answering anything until it finished.
-    /// A replacement request cancels the active worker but waits for its
-    /// completion event before starting the next worker.
-    fn schedule_workspace_scan(&mut self) {
-        self.cancel_workspace_scan_recovery();
-        let Some(start) = self.workspace_scans.request_replacement() else {
-            return;
-        };
-        self.spawn_workspace_scan(start);
+    fn schedule_analysis(&mut self, snapshot: ProjectAnalysisSnapshot) {
+        self.schedule_analysis_with_delay(snapshot, self.session.debounce_ms());
     }
 
-    fn spawn_workspace_scan(&self, start: WorkspaceScanStart) {
-        let (sequence, cancellation) = start.into_parts();
-        let service = self.service.clone();
-        let client = self.client.clone();
-        tokio::spawn(async move {
-            let worker_cancellation = Arc::clone(&cancellation);
-            let scan = tokio::task::spawn_blocking(move || {
-                worker_cancellation.filesystem_job().map(|job| {
-                    service.plan_workspace_scan_with_job(worker_cancellation.as_ref(), job)
-                })
-            })
-            .await
-            .map_err(|error| format!("workspace scan worker failed: {error}"))
-            .and_then(|scan| scan);
-            let _ = client.emit(WorkspaceScanned::new(sequence, scan));
-        });
+    fn schedule_analysis_immediately(&mut self, snapshot: ProjectAnalysisSnapshot) {
+        self.schedule_analysis_with_delay(snapshot, 0);
     }
 
-    fn schedule_workspace_scan_recovery(&mut self, generation: u64) {
-        self.cancel_workspace_scan_recovery();
-        let client = self.client.clone();
-        self.workspace_scan_recovery_timer.replace(
-            generation,
-            tokio::spawn(async move {
-                tokio::time::sleep(std::time::Duration::from_millis(
-                    WATCH_SCAN_RECOVERY_DEBOUNCE_MS,
-                ))
-                .await;
-                let _ = client.emit(WorkspaceScanRecovery::new(generation));
-            }),
-        );
-    }
-
-    fn cancel_workspace_scan_recovery(&mut self) {
-        self.workspace_scan_recovery_timer.cancel();
-    }
-
-    fn invalidate_workspace_scan(&mut self) {
-        self.cancel_workspace_scan_recovery();
-        self.workspace_scans.cancel();
-    }
-
-    fn schedule_analysis(&mut self, job: AnalysisJob) {
-        self.schedule_analysis_with_delay(job, self.service.debounce_ms());
-    }
-
-    fn schedule_analysis_immediately(&mut self, job: AnalysisJob) {
-        self.schedule_analysis_with_delay(job, 0);
-    }
-
-    fn schedule_analysis_with_delay(&mut self, job: AnalysisJob, debounce_ms: u64) {
-        self.cancel_analysis(&job.uri);
+    fn schedule_analysis_with_delay(
+        &mut self,
+        snapshot: ProjectAnalysisSnapshot,
+        debounce_ms: u64,
+    ) {
+        self.cancel_analysis(&snapshot.uri);
         let limit = self.cpu_limit.clone();
         let client = self.client.clone();
-        let uri = job.uri.clone();
-        let generation = job.request.revision.generation;
-        let workspace_gate = workspace_analysis_gate(&job, &self.workspace_analysis_gate);
-        // The worker reads missing includes into this copy while the editor
-        // keeps using the current workspace. Nothing it reads becomes visible
-        // until the finished analysis is adopted.
-        let workspace_copy = self.service.workspace_copy();
+        let uri = snapshot.uri.clone();
+        let cancellation = Arc::clone(&snapshot.cancellation);
         let handle = tokio::spawn(async move {
             if debounce_ms > 0 {
                 tokio::time::sleep(std::time::Duration::from_millis(debounce_ms)).await;
             }
-            let workspace_permit = match workspace_gate {
-                Some(gate) => match gate.acquire_owned().await {
-                    Ok(permit) => Some(permit),
-                    Err(_) => return,
-                },
-                None => None,
-            };
             let Ok(_permit) = limit.acquire_owned().await else {
                 return;
             };
-            if job.cancellation.is_cancelled() {
+            if snapshot.cancellation.is_cancelled() {
                 return;
             }
-            let worker_job = job.clone();
             let result = tokio::task::spawn_blocking(move || {
-                // A cancelled async wrapper cannot stop a running blocking
-                // worker. Moving the workspace permit into this closure keeps a
-                // replacement from opening a second draft until the old worker
-                // has actually released its transaction.
-                let workspace_permit = workspace_permit;
-                let result = worker_job
-                    .request
-                    .analyze(worker_job.cancellation.as_ref())
-                    .map_err(|error| error.to_string());
-                let workspace_result =
-                    worker_job.workspace_problem.clone().map(Err).or_else(|| {
-                        worker_job.workspace.as_ref().map(|input| {
-                            analyze_workspace_root(&workspace_copy, &worker_job, input)
-                        })
-                    });
-                (result, workspace_result, workspace_permit)
+                let mut snapshot = snapshot;
+                let (outcome, source_index, observation_access) =
+                    match snapshot.prepared_request.take() {
+                        Some(project) => {
+                            let source_index = project.source_index;
+                            let observation_access = project.observation_access;
+                            (
+                                ProjectAnalysisOutcome::Processed(process_project(
+                                    project.request,
+                                    snapshot.cancellation.as_ref(),
+                                )),
+                                source_index,
+                                Some(observation_access),
+                            )
+                        }
+                        None => (
+                            ProjectAnalysisOutcome::Rejected(
+                                snapshot
+                                    .project_problem
+                                    .clone()
+                                    .expect("a snapshot without a project request has a problem"),
+                            ),
+                            ProjectSourceIndex::default(),
+                            None,
+                        ),
+                    };
+                ProjectProcessingCompleted(ProjectAnalysisCompletion {
+                    snapshot,
+                    outcome,
+                    source_index,
+                    observation_access,
+                    observations_are_current: None,
+                })
             })
-            .await
-            .unwrap_or_else(|error| (Err(format!("analysis worker failed: {error}")), None, None));
-            let _ = client.emit(AnalysisCompleted {
-                job,
-                result: result.0,
-                workspace_result: result.1,
-                workspace_permit: result.2,
-            });
-        });
-        self.analysis_tasks
-            .insert(uri, AnalysisTask { generation, handle });
-    }
-
-    fn analysis_completed(
-        &mut self,
-        mut completed: AnalysisCompleted,
-    ) -> ControlFlow<async_lsp::Result<()>> {
-        // Keep the workspace candidate exclusive until the event loop has either
-        // adopted or rejected it. `AnalyzedRoot` still owns its filesystem
-        // transaction after the worker itself returns.
-        let workspace_permit = completed.workspace_permit.take();
-        let result = self.finish_analysis_completed(completed);
-        drop(workspace_permit);
-        result
-    }
-
-    fn finish_analysis_completed(
-        &mut self,
-        completed: AnalysisCompleted,
-    ) -> ControlFlow<async_lsp::Result<()>> {
-        if self
-            .analysis_tasks
-            .get(&completed.job.uri)
-            .is_some_and(|task| task.generation == completed.job.request.revision.generation)
-        {
-            self.analysis_tasks.remove(&completed.job.uri);
-        }
-        if let Some(retry) = self.service.refresh_stale_workspace(&completed.job) {
-            self.schedule_analysis_immediately(retry);
-            return ControlFlow::Continue(());
-        }
-        let Ok(analysis) = completed.result else {
-            return ControlFlow::Continue(());
-        };
-        if self.service.adopt(&completed.job, analysis) != Adoption::Adopted {
-            return ControlFlow::Continue(());
-        }
-        let mut publish_uris = std::collections::BTreeSet::from([completed.job.uri.clone()]);
-        if let Some(workspace) = completed.workspace_result {
-            match workspace {
-                Ok(analyzed) => {
-                    let failure = analyzed.failure();
-                    publish_uris.extend(
-                        self.service
-                            .adopt_analyzed_workspace(&completed.job, analyzed),
-                    );
-                    if let Some(failure) = failure {
-                        let _ = self.service.adopt_workspace_problem(
-                            &completed.job,
-                            WorkspaceProblem {
-                                source_id: failure.source_id,
-                                range: failure.range.unwrap_or_else(zero_range),
-                                code: failure.code,
-                                message: failure.message,
-                            },
-                        );
-                    }
-                }
-                Err(problem) => {
-                    let _ = self
-                        .service
-                        .adopt_workspace_problem(&completed.job, problem);
-                }
+            .await;
+            if let Ok(completed) = result {
+                let _ = client.emit(completed);
             }
+        });
+        self.analysis_workers.insert(
+            uri,
+            AnalysisWorker {
+                cancellation,
+                handle,
+            },
+        );
+    }
+
+    fn project_processing_completed(
+        &mut self,
+        completed: ProjectProcessingCompleted,
+    ) -> ControlFlow<async_lsp::Result<()>> {
+        self.remove_completed_analysis_worker(&completed.0.snapshot);
+        let next = self.session.project_processing_completed(completed.0);
+        self.apply_analysis_next(next)
+    }
+
+    fn schedule_project_validation(&mut self, completion: ProjectAnalysisCompletion) {
+        let limit = self.cpu_limit.clone();
+        let client = self.client.clone();
+        let uri = completion.snapshot.uri.clone();
+        let cancellation = Arc::clone(&completion.snapshot.cancellation);
+        let task_cancellation = Arc::clone(&cancellation);
+        let handle = tokio::spawn(async move {
+            let Ok(_permit) = limit.acquire_owned().await else {
+                return;
+            };
+            if cancellation.is_cancelled() {
+                return;
+            }
+            let result = tokio::task::spawn_blocking(move || {
+                let mut completion = completion;
+                completion.observations_are_current = Some(
+                    completion
+                        .observation_access
+                        .as_ref()
+                        .is_some_and(|access| {
+                            let ProjectAnalysisOutcome::Processed(result) = &completion.outcome
+                            else {
+                                return true;
+                            };
+                            project_observations_are_current(result, access, cancellation.as_ref())
+                        }),
+                );
+                ProjectValidationCompleted(completion)
+            })
+            .await;
+            if let Ok(completed) = result {
+                let _ = client.emit(completed);
+            }
+        });
+        self.analysis_workers.insert(
+            uri,
+            AnalysisWorker {
+                cancellation: task_cancellation,
+                handle,
+            },
+        );
+    }
+
+    fn project_validation_completed(
+        &mut self,
+        completed: ProjectValidationCompleted,
+    ) -> ControlFlow<async_lsp::Result<()>> {
+        self.remove_completed_analysis_worker(&completed.0.snapshot);
+        let next = self.session.complete_analysis(completed.0);
+        self.apply_analysis_next(next)
+    }
+
+    fn remove_completed_analysis_worker(&mut self, snapshot: &ProjectAnalysisSnapshot) {
+        if self
+            .analysis_workers
+            .get(&snapshot.uri)
+            .is_some_and(|worker| Arc::ptr_eq(&worker.cancellation, &snapshot.cancellation))
+        {
+            self.analysis_workers.remove(&snapshot.uri);
         }
+    }
+
+    fn apply_analysis_next(
+        &mut self,
+        action: ProjectAnalysisAction,
+    ) -> ControlFlow<async_lsp::Result<()>> {
+        match action {
+            ProjectAnalysisAction::Validate(completion) => {
+                self.schedule_project_validation(*completion);
+                ControlFlow::Continue(())
+            }
+            ProjectAnalysisAction::Retry(snapshot) => {
+                self.schedule_analysis_immediately(snapshot);
+                ControlFlow::Continue(())
+            }
+            ProjectAnalysisAction::Publish {
+                snapshot,
+                diagnostic_uris,
+            } => self.publish_diagnostics_for_job(&snapshot, diagnostic_uris),
+            ProjectAnalysisAction::Ignore => ControlFlow::Continue(()),
+        }
+    }
+
+    fn publish_diagnostics_for_job(
+        &mut self,
+        job: &ProjectAnalysisSnapshot,
+        additional_uris: impl IntoIterator<Item = String>,
+    ) -> ControlFlow<async_lsp::Result<()>> {
+        let mut publish_uris = job.previously_published_diagnostic_uris.clone();
+        publish_uris.insert(job.uri.clone());
+        publish_uris.extend(additional_uris);
         for uri in publish_uris {
             let Ok(uri) = uri.parse() else {
                 return ControlFlow::Break(Err(async_lsp::Error::Routing(format!(
@@ -616,21 +507,21 @@ impl Backend {
     }
 
     fn cancel_analysis(&mut self, uri: &str) {
-        if let Some(task) = self.analysis_tasks.remove(uri) {
-            task.handle.abort();
+        if let Some(worker) = self.analysis_workers.remove(uri) {
+            worker.handle.abort();
         }
     }
 
     fn cancel_all_analysis(&mut self) {
-        self.service.cancel_all();
-        for (_, task) in std::mem::take(&mut self.analysis_tasks) {
-            task.handle.abort();
+        self.session.shutdown();
+        for (_, worker) in std::mem::take(&mut self.analysis_workers) {
+            worker.handle.abort();
         }
     }
 
     fn publish_current_diagnostics(&mut self, uri: Url) -> ControlFlow<async_lsp::Result<()>> {
         let result = self
-            .service
+            .session
             .diagnostics(&uri)
             .map_err(async_lsp::Error::Routing)
             .and_then(|params: PublishDiagnosticsParams| {
@@ -643,95 +534,6 @@ impl Backend {
             Err(error) => ControlFlow::Break(Err(error)),
         }
     }
-}
-
-fn zero_range() -> adocweave::text::TextRange {
-    adocweave::text::TextRange::new(
-        adocweave::text::TextSize::ZERO,
-        adocweave::text::TextSize::ZERO,
-    )
-    .expect("zero range is ordered")
-}
-
-const MAX_REPORTED_SCAN_NOTICE_PROJECTS: usize = 5;
-const MAX_REPORTED_SCAN_NOTICE_PATH_CHARS: usize = 240;
-
-fn scan_notice_message(notices: &[WorkspaceScanNotice]) -> Option<String> {
-    let [notice] = notices else {
-        if notices.is_empty() {
-            return None;
-        }
-        let directory_limit = notices.iter().find_map(|notice| match notice {
-            WorkspaceScanNotice::DirectoryEntryLimit { limit } => Some(*limit),
-            WorkspaceScanNotice::ProjectResourceLimit { .. } => None,
-        });
-        let projects = notices
-            .iter()
-            .filter_map(|notice| match notice {
-                WorkspaceScanNotice::ProjectResourceLimit { project } => Some(project),
-                WorkspaceScanNotice::DirectoryEntryLimit { .. } => None,
-            })
-            .collect::<Vec<_>>();
-        let mut message = String::from(
-            "the initial workspace scan stopped before all documents were registered.",
-        );
-        if let Some(limit) = directory_limit {
-            message.push_str(&format!(
-                " It reached the limit of {limit} directory entries; list directories to leave \
-                 out under workspace.scan.exclude."
-            ));
-        }
-        if !projects.is_empty() {
-            let displayed = projects
-                .iter()
-                .take(MAX_REPORTED_SCAN_NOTICE_PROJECTS)
-                .map(|path| abbreviated_scan_notice_path(path))
-                .collect::<Vec<_>>()
-                .join(", ");
-            message.push_str(&format!(
-                " It reached the resource limits of {} projects; raise resources.max-files or \
-                 the byte limits there. Affected projects: {displayed}",
-                projects.len()
-            ));
-            if projects.len() > MAX_REPORTED_SCAN_NOTICE_PROJECTS {
-                message.push_str(&format!(
-                    ", and {} more",
-                    projects.len() - MAX_REPORTED_SCAN_NOTICE_PROJECTS
-                ));
-            }
-            message.push('.');
-        }
-        message.push_str(" Documents that were not registered can still be opened and included.");
-        return Some(message);
-    };
-    Some(match notice {
-        WorkspaceScanNotice::DirectoryEntryLimit { limit } => format!(
-            "the initial workspace scan stopped at its limit of {limit} directory entries, so \
-             some documents are not registered as analysis roots. List the directories to leave \
-             out under workspace.scan.exclude in the .adocweave.toml at the workspace folder \
-             root. Documents that were not registered can still be opened and included."
-        ),
-        WorkspaceScanNotice::ProjectResourceLimit { project } => format!(
-            "the initial workspace scan reached the resource limits of {}, so some documents \
-             under it are not registered as analysis roots. Raise resources.max-files or the \
-             byte limits there. Documents that were not registered can still be opened and \
-             included.",
-            abbreviated_scan_notice_path(project),
-        ),
-    })
-}
-
-fn abbreviated_scan_notice_path(path: &std::path::Path) -> String {
-    let rendered = path.display().to_string();
-    if rendered.chars().count() <= MAX_REPORTED_SCAN_NOTICE_PATH_CHARS {
-        return rendered;
-    }
-    let mut abbreviated = rendered
-        .chars()
-        .take(MAX_REPORTED_SCAN_NOTICE_PATH_CHARS - 3)
-        .collect::<String>();
-    abbreviated.push_str("...");
-    abbreviated
 }
 
 struct CancelWorkerOnDrop(Arc<CancellationToken>);
@@ -826,20 +628,19 @@ fn content_modified() -> ResponseError {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
     use super::*;
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn aborting_the_async_wrapper_does_not_release_a_running_workspace_worker() {
+    async fn aborting_the_async_wrapper_does_not_release_a_running_blocking_worker() {
         let gate = Arc::new(Semaphore::new(1));
         let worker_gate = Arc::clone(&gate);
         let (started_tx, started_rx) = std::sync::mpsc::channel();
         let (finish_tx, finish_rx) = std::sync::mpsc::channel();
         let task = tokio::spawn(async move {
-            let permit = worker_gate.acquire_owned().await.expect("workspace permit");
+            let permit = worker_gate.acquire_owned().await.expect("worker permit");
             tokio::task::spawn_blocking(move || {
                 let _permit = permit;
                 started_tx.send(()).expect("started receiver");
@@ -859,59 +660,13 @@ mod tests {
             tokio::time::timeout(Duration::from_millis(50), Arc::clone(&gate).acquire_owned())
                 .await
                 .is_err(),
-            "the detached blocking worker still owns the workspace gate"
+            "the detached blocking worker still owns the execution permit"
         );
         finish_tx.send(()).expect("finish worker");
         let _permit = tokio::time::timeout(Duration::from_secs(1), gate.acquire_owned())
             .await
-            .expect("workspace gate released after worker exit")
-            .expect("workspace permit");
-    }
-
-    #[test]
-    fn multiple_scan_notices_are_bounded_in_one_actionable_message() {
-        let mut notices = vec![WorkspaceScanNotice::DirectoryEntryLimit { limit: 8 }];
-        notices.extend(
-            (0..7).map(|index| WorkspaceScanNotice::ProjectResourceLimit {
-                project: PathBuf::from(format!("/workspace/project-{index}/.adocweave.toml")),
-            }),
-        );
-
-        let message = scan_notice_message(&notices).expect("scan notice");
-
-        assert!(
-            message.contains("limit of 8 directory entries"),
-            "{message}"
-        );
-        assert!(message.contains("workspace.scan.exclude"), "{message}");
-        assert!(
-            message.contains("resource limits of 7 projects"),
-            "{message}"
-        );
-        assert!(message.contains("resources.max-files"), "{message}");
-        assert!(message.contains("project-0"), "{message}");
-        assert!(message.contains("project-4"), "{message}");
-        assert!(!message.contains("project-5"), "{message}");
-        assert!(message.contains("and 2 more"), "{message}");
-    }
-
-    #[test]
-    fn scan_notice_paths_are_abbreviated_at_unicode_boundaries() {
-        let path = PathBuf::from(format!("/workspace/{}", "界".repeat(300)));
-
-        let abbreviated = abbreviated_scan_notice_path(&path);
-        let message = scan_notice_message(&[WorkspaceScanNotice::ProjectResourceLimit {
-            project: path.clone(),
-        }])
-        .expect("scan notice");
-
-        assert_eq!(
-            abbreviated.chars().count(),
-            MAX_REPORTED_SCAN_NOTICE_PATH_CHARS
-        );
-        assert!(abbreviated.ends_with("..."));
-        assert!(message.contains(&abbreviated));
-        assert!(!message.contains(path.to_string_lossy().as_ref()));
+            .expect("execution permit released after worker exit")
+            .expect("worker permit");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

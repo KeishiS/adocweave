@@ -2,6 +2,8 @@
 
 この文書では、AdocWeaveが環境に依存せず扱う範囲、公開APIおよび処理上限を定義します。
 通常の文書作成では xref:../user-guide/syntax-support.adoc[対応しているAsciiDocの書式]を参照してください。
+ここで説明するRust APIは``adocweave-core`` crateが所有し、Rustコードからは
+``adocweave_core``という名前で参照します。
 
 == 対象範囲
 
@@ -12,7 +14,7 @@ AdocWeaveは、AsciiDocの読み取り、問題の検出、整形、HTMLへの�
 == バージョン
 
 コアAPIはRustワークスペース内部のバージョンを使います。WebAssemblyの製品バージョンは
-link:../../web-worker/package.json[WebAssembly package manifest]、必要なRustのバージョンは
+link:../../packages/wasm/package.json[WebAssembly package manifest]、必要なRustのバージョンは
 link:../../toolchains.json[toolchain manifest]を基準とします。
 公開結果を保存するアプリケーションは、AdocWeaveの更新時にHTMLおよび検索用情報を再構築してください。
 
@@ -31,7 +33,7 @@ xref:../user-guide/syntax-support.adoc[対応しているAsciiDocの書式]に�
 [#document-projection]
 == 構造情報
 
-``adocweave::output::projection``は、一つの``Analysis``から必要な構造情報だけを取得するqueryを提供します。
+``adocweave_core::output::projection``は、一つの``Analysis``から必要な構造情報だけを取得するqueryを提供します。
 各queryはHTMLを生成せず、ソースを再解析せず、ファイルシステム、ネットワーク、DBまたはアプリ固有のschemaへ
 アクセスしません。
 
@@ -74,16 +76,16 @@ book part・manpage headerの構造、および番号・TOC・captionなどの�
 ``reference_targets``、``catalogs``、``structure``および``presentation``から直接借用します。これらを一つの
 構造体へ複製して保持しません。
 
-WASM adapterは、利用者がprojectionを要求した場合だけ、これらのqueryと``Analysis``から借用した値を
-``WasmDocumentProjection``へ集約します。公開するWASM protocolのfield名、列挙値、配列順および
-projectionを要求しない場合の``null``は、このadapterが保証します。Rustのqueryは公開protocolの構造へ依存しません。
+WASM adapterは、利用者が``document``を要求した場合だけ、これらのqueryと``Analysis``から借用した値を
+``DocumentView``へ集約します。公開するWASM protocolのfield名、列挙値、配列順および要求していないproductを
+応答から省く処理は、このadapterが保証します。Rustのqueryは公開protocolの構造へ依存しません。
 
 Language Serverはsemantic tokensやdocument linksの処理で必要なlinkやrangeだけを参照します。検索用文字列、数式、
 Source block、catalogなどを同時に生成しません。
 
 数式の``FormulaProjection.kind``は表示形式を表す``inline``または``block``です。Rust APIの
-``MathLanguage::Latex``は``as_asciidoc_name()``で``latexmath``を返します。JSON／WASM protocolの既存enum値は
-互換性のため``latex``を維持し、AsciiDoc構文名やHTMLの``data-math-language``と混同しません。
+``MathLanguage::Latex``は``as_asciidoc_name()``で``latexmath``を返します。JSON/WASM protocolでは``latex``を使い、
+AsciiDoc構文名やHTMLの``data-math-language``と混同しません。
 
 Source blockの``sourceRange``は、開始区切り行の行頭から終了区切り行の行末までを表します。
 先行するblock title、anchorおよび属性行は含みません。本文には``contentRange``、言語名には
@@ -95,7 +97,7 @@ native APIの``VerbatimBlock.metadata.range``またはsyntax treeの先行する
 TOC出力の有無を``RenderingFeatures``として返します。言語は重複を除きます。数式言語は固定順の
 ``latexmath``、``typst``で返し、将来の言語はこの順序表へ追加します。Source block言語はHTMLの言語classと
 同じ規則でASCII英字を小文字化し、ASCII英数字、``-``および``_``以外を``-``へ置き換えてから文字列の
-昇順で返します。言語指定のないSource blockは含めません。TOCは有効化され、かつ実際の投影結果に
+昇順で返します。言語指定のないSource blockは含めません。TOCは有効化され、かつ実際の取得結果に
 一つ以上の項目がある場合にだけ``true``です。
 
 このqueryは``Analysis``を直接受け取り、preprocessで展開されたincludeの内容も反映します。
@@ -206,13 +208,13 @@ source occurrenceを取得します。
 
 前処理と解析を一度に行う場合は、``AnalysisOptions``と``PreprocessOptions``から
 ``EffectiveProcessingOptions``を作り、その``preprocess_and_analyze``を呼び出します。
-この値は両段階で共有する文書外属性と属性展開上限の一致を構築時に検査します。Workspaceでも
-``WorkspaceSnapshot::analyze_with_options``へ同じ値を渡します。
+この値は両段階で共有する文書外属性と属性展開上限の一致を構築時に検査します。``adocweave-project``も、
+一回の要求に含まれる主文書とinclude展開後の解析へ同じ設定を適用します。
 
 [source,rust]
 ----
-use adocweave::output::html::{RenderPolicy, render};
-use adocweave::{AnalysisOptions, Engine, ParseError};
+use adocweave_core::output::html::{RenderPolicy, render};
+use adocweave_core::{AnalysisOptions, Engine, ParseError};
 
 fn convert() -> Result<String, ParseError> {
     let source = "\
@@ -227,7 +229,7 @@ fn convert() -> Result<String, ParseError> {
 }
 ----
 
-``:toc:``と``:sectnums:``はRust側のflagではなく、文書ヘッダーの属性によって有効になります。
+``:toc:``と``:sectnums:``はRust側のflagではなく、文書ヘッダの属性によって有効になります。
 ``:toclevels:``は1から5までの整数であり、省略時はlevel 1から5までを目次候補とします。不正な値は
 ``invalid-attribute``診断となります。
 
@@ -239,30 +241,404 @@ unset後の参照は``undefined-attribute``、循環と展開上限超過は``at
 [#wasm-api]
 == WebAssembly API
 
-``adocweave-wasm``は、ブラウザーとJavaScriptからコアAPIを利用するための入口です。要求には
-`sourceId`、source、必要な出力および設定を渡します。未知のfieldは拒否します。
+``adocweave-wasm``は、ブラウザーとNode.jsからコアAPIを利用するための入口です。ブラウザーの
+``AdocWeaveClient``とNode.jsのdirect入口は、同じ``AnalyzeRequest``、``AnalyzeResult``および
+``AdocWeaveError``を使います。
 
-出力はsyntax tree、AST、HTML、文書属性の出現箇所、resource query、診断、symbolおよび構造情報から選択できます。
-省略時はHTML、resource query、診断および構造情報を返します。`analysisOptions`、`renderPolicy`、
-``outputLimits``および``renderInputs``を責務別に渡し、省略したfieldにはコアの既定値を使用します。
-返却fieldは出力の選択にかかわらず省略しません。選択しなかった構造情報の``projection``は``null``、
-配列の出力は空の配列、文字列の出力は空文字列です。利用側はfieldの有無ではなく、要求時に指定した
-``products``とこれらの値を使って結果を処理します。
-参照とresourceのJSON表現および
-安全性の規則はxref:server-execution.adoc#render-inputs[変換入力]を基準とします。
+[source,javascript]
+----
+const result = await analyze({ source, products, resources });
+----
 
-応答には解析結果の概要および要求した出力を含めます。
-エラーは安定した``code``と利用者向けの``message``だけを返します。source、応答およびエラーは呼び出しごとの
-所有値であり、次回の呼び出しで無効になるpointerを公開しません。
+ブラウザーの入口は``Promise``を返し、``AbortSignal``による取消しに対応します。Node.jsのdirect入口は
+Web Workerを使いませんが、要求、応答およびエラーの項目は同じです。
 
-JSONの要求、前処理の入出力、応答およびエラーのwire型は``crates/adocweave-wasm``のRust定義が正本です。
-TypeScript宣言``web-worker/protocol.d.mts``はここから生成します。wire型はコアの型へ依存しません。要求はwire型のfield間制約を検査してからコアの設定へ変換し、
-未検査の値を実行処理へ渡しません。前処理と通常の応答では、コアの結果を生成されたwire型へ投影する処理だけを
-WASM adapterに置きます。field、列挙値またはtag付きunionを変更する場合は、schemaを更新して生成物と
-protocol検査を同時に更新します。
+=== 要求
 
-Browser clientとWASMの互換性は、このWASM protocol schemaのhandshakeで検査します。Worker内部の要求番号や
-封筒の形式は公開API世代に含めません。
+``AnalyzeRequest``のトップレベルには次の3項目だけを指定できます。
 
-HTML、整形、問題一覧、構造情報、外部リンクの解決結果は用途ごとの公開moduleにあります。型名とJSONの
-詳細はAPIドキュメントを参照してください。
+[cols="1,1,1,3",options="header"]
+|===
+|項目 |型 |指定 |意味と省略時の値
+
+|``source``
+|``SourceInput``
+|必須
+|解析する主文書と、その文書に適用する解析入力です。``null``は受理しません。
+
+|``products``
+|``ProductRequest``
+|必須
+|必要な結果と、その結果だけに適用する設定です。1件以上のproductを指定します。
+
+|``resources``
+|``ResourceInput``
+|省略可
+|include文書と利用側アプリが解決した外部リソースです。省略時は空の入力です。
+|===
+
+この節に示す全てのobjectで未知の項目を拒否します。型に``null``を含む項目だけが``null``を受理します。
+それ以外の省略可能な項目は、項目自体の欠落または``undefined``だけを省略として扱います。
+
+==== ``source``
+
+``SourceInput``は次の項目を持ちます。
+
+[cols="1,1,1,3",options="header"]
+|===
+|項目 |型 |指定 |意味と省略時の値
+
+|``text``
+|``string``
+|必須
+|解析するJavaScript文字列です。
+
+|``id``
+|``string``
+|省略可
+|結果中で主文書を識別する論理IDです。省略時は論理IDを持ちません。空文字列と制御文字を含む値は拒否します。
+
+|``attributes``
+|``Record<string, string | null>``
+|省略可
+|文書へ事前に渡す属性です。文字列は設定、``null``は未設定を表します。省略時は空です。空の属性名と
+制御文字を含む属性名は拒否します。object内の値には``undefined``を指定できません。
+
+|``syntaxMode``
+|``"permissive" | "strict"``
+|省略可
+|構文の判定方法です。省略時は``"permissive"``です。
+|===
+
+構文解析、属性展開および出力量の上限はpackageが固定します。利用側が上限を増やす項目は公開しません。
+小さい上限を必要とする場合は、``source.text``と``resources.documents``を呼出し前に制限してください。
+原文中の範囲は、対象のJavaScript文字列をUTF-8へencodeした後のバイト位置で表します。
+
+==== ``products``
+
+``ProductRequest``はproduct名をキーに持つobjectです。項目の存在が出力要求を表すため、値の``false``と
+``null``は拒否します。設定を持たないproductには``true``、設定を持つproductには``true``または設定objectを
+指定します。空のobjectは拒否します。
+
+[cols="2,2,2,3",options="header"]
+|===
+|product |要求値 |応答値 |意味
+
+|``syntax``
+|``true``
+|``string``
+|元の範囲と回復結果を保持する構文情報です。
+
+|``canonicalAst``
+|``true``
+|``string``
+|正規化したASTのJSON文字列です。
+
+|``html``
+|``true | HtmlOptions``
+|``string``
+|安全方針を適用したHTMLです。``true``は``HtmlOptions``の既定値を使います。
+
+|``attributeOccurrences``
+|``true``
+|``DocumentAttributeOccurrence[]``
+|原文に対応する文書属性の出現です。
+
+|``attributeQueries``
+|``true``
+|``AttributeQueryResult``
+|属性の設定と参照の対応です。
+
+|``resourceQueries``
+|``true``
+|``ResourceQuery[]``
+|利用側アプリによる画像、音声および動画の解決が必要な箇所です。
+
+|``diagnostics``
+|``true | DiagnosticOptions``
+|``Diagnostic[]``
+|構文、意味、Lintおよび要求したHTML変換で生じた診断です。``true``は既定の診断設定を使います。
+
+|``symbols``
+|``true``
+|``DocumentSymbol[]``
+|文書タイトル、見出しおよびlist itemの階層です。
+
+|``document``
+|``true``
+|``DocumentView | null``
+|文書全体から得た、利用側アプリ向けの意味情報です。
+|===
+
+``HtmlOptions``は次の項目を持ちます。各項目と、項目に指定する方針objectの各項目は省略できます。
+
+[source,typescript]
+----
+type HtmlOptions = {
+  documentMode?: "fragment" | "complete";
+  activeUrls?: {
+    allowedSchemes?: string[];
+    allowAuthoredRelative?: boolean;
+    allowResolvedRelative?: boolean;
+    allowResolvedRootRelative?: boolean;
+    allowDataUris?: boolean;
+  };
+  externalLinks?: {
+    openInNewContext?: boolean;
+    noreferrer?: boolean;
+  };
+  sourceLanguages?: {
+    allowed?: string[];
+    unknown?: "preserve-sanitized" | "omit-class" | "diagnostic";
+  };
+  roles?: {
+    allowed?: string[];
+    unknown?: "silent" | "diagnostic";
+  };
+  mathLanguages?: Array<"latex" | "typst">;
+  unresolvedReferences?: "target" | "label-only" | "hidden";
+  resourceCapabilities?: { images?: boolean; media?: boolean };
+  stylesheets?: Array<
+    | { kind: "external"; url: string }
+    | { kind: "inline"; css: string }
+  >;
+};
+----
+
+[cols="2,2,3",options="header"]
+|===
+|項目 |既定値 |意味
+
+|``documentMode``
+|``"fragment"``
+|``"fragment"``は本文断片、``"complete"``は完全なHTML文書を返します。
+
+|``activeUrls``
+|schemeは``http``と``https``、相対URL、root相対URLおよびdata URIは不許可
+|HTMLへ出す記述値と解決済みURLの許可範囲です。
+
+|``externalLinks``
+|新しい閲覧contextを開かず、``noreferrer``を付けない
+|外部linkの表示方法です。
+
+|``sourceLanguages``
+|全言語を許可し、未知の言語は安全なclass名として保持
+|source blockの言語classです。
+
+|``roles``
+|許可listは空、未知のroleは診断しない
+|HTMLのclassへ出せるblock roleです。
+
+|``mathLanguages``
+|``["latex", "typst"]``
+|数式として扱う言語です。
+
+|``unresolvedReferences``
+|``"target"``
+|解決できない参照の表示方法です。
+
+|``resourceCapabilities``
+|画像、音声および動画を有効
+|HTMLへ出せる外部リソースの種類です。
+
+|``stylesheets``
+|空の配列
+|完全なHTML文書へ追加する、検証済みの外部またはinline stylesheetです。
+|===
+
+``DiagnosticOptions``は次の項目を持ちます。全て省略できます。
+
+[source,typescript]
+----
+type DiagnosticOptions = {
+  protectedAttributes?: Record<string, string | null>;
+  authoredUrls?: {
+    allowedSchemes?: string[];
+    allowRelative?: boolean;
+  };
+  rules?: Record<string, {
+    enabled?: boolean;
+    severity?: "error" | "warning" | "information" | "hint";
+  }>;
+  maxDiagnostics?: number;
+};
+----
+
+[cols="2,2,3",options="header"]
+|===
+|項目 |既定値 |意味
+
+|``protectedAttributes``
+|空のobject
+|文書から変更できない属性と値です。文字列または``null``を指定し、object内の値には``undefined``を指定できません。
+
+|``authoredUrls``
+|schemeは``http``と``https``、相対URLは許可
+|文書に記述されたURLの診断方針です。
+
+|``rules``
+|空のobject
+|Lintルールcodeをキーにした``enabled``と``severity``の上書きです。未知のcodeは拒否します。
+
+|``maxDiagnostics``
+|``1000``
+|返す診断件数の上限です。0以上1000以下だけを受理します。
+|===
+
+``HtmlOptions``と``DiagnosticOptions``でも、値に``null``を指定した項目と未知の項目を拒否します。
+``html``と``diagnostics``を要求した場合は、HTML変換時の診断を``diagnostics``へ統合します。
+``diagnostics``を要求せず、HTMLを生成できる問題が生じた場合は応答へ加えません。HTMLを生成できない問題は
+``analysis-failed``として返します。
+
+==== ``resources``
+
+``ResourceInput``は、利用側アプリが取得または解決した入力だけを持ちます。全ての項目を省略できます。
+
+[cols="2,2,2,3",options="header"]
+|===
+|項目 |型 |既定値 |意味
+
+|``documents``
+|``Record<string, string>``
+|空のobject
+|include先の論理IDとJavaScript文字列です。同じIDは一つだけ指定できます。
+
+|``baseUri``
+|``string``
+|基準URIなし
+|相対参照を解決する基準URIです。指定する場合は絶対URIだけを受理します。
+
+|``safeMode``
+|``"unsafe" | "server" | "safe" | "secure"``
+|``"secure"``
+|includeと属性処理へ適用するAsciiDoc safe modeです。
+
+|``allowedSchemes``
+|``string[]``
+|空の配列
+|include先として利用側アプリが許可するURI schemeです。空文字列、重複および制御文字を拒否します。
+
+|``includes``
+|``"expand" | "preserve"``
+|``"expand"``
+|includeを展開するか、原文のmacroとして保持するかを指定します。
+
+|``references``
+|``ResolvedReference[]``
+|空の配列
+|文書間参照について利用側アプリが解決した結果です。
+
+|``assets``
+|``ResolvedResource[]``
+|空の配列
+|画像、音声および動画について利用側アプリが解決した結果です。
+
+|``citations``
+|``ResolvedCitation[]``
+|空の配列
+|引用について利用側アプリが解決した結果です。
+
+|``bibliography``
+|``GeneratedBibliography | null``
+|``null``
+|利用側アプリが生成した参考文献です。
+|===
+
+``ResolvedReference``、``ResolvedResource``、``ResolvedCitation``および``GeneratedBibliography``は、
+``status``で種類を区別します。各型の項目は生成したTypeScript宣言を参照してください。
+
+参照と外部リソースのJSON表現および安全性の規則は、
+xref:server-execution.adoc#render-inputs[変換入力]を基準とします。``documents``と解決済みの各配列には、
+packageが固定する件数とバイト数の上限を適用します。解決済みの値は、JavaScript文字列をUTF-8へencodeした後の
+半開区間のバイト位置で範囲を指定します。範囲外、逆順または重複して競合する値は拒否します。
+
+=== 応答
+
+``AnalyzeResult``は、要求したproductと同じ名前の項目だけを持ちます。要求したproductは、結果が空配列、空文字列
+または``null``でも必ず存在します。要求していないproductは存在しません。
+
+[source,javascript]
+----
+const result = await analyze({
+  source: { text: "Paragraph." },
+  products: { html: true, diagnostics: true },
+});
+
+Object.hasOwn(result, "html");        // true
+Object.hasOwn(result, "diagnostics"); // true
+Object.hasOwn(result, "syntax");      // false
+----
+
+TypeScript宣言では各productを省略可能な項目として表します。利用側は、要求した項目が存在することを確認してから
+値を使います。応答内の項目順序は保証しません。要求した``products``の写し、構文解析回数、内部処理ごとの診断および
+使用量は返しません。
+
+=== 不正な要求
+
+次の要求は``invalid-request``として拒否し、一部だけを採用しません。
+
+* トップレベルまたは入れ子のobjectにある未知の項目
+* ``source``または``products``の欠落と``null``
+* ``source.text``の文字列以外の値
+* 空の``products``
+* product値の``false``、``null``、未知のproduct名およびproduct設定の未知項目
+* enumに定義していない文字列、数値範囲外の値、逆順または入力外のバイト範囲
+* 未知のLintルールcode、重複するschemeおよび上限を超える入力
+
+JavaScriptでは、項目が存在しないことと値が``undefined``であることを同じ省略として扱います。JSONにない
+``NaN``、``Infinity``、関数、symbolおよび循環参照は受理しません。
+
+=== エラー
+
+全ての公開入口は、失敗時に``AdocWeaveError``をthrowするか、そのエラーで``Promise``をrejectします。
+``AdocWeaveError``は``Error``を継承し、読み取り専用の``code``を持ちます。``message``は英語の説明です。
+処理で分岐する場合は``code``を使います。
+
+[cols="2,4",options="header"]
+|===
+|code |条件
+
+|``invalid-request``
+|要求の形、値または組合せがこの節で定めた仕様に合いません。
+
+|``input-limit-exceeded``
+|主文書、外部入力または処理量がpackageの固定上限を超えました。
+
+|``output-limit-exceeded``
+|要求した結果がpackageの固定出力上限を超えました。
+
+|``analysis-failed``
+|診断として結果へ含められない解析または出力の失敗です。内部処理段階をcodeへ含めません。
+
+|``cancelled``
+|ブラウザーの公開clientで``AbortSignal``による取消しが完了しました。
+
+|``analysis-in-progress``
+|同じブラウザーclientで別の解析が実行中です。
+
+|``disposed``
+|破棄済みのブラウザーclientを使用しました。
+
+|``unsupported-worker-protocol``
+|同梱したJavaScriptとWebAssemblyのschema版が、Workerの起動時照合で一致しません。
+
+|``wasm-trapped``
+|WebAssemblyがtrapしました。
+
+|``worker-failed``
+|WorkerまたはWebAssemblyを初期化できない、またはWorkerの応答を検証できません。
+|===
+
+``sourceId``、バイト範囲、内部のエラー型名、RustのbacktraceおよびWorkerの``requestId``はエラーへ公開しません。
+入力箇所を安全に特定できる問題は``diagnostics`` productへ含めます。``source``、応答およびエラーは
+呼出しごとの所有値であり、次回の呼出しで無効になるポインタを公開しません。
+
+=== 型と検証の正本
+
+要求、応答およびエラーの公開型は``crates/adocweave-wasm``のRust定義が正本です。TypeScript宣言
+``packages/wasm/protocol.d.mts``はここから生成します。項目、列挙値またはtag付きunionを変更する場合は、
+生成物とprotocol検査を同時に更新します。
+
+ブラウザークライアントとWASMの互換性は、WASM protocol schemaの照合で検査します。Worker内部の要求番号と
+封筒の形式は公開APIに含めません。公開仕様をこの構成にした理由は
+xref:adr/0042-wasm-public-contract.adoc[ADR 0042]を参照してください。

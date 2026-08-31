@@ -186,7 +186,7 @@ export async function run(): Promise<void> {
 
   await vscode.workspace
     .getConfiguration("adocweave")
-    .update("server.path", "relative/missing-adocweave-lsp", vscode.ConfigurationTarget.Global);
+    .update("server.path", "relative/missing-adocweave", vscode.ConfigurationTarget.Global);
   await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
   await editor.edit((builder) => builder.insert(new vscode.Position(0, 1), " "));
   await waitFor(() => (!hasDiagnostic(uri, "heading-marker-space") ? true : undefined));

@@ -1,0 +1,6 @@
+[package]
+name = "adocweave"
+changelog = "CHANGELOG.md"
+
+[dist]
+dist = true

@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { shouldRetryRemoval } from "./platform-contract.mjs";
+import { shouldRetryRemoval } from "./native-platform.mjs";
 import { hasExited, waitForExit } from "./process-lifecycle.mjs";
 
 export const LSP_SMOKE_TOTAL_TIMEOUT_MS = 45_000;
@@ -72,6 +72,7 @@ export function createNativeSmokeDeadline(
 
 export async function smokeLsp(
   binary,
+  binaryArguments,
   packageVersion,
   deadline,
   {
@@ -86,7 +87,7 @@ export async function smokeLsp(
     LSP_SMOKE_TEARDOWN_RESERVE_MS,
     deadline.timeoutMs / 2,
   );
-  const child = spawnProcess(binary, [], { stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawnProcess(binary, binaryArguments, { stdio: ["pipe", "pipe", "pipe"] });
   const lifecycle = observeLifecycle(child);
   const reader = createJsonRpcReader(child, lifecycle);
   let completed = false;

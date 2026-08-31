@@ -1,0 +1,173 @@
+name: VS Code extension publication
+
+on:
+  push:
+    tags:
+      - 'vscode/v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vscode-publish-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  npm_config_fetch_retries: "3"
+  npm_config_fetch_retry_maxtimeout: "30000"
+  npm_config_fetch_timeout: "120000"
+
+jobs:
+  candidate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    outputs:
+      version: ${{ steps.contract.outputs.version }}
+      vsix: ${{ steps.contract.outputs.vsix }}
+    env:
+      PACKAGE_COMMIT: ${{ github.sha }}
+      PACKAGE_TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - uses: DeterminateSystems/determinate-nix-action@527f17dd63d2d60d3e5552934bc84b9a33a14d11 # v3.22.2
+      - id: contract
+        name: Tag, version, and source verification
+        run: |
+          version="$(jq -er .version editors/vscode/package.json)"
+          test "$(jq -er .publisher editors/vscode/package.json)" = adocweave
+          test "$(jq -er .name editors/vscode/package.json)" = adocweave
+          test "$PACKAGE_TAG" = "vscode/v$version"
+          tag_commit="$(git rev-parse "refs/tags/$PACKAGE_TAG^{commit}")"
+          test "$tag_commit" = "$PACKAGE_COMMIT"
+          test "$(git rev-parse HEAD)" = "$PACKAGE_COMMIT"
+          git merge-base --is-ancestor "$PACKAGE_COMMIT" refs/remotes/origin/main
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "vsix=adocweave-$version.vsix" >> "$GITHUB_OUTPUT"
+      - name: Candidate construction and verification
+        run: nix develop .#ci-integrations -c cargo make test-vscode-release-candidate
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: vscode-extension-candidate
+          path: target/distrib/${{ steps.contract.outputs.vsix }}
+          if-no-files-found: error
+          retention-days: 7
+
+  marketplace:
+    needs: candidate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: marketplace-publish
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_CORE_OUTPUT: none
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      VSIX: target/distrib/${{ needs.candidate.outputs.vsix }}
+      VERSION: ${{ needs.candidate.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: DeterminateSystems/determinate-nix-action@527f17dd63d2d60d3e5552934bc84b9a33a14d11 # v3.22.2
+      - name: Microsoft Entra ID login
+        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: vscode-extension-candidate
+          path: target/distrib
+      - name: Locked extension dependencies
+        run: nix develop .#ci -c npm ci --ignore-scripts --prefix editors/vscode
+      - id: existing
+        name: Existing Marketplace publication verification
+        working-directory: editors/vscode
+        run: |
+          state="$(node scripts/marketplace-publication.mts \
+            --candidate "$GITHUB_WORKSPACE/$VSIX" \
+            --publisher adocweave --name adocweave --version "$VERSION" --target universal \
+            --output "$RUNNER_TEMP/marketplace.vsix")"
+          echo "state=$state" >> "$GITHUB_OUTPUT"
+      - name: Visual Studio Marketplace publication
+        if: steps.existing.outputs.state == 'missing'
+        working-directory: editors/vscode
+        run: npx --no-install vsce publish --packagePath "$GITHUB_WORKSPACE/$VSIX" --azure-credential
+      - name: Published Marketplace extension verification
+        working-directory: editors/vscode
+        run: |
+          for _ in $(seq 1 20); do
+            state="$(node scripts/marketplace-publication.mts \
+              --candidate "$GITHUB_WORKSPACE/$VSIX" \
+              --publisher adocweave --name adocweave --version "$VERSION" --target universal \
+              --output "$RUNNER_TEMP/marketplace.vsix")"
+            if [ "$state" = published ]; then
+              exit 0
+            fi
+            sleep 6
+          done
+          echo "Marketplace did not make adocweave.adocweave $VERSION available within 120 seconds" >&2
+          exit 1
+      - name: Published extension and Language Server verification
+        env:
+          ADOCWEAVE_TEST_VSIX: ${{ runner.temp }}/marketplace.vsix
+        run: nix develop .#ci-integrations -c cargo make test-vscode-published-extension
+
+  open-vsx:
+    needs: candidate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: open-vsx-publish
+    env:
+      VSIX: target/distrib/${{ needs.candidate.outputs.vsix }}
+      VERSION: ${{ needs.candidate.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: DeterminateSystems/determinate-nix-action@527f17dd63d2d60d3e5552934bc84b9a33a14d11 # v3.22.2
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: vscode-extension-candidate
+          path: target/distrib
+      - name: Locked extension dependencies
+        run: nix develop .#ci -c npm ci --ignore-scripts --prefix editors/vscode
+      - id: existing
+        name: Existing Open VSX publication verification
+        run: |
+          state="$(node tools/open-vsx-publication.mjs \
+            --candidate "$VSIX" --namespace adocweave --name adocweave --version "$VERSION" \
+            --output "$RUNNER_TEMP/open-vsx.vsix")"
+          echo "state=$state" >> "$GITHUB_OUTPUT"
+      - name: Open VSX publication
+        if: steps.existing.outputs.state == 'missing'
+        working-directory: editors/vscode
+        env:
+          OVSX_PAT: ${{ secrets.OPEN_VSX_TOKEN }}
+        run: npx --no-install ovsx publish "$GITHUB_WORKSPACE/$VSIX"
+      - name: Published Open VSX extension verification
+        run: |
+          for _ in $(seq 1 20); do
+            state="$(node tools/open-vsx-publication.mjs \
+              --candidate "$VSIX" --namespace adocweave --name adocweave --version "$VERSION" \
+              --output "$RUNNER_TEMP/open-vsx.vsix")"
+            if [ "$state" = published ]; then
+              exit 0
+            fi
+            sleep 6
+          done
+          echo "Open VSX did not make adocweave.adocweave $VERSION available within 120 seconds" >&2
+          exit 1
+      - name: Published extension and Language Server verification
+        env:
+          ADOCWEAVE_TEST_VSIX: ${{ runner.temp }}/open-vsx.vsix
+        run: nix develop .#ci-integrations -c cargo make test-vscode-published-extension

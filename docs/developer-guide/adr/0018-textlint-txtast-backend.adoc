@@ -1,5 +1,9 @@
 = ADR 0018: textlint専用TxtAST backendへの責務集約
-:status: accepted; component identity amended by ADR 0030
+:status: 一部有効。コンポーネントの識別方法はADR 0030により改訂
+
+== 状態
+
+{status}
 
 == 文脈
 
@@ -9,7 +13,7 @@ JavaScriptへ渡し、JavaScriptでTxtASTへ変換する責務分担を採用し
 
 実装後の検証により、block titleと本体の範囲が重なる入力を処理できないこと、引用ではないcontainerを
 ``BlockQuote``として扱うこと、表示されるmacro本文を除外することが分かりました。また、JavaScriptで
-入力中の全文字境界を保持する位置変換は、入力サイズに対して大きなmemory増幅を起こします。
+入力中の全ての文字間位置を保持する位置変換は、入力サイズに対して大きなmemory増幅を起こします。
 
 これらは個別の条件分岐だけでなく、AsciiDocの意味をTxtASTへ対応させる判断と、位置を変換する責務が
 複数の層へ分散していることから生じています。
@@ -23,7 +27,7 @@ textlint固有の変換をpure Rustの``adocweave-textlint`` adapterへ集約し
 責務を次のように分けます。
 
 * AdocWeave core：AsciiDocの解析結果、意味情報および原文範囲
-* textlint adapter：校正対象の選択、TxtAST nodeへの意味対応、文章境界およびUTF-16範囲
+* textlint adapter：校正対象の選択、TxtAST nodeへの意味対応、文の区切りおよびUTF-16範囲
 * Node.js専用WebAssembly：request、使用量の上限およびJavaScript binding
 * JavaScript package：原文からの``raw``と``value``の取得、``loc``の付与およびProcessor lifecycle
 * textlint規則：TxtASTで表された文章の検査と診断
@@ -56,15 +60,22 @@ coreの``text-projection`` featureと``adocweave::output::text``は削除しま�
 利用箇所がなく、対象固有の校正方針をcoreの公開APIとして維持する理由がないためです。Node.js専用
 WebAssemblyはBrowser向けWebAssemblyと引き続き分離します。
 
+[NOTE]
+====
+ここでいうcore crateの``adocweave``は、現在の``adocweave-core``です。``adocweave``という名前は、利用者が
+実行するCLIのcrateが持ちます。現在のcrate構成はxref:0046-project-owned-local-filesystem.adoc[ADR 0046]に
+一覧があります。
+====
+
 == 採用しない案
 
 既存の``TextProjection``へ本体範囲を追加し、JavaScriptの位置変換だけを差し替える方法は、当面の不具合を
 修正できます。しかしcore、転送用型およびJavaScriptの三つのnode体系と、校正方針の分散を残すため
 採用しません。
 
-最終的なTxtASTをWebAssembly内ですべて構築する方法は、``raw``と``value``の文字列をWebAssembly境界で
+最終的なTxtASTをWebAssembly内ですべて構築する方法は、``raw``と``value``の文字列をWebAssemblyインターフェイスで
 複製します。JavaScript文字列から安全に切り出せる値まで複製する必要はないため、UTF-16範囲を持つplanを
-境界とします。
+責務の分かれ目とします。
 
 Browser向けWebAssemblyへ入口を追加する方法は、textlintを使わない利用者の成果物と公開protocolを
 変更するため採用しません。

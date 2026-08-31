@@ -1,20 +1,18 @@
 import { readFileSync } from "node:fs";
 import process from "node:process";
 
-import { releaseFromTag, validateDistPlan } from "./release-contract.mjs";
-import plan from "../release/distribution-plan.json" with { type: "json" };
+import { validateDistPlan } from "./native-release-checks.mjs";
 
 const [path, tag] = process.argv.slice(2);
-if (!path || !tag) {
+if (!path || !tag || process.argv.length !== 4) {
   process.stderr.write("usage: node tools/verify-dist-plan.mjs PLAN_JSON TAG\n");
   process.exit(2);
-}
-
-try {
-  const { product, productVersion } = releaseFromTag(tag);
-  validateDistPlan(JSON.parse(readFileSync(path, "utf8")), plan, product, productVersion, tag);
-  process.stdout.write(`dist plan verified: ${tag}\n`);
-} catch (error) {
-  process.stderr.write(`${error.message}\n`);
-  process.exitCode = 1;
+} else {
+  try {
+    validateDistPlan(JSON.parse(readFileSync(path, "utf8")), tag);
+    process.stdout.write(`dist plan verified: ${tag}\n`);
+  } catch (error) {
+    process.stderr.write(`${error.message}\n`);
+    process.exitCode = 1;
+  }
 }

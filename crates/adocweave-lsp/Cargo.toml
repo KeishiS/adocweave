@@ -1,6 +1,6 @@
 [package]
 name = "adocweave-lsp"
-version = "0.47.0"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
 homepage.workspace = true
@@ -10,10 +10,8 @@ rust-version.workspace = true
 description = "Language Server for AdocWeave"
 
 [dependencies]
-adocweave = { path = "../adocweave" }
-adocweave-config = { path = "../adocweave-config" }
-adocweave-host = { path = "../adocweave-host" }
-adocweave-workspace = { path = "../adocweave-workspace" }
+adocweave-core = { path = "../adocweave-core" }
+adocweave-project = { path = "../adocweave-project" }
 async-lsp = { version = "0.2.4", default-features = false, features = [
   "client-monitor",
   "omni-trait",
@@ -35,12 +33,8 @@ tokio = { version = "1", features = [
 tokio-util = { version = "0.7", features = ["compat"] }
 tower = "0.5"
 
+[dev-dependencies]
+tempfile = "3"
+
 [lib]
 path = "src/lib.rs"
-
-[[bin]]
-name = "adocweave-lsp"
-path = "src/main.rs"
-
-[package.metadata.dist]
-dist = true

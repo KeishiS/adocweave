@@ -2,22 +2,26 @@
 
 このディレクトリには、利用方法、対応書式、アプリケーションへの組み込み、開発方法を記載します。
 
-== Version方針
+== バージョン方針
 
-各製品のバージョンは``release/distribution-plan.json``の``versionSource``が指すmanifestを基準とします。
-RustおよびNode.jsのバージョンはlink:../toolchains.json[toolchain manifest]を基準とします。
+ネイティブ実行ファイルとRust公開APIは、リポジトリ直下の``Cargo.toml``にある
+``workspace.package.version``を基準とします。npmパッケージとエディタ拡張は、各ディレクトリのmanifestと
+Changelogを基準とする独立したバージョンを持ちます。
+root workspaceのRustとNode.jsのバージョンはlink:../toolchains.json[toolchain manifest]を基準とします。
+Zed拡張が対応する最小Rust版は、公式レジストリの構築環境に合わせて
+link:../editors/zed/Cargo.toml[拡張のmanifest]で別に指定します。
 
-version固有の変更内容と移行手順は
-https://github.com/KeishiS/adocweave/releases[GitHub Releases]を参照してください。
+ネイティブ版の変更内容はhttps://github.com/KeishiS/adocweave/releases[GitHub Releases]、npmパッケージと
+エディタ拡張の変更内容は各配布物のChangelogを参照してください。
 
 == ディレクトリの案内
 
 user-guideディレクトリには、利用目的、操作、入力および結果を利用者の視点で記載します。
 実装内部の説明は、操作結果を理解するために必要な範囲に限定します。
 developer-guideディレクトリには、アプリへの組み込み、実装、配布および設計について、
-コンポーネントの責務、境界、不変条件および検証方法を記載します。基本的な操作手順は
+コンポーネントの責務と分担、不変条件および検証方法を記載します。基本的な操作手順は
 user-guideと重複させません。
-採用した設計とその背景はdeveloper-guide内のADR、
+採用した設計とその背景はxref:developer-guide/adr/index.adoc[ADRの索引]、
 現在の主要な計画はロードマップ、作業単位はGitHub Issuesに記録します。
 完了した作業の経緯はGitHub Issues、Pull RequestおよびGit履歴から確認します。
 
@@ -38,11 +42,11 @@ user-guideと重複させません。
 |対応範囲(profile)
 |AdocWeaveが受け付け、期待どおりに処理するAsciiDocの範囲です。
 
-|意味情報(semantic model, projection)
+|意味情報（semantic modelと用途別の解析結果）
 |解析して得た、見出し・リンク・表・属性などの構造化された情報です。
 
 |利用側アプリ(host)
-|AdocWeaveを呼び出すCLI、エディター、Webアプリなどです。
+|AdocWeaveを呼び出すCLI、エディタ、Webアプリなどです。
 
 |テスト用入力(fixture)
 |期待する結果と組で保存する入力例です。
@@ -51,6 +55,6 @@ user-guideと重複させません。
 |``syntax-mode = "permissive"``を指します。未対応構文を元の内容のまま保持し、解析を続けます。
 
 |``strict``モード
-|``syntax-mode = "strict"``を指します。未対応構文を含む文書に対するコア操作を拒否します。
+|``syntax-mode = "strict"``を指します。未対応構文を含む文書の解析をエラーにします。
 
 |===

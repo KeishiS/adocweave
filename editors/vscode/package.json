@@ -1,8 +1,8 @@
 {
-  "name": "adocweave-vscode",
-  "displayName": "AdocWeave",
+  "name": "adocweave",
+  "displayName": "AdocWeave Language Support",
   "description": "AdocWeave Language Server client and AsciiDoc syntax highlighting",
-  "version": "0.46.2",
+  "version": "0.55.1",
   "publisher": "adocweave",
   "license": "MIT OR Apache-2.0",
   "homepage": "https://github.com/KeishiS/adocweave",
@@ -12,7 +12,7 @@
   },
   "private": true,
   "engines": {
-    "vscode": "^1.125.0"
+    "vscode": "^1.107.0"
   },
   "categories": [
     "Programming Languages",
@@ -49,7 +49,7 @@
           "type": "string",
           "default": "",
           "scope": "machine",
-          "description": "Absolute path to the adocweave-lsp executable to use. When empty, the extension searches PATH."
+          "description": "Absolute path to the adocweave executable to use. When empty, the extension searches PATH."
         }
       }
     },
@@ -82,23 +82,25 @@
     "format": "biome format --write src test scripts",
     "format:check": "biome format src test scripts",
     "lint": "biome lint src test scripts",
-    "test": "npm run build:test && node --test dist-test/test/*.test.js",
+    "test": "npm run build:test && node --test dist-test/test/*.test.js scripts/*.test.mts",
     "build:test": "node scripts/build-test.mts",
     "package": "node scripts/package.mts",
     "test:vsix-installation": "node scripts/vsix-installation-smoke.mts",
-    "test:extension": "node scripts/run-extension-tests.mts"
+    "test:extension": "node scripts/run-extension-tests.mts",
+    "test:acquisition": "node scripts/run-acquisition-test.mts"
   },
   "dependencies": {
+    "fflate": "0.8.3",
     "vscode-languageclient": "10.1.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.8",
+    "@biomejs/biome": "2.5.9",
     "@types/node": "26.2.0",
-    "@types/vscode": "1.125.0",
+    "@types/vscode": "1.107.0",
     "@vscode/test-electron": "3.1.0",
     "@vscode/vsce": "3.9.2",
     "esbuild": "0.28.2",
-    "fflate": "0.8.3",
+    "ovsx": "1.1.1",
     "typescript": "7.0.2",
     "vscode-oniguruma": "2.0.1",
     "vscode-textmate": "9.3.2"

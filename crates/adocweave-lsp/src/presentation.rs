@@ -1,35 +1,35 @@
-//! Stateless completion presentation over selected document and workspace analyses.
+//! Stateless completion presentation over selected document and expanded_analysis analyses.
 
-use adocweave::Analysis;
-use adocweave::semantic::{DocumentElement, document_element_at, source_language_candidates};
+use adocweave_core::Analysis;
+use adocweave_core::semantic::{DocumentElement, document_element_at, source_language_candidates};
 use async_lsp::lsp_types as lsp;
 
 use crate::position::{PositionEncoding, cursor_touches_range, request_offset};
-use crate::state::WorkspaceAnalysis;
+use crate::state::ExpandedDocumentAnalysis;
 
 pub(crate) fn completion(
     analysis: &Analysis,
-    workspaces: &[&WorkspaceAnalysis],
+    expanded_analyses: &[&ExpandedDocumentAnalysis],
     uri: &lsp::Url,
     position: lsp::Position,
     encoding: PositionEncoding,
 ) -> Result<lsp::CompletionResponse, String> {
     let offset = request_offset(analysis.source_document(), position, encoding)?;
     if attribute_completion_context(analysis.source(), offset as usize) {
-        let values = workspaces
+        let values = expanded_analyses
             .iter()
-            .find_map(|workspace| {
-                expanded_offset_for_origin(workspace, uri, offset).map(|expanded| {
-                    workspace
+            .find_map(|expanded_analysis| {
+                expanded_offset_for_origin(expanded_analysis, uri, offset).map(|expanded| {
+                    expanded_analysis
                         .analysis
                         .attribute_environment()
                         .values_at(expanded)
                 })
             })
             .unwrap_or_else(|| {
-                analysis
-                    .attribute_environment()
-                    .values_at(adocweave::text::TextSize::new(offset as usize).expect("offset"))
+                analysis.attribute_environment().values_at(
+                    adocweave_core::text::TextSize::new(offset as usize).expect("offset"),
+                )
             });
         return Ok(items(values.into_iter().map(|(name, value)| {
             lsp::CompletionItem {
@@ -151,17 +151,17 @@ fn items(items: impl IntoIterator<Item = lsp::CompletionItem>) -> lsp::Completio
 }
 
 fn expanded_offset_for_origin(
-    workspace: &WorkspaceAnalysis,
+    expanded: &ExpandedDocumentAnalysis,
     uri: &lsp::Url,
     offset: u32,
-) -> Option<adocweave::text::TextSize> {
-    workspace.document.source_map().iter().find_map(|segment| {
-        if segment.mapping != adocweave::preprocess::SourceMapping::Identity
+) -> Option<adocweave_core::text::TextSize> {
+    expanded.document.source_map().iter().find_map(|segment| {
+        if segment.mapping != adocweave_core::preprocess::SourceMapping::Identity
             || segment
                 .origin
                 .source_id
                 .as_ref()
-                .is_none_or(|source_id| source_id.as_str() != uri.as_str())
+                .is_none_or(|source_id| expanded.uri_for_source_id(source_id) != Some(uri.as_str()))
         {
             return None;
         }
@@ -170,8 +170,10 @@ fn expanded_offset_for_origin(
             return None;
         }
         let relative = offset.checked_sub(origin.start().to_u32())?;
-        adocweave::text::TextSize::new(segment.output_range.start().to_usize() + relative as usize)
-            .ok()
+        adocweave_core::text::TextSize::new(
+            segment.output_range.start().to_usize() + relative as usize,
+        )
+        .ok()
     })
 }
 
@@ -204,7 +206,7 @@ fn attribute_completion_context(source: &str, offset: usize) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use adocweave::{Analysis, AnalysisOptions, AnalysisRequest, NeverCancel};
+    use adocweave_core::{Analysis, AnalysisOptions, AnalysisRequest, NeverCancel};
 
     use super::*;
 

@@ -30,10 +30,10 @@ cargo make verify
 |依存関係の出所、license、advisoryおよび例外の監査
 
 |``acceptance``
-|現在のhostで実行できる統合検査と配布candidateの受入検査
+|現在のhostで実行できる``main``向け統合検査
 
 |``release-check``
-|``verify``、``security-audit``および``acceptance``を含む公開前の完全な検査
+|``verify``、``security-audit``、``acceptance``およびnative配布計画を含む公開前の検査
 |===
 
 ``fmt``はソースを整形し、``fmt-check``は変更せずに書式を検査します。日常の入口とCI専用入口以外のtaskは
@@ -139,7 +139,7 @@ remote名、ブランチ名、mergeの方式および必須checkの構成は、M
 . 構文情報から意味情報への対応と、保持する元範囲を定義します。
 . 不完全入力の同期点、回復結果および安定した診断codeを定義します。
 . 厳格modeと寛容modeでの扱いを定義します。
-. 曖昧入力、境界値および回復をテスト用入力と期待結果で固定します。
+. 曖昧な入力、上限・下限付近の値および回復動作をテスト用入力と期待結果で固定します。
 
 既存構文の**不具合修正や挙動の調整**では、この6項目を求めません。再発を防ぐテスト用入力と期待結果を
 追加すれば十分です。認識規則そのものを変える場合だけ、上の項目のうち影響する範囲を更新します。
@@ -155,12 +155,13 @@ Rustの許可licenseと取得元は``deny.toml``、VS Code拡張の配布runtime
 
 . 対象のmanifestとlockfileだけを更新し、無関係な依存関係の変更を分離します。
 . ``cargo make security-audit``を実行します。
-. license、取得元、生成されるnoticeおよびbrowser sizeの差分を確認します。
+. license、取得元、生成されるnoticeおよび``@adocweave/wasm``の大きさの差分を確認します。
 . 通常の品質検査を通してからpull requestを統合します。
 
 同じcrateの複数バージョンが依存関係へ入ることは禁止しません。上流のバージョン制約で決まる値であり、
-一覧を保守しても実害を防げないためです。重複が問題になるのは成果物の大きさとbuild時間であり、
-これらはbrowser archiveとraw WebAssemblyの上限、VSIXのsize上限および``wasm-size``が検査します。
+一覧を保守しても実害を防げないためです。重複が問題になるのは成果物の大きさとbuild時間です。大きさは
+次の2つが上限を超えていないことを確かめます。``test-wasm-smoke``は``@adocweave/wasm``のarchiveと
+WebAssembly本体の大きさを、``test-vscode-release-determinism``はVSIXの大きさを検査します。
 
 ``security-audit``は、``cargo-deny``が実行時に取得する最新のRustSec Advisory Databaseを使い、root workspaceと
 Zed拡張のadvisory、licenseおよび取得元を検査します。npmはVS Code拡張の配布runtime treeだけを標準の
@@ -203,11 +204,12 @@ Nix入力はDependabotの対象外であり、``flake.lock``を手動で更新�
 * 新しい文書を追加する前に、既存の文書へ統合できないか確認します。
 * 利用者向けの手順は代表的な経路だけを書きます。成果物ごとの網羅した手順を並べず、詳細はCLIのhelpと
   Release Notesへ委ねます。
-* バージョン固有の変更内容と移行手順は、原則としてGitHub Release Notesへ記載します。その本文は
-  ``release/notes.md``に書き、版を上げるときに書き直します。Release本文がMarkdownであるため、このfileだけは
-  ``.adoc``ではなく``.md``です。VS Code拡張の``editors/vscode/README.md``も、拡張registryとeditorの拡張画面が
+* ネイティブ版に固有の変更内容と移行手順は、rootの``CHANGELOG.md``へ記載します。cargo-distは対象版の項目を
+  GitHub Release Notesへ取り込みます。独立した版を持つWebAssemblyパッケージ、textlint用Processor、
+  VS Code拡張およびZed拡張の変更は、それぞれのディレクトリにある``CHANGELOG.md``へ記載します。
+  VS Code拡張とZed拡張の``README.md``および``CHANGELOG.md``は、拡張registryとエディタの拡張画面が
   Markdownだけを表示するため``.md``です。
-* CLI option、診断code、パッケージバージョン、対応target、公開APIおよびschemaなど、codeや機械可読な
+* CLI option、診断code、パッケージバージョン、対応target、公開APIおよびschemaなど、codeやJSON形式の
   manifestから取得できる情報を文書へ重複して記載しません。
 * 現行仕様、設計理由および作業計画を同じ文書に混在させません。現行仕様は``docs/``、設計理由はADR、
   作業計画はGitHub Issuesを正本とします。
@@ -215,17 +217,24 @@ Nix入力はDependabotの対象外であり、``flake.lock``を手動で更新�
 * 利用者から見える変更では、関連文書を同じpull requestで更新します。
 * 文書内のcommand例は、可能な限りCIまたは自動testで実行できる形にします。
 
+== CLIの表示言語
+
+CLIが端末へ表示するhelp、診断、進捗、要約およびerrorは英語で記述します。JSON、SARIFなどの
+出力に含める説明文も英語とします。設定名、option名、診断codeおよび出力schemaと同様に、
+表示言語を実行環境や文書の言語によって切り替えません。
+
 == Pull request
 
 pull requestを作成するときは、link:.github/pull_request_template.md[Pull Request template]を使用します。
 変更の目的、主な変更点、実行した検証を簡潔に記載し、未実施の検証がある場合は理由を記載してください。
 
-CIの必須checkは``verify``の一つだけです。すべてのPull Requestで変更pathにかかわらず同じsource gateを実行し、
-書式、lint、test、生成fileの差分、人が書いた文書および配布metadataを検査します。成果物の構築有無を
-pathから判定せず、実行しないjobの``skipped``を別のjobで照合しません。失敗した場合は、Nix開発環境で
-``cargo make verify``を再実行し、設定の基準である``.github/workflows``と``Makefile.toml``を確認してください。
+CIの必須checkは``verify``の一つだけです。すべてのPull Requestで、``cargo make verify``によるsource検査、
+macOSとWindowsのProjectおよびLanguage Server試験、Zed公式レジストリが使用するRust 1.90での
+``wasm32-wasip2``向け構築を別のjobとして実行し、``verify``へ結果をまとめます。
 
-cross targetの構築、実際のOSやBrowserを使う統合検査、fuzz、Nixパッケージ検査、未公開製品の配布成果物の構築および
+手元の``cargo make verify``で再現できるのはsource検査です。OS別の試験はCI workflow、Zedの構築は
+xref:docs/developer-guide/zed-development.adoc[Zed拡張の開発]に記載したRust版とtargetで確認してください。
+そのほかのcross target、実際のOSやBrowserを使う統合検査、fuzz、Nixパッケージ検査、配布成果物の構築および
 成果物を使うruntime受入検査は、Pull Requestを``main``へ統合した後に実行します。``main``の検査に失敗したcommitは
 公開candidateとして使用しません。手元で成果物を含む追加の受入検査を行う場合は、次を実行します。
 
@@ -234,9 +243,9 @@ cross targetの構築、実際のOSやBrowserを使う統合検査、fuzz、Nix�
 cargo make acceptance
 ----
 
-このtaskは``verify``済みのsourceを前提に、cross target、実WASM、editor、fuzzおよびNixの統合検査を行い、
-Browser、textlint、VS Code、Zedの配布candidateを構築して受入検査を実行します。``release-check``は
-``verify``と``acceptance``を一つの実行計画へ合成するため、同じtaskを重複して実行しません。
+このtaskは``verify``済みのsourceを前提に、cross target、実WASM、エディタ、fuzzおよびNixの統合検査を行います。
+``release-check``は``verify``、``security-audit``、``acceptance``およびnativeのcargo-dist計画を一つの実行計画へ
+まとめるため、同じtaskを重複して実行しません。
 
 手元とCIでは、``flake.lock``で固定した開発環境のChromiumを使用します。別のbrowserを確認する場合は
 ``ADOCWEAVE_BROWSER``で実行ファイルを指定できます。
@@ -249,146 +258,237 @@ required status checkを``verify``一件へ置き換えます。
 [#tag]
 == Tag
 
-安定版には``adocweave-<product>/vX.Y.Z``形式のtagを使用します。人がtagを直接作成またはpushしてはいけません。
-``main``を指定して開始した公開workflowが検査とcandidate構築を完了した後、同じrunがtagを作成します。
-公開済みtagの更新と削除は行いません。tagの作成条件と公開失敗時の扱いは
+ネイティブ版には``vX.Y.Z``形式のtagを使用します。リリース用Pull Requestを``main``へ統合し、そのcommitに対する
+release gateが成功した後、cargo-distのRelease workflowを``main``から手動実行します。cargo-distが成果物を構築し、
+GitHub Releaseとtagを作成します。ネイティブ版のtagを手元からpushしません。公開済みtagの更新と削除は行いません。
+tagの作成条件と公開失敗時の扱いは
 xref:docs/developer-guide/release-distribution.adoc[GitHub Releases配布仕様]を基準とします。
+
+Zed拡張はこのtagとGitHub Releaseに含めません。``editors/zed/extension.toml``で独立してバージョンを管理し、
+公開branchのcommitを公式Zed拡張レジストリへ提出します。
 
 == Release
 
 release作業も通常の変更と同様に、短命なブランチとpull requestから開始します。
 
-. 公開する製品を選び、変更の互換性および利用者への影響に応じたSemantic Versioningのバージョンを決めます。
-  続いて、その製品について登録済みのversion記録を同期します。``PRODUCT``には
-  link:release/version-sync.json[バージョン同期対象]に登録した製品IDを指定します。
+この節はGitHub Releaseへ含める成果物の手順です。Zed拡張の更新と提出は
+xref:docs/developer-guide/zed-development.adoc#zed-registry-submission[公式レジストリへの提出]に従います。
+
+. Cargo workspaceの現在の版に対応する``tag``を確認し、rootの``CHANGELOG.md``へ利用者から見える変更を
+  記載します。``tag``がない場合は、既存の先頭項目へ追記します。``tag``がある場合は、互換性および
+  利用者への影響に応じて次のSemantic Versioningの版を決め、先頭へ項目を追加します。
+  移行操作やRustの公開APIに互換性のない変更がある場合は、その内容も記載します。WebAssemblyパッケージ、
+  textlint用Processor、VS Code拡張およびZed拡張の版は更新しません。
+. 次の版へ進む場合は、Cargo workspaceの版とnative用lockfileを更新します。現在の未公開版を使う場合は、
+  この操作を行いません。版更新toolは、先に用意したChangelog項目を確認しますが、Changelogの見出し、本文、
+  日付および参照先を変更しません。
 +
 [source,console]
 ----
-node tools/sync-release-version.mjs --product PRODUCT --version X.Y.Z
+node tools/native-release-version.mjs --version X.Y.Z
 ----
 +
-このtoolはバージョン同期対象に明示したmanifest、lockfile、公開仕様のfixtureおよび生成物だけを
-更新します。更新前に部分的なバージョン変更を検出した場合は、ファイルを書き換えず停止します。
-各製品内のversion記録が正本と一致することは``cargo make verify``内のrelease contractが別に照合します。
-. 差分を確認し、link:release/notes.template.md[Release Notesの雛形]を``release/notes.md``へ複製します。
-  題名の``PRODUCT``と``X.Y.Z``を置き換え、各節へ現在の変更内容を書きます。必要な仕様文書とテスト用入力も
-  更新してから、Release Notesと、選択した製品内のversion記録を検査します。
+このtoolは``Cargo.toml``、``Cargo.lock``および``fuzz/Cargo.lock``だけを更新します。npmパッケージと
+エディタ拡張のmanifestは、それぞれを公開するときに所有先で更新します。
+. 必要な仕様文書とテスト用入力も更新してから、native用lockfileとChangelogの版がworkspace版と一致することを
+  検査します。
 +
 [source,console]
 ----
-node tools/release-notes.mjs --check PRODUCT
-node tools/sync-release-version.mjs --product PRODUCT --check
+node tools/native-release-version.mjs --check
 ----
 . ``cargo make release-check``を実行し、pull requestの必須checkが成功したことを確認して``main``へ統合します。
-. release対象のPull Requestをすべて統合し、公開対象が``main``の先端であることを確認して、次のように公開workflowを実行します。
+. release対象のPull Requestをすべて統合し、公開対象が``main``の先端であることと、そのcommitに対するrelease gateの
+  成功を確認します。Release workflowを``dry-run``で実行します。``dry-run``は公開せず、4対象プラットフォームのnative archiveを
+  構築して成果物試験まで実行します。
 +
 [source,console]
 ----
-gh workflow run release.yml \
-  --ref main \
-  -f product=PRODUCT
+gh workflow run release.yml --ref main -f tag=dry-run
 ----
-. workflowの検査と選択製品のcandidate構築が成功したら、``github-release`` Environmentで公開を承認します。
-. 公開workflowの検証が成功し、予定されたassetを含むstableなGitHub Releaseが作成されたことを確認します。
-  必要に応じて、xref:#release-checklist[Release checklist]の任意の受入確認を行います。
-
-Release Notesの題名、見出しおよび順序は``release/notes.template.md``を正本とします。製品と版の
-placeholderを置き換え、各節の本文を``release/notes.md``に人が書きます。選択した製品のversionと
-互換性判断に使うAPI世代は
-``tools/release-notes.mjs``が機械可読な正本から生成し、``対応関係``の節にだけ追記します。
-``cargo make verify``に含まれるrelease contractが、題名から判定した製品、製品version、見出し、順序および
-未記入の案内文が残っていないことを検査します。公開workflowも同じtoolでGitHub Releaseの本文を生成します。
+. ``dry-run``が成功したcommitと現在の``main``の先端が同じであることを確認し、同じworkflowへ
+  ``vX.Y.Z``を指定してstable releaseを開始します。
++
+[source,console]
+----
+gh workflow run release.yml --ref main -f tag=vX.Y.Z
+----
+. cargo-distのworkflowが、検査済みの4つのnative成果物を一つのGitHub Releaseへ添付し、tagを作成します。
+  独立版のnpmパッケージとVS Code拡張は、このReleaseに含めません。
+. Release workflowがCachixの公開jobを実行し、書込みtokenを持たない後続jobが公開済みパッケージを取得して確認します。
+. Cachixへの公開を含むRelease workflow全体が成功し、予定されたassetを含むstableなGitHub Releaseが作成されたことを
+  確認します。
+  ``RELEASE_TAG=vX.Y.Z cargo make native-release-acceptance``で公開済みassetを確認し、
+  必要に応じてxref:#release-checklist[Release checklist]の任意の受入確認を行います。
 
 CLI引数、Language Server protocol、設定schemaなど、外部から利用する仕様を変更した場合は、変更内容と影響を
-``主な変更``へ記載します。ほかの製品や外部APIとの併用条件が変わる場合は``対応関係``へ、利用者の作業が
-必要な場合はその版への移行を説明する節へ記載します。
+rootの``CHANGELOG.md``へ記載します。利用者の作業が必要な場合は``Migration``、Rustの公開APIに互換性のない変更が
+ある場合は``Rust API``へ記載します。
 前の版と比較していない仕様を「変更していません」と機械生成しません。
 
-雛形の``PRODUCT``と``X.Y.Z``は公開する製品と版へ置き換えます。「記載してから公開」を含む案内文は、
-書き終えたら削除します。残っている場合は``release-contract``が未記入として拒否します。
-``tools/sync-release-version.mjs``は``release/version-sync.json``に登録したfileだけを変更し、
-``release/notes.md``の題名、見出しおよび本文は変更しません。
+``tools/native-release-version.mjs``はnative版の固定された3ファイルだけを変更し、rootの``CHANGELOG.md``は読み取るだけです。
+Changelogの見出し、本文、日付および参照先は人が記載します。cargo-distは対象版の項目をGitHub Release Notesへ直接取り込むため、
+別のRelease Notes生成器は使用しません。
 
 公開処理の権限、同一runでのcandidate検証およびReleaseの状態遷移は
 xref:docs/developer-guide/release-distribution.adoc[GitHub Releases配布仕様]を基準とします。
-公開に失敗した場合は、再実行前にworkflowのcleanup結果を確認します。
+外部公開だけに失敗した場合は、Release workflowの``Re-run failed jobs``を使用します。成功済みのGitHub Release作成jobを
+再実行せず、失敗した公開jobと後続jobだけを同じtagとcommitで再実行します。再実行前にworkflowのcleanup結果を
+確認します。
 
 公開後に問題が見つかった場合は、既存のtagやassetを置換せず、修正をpull requestで``main``へ統合して
 新しいバージョンで最初から実行します。
 
+最初の自動公開より前に、``github-release``、``cachix-publish``、``marketplace-publish``、``npm-publish``および
+``open-vsx-publish``の5つのenvironmentを作成します。各environmentのdeployment branch policyではSelected branches
+and tagsを選びます。``npm-publish``では``wasm/v*``と``textlint-plugin-asciidoc/v*``、
+``marketplace-publish``と``open-vsx-publish``では
+``vscode/v*``を許可します。``github-release``と``cachix-publish``では``main``だけを許可します。
+ネイティブ版は``main``から手動実行します。
+Open VSXとCachixのtokenは対応するenvironmentへ移します。
+textlint用Processorのnpm Trusted Publisherには``textlint-plugin-publish.yml``と``npm-publish`` environment、
+Visual Studio Marketplace用の``marketplace-publish`` environmentには``AZURE_CLIENT_ID``と
+``AZURE_TENANT_ID``を変数として登録します。
+
+[#vscode-release]
+=== VS Code拡張のRelease
+
+VS Code拡張の版は``editors/vscode/package.json``、変更内容は``editors/vscode/CHANGELOG.md``を正本とします。
+ネイティブ版のworkspace版とは同期しません。公開する変更をPull Requestから``main``へ統合し、そのcommitの
+release gateが成功した後、``package.json``と同じ版のannotated tagを作成して``upstream``へpushします。
+
+[source,console]
+----
+git tag -a vscode/vX.Y.Z -m "AdocWeave VS Code extension vX.Y.Z"
+git push upstream vscode/vX.Y.Z
+----
+
+``vscode-publish.yml``はVSIXを一度だけ構築し、同じworkflow artifactをOpen VSX RegistryとVisual Studio Marketplaceへ
+送ります。片方だけが失敗した場合は、GitHub Actionsの``Re-run failed jobs``で失敗したjobだけを再実行します。
+公開済みの版が候補と一致する場合は、再送信せず公開内容の検査から再開します。
+
+[#open-vsx-publication]
+=== Open VSX Registryへの公開
+
+Open VSXへの公開には``open-vsx-publish`` environmentの``OPEN_VSX_TOKEN``を使用します。公開job以外へtokenを
+渡しません。公開後はRegistryからVSIXを取得し、候補と内容が一致することとLanguage Serverへ接続できることを
+確認します。
+
+[#marketplace-publication]
+=== Visual Studio Marketplaceへの公開
+
+Azureでユーザー割り当てマネージドIDを作成し、そのフェデレーション資格情報をGitHubのrepository
+``KeishiS/adocweave``とenvironment``marketplace-publish``へ関連付けます。このIDはVisual Studio Marketplaceの
+publisher``adocweave``へContributorとして登録します。Client IDとTenant IDは秘密情報ではないため、
+``marketplace-publish`` environmentの``AZURE_CLIENT_ID``と``AZURE_TENANT_ID``へ変数として保存します。
+
+workflowはGitHubのOIDC tokenでMicrosoft Entra IDへログインし、対象versionが未公開の場合だけ
+``vsce publish --azure-credential``で送信します。PAT、client secretおよび証明書は使用しません。
+
+対象versionが公開済みの場合は送信せず、MarketplaceからVSIXを取得して候補と照合します。
+Marketplaceが追加する署名領域はarchive全体のbyte列を変えるため比較から除きますが、拡張ID、version、target、
+署名以外のfile一覧および内容が異なる場合は失敗します。公開直後にも同じ検査を行い、Language Serverへの接続も
+確認します。
+
 [#npm-publication]
-=== npm Registryへの公開
+=== textlint用Processorのnpm公開
 
 npmのscope``@adocweave``はリポジトリの保守者が所有します。所有者を失った場合の回復はnpmのsupportへ
 申請する以外になく、自助手段はありません。organizationでは2要素認証を必須にします。
 
-公開するのは、GitHub Releaseへ添付したarchiveと同じbyte列だけです。作業ツリーから``npm publish``すると
-別のbyte列が載るため、公開済みReleaseからdownloadしたfileを指定します。
+``@adocweave/textlint-plugin-asciidoc``の版は``packages/textlint-plugin-asciidoc/package.json``、変更内容は
+同じディレクトリの``CHANGELOG.md``を基準とします。ネイティブ版とは別にSemantic Versioningを適用し、
+利用者向けのAPIまたは動作が変わった場合だけ更新します。
 
-npmのTrusted Publisherはpackage単位の設定で、packageが実在しないと登録できません。したがってpackageごとに
-一度だけ、手元から初回公開を行います。
-
-[source,console]
-----
-gh release download adocweave-PRODUCT/vX.Y.Z --pattern '*.tgz' --pattern 'sha256.sum'
-sha256sum --check --strict sha256.sum
-npm publish PACKAGE-X.Y.Z.tgz
-----
-
-初回公開の後、npmjs.comのpackage設定でTrusted Publisherへリポジトリ、workflow file名および許可する操作を
-登録します。登録後は``npm-publish.yml``がOIDCで公開できるため、初回公開に使った資格情報を失効させます。
-Trusted Publishing経由の公開にはprovenanceが自動で付きます。
-
-npmへの公開は、GitHub Releaseを公開したあとに次を実行します。``release.yml``からは呼びません。
+変更を``main``へ統合し、そのcommitの検査が成功した後、パッケージの版と一致するtagを作成します。
 
 [source,console]
 ----
-gh workflow run npm-publish.yml -f tag=adocweave-PRODUCT/vX.Y.Z -f product=PRODUCT
+git tag -a textlint-plugin-asciidoc/vX.Y.Z \
+  -m "@adocweave/textlint-plugin-asciidoc X.Y.Z"
+git push upstream textlint-plugin-asciidoc/vX.Y.Z
 ----
 
-再利用workflowとして呼び出すと、npmは実際に``npm publish``を実行するworkflowではなく、呼び出し元の
-workflow file名で公開元を照合します。Trusted Publisherはpackageごとに一つしか登録できないため、
-``release.yml``を登録すると、送信だけが失敗したときにRelease全体を再実行しなければ回復できません。
-``npm-publish.yml``を登録して単独で実行すれば、通常の公開と復旧が同じ操作になります。
+``textlint-plugin-publish.yml``はtagが指すcommitからパッケージを一度だけ構築して検査し、npm Trusted Publishingで
+直接公開します。GitHub Releaseには添付しません。Trusted Publisherにはworkflow file
+``textlint-plugin-publish.yml``とenvironment``npm-publish``を登録します。失敗した場合は同じworkflow runの
+``Re-run failed jobs``を使用します。同じ版が公開済みであれば内容を確認して送信を省略します。公開後はnpmから
+導入し直し、署名とprovenance、固定したtextlint利用側および``npx``での動作を確認します。
+修正が必要な場合は新しい版を使用します。
 
-npmへの送信だけが失敗した場合は、同じtagと製品を指定して``npm-publish.yml``を実行します。公開済みversionの
-上書きはnpmが拒否するため、再実行しても公開済みの版は変わりません。公開後に問題が見つかった場合は
-``npm deprecate``で警告を表示し、修正は新しいversionで行います。``unpublish``は安全上必要な場合に限ります。
-一度``unpublish``したversion番号は再利用できません。
+[#wasm-npm-publication]
+=== WebAssemblyパッケージの公開
+
+``@adocweave/wasm``の版は``packages/wasm/package.json``、変更内容は同じディレクトリの
+``CHANGELOG.md``を基準とします。ネイティブ版とは別にSemantic Versioningを適用し、利用者向けのAPIまたは動作が
+変わった場合だけ更新します。
+
+変更を``main``へ統合し、そのcommitの検査が成功した後、パッケージの版と一致するtagを作成します。
+
+[source,console]
+----
+git tag -a wasm/vX.Y.Z -m "@adocweave/wasm X.Y.Z"
+git push upstream wasm/vX.Y.Z
+----
+
+``wasm-publish.yml``はtagが指すcommitからパッケージを一度だけ構築して検査し、npm Trusted Publishingで直接
+公開します。GitHub Releaseには添付しません。Trusted Publisherにはworkflow file``wasm-publish.yml``と
+environment``npm-publish``を登録します。失敗した場合は同じworkflow runの``Re-run failed jobs``を使用します。
+同じ版が公開済みであれば内容を確認して送信を省略します。公開後はnpmから導入し直し、署名とprovenance、
+Node.jsおよび実ブラウザーでの動作を確認します。修正が必要な場合は新しい版を使用します。
+
+[#cachix-publication]
+=== Cachixへの公開
+
+Cachixへの公開はstableなGitHub Releaseの公開後に自動的に始まります。送信または確認に失敗した場合は、
+Release workflowの``Re-run failed jobs``を実行します。
+
+公開jobはRelease、tag、commitおよびworkspace版を照合し、``x86_64-linux``と``aarch64-linux``のNix packageと
+依存物一式を送信します。送信後は、書込みtokenを持たない別のrunnerがローカルでの構築を禁止してCachixから
+packageを取得し、versionと``adocweave lsp``の起動を確認します。
+
+同じcommitから生成されるNix store pathは変わらないため、公開済みの内容を置き換えずに不足した送信と確認を
+やり直せます。
 
 [#release-checklist]
 == Release checklist
 
 公開前は自動検査に加え、GitHub上の設定と公開対象を人が確認します。
 
-公開後の項目は**任意**です。実際の画面操作や実環境での導入は人手でしか行えず、毎releaseで全経路を
+公開済みnative Releaseの検査は必須です。``RELEASE_TAG=vX.Y.Z cargo make native-release-acceptance``を実行すると、
+Releaseのasset一覧、標準manifest、checksum、attestationおよび実行ホスト向けarchiveの導入を確認します。
+
+それ以外の公開後の項目は**任意**です。実際の画面操作や実環境での導入は人手でしか行えず、毎releaseで全経路を
 確認すると一人では回らないためです。気になる経路を選んで確認し、結果は必要に応じてIssueへ記録します。
 変更のなかった成果物は省略してかまいません。公開したassetそのものの完全性(checksum、attestation、
-バージョン、binary cacheへの登録)は自動で確認できるため、任意の対象から外します。
+バージョン、Cachixへの登録)は自動で確認できるため、任意の対象から外します。
 
 公開後の手動確認を行う場合は、リポジトリのcheckoutやワークスペースの``target``を``PATH``へ含めない
 clean環境で、公開assetだけを使って実行します。
 
 === 公開前
 
-* [ ] ``github-release`` Environmentにrequired reviewerがあり、``main``だけを許可しています。workflowはこの外部設定を
-      検査しないため、dispatch前にGitHubの設定画面で確認します。
-* [ ] 公開する変更をすべて統合し、``main``の先端と公開する製品を確認してworkflowを開始しています。
+* [ ] 公開する変更をすべて統合し、対象commitの``main``向けrelease gateが成功しています。
+* [ ] workspace版、``CHANGELOG.md``の対象項目およびRelease workflowへ指定する``vX.Y.Z``tagが一致しています。
+* [ ] VS Code拡張を公開する場合は、``editors/vscode/package.json``の版、
+      ``editors/vscode/CHANGELOG.md``の対象項目および作成する``vscode/vX.Y.Z``tagが一致しています。
 
 === 公開後（任意）
 
 次は人手でしか確認できない経路です。変更のあった成果物から選んで確認します。すべてを毎回行う必要は
 ありません。問題が見つかった場合はIssueへ記録し、修正は新しいバージョンで公開します。
 
-* [ ] VS Code拡張: Open VSXまたは公開VSIXから導入し、AsciiDoc認識、基本構文色付けおよび設定したLanguage Serverとの接続を確認する。
-* [ ] Zed拡張: 公開archiveを導入し、AsciiDoc認識と設定したLanguage ServerによるLSP機能を確認する。
-* [ ] browser package: cross-origin isolationを使わない環境で実WASMを読み込み、HTML、診断、projection、解析の取消しおよび
+* [ ] VS Code拡張: Open VSXまたはVisual Studio Marketplaceから導入し、AsciiDoc認識、基本構文色付けおよび
+      設定したLanguage Serverとの接続を確認する。
+* [ ] Zed拡張: 公式レジストリへ登録した場合は、その版を導入し、``AsciiDoc``拡張との併用と
+      Language ServerによるLSP機能を確認する。
+* [ ] browser package: cross-origin isolationを使わない環境で実WASMを読み込み、HTML、診断、構造情報、解析の取消しおよび
       取消し後の再解析を確認する。
 * [ ] textlint用Processor: 新しいプロジェクトへ導入し、``.adoc``の検査と``textlint --fix``で入力が変化しないことを
       確認する。
-* [ ] CLIとLSP: clean ``PATH``へ導入し、バージョンの選択、更新、rollbackおよび完全削除を確認する。
-* [ ] Nix: 利用側flakeへtagのコミットを固定し、CLIとLSPの``nix run``を確認する。
+* [ ] native実行ファイル: clean ``PATH``へ導入し、CLI操作と``adocweave lsp``、更新、rollbackおよび完全削除を確認する。
+* [ ] Nix: 利用側flakeへtagのコミットを固定し、通常のCLI操作と``adocweave lsp``の``nix run``を確認する。
 
-公開assetの完全性は自動で確認します。asset集合と非0 byte、checksum、attestation、``--version --json``、
-binary cacheへの登録、Open VSXへ公開したfileがGitHub Release assetと同一であることは、公開workflowと
-公開後の検証で機械的に判定できるため、この一覧には含めません。
+公開assetの完全性は公開後のtaskで確認します。asset集合と0バイトではないこと、checksum、attestation、``--version --json``、
+Cachixへの登録、Open VSXへ公開したfileのバイト一致およびVisual Studio Marketplaceへ公開したVSIXの
+署名以外の内容一致は、公開workflowと公開後の検証で機械的に判定できるため、この一覧には含めません。

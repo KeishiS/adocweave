@@ -10,20 +10,80 @@ pub(super) fn uri(value: &str) -> lsp::Url {
     value.parse().expect("valid URI")
 }
 
-/// Runs the lifecycle a client performs: `initialize`, then `initialized`.
-///
-/// The walk runs on a worker in the server and returns through an event. Here
-/// the two halves run back to back, so a test observes the state the client
-/// reaches once the scan has landed. A test that only calls `initialize`
-/// observes a service that has not read its roots yet.
+pub(super) struct TestProject {
+    root: std::path::PathBuf,
+    _directory: tempfile::TempDir,
+}
+
+impl TestProject {
+    pub(super) fn new() -> Self {
+        let directory = tempfile::tempdir().expect("project directory");
+        let root = directory
+            .path()
+            .canonicalize()
+            .expect("canonical project directory");
+        Self {
+            root,
+            _directory: directory,
+        }
+    }
+
+    pub(super) fn root(&self) -> &std::path::Path {
+        &self.root
+    }
+
+    pub(super) fn path(&self, name: &str) -> std::path::PathBuf {
+        self.root.join(name)
+    }
+
+    pub(super) fn uri(&self, name: &str) -> lsp::Url {
+        lsp::Url::from_file_path(self.path(name)).expect("document URI")
+    }
+
+    pub(super) fn document(&self, name: &str, source: &str) -> lsp::Url {
+        let path = self.path(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("document directory");
+        }
+        std::fs::write(&path, source).expect("document");
+        self.uri(name)
+    }
+
+    pub(super) fn open(
+        &self,
+        service: &mut Session,
+        name: &str,
+        version: i32,
+        source: &str,
+    ) -> lsp::Url {
+        let document_uri = self.document(name, source);
+        open(service, document_uri.as_str(), version, source);
+        document_uri
+    }
+}
+
+pub(super) struct IncludeFixture {
+    pub root_uri: lsp::Url,
+    pub include_uri: lsp::Url,
+    _project: TestProject,
+}
+
+impl IncludeFixture {
+    pub(super) fn new(root_source: &str, include_source: &str) -> Self {
+        let project = TestProject::new();
+        Self {
+            root_uri: project.document("root.adoc", root_source),
+            include_uri: project.document("part.adoc", include_source),
+            _project: project,
+        }
+    }
+}
+
 pub(super) fn initialize_with_params(
-    service: &mut LanguageService,
+    service: &mut Session,
     params: lsp::InitializeParams,
 ) -> lsp::InitializeResult {
-    let result = service.initialize(&params);
-    let scan = service.plan_workspace_scan(&adocweave::NeverCancel);
-    let _ = service.apply_workspace_scan(scan);
-    result
+    service.initialize(&params)
 }
 
 pub(super) async fn write_message(output: &mut (impl AsyncWriteExt + Unpin), message: &Value) {
@@ -55,10 +115,7 @@ pub(super) async fn read_message(
     serde_json::from_slice(&body).expect("json")
 }
 
-pub(super) fn initialize(
-    service: &mut LanguageService,
-    encodings: &[&str],
-) -> lsp::InitializeResult {
+pub(super) fn initialize(service: &mut Session, encodings: &[&str]) -> lsp::InitializeResult {
     let params = typed(json!({
         "processId": null,
         "rootUri": null,
@@ -97,7 +154,7 @@ pub(super) fn full_capabilities(encodings: &[&str]) -> Value {
     })
 }
 
-pub(super) fn open(service: &mut LanguageService, uri: &str, version: i32, text: &str) {
+pub(super) fn open(service: &mut Session, uri: &str, version: i32, text: &str) {
     let jobs = service.begin_open(typed(json!({
         "textDocument": {
             "uri": uri,
@@ -112,7 +169,7 @@ pub(super) fn open(service: &mut LanguageService, uri: &str, version: i32, text:
 }
 
 pub(super) fn all_code_actions(
-    service: &LanguageService,
+    service: &Session,
     document_uri: &lsp::Url,
 ) -> Result<Option<Vec<lsp::CodeActionOrCommand>>, String> {
     service.code_actions(
@@ -130,7 +187,7 @@ pub(super) fn all_code_actions(
 }
 
 pub(super) fn change(
-    service: &mut LanguageService,
+    service: &mut Session,
     uri: &str,
     version: i32,
     changes: Value,
@@ -149,59 +206,94 @@ pub(super) fn change(
 }
 
 /// Runs one job the way the event loop and its worker do, then adopts it.
-pub(super) fn adopt(service: &mut LanguageService, job: AnalysisJob) {
-    let analysis = job
-        .request
-        .analyze(job.cancellation.as_ref())
-        .expect("analysis");
-    assert_eq!(service.adopt(&job, analysis), Adoption::Adopted);
-    if let Some(problem) = &job.workspace_problem {
-        assert_eq!(
-            service.adopt_workspace_problem(&job, problem.clone()),
-            Adoption::Adopted
-        );
-        return;
-    }
-    let Some(input) = &job.workspace else {
-        return;
+pub(super) fn adopt(service: &mut Session, job: ProjectAnalysisSnapshot) {
+    let _ = adopt_completion(service, process_project_snapshot(job));
+}
+
+pub(super) fn adopt_completion(
+    service: &mut Session,
+    completion: crate::service::ProjectAnalysisCompletion,
+) -> Vec<String> {
+    let next = service.project_processing_completed(completion);
+    let next = match next {
+        crate::service::ProjectAnalysisAction::Validate(completion) => {
+            service.complete_analysis(validate(*completion))
+        }
+        next => next,
     };
-    let workspace = service.workspace_copy();
-    match crate::backend::analyze_workspace_root(&workspace, &job, input) {
-        Ok(analyzed) => {
-            let failure = analyzed.failure();
-            service.adopt_analyzed_workspace(&job, analyzed);
-            if let Some(failure) = failure {
-                assert_eq!(
-                    service.adopt_workspace_problem(
-                        &job,
-                        WorkspaceProblem {
-                            source_id: failure.source_id,
-                            range: failure.range.unwrap_or_else(|| {
-                                adocweave::text::TextRange::new(
-                                    adocweave::text::TextSize::ZERO,
-                                    adocweave::text::TextSize::ZERO,
-                                )
-                                .expect("zero range")
-                            }),
-                            code: failure.code,
-                            message: failure.message,
-                        }
-                    ),
-                    Adoption::Adopted
-                );
-            }
+    adopt_next(service, next)
+}
+
+pub(super) fn adopt_next(
+    service: &mut Session,
+    action: crate::service::ProjectAnalysisAction,
+) -> Vec<String> {
+    match action {
+        crate::service::ProjectAnalysisAction::Publish {
+            diagnostic_uris, ..
+        } => diagnostic_uris,
+        crate::service::ProjectAnalysisAction::Retry(snapshot) => {
+            adopt_completion(service, process_project_snapshot(snapshot))
         }
-        Err(problem) => {
-            assert_eq!(
-                service.adopt_workspace_problem(&job, problem),
-                Adoption::Adopted
-            );
+        crate::service::ProjectAnalysisAction::Validate(completion) => {
+            let next = service.complete_analysis(validate(*completion));
+            adopt_next(service, next)
         }
+        crate::service::ProjectAnalysisAction::Ignore => panic!("analysis was not adopted"),
     }
 }
 
+pub(super) fn process_project_snapshot(
+    mut job: ProjectAnalysisSnapshot,
+) -> crate::service::ProjectAnalysisCompletion {
+    let (outcome, source_index, observation_access) = match job.prepared_request.take() {
+        Some(project) => (
+            crate::service::ProjectAnalysisOutcome::Processed(adocweave_project::process(
+                project.request,
+                job.cancellation.as_ref(),
+            )),
+            project.source_index,
+            Some(project.observation_access),
+        ),
+        None => (
+            crate::service::ProjectAnalysisOutcome::Rejected(
+                job.project_problem.clone().expect("project problem"),
+            ),
+            crate::state::ProjectSourceIndex::default(),
+            None,
+        ),
+    };
+    crate::service::ProjectAnalysisCompletion {
+        snapshot: job,
+        outcome,
+        source_index,
+        observation_access,
+        observations_are_current: None,
+    }
+}
+
+pub(super) fn validate(
+    mut completion: crate::service::ProjectAnalysisCompletion,
+) -> crate::service::ProjectAnalysisCompletion {
+    let access = completion
+        .observation_access
+        .as_ref()
+        .expect("observation access");
+    let crate::service::ProjectAnalysisOutcome::Processed(result) = &completion.outcome else {
+        unreachable!("only processed results require validation");
+    };
+    completion.observations_are_current = Some(crate::service::project_observations_are_current(
+        result,
+        access,
+        &adocweave_core::NeverCancel,
+    ));
+    completion
+}
+
 pub(super) fn apply_edits(source: &str, edits: &[lsp::TextEdit]) -> String {
-    use adocweave::text::{Position, PositionEncoding as CorePositionEncoding, SourceDocument};
+    use adocweave_core::text::{
+        Position, PositionEncoding as CorePositionEncoding, SourceDocument,
+    };
 
     let index = SourceDocument::new(source).expect("line index");
     let mut byte_edits = edits
@@ -230,16 +322,16 @@ pub(super) fn apply_edits(source: &str, edits: &[lsp::TextEdit]) -> String {
     output
 }
 
-pub(super) fn open_reference_workspace(service: &mut LanguageService) {
-    open(
+pub(super) fn open_reference_workspace(service: &mut Session, project: &TestProject) {
+    project.open(
         service,
-        "file:///a.adoc",
+        "a.adoc",
         1,
         "[[target]]\n== Target\n\nSee <<target>> and xref:b.adoc#other[B].\nhttps://example.com[Site]\n",
     );
-    open(
+    project.open(
         service,
-        "file:///b.adoc",
+        "b.adoc",
         1,
         "[[other]]\n== Other\n\nxref:a.adoc#target[A]\n",
     );

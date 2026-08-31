@@ -1,0 +1,58 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  expectedReleaseAssets,
+  validateCargoDistChangelog,
+  validateDistPlan,
+  validateReleaseTag,
+  verifyRepository,
+} from "./native-release-checks.mjs";
+import { nativeReleasePlanFixture } from "./native-release-plan.fixture.mjs";
+import { releaseTag, workspaceVersion } from "./native-release-version.mjs";
+
+const release = verifyRepository();
+const plan = nativeReleasePlanFixture(release);
+
+test("repositoryは一つのworkspace版とtagを使う", () => {
+  const version = workspaceVersion();
+  assert.deepEqual(release, { tag: releaseTag(version), version });
+  assert.deepEqual(validateReleaseTag(release.tag), release);
+  for (const tag of [version, `adocweave-core/${release.tag}`, `adocweave-lsp/${release.tag}`, `${release.tag}-rc.1`]) {
+    assert.throws(() => validateReleaseTag(tag), /exactly/);
+  }
+});
+
+test("cargo-distはrepository rootのChangelogを配布物へ収録する", () => {
+  assert.equal(validateCargoDistChangelog('changelog = "CHANGELOG.md"', true), "CHANGELOG.md");
+  assert.throws(
+    () => validateCargoDistChangelog('changelog = "../../CHANGELOG.md"', true),
+    /repository-root CHANGELOG/,
+  );
+  assert.throws(
+    () => validateCargoDistChangelog('changelog = "CHANGELOG.md"', false),
+    /does not exist/,
+  );
+});
+
+test("cargo-dist planは単一appとnative releaseの成果物を持つ", () => {
+  const validated = validateDistPlan(plan, release.tag);
+  assert.equal(validated.version, release.version);
+  assert.deepEqual(validated.assets, expectedReleaseAssets());
+  assert.equal(plan.releases.length, 1);
+});
+
+test("製品別または不完全なplanを拒否する", () => {
+  assert.throws(
+    () => validateDistPlan({ ...plan, releases: [{ ...plan.releases[0], app_name: "adocweave-core" }] }),
+    /native adocweave app/,
+  );
+  assert.throws(
+    () => validateDistPlan({ ...plan, github_attestations: false }),
+    /attest every hosted artifact/,
+  );
+  assert.throws(
+    () => validateDistPlan({ ...plan, announcement_github_body: "Changes" }),
+    /release notes/,
+  );
+});

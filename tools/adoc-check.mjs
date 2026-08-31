@@ -44,7 +44,7 @@ export function validateCurrentDocumentAdrLinks(sources) {
   const superseded = new Set(
     Object.entries(sources)
       .filter(([path, source]) =>
-        path.startsWith(adrDirectory) && /^:status:\s+superseded\b/m.test(source))
+        path.startsWith(adrDirectory) && /^:status:\s+置換済み(?:[。\s]|$)/m.test(source))
       .map(([path]) => path),
   );
   const obsoleteLinks = [];
@@ -123,7 +123,6 @@ export function main() {
       "--no-include",
       "--fail-on",
       "warning",
-      "--local-targets",
       "--project-root",
       ".",
       entry.path,

@@ -197,6 +197,12 @@ async function assertInstalledPackage(root, manifestContract) {
   const manifestPath = join(packageRoot, "package.json");
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
   assert.equal(manifest.name, packageName, `installed package name must be ${packageName}`);
+  assert.equal(
+    manifest.version,
+    manifestContract.version,
+    `installed package version must be ${manifestContract.version}`,
+  );
+  assert.equal(manifest.dependencies, undefined, "installed plugin must not have runtime dependencies");
   assert.deepEqual(manifest.peerDependencies, {
     "@textlint/types": manifestContract.peerDependencies["@textlint/types"],
     textlint: textlintVersion,

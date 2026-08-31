@@ -5,13 +5,16 @@ members = ["cargo:."]
 [dist]
 # The preferred dist version to use in CI (Cargo.toml SemVer syntax)
 cargo-dist-version = "0.31.0"
+# cargo-dist grants contents: write to the complete generated workflow. Keep
+# the checked-in workflow read-only and grant write access only to its host job.
 allow-dirty = ["ci"]
-# A single repository-owned checksum list is the public contract.
-checksum = "false"
+checksum = "sha256"
 unix-archive = ".zip"
 windows-archive = ".zip"
 # CI backends to support
 ci = "github"
+dispatch-releases = true
+github-build-setup = "../dist-build-setup.yml"
 # The installers to generate for each app
 installers = []
 # Target platforms to build apps for (Rust target-triple syntax)
@@ -23,11 +26,13 @@ targets = [
 ]
 # Where to host releases
 hosting = "github"
-packages = ["adocweave-cli", "adocweave-lsp"]
+github-attestations = true
+github-attestations-phase = "host"
+packages = ["adocweave"]
 # Which actions to run on pull requests
 pr-run-mode = "plan"
 # Plan jobs to run in CI
-plan-jobs = ["./release-contract"]
+plan-jobs = ["./native-release-checks"]
 # Run native archive smoke tests after target builds
 global-artifacts-jobs = ["./native-artifact-smoke"]
 # Generate and dist a source tarball
@@ -40,3 +45,9 @@ aarch64-unknown-linux-musl = "ubuntu-24.04-arm"
 aarch64-apple-darwin = "macos-15"
 x86_64-unknown-linux-musl = "ubuntu-24.04"
 x86_64-pc-windows-msvc = "windows-2025"
+
+[dist.github-action-commits]
+"actions/checkout" = "d23441a48e516b6c34aea4fa41551a30e30af803"
+"actions/upload-artifact" = "b7c566a772e6b6bfb58ed0dc250532a479d7789f"
+"actions/download-artifact" = "37930b1c2abaa49bbe596cd826c3c89aef350131"
+"actions/attest-build-provenance" = "43d14bc2b83dec42d39ecae14e916627a18bb661"

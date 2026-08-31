@@ -1,8 +1,9 @@
-= ADR 0012: runtime非依存のWorkspace解析境界
+= ADR 0012: runtime非依存のWorkspace解析
+:status: 置換済み。ADR 0041により置換
 
 == 状態
 
-採用
+{status}
 
 == 背景
 
@@ -39,7 +40,7 @@ disk、open overlayおよびeffective snapshotへ同じ件数・resource byte・
 
 == 結果
 
-各consumerは同じ安全境界、依存判定、cancelおよび古い結果の不採用規則を再利用できます。
+各consumerは同じ安全上の制限、依存判定、cancelおよび古い結果の不採用規則を再利用できます。
 Language Serverはprotocol、position変換、通知順序およびworker schedulingだけを所有します。
 
 crateが一つ増え、resource stateと解析snapshotの変換を明示する必要があります。一方で低水準host crateの

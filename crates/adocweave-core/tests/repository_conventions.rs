@@ -1,0 +1,243 @@
+//! Repository-wide conventions that require the complete checkout: tracked
+//! documents parse losslessly, the published lint catalog matches the public
+//! constants, crate dependencies follow the intended direction, and the core
+//! stays independent from host APIs.
+
+use std::collections::BTreeSet;
+use std::fs;
+use std::process::Command;
+
+use adocweave_core::{AnalysisOptions, Engine};
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+struct CorpusManifest {
+    normative: Vec<NormativeCase>,
+    abnormal: Vec<AbnormalCase>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NormativeCase {
+    path: String,
+    ignored_codes: BTreeSet<String>,
+}
+
+#[derive(Deserialize)]
+struct AbnormalCase {
+    path: String,
+    codes: Vec<String>,
+}
+
+fn repository_root() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+fn collect_rust_files(directory: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+    if !directory.exists() {
+        return;
+    }
+    for entry in fs::read_dir(directory).expect("Rust module directory") {
+        let path = entry.expect("Rust module entry").path();
+        if path.is_dir() {
+            collect_rust_files(&path, files);
+        } else if path.extension().is_some_and(|extension| extension == "rs") {
+            files.push(path);
+        }
+    }
+}
+
+fn analyze(path: &str) -> adocweave_core::Analysis {
+    let source = fs::read_to_string(repository_root().join(path))
+        .unwrap_or_else(|error| panic!("{path}: {error}"));
+    Engine::new(AnalysisOptions::default())
+        .analyze(&source)
+        .unwrap_or_else(|error| panic!("{path}: {error}"))
+}
+
+fn manifest() -> CorpusManifest {
+    serde_json::from_str(
+        &fs::read_to_string(repository_root().join("fixtures/corpus.json"))
+            .expect("corpus manifest"),
+    )
+    .expect("valid corpus manifest")
+}
+
+#[test]
+fn tracked_adoc_corpus_is_lossless_and_has_valid_ranges() {
+    let output = Command::new("git")
+        .args(["ls-files", "-z", "*.adoc"])
+        .current_dir(repository_root())
+        .output()
+        .expect("git ls-files");
+    assert!(output.status.success());
+    for path in output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+    {
+        let path = std::str::from_utf8(path).expect("UTF-8 repository path");
+        let analysis = analyze(path);
+        assert_eq!(analysis.syntax().reconstruct(), analysis.source(), "{path}");
+        for diagnostic in analysis.diagnostics() {
+            let range = diagnostic.range;
+            assert!(range.start() <= range.end(), "{path}: {range:?}");
+            assert!(
+                range.end().to_usize() <= analysis.source().len(),
+                "{path}: {range:?}"
+            );
+            assert!(
+                analysis.source().is_char_boundary(range.start().to_usize()),
+                "{path}"
+            );
+            assert!(
+                analysis.source().is_char_boundary(range.end().to_usize()),
+                "{path}"
+            );
+        }
+    }
+}
+
+#[test]
+fn normative_documents_have_no_diagnostics() {
+    for case in manifest().normative {
+        let analysis = analyze(&case.path);
+        let ignored: BTreeSet<_> = analysis
+            .diagnostics()
+            .iter()
+            .filter(|diagnostic| case.ignored_codes.contains(diagnostic.code.as_str()))
+            .map(|diagnostic| diagnostic.code.as_str().to_owned())
+            .collect();
+        assert_eq!(
+            ignored, case.ignored_codes,
+            "{}: stale diagnostic allowlist",
+            case.path
+        );
+        let diagnostics: Vec<_> = analysis
+            .diagnostics()
+            .iter()
+            .filter(|diagnostic| !case.ignored_codes.contains(diagnostic.code.as_str()))
+            .collect();
+        assert!(diagnostics.is_empty(), "{}: {diagnostics:?}", case.path);
+    }
+}
+
+#[test]
+fn abnormal_fixtures_match_their_diagnostic_manifest() {
+    for case in manifest().abnormal {
+        let actual: Vec<_> = analyze(&case.path)
+            .diagnostics()
+            .iter()
+            .map(|diagnostic| diagnostic.code.as_str().to_owned())
+            .collect();
+        assert_eq!(actual, case.codes, "{}", case.path);
+    }
+}
+
+#[test]
+fn every_lint_rule_constant_is_reexported() {
+    // A rule reaches consumers through two hand-written places: the catalog
+    // macro that defines the constant, and the re-export list in lib.rs. A rule
+    // added to only the first still produces diagnostics, so nothing fails
+    // until someone writes `use ...::THE_RULE` and cannot compile. A released
+    // rule has already reached consumers that way, with no constant to name.
+    let source = fs::read_to_string(repository_root().join("crates/adocweave-core/src/lib.rs"))
+        .expect("crate root");
+    let start = source
+        .find("pub use crate::lint::{")
+        .expect("lint re-export list");
+    let end = source[start..].find("};").expect("end of re-export list") + start;
+    let exported = &source[start..end];
+
+    let missing = adocweave_core::output::diagnostics::LINT_RULES
+        .iter()
+        .map(|rule| rule.id.as_str().replace('-', "_").to_uppercase())
+        .filter(|constant| {
+            !exported
+                .match_indices(constant.as_str())
+                .any(|(offset, _)| {
+                    let after = exported[offset + constant.len()..].chars().next();
+                    // `INVALID_ATTRIBUTE` must not be satisfied by a longer name.
+                    after.is_none_or(|character| !(character.is_alphanumeric() || character == '_'))
+                })
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        missing.is_empty(),
+        "lint rule constants missing from the lib.rs re-export: {missing:?}"
+    );
+}
+
+fn workspace_dependencies(manifest: &str) -> BTreeSet<&str> {
+    manifest
+        .lines()
+        .filter_map(|line| line.split_once('=').map(|(name, _)| name.trim()))
+        .filter(|name| name.starts_with("adocweave"))
+        .collect()
+}
+
+#[test]
+fn workspace_crates_have_the_final_dependency_direction() {
+    let root = repository_root();
+    let core =
+        fs::read_to_string(root.join("crates/adocweave-core/Cargo.toml")).expect("core manifest");
+    let cli = fs::read_to_string(root.join("crates/adocweave/Cargo.toml")).expect("CLI manifest");
+    let lsp =
+        fs::read_to_string(root.join("crates/adocweave-lsp/Cargo.toml")).expect("LSP manifest");
+    let project = fs::read_to_string(root.join("crates/adocweave-project/Cargo.toml"))
+        .expect("project manifest");
+    let wasm = fs::read_to_string(root.join("crates/adocweave-wasm/Cargo.toml"))
+        .expect("WebAssembly manifest");
+    let textlint = fs::read_to_string(root.join("crates/adocweave-textlint/Cargo.toml"))
+        .expect("textlint manifest");
+
+    assert_eq!(workspace_dependencies(&core), BTreeSet::new());
+    assert_eq!(
+        workspace_dependencies(&cli),
+        BTreeSet::from(["adocweave-core", "adocweave-lsp", "adocweave-project"])
+    );
+    assert_eq!(
+        workspace_dependencies(&lsp),
+        BTreeSet::from(["adocweave-core", "adocweave-project"])
+    );
+    assert_eq!(
+        workspace_dependencies(&project),
+        BTreeSet::from(["adocweave-core"])
+    );
+    assert_eq!(
+        workspace_dependencies(&wasm),
+        BTreeSet::from(["adocweave-core"])
+    );
+    assert_eq!(
+        workspace_dependencies(&textlint),
+        BTreeSet::from(["adocweave-core"])
+    );
+}
+
+#[test]
+fn core_source_does_not_access_the_environment() {
+    let source_root = repository_root().join("crates/adocweave-core/src");
+    let mut files = Vec::new();
+    collect_rust_files(&source_root, &mut files);
+    for path in files {
+        let source = fs::read_to_string(&path).expect("core source");
+        for forbidden in [
+            "std::env",
+            "std::fs",
+            "std::net",
+            "std::process",
+            "async_lsp",
+            "js_sys",
+            "tokio",
+            "wasm_bindgen",
+            "web_sys",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{} accesses an environment dependency through {forbidden}",
+                path.display()
+            );
+        }
+    }
+}

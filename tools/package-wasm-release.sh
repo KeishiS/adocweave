@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-version="$(node --input-type=module -e "import manifest from './web-worker/package.json' with { type: 'json' }; process.stdout.write(manifest.version)")"
+version="$(node --input-type=module -e "import manifest from './packages/wasm/package.json' with { type: 'json' }; process.stdout.write(manifest.version)")"
 archive_name="adocweave-wasm-$version.tgz"
 archive="target/distrib/$archive_name"
 npm_cache="${ADOCWEAVE_WASM_NPM_CACHE:-target/npm-cache}"
@@ -32,13 +32,14 @@ cp target/adocweave-wasm/adocweave_wasm_bg.wasm "$stage/wasm/"
 if [[ -f target/adocweave-wasm/adocweave_wasm.d.ts ]]; then
   cp target/adocweave-wasm/adocweave_wasm.d.ts "$stage/wasm/"
 fi
-cp web-worker/analysis.mjs web-worker/client.mjs web-worker/contracts.mjs \
-  web-worker/direct.mjs web-worker/direct.d.mts web-worker/index.mjs \
-  web-worker/index.d.mts web-worker/protocol.d.mts web-worker/worker-protocol.mjs \
-  web-worker/worker.mjs "$stage/worker/"
-cp web-worker/example/index.html web-worker/example/app.mjs "$stage/example/"
-cp web-worker/package.json web-worker/README.md LICENSE-MIT LICENSE-APACHE "$stage/"
-node tools/generate-third-party-notices.mjs "$stage/THIRD_PARTY_NOTICES.adoc"
+cp packages/wasm/analysis.mjs packages/wasm/client.mjs \
+  packages/wasm/direct.mjs packages/wasm/direct.d.mts packages/wasm/index.mjs \
+  packages/wasm/index.d.mts packages/wasm/protocol.d.mts packages/wasm/worker-protocol.mjs \
+  packages/wasm/worker.mjs "$stage/worker/"
+cp packages/wasm/example/index.html packages/wasm/example/app.mjs "$stage/example/"
+cp packages/wasm/package.json packages/wasm/README.md packages/wasm/CHANGELOG.md \
+  LICENSE-MIT LICENSE-APACHE "$stage/"
+node tools/generate-third-party-notices.mjs --wasm "$stage/THIRD_PARTY_NOTICES.adoc"
 
 mkdir -p target/distrib
 pack_result="$(npm --cache "$npm_cache" pack --ignore-scripts --json --pack-destination "$scratch" "$stage")"

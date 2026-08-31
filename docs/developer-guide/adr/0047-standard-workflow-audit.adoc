@@ -1,0 +1,60 @@
+= ADR 0047: workflowの検査を標準toolへ委ねる
+:status: 採用
+
+== 状態
+
+{status}
+
+== 背景
+
+``.github/workflows``のYAMLを読み、内容を検査する自作のscriptが1,890行ありました。``yq``を子processとして
+起動してYAMLをJSONへ変換し、外部Actionのcommit SHA固定、job単位の権限、job間の依存関係、および各公開
+workflowが特定の文字列を含むことを検査していました。
+
+この検査が保証していたのは、大部分が「YAML本文に特定の文字列が残っていること」です。たとえば
+``native-release-checks.yml``の中に``git merge-base --is-ancestor``という文字列が存在することを検査して
+いましたが、その処理自体はrelease時に実際に実行されます。静的な検査が増やしていた保証は、この行を
+誤って消さないことだけでした。
+
+同じ領域はGitHubと既存toolが担当します。構文とshellの検査は``actionlint``、Actionのcommit SHA更新は
+Dependabotの``github-actions`` ecosystem、secretの分離はEnvironmentのdeployment branch policyが強制します。
+
+自作の検査が効いていない例もありました。``actions/download-artifact``は3つのworkflowで同じcommit SHAを
+使いながら注記が``# v8.0.0``と``# v7.0.0``に割れ、別のworkflowは別のSHAへ``# v8``と書いていました。
+自作の検査は40桁の16進数であることしか見ないため、この食い違いを検出できませんでした。
+
+== 決定
+
+workflowの検査は``actionlint``とzizmorが行います。``actionlint``は構文、式およびshellを検査し、zizmorは
+template injection、資格情報の過剰な受け渡し、固定していないAction、cacheの汚染などを検査します。
+YAML本文へ独自の判定を書くscriptは持ちません。
+
+zizmorが報告する内容のうち、cargo-distが生成する``release.yml``の該当箇所と、cacheを使わない
+``actions/setup-node``の呼び出しは``.github/zizmor.yml``で除外します。除外は行を指定して書き、理由を
+同じファイルへ残します。生成物が作り直されて行がずれた場合は除外が一致しなくなり、zizmorが再び
+報告します。
+
+失敗の条件はmedium以上の指摘とします。medium未満は確度が低い判定であり、現在は成果物のsha256を
+比較する式だけが該当します。
+
+配布物を構築、公開および観測するscript自体の試験は``release-tool-tests``へ残します。これらはYAMLでは
+なく実際に動くscriptを対象とするため、標準toolでは代替できません。
+
+== 検討した代替案
+
+**自作の検査を縮小して残す。** 権限とSHA固定の検査だけを残す案です。しかしどちらもzizmorの
+``excessive-permissions``と``unpinned-uses``が扱う範囲で、``yq``への依存と二重の保守が残るため採用しません。
+
+**OpenSSF Scorecardを使う。** ``Token-Permissions``と``Pinned-Dependencies``を評価できますが、
+評価はrepository単位の点数であり、Pull Requestで特定の行を指す指摘は得られません。個人開発では
+指摘を直接受け取れるzizmorのほうが扱いやすいため採用しません。
+
+== 結果
+
+``tools/``から1,890行が減り、workflowの検査に必要な知識は``actionlint``とzizmorの文書へ移ります。
+zizmorの導入により、Pull Requestで資格情報の過剰な受け渡しとtemplate injectionの指摘を受け取れます。
+実際にこの導入で、secretを読まない2つの再利用workflowへ``secrets: inherit``を渡していた箇所と、
+matrixの値をshellへ直接展開していた箇所を修正しました。
+
+除外した指摘は``.github/zizmor.yml``に残ります。cargo-distが``release.yml``を作り直した場合は、
+除外が一致しなくなるためCIが失敗し、その時点で再び判断します。

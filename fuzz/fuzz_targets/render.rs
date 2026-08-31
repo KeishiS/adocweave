@@ -1,8 +1,8 @@
 #![no_main]
 
-use adocweave::output::html::{RenderPolicy, render};
-use adocweave::resolution::UrlProvenance;
-use adocweave::{AnalysisOptions, Engine};
+use adocweave_core::output::html::{RenderPolicy, render};
+use adocweave_core::resolution::UrlProvenance;
+use adocweave_core::{AnalysisOptions, Engine};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|source: &str| {

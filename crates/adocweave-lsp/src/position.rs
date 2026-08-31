@@ -1,4 +1,4 @@
-use adocweave::text::{
+use adocweave_core::text::{
     Position as CorePosition, PositionEncoding as CorePositionEncoding, SourceDocument,
     TextRange as CoreTextRange,
 };
@@ -117,7 +117,7 @@ pub(crate) fn cursor_touches_range(range: CoreTextRange, offset: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use adocweave::text::{TextRange, TextSize};
+    use adocweave_core::text::{TextRange, TextSize};
     use serde_json::json;
 
     #[test]

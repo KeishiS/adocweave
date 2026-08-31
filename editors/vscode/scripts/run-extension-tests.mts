@@ -1,10 +1,21 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { runTests } from "@vscode/test-electron";
+import { unzipSync } from "fflate";
+
+import { type ExtensionManifest, readJson, supportedVSCodeFloor } from "./manifests.mts";
 
 if (process.platform === "linux" && process.env.GITHUB_ACTIONS === "true") {
   delete process.env.LD_LIBRARY_PATH;
@@ -20,12 +31,35 @@ const sourceServer =
     repositoryRoot,
     "target",
     "debug",
-    process.platform === "win32" ? "adocweave-lsp.exe" : "adocweave-lsp",
+    process.platform === "win32" ? "adocweave.exe" : "adocweave",
   );
 const server = join(
   scratch,
-  process.platform === "win32" ? "adocweave-lsp-test.exe" : "adocweave-lsp-test",
+  process.platform === "win32" ? "adocweave-test.exe" : "adocweave-test",
 );
+
+function extensionUnderTest(): string {
+  const vsix = process.env.ADOCWEAVE_TEST_VSIX;
+  if (vsix === undefined) return extensionRoot;
+  const destination = join(scratch, "published-extension");
+  for (const [name, contents] of Object.entries(unzipSync(readFileSync(vsix)))) {
+    if (!name.startsWith("extension/") || name.endsWith("/")) continue;
+    const path = resolve(destination, name.slice("extension/".length));
+    const fromRoot = relative(destination, path);
+    if (fromRoot.startsWith("..") || resolve(destination, fromRoot) !== path) {
+      throw new Error(`The published VSIX contains an unsafe entry path: ${name}`);
+    }
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, contents);
+  }
+  const manifest = JSON.parse(
+    readFileSync(join(destination, "package.json"), "utf8"),
+  ) as ExtensionManifest;
+  if (manifest.name !== "adocweave" || manifest.publisher !== "adocweave") {
+    throw new Error("The published VSIX does not contain adocweave.adocweave");
+  }
+  return destination;
+}
 
 /** Command lines of every running process, one per line. */
 function runningProcesses(): string {
@@ -54,7 +88,7 @@ try {
     })}\n`,
   );
   await runTests({
-    extensionDevelopmentPath: extensionRoot,
+    extensionDevelopmentPath: extensionUnderTest(),
     extensionTestsPath: join(extensionRoot, "dist-test", "test", "suite", "index.js"),
     launchArgs: [
       "--disable-extensions",
@@ -64,7 +98,8 @@ try {
       userData,
       join(extensionRoot, "test", "fixtures", "adocweave.code-workspace"),
     ],
-    version: "1.125.0",
+    // 対応範囲として宣言した下限で検査する。engines.vscodeから導く理由はmanifests.mtsを参照。
+    version: supportedVSCodeFloor(readJson<ExtensionManifest>("package.json")),
   });
   const serverNeedle = server.toLocaleLowerCase("en-US");
   if (

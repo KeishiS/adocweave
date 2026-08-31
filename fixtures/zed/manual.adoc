@@ -21,3 +21,10 @@ fn shorthand() {
 ----
 
 _unfinished emphasis
+
+[#zed-manual-target]
+== 参照先
+
+この見出しは定義参照と参照検索の確認に使用します。
+
+<<zed-manual-target,参照先>>

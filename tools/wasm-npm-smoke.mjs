@@ -7,16 +7,18 @@ import process from "node:process";
 import { pathToFileURL } from "node:url";
 
 import { npmInvocation } from "./textlint-plugin-consumer-e2e.mjs";
+import { runWasmPackageBrowserSmoke } from "./wasm-release-smoke.mjs";
 
-const MANIFEST = new URL("../web-worker/package.json", import.meta.url);
+const MANIFEST = new URL("../packages/wasm/package.json", import.meta.url);
 
 // 公開したWebAssembly packageをnpm Registryから導入し直し、registryのversion解決を
-// 経た取得と、公開entryおよび型定義の解決を観測する。実browserでのWorkerとWASMの
-// URL解決は、同じbyte列に対して公開前のgateで確認済み。
+// 経た取得、署名とprovenance、公開entry、Node.jsおよび実ブラウザーでのWorkerとWASMを確認する。
 export async function runWasmNpmSmoke({
   manifest,
   fetchJson = defaultFetchJson,
-  install = installFromRegistry
+  install = installFromRegistry,
+  audit = auditInstalledPackage,
+  browser = runInstalledPackageBrowserSmoke,
 } = {}) {
   manifest ??= JSON.parse(await readFile(MANIFEST, "utf8"));
   const { name, version } = manifest;
@@ -32,7 +34,9 @@ export async function runWasmNpmSmoke({
   const root = await mkdtemp(join(tmpdir(), "adocweave-wasm-npm-smoke-"));
   try {
     await install({ spec: `${name}@${version}`, cwd: root });
-    await assertInstalledPackage(root, manifest);
+    const packageRoot = await assertInstalledPackage(root, manifest);
+    await audit({ root, name, version });
+    await browser({ packageRoot });
     return Object.freeze({ name, version });
   } finally {
     await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
@@ -83,10 +87,61 @@ async function assertInstalledPackage(root, expected) {
     "--input-type=module",
     "-e",
     `const { analyze } = await import(${JSON.stringify(`${expected.name}/direct`)});
-     const result = await analyze({ source: "= 題名\\n" });
+     const result = await analyze({
+       source: { text: "= 題名\\n" },
+       products: { html: true },
+     });
      process.stdout.write(String(result.html));`
   ], root);
   assert.match(html, /題名/u, "ビルド時の入口が解析結果を返しません");
+  return packageRoot;
+}
+
+export function assertSignatureAudit(report, { name, version }) {
+  assert.deepEqual(report.invalid, [], "npm署名またはattestationが無効です");
+  assert.deepEqual(report.missing, [], "npm Registryの署名がありません");
+  const verified = report.verified?.find((entry) =>
+    entry.name === name && entry.version === version
+  );
+  assert.ok(verified, `${name}@${version}のattestationが検証されていません`);
+  assert.equal(
+    verified.attestations?.provenance?.predicateType,
+    "https://slsa.dev/provenance/v1",
+    "SLSA provenance v1がありません",
+  );
+  const provenance = verified.attestationBundles?.find((entry) =>
+    entry.predicateType === "https://slsa.dev/provenance/v1"
+  );
+  assert.ok(provenance?.bundle?.dsseEnvelope?.signatures?.length > 0,
+    "署名付きprovenance attestationがありません");
+}
+
+async function auditInstalledPackage({ root, name, version }) {
+  const npm = npmInvocation();
+  const result = await runProcess(npm.command, [
+    ...npm.arguments,
+    "audit",
+    "signatures",
+    "--json",
+    "--include-attestations",
+  ], { cwd: root, env: { ...process.env, npm_config_cache: join(root, ".npm-cache") } });
+  if (result.code !== 0) {
+    throw new Error(`npm audit signatures exited with ${result.code}\n${result.stdout}\n${result.stderr}`);
+  }
+  let report;
+  try {
+    report = JSON.parse(result.stdout);
+  } catch (error) {
+    throw new Error(`npm audit signatures returned invalid JSON: ${error.message}`);
+  }
+  assertSignatureAudit(report, { name, version });
+}
+
+async function runInstalledPackageBrowserSmoke({ packageRoot }) {
+  await runWasmPackageBrowserSmoke(
+    packageRoot,
+    process.env.ADOCWEAVE_BROWSER ?? "chromium",
+  );
 }
 
 async function installFromRegistry({ spec, cwd }) {

@@ -1,6 +1,6 @@
 #![no_main]
 
-use adocweave::{AnalysisOptions, Engine};
+use adocweave_core::{AnalysisOptions, Engine};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|input: &[u8]| {
@@ -8,16 +8,16 @@ fuzz_target!(|input: &[u8]| {
         return;
     };
     if let Ok(analysis) = Engine::new(AnalysisOptions::default()).analyze(source) {
-        let _ = adocweave::output::html::render(
+        let _ = adocweave_core::output::html::render(
             analysis.document(),
-            &adocweave::output::html::RenderPolicy::default(),
+            &adocweave_core::output::html::RenderPolicy::default(),
         );
-        let _ = adocweave::output::formatter::format_analysis(
+        let _ = adocweave_core::output::formatter::format_analysis(
             &analysis,
-            &adocweave::output::formatter::FormatConfig::default(),
-            &adocweave::NeverCancel,
+            &adocweave_core::output::formatter::FormatConfig::default(),
+            &adocweave_core::NeverCancel,
         );
         let _ = analysis.document().symbols();
-        let _ = adocweave::output::diagnostics::render_json(analysis.diagnostics());
+        let _ = analysis.diagnostics();
     }
 });

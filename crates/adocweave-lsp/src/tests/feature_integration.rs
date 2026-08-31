@@ -2,8 +2,9 @@ use super::*;
 
 #[test]
 fn document_symbols_choose_the_empty_shape_from_client_capabilities() {
-    let document_uri = uri("file:///not-analyzed.adoc");
-    let mut hierarchical = LanguageService::default();
+    let project = TestProject::new();
+    let document_uri = project.document("not-analyzed.adoc", "");
+    let mut hierarchical = Session::default();
     initialize(&mut hierarchical, &["utf-16"]);
     assert!(matches!(
         hierarchical
@@ -13,7 +14,7 @@ fn document_symbols_choose_the_empty_shape_from_client_capabilities() {
         lsp::DocumentSymbolResponse::Nested(symbols) if symbols.is_empty()
     ));
 
-    let mut flat = LanguageService::default();
+    let mut flat = Session::default();
     flat.initialize(&typed(json!({
         "processId": null,
         "rootUri": null,
@@ -29,14 +30,14 @@ fn document_symbols_choose_the_empty_shape_from_client_capabilities() {
 
 #[test]
 fn hover_and_completion_use_the_same_analysis_snapshot() {
-    let mut service = LanguageService::default();
-    open(
+    let project = TestProject::new();
+    let mut service = Session::default();
+    let document_uri = project.open(
         &mut service,
-        "file:///features.adoc",
+        "features.adoc",
         1,
         "= 題名😀\n\n[source, ru]\n----\ncode\n----\n",
     );
-    let document_uri = uri("file:///features.adoc");
     let hover = service
         .hover(&document_uri, lsp::Position::new(0, 4))
         .expect("hover")
@@ -59,14 +60,14 @@ fn hover_and_completion_use_the_same_analysis_snapshot() {
 
 #[test]
 fn hover_and_completion_cover_attributes_references_links_and_math() {
-    let mut service = LanguageService::default();
-    open(
+    let project = TestProject::new();
+    let mut service = Session::default();
+    let document_uri = project.open(
         &mut service,
-        "file:///rich-features.adoc",
+        "rich-features.adoc",
         1,
         "= Title\n:name: value\n\n[[part]]\n== Part\n\nhttps://example.com[Site] <<part>> stem:[x+y]\n",
     );
-    let document_uri = uri("file:///rich-features.adoc");
     for (position, expected) in [
         (lsp::Position::new(1, 2), "document attribute"),
         (lsp::Position::new(3, 3), "reference target"),
@@ -103,18 +104,16 @@ fn hover_and_completion_cover_attributes_references_links_and_math() {
 
 #[test]
 fn hover_selects_the_token_starting_at_an_adjacent_range_boundary() {
-    let mut service = LanguageService::default();
-    open(
+    let project = TestProject::new();
+    let mut service = Session::default();
+    let document = project.open(
         &mut service,
-        "file:///adjacent-attributes.adoc",
+        "adjacent-attributes.adoc",
         1,
         ":first: one\n:second: two\n\n{first}{second}\n",
     );
     let hover = service
-        .hover(
-            &uri("file:///adjacent-attributes.adoc"),
-            lsp::Position::new(3, 7),
-        )
+        .hover(&document, lsp::Position::new(3, 7))
         .expect("hover")
         .expect("second attribute hover");
     let value = serde_json::to_value(hover).expect("serialize");
@@ -143,9 +142,9 @@ fn attribute_features_follow_the_binding_visible_at_the_cursor() {
 
 {name}
 ";
-    let mut service = LanguageService::default();
-    open(&mut service, "file:///attributes.adoc", 1, source);
-    let document = uri("file:///attributes.adoc");
+    let project = TestProject::new();
+    let mut service = Session::default();
+    let document = project.open(&mut service, "attributes.adoc", 1, source);
 
     for (line, expected) in [(2, "Value: `first`"), (6, "Value: `second`"), (10, "unset")] {
         let hover = service
@@ -219,21 +218,25 @@ fn attribute_features_follow_the_binding_visible_at_the_cursor() {
 
 #[test]
 fn attribute_definition_and_references_project_through_includes() {
-    let mut service = LanguageService::default();
+    let fixture = IncludeFixture::new(
+        "include::part.adoc[]\n\n😀 {shared}\n",
+        ":shared: included\n",
+    );
+    let mut service = Session::default();
     open(
         &mut service,
-        "file:///book/part.adoc",
+        fixture.include_uri.as_str(),
         1,
         ":shared: included\n",
     );
     open(
         &mut service,
-        "file:///book/root.adoc",
+        fixture.root_uri.as_str(),
         1,
         "include::part.adoc[]\n\n😀 {shared}\n",
     );
-    let root = uri("file:///book/root.adoc");
-    let part = uri("file:///book/part.adoc");
+    let root = fixture.root_uri.clone();
+    let part = fixture.include_uri.clone();
 
     let hover = service
         .hover(&root, lsp::Position::new(2, 4))
@@ -269,7 +272,7 @@ fn attribute_definition_and_references_project_through_includes() {
     assert!(
         change(
             &mut service,
-            "file:///book/part.adoc",
+            fixture.include_uri.as_str(),
             2,
             json!([{"text": ":shared: changed\n"}])
         )
@@ -286,16 +289,16 @@ fn attribute_definition_and_references_project_through_includes() {
             .contains("Value: `changed`")
     );
 
-    let mut restarted = LanguageService::default();
+    let mut restarted = Session::default();
     open(
         &mut restarted,
-        "file:///book/part.adoc",
+        fixture.include_uri.as_str(),
         2,
         ":shared: changed\n",
     );
     open(
         &mut restarted,
-        "file:///book/root.adoc",
+        fixture.root_uri.as_str(),
         1,
         "include::part.adoc[]\n\n😀 {shared}\n",
     );
@@ -313,15 +316,15 @@ fn attribute_definition_and_references_project_through_includes() {
 
 #[test]
 fn attribute_features_use_the_negotiated_utf8_position_encoding() {
-    let mut service = LanguageService::default();
+    let project = TestProject::new();
+    let mut service = Session::default();
     initialize(&mut service, &["utf-8"]);
-    open(
+    let document = project.open(
         &mut service,
-        "file:///utf8-attribute.adoc",
+        "utf8-attribute.adoc",
         1,
         ":name: 値\n\n😀 {name}\n",
     );
-    let document = uri("file:///utf8-attribute.adoc");
     let hover = service
         .hover(&document, lsp::Position::new(2, 6))
         .expect("hover")
@@ -344,14 +347,14 @@ fn attribute_features_use_the_negotiated_utf8_position_encoding() {
 
 #[test]
 fn hover_and_completion_cover_common_block_metadata() {
-    let mut service = LanguageService::default();
-    open(
+    let project = TestProject::new();
+    let mut service = Session::default();
+    let document_uri = project.open(
         &mut service,
-        "file:///metadata.adoc",
+        "metadata.adoc",
         1,
         ".Visible\n[#item.lead%collapsible,cols=2]\nParagraph\n",
     );
-    let document_uri = uri("file:///metadata.adoc");
     for (position, expected) in [
         (lsp::Position::new(0, 2), "block title"),
         (lsp::Position::new(1, 3), "reference target"),
@@ -396,14 +399,14 @@ fn hover_and_completion_cover_common_block_metadata() {
 
 #[test]
 fn hover_and_completion_cover_semantic_block_presentations() {
-    let mut service = LanguageService::default();
-    open(
+    let project = TestProject::new();
+    let mut service = Session::default();
+    let document_uri = project.open(
         &mut service,
-        "file:///semantic-blocks.adoc",
+        "semantic-blocks.adoc",
         1,
         "NOTE: text\n\n[quote,Author,Work]\n____\nquoted\n____\n",
     );
-    let document_uri = uri("file:///semantic-blocks.adoc");
     let note = service
         .hover(&document_uri, lsp::Position::new(0, 1))
         .expect("hover")
@@ -440,10 +443,10 @@ fn hover_and_completion_cover_semantic_block_presentations() {
 
 #[test]
 fn hover_uses_document_catalogs_for_footnotes_bibliography_and_index() {
-    let mut service = LanguageService::default();
+    let project = TestProject::new();
+    let mut service = Session::default();
     let source = "footnote:n[note] footnote:n[] bibanchor:ref[] indexterm:[Rust,Ownership]";
-    open(&mut service, "file:///catalogs.adoc", 1, source);
-    let document_uri = uri("file:///catalogs.adoc");
+    let document_uri = project.open(&mut service, "catalogs.adoc", 1, source);
     for (character, expected) in [
         (2, "footnote 1"),
         (23, "footnote 1"),
@@ -467,10 +470,10 @@ fn hover_uses_document_catalogs_for_footnotes_bibliography_and_index() {
 
 #[test]
 fn bibliography_targets_support_hover_definition_and_references() {
-    let mut service = LanguageService::default();
+    let project = TestProject::new();
+    let mut service = Session::default();
     let source = "= References\n\n[bibliography]\n== Sources\n\n* bibanchor:ref[] Entry\n\nSee <<ref,Entry>> and <<ref>>.\n";
-    let document_uri = uri("file:///bibliography.adoc");
-    open(&mut service, document_uri.as_str(), 1, source);
+    let document_uri = project.open(&mut service, "bibliography.adoc", 1, source);
 
     let hover = service
         .hover(&document_uri, lsp::Position::new(5, 9))
@@ -488,7 +491,7 @@ fn bibliography_targets_support_hover_definition_and_references() {
         .expect("definition")
         .expect("value");
     let definition = serde_json::to_value(definition).expect("serialize");
-    assert_eq!(definition["uri"], "file:///bibliography.adoc");
+    assert_eq!(definition["uri"], document_uri.as_str());
     assert_eq!(definition["range"]["start"]["line"], 5);
 
     let references = service

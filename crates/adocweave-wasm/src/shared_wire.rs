@@ -5,7 +5,7 @@
 )]
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
-pub enum WasmMathLanguage {
+pub enum MathLanguage {
     Latex,
     Typst,
 }
@@ -17,7 +17,7 @@ pub enum WasmMathLanguage {
 )]
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
-pub enum WasmSeverity {
+pub enum Severity {
     Error,
     #[default]
     Warning,

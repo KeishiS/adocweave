@@ -9,13 +9,19 @@ import {
 
 const manifest = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
 const toolchains = JSON.parse(readFileSync(new URL("../../toolchains.json", import.meta.url), "utf8"));
-const bridge = readFileSync(new URL("./bridge.mjs", import.meta.url), "utf8");
+const changelog = readFileSync(new URL("./CHANGELOG.md", import.meta.url), "utf8");
 
 test("public registryへ公開しruntime npm依存を持たない", () => {
   assert.equal(manifest.name, "@adocweave/textlint-plugin-asciidoc");
   assert.equal(manifest.private, undefined);
   assert.equal(manifest.publishConfig.access, "public");
   assert.deepEqual(manifest.dependencies, undefined);
+});
+
+test("package.jsonのversionを専用Changelogへ記録する", () => {
+  assert.match(manifest.version, /^\d+\.\d+\.\d+$/u);
+  assert.match(changelog, new RegExp(`^## \\[${manifest.version.replaceAll(".", "\\.")}\\]`, "mu"));
+  assert.ok(manifest.files.includes("CHANGELOG.md"));
 });
 
 test("検証した組合せを下限とする範囲で依存を受け入れる", () => {
@@ -46,26 +52,11 @@ test("受け入れる範囲の外側を拒否する", () => {
 test("npmが描画するMarkdownのREADMEを収録する", () => {
   assert.ok(manifest.files.includes("README.md"));
   assert.equal(existsSync(new URL("./README.md", import.meta.url)), true);
-  assert.equal(existsSync(new URL("./README.adoc", import.meta.url)), false);
 });
 
-test("parseTextとWASMをpackage内で完結させる", () => {
-  assert.match(bridge, /require\("\.\/wasm\/adocweave_textlint_wasm\.cjs"\)/);
-  assert.match(bridge, /typeof loaded\?\.parseText !== "function"/);
-  assert.doesNotMatch(
-    bridge,
-    /adapterApiVersion|TEXTLINT_ADAPTER_API_VERSION|package\.json|release-manifest|target\//,
-  );
-});
-
-test("package境界へプロジェクト固有設定を含めない", () => {
-  const serialized = JSON.stringify(manifest);
-  for (const name of ["japanese-terminology", "preset-ja", "targets.json"]) {
-    assert.doesNotMatch(serialized, new RegExp(name));
-  }
+test("licenseと第三者依存通知を収録する", () => {
   for (const license of ["LICENSE-APACHE", "LICENSE-MIT"]) {
     assert.equal(existsSync(new URL(`./${license}`, import.meta.url)), true);
   }
   assert.ok(manifest.files.includes("THIRD_PARTY_NOTICES.adoc"));
-  assert.equal(existsSync(new URL("./THIRD_PARTY_NOTICES.adoc", import.meta.url)), false);
 });

@@ -2,10 +2,11 @@ use super::*;
 
 #[test]
 fn semantic_tokens_are_sorted_and_delta_encoded_from_the_analysis() {
-    let mut service = LanguageService::default();
-    open_reference_workspace(&mut service);
+    let project = TestProject::new();
+    let mut service = Session::default();
+    open_reference_workspace(&mut service, &project);
     let tokens = service
-        .semantic_tokens(&uri("file:///a.adoc"))
+        .semantic_tokens(&project.uri("a.adoc"))
         .expect("semantic tokens")
         .expect("tokens");
     let value = serde_json::to_value(tokens).expect("serialize");
@@ -19,10 +20,10 @@ fn semantic_tokens_are_sorted_and_delta_encoded_from_the_analysis() {
 #[test]
 fn semantic_tokens_split_multiline_inline_ranges_at_crlf_boundaries() {
     for (encoding, first_length) in [("utf-8", 5), ("utf-16", 3)] {
-        let mut service = LanguageService::default();
+        let project = TestProject::new();
+        let mut service = Session::default();
         initialize(&mut service, &[encoding]);
-        let document_uri = uri("file:///multiline.adoc");
-        open(&mut service, document_uri.as_str(), 1, "``a😀\r\nb``");
+        let document_uri = project.open(&mut service, "multiline.adoc", 1, "``a😀\r\nb``");
 
         let tokens = service
             .semantic_tokens(&document_uri)
@@ -39,12 +40,12 @@ fn semantic_tokens_split_multiline_inline_ranges_at_crlf_boundaries() {
 
 #[test]
 fn semantic_tokens_leave_syntactic_headings_to_editor_grammars() {
-    let mut service = LanguageService::default();
+    let project = TestProject::new();
+    let mut service = Session::default();
     initialize(&mut service, &["utf-8"]);
-    let document_uri = uri("file:///heading.adoc");
-    open(
+    let document_uri = project.open(
         &mut service,
-        document_uri.as_str(),
+        "heading.adoc",
         1,
         "= Document\n\n== Section\n",
     );
@@ -64,10 +65,10 @@ fn external_link_tokens_keep_exact_ranges_even_when_document_links_reject_the_ur
 javascript:alert(1)[Unsafe]\n\
 https://example.com:99999[Invalid port]\n";
     for (encoding, expected_start) in [("utf-8", 5), ("utf-16", 3)] {
-        let mut service = LanguageService::default();
+        let project = TestProject::new();
+        let mut service = Session::default();
         initialize(&mut service, &[encoding]);
-        let document = uri("file:///external-link-tokens.adoc");
-        open(&mut service, document.as_str(), 1, source);
+        let document = project.open(&mut service, "external-link-tokens.adoc", 1, source);
 
         let tokens = service
             .semantic_tokens(&document)

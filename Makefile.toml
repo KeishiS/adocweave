@@ -65,62 +65,77 @@ description = "Run all workspace tests and require generated declarations and sc
 script_runner = "@shell"
 script = '''
 # ts-rsは既存fileへ追記するため、消えた型が残らないようworkspace testの前に作り直します。
-rm -f web-worker/protocol.d.mts
+rm -f packages/wasm/protocol.d.mts
 cargo test --workspace --all-features
-git diff --exit-code -- web-worker/protocol.d.mts
+git diff --exit-code -- packages/wasm/protocol.d.mts
 '''
 
-[tasks.test-web-worker]
+[tasks.test-wasm-package]
 private = true
-description = "Run the Web Worker protocol tests"
+description = "Run the WebAssembly npm package tests"
 command = "npm"
-args = ["test", "--prefix", "web-worker"]
+args = ["test", "--prefix", "packages/wasm"]
 
 [tasks.protocol-wasm-corpus-check]
 private = true
 description = "Verify the request corpus through the generated wasm-bindgen boundary"
 dependencies = ["build-wasm-node"]
 command = "node"
-args = ["--test", "web-worker/protocol-wasm.test.mjs"]
+args = ["--test", "packages/wasm/protocol-wasm.test.mjs"]
 
-[tasks.release-contract]
-private = true
-description = "Verify release train versions, targets, tags, and distribution manifest schema"
-dependencies = [
-  "release-version-check",
-  "release-workflow-policy",
-]
+[tasks.native-release-checks]
+category = "CI entry points"
+description = "Verify the native version, release tag, cargo-dist artifacts, and Cargo metadata"
+dependencies = ["native-version-check"]
 script_runner = "@shell"
 script = '''
 node --test \
-  tools/generate-third-party-notices.test.mjs \
-  tools/release-metadata.test.mjs \
-  tools/release-notes.test.mjs \
-  tools/verify-vscode-dependencies.test.mjs
-node tools/release-notes.mjs --check
-args=""
+  tools/native-release-acceptance.test.mjs \
+  tools/native-release-checks.test.mjs
 metadata="$(mktemp "${TMPDIR:-/tmp}/adocweave-release-metadata.XXXXXX.json")"
-zed_metadata="$(mktemp "${TMPDIR:-/tmp}/adocweave-zed-release-metadata.XXXXXX.json")"
 notice="$(mktemp "${TMPDIR:-/tmp}/adocweave-third-party-notices.XXXXXX.adoc")"
-trap 'rm -f "$metadata" "$zed_metadata" "$notice"' EXIT
+trap 'rm -f "$metadata" "$notice"' EXIT
 if [ -n "${RELEASE_TAG:-}" ]; then
-  args="--tag=$RELEASE_TAG"
+  node tools/native-release-checks.mjs "--tag=$RELEASE_TAG"
+else
+  node tools/native-release-checks.mjs
 fi
-node tools/release-contract.mjs $args
-node tools/release-contract.test.mjs
 cargo metadata --locked --format-version=1 > "$metadata"
-cargo metadata --manifest-path editors/zed/Cargo.toml --locked --format-version=1 > "$zed_metadata"
-node tools/verify-cargo-release-metadata.mjs "$metadata" "$zed_metadata"
-node tools/generate-third-party-notices.mjs "$notice"
+node tools/verify-cargo-release-metadata.mjs "$metadata"
+node tools/generate-third-party-notices.mjs --native x86_64-unknown-linux-musl "$notice"
 '''
 
-[tasks.release-version-check]
-private = true
-description = "Verify the explicit release version allowlist and generated outputs"
+[tasks.native-release-acceptance]
+category = "Developer entry points"
+description = "Verify a published native GitHub Release, attestations, and installation on this host"
 script_runner = "@shell"
 script = '''
-node --test tools/sync-release-version.test.mjs
-node tools/sync-release-version.mjs --check
+if [ -z "${RELEASE_TAG:-}" ]; then
+  echo "RELEASE_TAG is required (for example, v0.54.1)" >&2
+  exit 2
+fi
+node tools/native-release-checks.mjs "--tag=$RELEASE_TAG"
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/adocweave-native-release.XXXXXX")"
+trap 'rm -rf "$scratch"' EXIT
+assets="$scratch/assets"
+mkdir "$assets"
+repository="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
+gh api "repos/$repository/releases/tags/$RELEASE_TAG" > "$scratch/release.json"
+gh release download "$RELEASE_TAG" --repo "$repository" --dir "$assets"
+node tools/native-release-acceptance.mjs "$RELEASE_TAG" "$scratch/release.json" "$assets"
+for asset in "$assets"/*; do
+  gh attestation verify "$asset" --repo "$repository"
+done
+node tools/native-release-installation.mjs "$assets" "$assets/dist-manifest.json"
+'''
+
+[tasks.native-version-check]
+private = true
+description = "Verify the native workspace, lockfiles, and changelog version"
+script_runner = "@shell"
+script = '''
+node --test tools/native-release-version.test.mjs
+node tools/native-release-version.mjs --check
 '''
 
 [tasks.security-audit]
@@ -129,48 +144,60 @@ description = "Audit distributed dependency licenses, sources, and current advis
 command = "bash"
 args = ["tools/security-audit.sh"]
 
-[tasks.release-workflow-policy]
+[tasks.release-tool-tests]
 private = true
-description = "Verify action pins, permissions, secret access, and product release routing"
+description = "Test the scripts that build, publish, and observe the distribution artifacts"
 script_runner = "@shell"
 script = '''
-node tools/release-workflow-policy.mjs
 node --test \
+  tools/cachix-smoke.test.mjs \
   tools/wasm-release-budget.test.mjs \
-  tools/normalize-darwin-archives.test.mjs \
-  tools/product-candidate-plan.test.mjs \
-  tools/product-release.test.mjs \
-  tools/release-workflow-policy.test.mjs \
-  tools/security-audit.test.mjs
+  tools/npm-publication.test.mjs \
+  tools/open-vsx-publication.test.mjs
 '''
 
 [tasks.workflow-lint]
 private = true
-description = "Lint GitHub Actions syntax and enforce the release security policy"
-dependencies = ["release-workflow-policy"]
-command = "actionlint"
-args = [
-  "-ignore",
-  'unknown permission scope "vulnerability-alerts"',
+description = "Lint GitHub Actions syntax and audit workflow security"
+script_runner = "@shell"
+script = '''
+actionlint \
+  -ignore 'unknown permission scope "vulnerability-alerts"' \
+  -ignore SC2086 \
+  -ignore SC2129
+# 除外した箇所と理由は.github/zizmor.ymlにあります。medium未満は確度が低く、現在は
+# 成果物のsha256を比較する式だけが該当するため、失敗の条件をmedium以上にします。
+zizmor --offline --no-progress --min-severity medium .github/workflows
+'''
+
+[tasks.native-release-ci]
+private = true
+description = "Run the native release checks, workflow lint, tool tests, and cargo-dist plan used by pull requests"
+dependencies = [
+  "native-release-checks",
+  "workflow-lint",
+  "release-tool-tests",
+  "dist-plan",
 ]
 
-[tasks.release-ci-contract]
+[tasks.native-platform-contract]
 private = true
-description = "Run the release contract, workflow lint, and cargo-dist plan used by pull requests"
-dependencies = ["release-contract", "workflow-lint", "dist-plan"]
+description = "Verify native archive and operating-system contracts without requiring each target host"
+command = "node"
+args = [
+  "--test",
+  "tools/native-platform.test.mjs",
+]
 
-[tasks.platform-contract]
+[tasks.npm-package-contracts]
 private = true
-description = "Verify Windows and macOS release contracts without requiring the target operating system"
+description = "Verify WebAssembly and textlint package installation contracts"
 command = "node"
 args = [
   "--test",
   "tools/wasm-npm-smoke.test.mjs",
-  "tools/platform-contract.test.mjs",
-  "tools/release-installation-e2e.test.mjs",
   "tools/textlint-plugin-npm-smoke.test.mjs",
   "tools/textlint-plugin-npx-smoke.test.mjs",
-  "tools/textlint-plugin-post-release-smoke.test.mjs",
   "tools/textlint-plugin-consumer-e2e.test.mjs",
   "tools/verify-textlint-plugin-reproducibility.test.mjs",
 ]
@@ -206,18 +233,17 @@ dependencies = ["check-windows-target", "check-macos-target"]
 
 [tasks.dist-plan]
 private = true
-description = "Run each pinned native product dist plan without publishing"
+description = "Run the pinned cargo-dist plan for the native release"
 script_runner = "@shell"
 script = '''
-node tools/generate-third-party-notices.mjs THIRD_PARTY_NOTICES.adoc
+node tools/generate-third-party-notices.mjs --native x86_64-unknown-linux-musl THIRD_PARTY_NOTICES.adoc
 root="$(mktemp -d "${TMPDIR:-/tmp}/adocweave-dist-plan.XXXXXX")"
 trap 'rm -rf "$root"' EXIT
-for product in cli lsp; do
-  tag="$(node tools/product-release.mjs "$product" | jq -r .tag)"
-  plan="$root/$product.json"
-  dist plan --tag="$tag" --output-format=json > "$plan"
-  node tools/verify-dist-plan.mjs "$plan" "$tag"
-done
+version="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\([^"]*\)"/\1/p' Cargo.toml)"
+tag="v$version"
+plan="$root/plan.json"
+dist plan --tag="$tag" --output-format=json > "$plan"
+node tools/verify-dist-plan.mjs "$plan" "$tag"
 '''
 
 [tasks.compile-wasm-release]
@@ -243,15 +269,9 @@ wasm-bindgen \
 
 [tasks.package-wasm-release]
 private = true
-description = "Build the deterministic WebAssembly extra artifact consumed by dist"
+description = "Build the deterministic WebAssembly npm package candidate"
 command = "bash"
 args = ["tools/package-wasm-release.sh"]
-
-[tasks.package-zed-release]
-private = true
-description = "Build the deterministic source-checkout-free Zed development extension archive"
-command = "bash"
-args = ["tools/package-zed-release.sh"]
 
 [tasks.package-textlint-plugin-release]
 private = true
@@ -295,43 +315,13 @@ node tools/textlint-plugin-consumer-e2e.mjs \
   "target/distrib/adocweave-textlint-plugin-asciidoc-$version.tgz"
 '''
 
-[tasks.textlint-plugin-post-release-npx-smoke]
+[tasks.test-textlint-plugin-release-candidate]
 category = "CI entry points"
-description = "Observe the published GitHub Release asset, checksum, and one-shot npx path after publication"
-command = "node"
-args = ["tools/textlint-plugin-post-release-smoke.mjs"]
-
-[tasks.textlint-plugin-post-publication-npm-smoke]
-category = "CI entry points"
-description = "Observe the clean install and one-shot npx paths from the npm Registry after publication"
-command = "node"
-args = ["tools/textlint-plugin-npm-smoke.mjs"]
-
-[tasks.wasm-post-publication-npm-smoke]
-category = "CI entry points"
-description = "Observe the clean install and public entry resolution from the npm Registry after publication"
-command = "node"
-args = ["tools/wasm-npm-smoke.mjs"]
-
-[tasks.package-lib-release]
-private = true
-description = "Build the deterministic library source archive consumed by dist"
-command = "bash"
-args = ["tools/package-lib-release.sh"]
-
-[tasks.test-lib-release-package]
-category = "CI entry points"
-description = "Verify the library release archive layout and deterministic bytes"
-dependencies = ["package-lib-release"]
-command = "bash"
-args = ["tools/verify-lib-release-package.sh"]
-
-[tasks.test-zed-release-package]
-private = true
-description = "Verify the Zed release archive layout and deterministic bytes"
-dependencies = ["package-zed-release"]
-command = "bash"
-args = ["tools/verify-zed-release-package.sh"]
+description = "Build, verify, reproduce, and exercise the textlint plugin release candidate"
+dependencies = [
+  "textlint-plugin-reproducibility",
+  "textlint-plugin-release-consumer-e2e",
+]
 
 [tasks.test-wasm-release-package]
 private = true
@@ -344,7 +334,7 @@ args = ["tools/verify-wasm-release-package.sh"]
 private = true
 description = "Compile-check the public TypeScript declarations"
 command = "tsc"
-args = ["--project", "web-worker/tsconfig.json"]
+args = ["--project", "packages/wasm/tsconfig.json"]
 
 [tasks.test-wasm-smoke]
 private = true
@@ -353,7 +343,7 @@ dependencies = ["package-wasm-release", "test-wasm-types"]
 script_runner = "@shell"
 script = '''
 node --test tools/process-lifecycle.test.mjs tools/host-executable.test.mjs
-version="$(node --input-type=module -e "import manifest from './web-worker/package.json' with { type: 'json' }; process.stdout.write(manifest.version)")"
+version="$(node --input-type=module -e "import manifest from './packages/wasm/package.json' with { type: 'json' }; process.stdout.write(manifest.version)")"
 node tools/wasm-release-smoke.mjs "target/distrib/adocweave-wasm-$version.tgz" "${ADOCWEAVE_BROWSER:-chromium}"
 '''
 
@@ -363,32 +353,6 @@ description = "Bundle the public API with esbuild and smoke test its asset URL r
 dependencies = ["package-wasm-release", "test-wasm-types"]
 command = "bash"
 args = ["tools/wasm-bundler-smoke.sh"]
-
-[tasks.release-global-candidate]
-private = true
-description = "Build and completely verify each global release candidate"
-dependencies = [
-  "test-wasm-release-candidate",
-  "textlint-plugin-release-consumer-e2e",
-  "test-vscode-release-determinism",
-  "test-zed-release-candidate",
-]
-
-[tasks.test-global-product-candidate]
-category = "CI entry points"
-description = "Build and completely verify PRODUCT as one global release candidate"
-script_runner = "@shell"
-script = '''
-case "${PRODUCT:-}" in
-  lib) task=test-lib-release-package ;;
-  wasm) task=test-wasm-release-candidate ;;
-  textlint) task=textlint-plugin-release-consumer-e2e ;;
-  vscode) task=test-vscode-release-determinism ;;
-  zed) task=test-zed-release-candidate ;;
-  *) echo "unsupported global candidate product: ${PRODUCT:-<unset>}" >&2; exit 2 ;;
-esac
-cargo make "$task"
-'''
 
 [tasks.wasm-runtime-check]
 private = true
@@ -401,27 +365,8 @@ dependencies = [
 
 [tasks.test-wasm-release-candidate]
 category = "CI entry points"
-description = "Build, verify, run, install, and remove the WebAssembly release candidate"
+description = "Build, verify, and run the WebAssembly release candidate"
 dependencies = ["wasm-runtime-check"]
-command = "node"
-args = [
-  "tools/release-installation-e2e.mjs",
-  "wasm",
-  "target/distrib",
-  "x86_64-unknown-linux-musl",
-]
-
-[tasks.test-zed-release-candidate]
-category = "CI entry points"
-description = "Build, verify, install, and remove the Zed release candidate"
-dependencies = ["test-zed-release-package"]
-command = "node"
-args = [
-  "tools/release-installation-e2e.mjs",
-  "zed",
-  "target/distrib",
-  "x86_64-unknown-linux-musl",
-]
 
 [tasks.build-wasm-node]
 private = true
@@ -541,24 +486,7 @@ private = true
 description = "Compare native and actual WASM results over shared conformance fixtures"
 dependencies = ["build-conformance-native", "build-wasm-node"]
 command = "npm"
-args = ["run", "test:cross-runtime", "--prefix", "web-worker"]
-
-[tasks.wasm-size]
-private = true
-description = "Report the byte sizes of the WebAssembly artifacts that ship"
-dependencies = ["package-wasm-release"]
-script_runner = "@shell"
-script = '''
-# package-wasm-release leaves the wasm profile wasm-bindgen output here and
-# copies it into the archive, so these are the bytes consumers download.
-for artifact in target/adocweave-wasm/*; do
-  bytes="$(wc -c < "$artifact")"
-  echo "$bytes $artifact"
-done
-version="$(node --input-type=module -e "import manifest from './web-worker/package.json' with { type: 'json' }; process.stdout.write(manifest.version)")"
-archive="target/distrib/adocweave-wasm-$version.tgz"
-echo "$(wc -c < "$archive") $archive"
-'''
+args = ["run", "test:cross-runtime", "--prefix", "packages/wasm"]
 
 [tasks.fuzz-smoke]
 category = "CI entry points"
@@ -585,11 +513,11 @@ for target in analyze preprocess process render; do
 done
 '''
 
-[tasks.zed-query-contract]
+[tasks.zed-registry-contract]
 private = true
-description = "Verify Zed highlight and injection queries against the pinned grammar node schema"
+description = "Verify the Zed extension package and official registry metadata"
 command = "node"
-args = ["tools/zed-query-contract.mjs"]
+args = ["tools/zed-registry-contract.mjs"]
 
 [tasks.check-zed-wasm]
 private = true
@@ -615,6 +543,16 @@ description = "Install the locked VS Code extension dependencies without lifecyc
 command = "npm"
 args = ["ci", "--ignore-scripts", "--prefix", "editors/vscode"]
 
+[tasks.third-party-notice-contracts]
+private = true
+description = "Verify each distribution notice against its runtime dependency boundary"
+command = "node"
+args = [
+  "--test",
+  "tools/generate-third-party-notices.test.mjs",
+  "tools/verify-vscode-dependencies.test.mjs",
+]
+
 [tasks.check-vscode]
 private = true
 description = "Type-check and validate the VS Code extension manifest and TextMate grammar"
@@ -632,7 +570,7 @@ args = ["test", "--prefix", "editors/vscode"]
 [tasks.test-vscode-extension-host]
 private = true
 description = "Run the official VS Code extension host against the real AdocWeave Language Server"
-dependencies = ["build-lsp", "vscode-dependencies"]
+dependencies = ["build-adoc-check", "vscode-dependencies"]
 script_runner = "@shell"
 script = '''
 # The host loads the extension from dist and its test suite from dist-test, so
@@ -660,6 +598,34 @@ npm run package --prefix editors/vscode -- --verify-determinism
 npm run test:vsix-installation --prefix editors/vscode
 '''
 
+[tasks.test-vscode-release-candidate]
+category = "CI entry points"
+description = "Build and verify the independent VS Code extension candidate"
+dependencies = [
+  "check-vscode",
+  "test-vscode",
+  "test-vscode-release-determinism",
+  "test-vscode-extension-host",
+]
+
+[tasks.test-vscode-published-extension]
+category = "CI entry points"
+description = "Run a registry VSIX against the real AdocWeave Language Server"
+dependencies = ["build-adoc-check", "vscode-dependencies"]
+script_runner = "@shell"
+script = '''
+test -n "${ADOCWEAVE_TEST_VSIX:-}"
+npm run build:test --prefix editors/vscode
+if [ "$(uname -s)" = Linux ]; then
+  Xvfb :97 -screen 0 1280x1024x24 >/dev/null 2>&1 &
+  xvfb_pid=$!
+  trap 'kill "$xvfb_pid" 2>/dev/null || true' EXIT
+  DISPLAY=:97 npm run test:extension --prefix editors/vscode
+else
+  npm run test:extension --prefix editors/vscode
+fi
+'''
+
 [tasks.clippy-zed]
 private = true
 description = "Run Clippy for the excluded Zed extension crate"
@@ -685,7 +651,7 @@ private = true
 description = "Reject documentation .md files except repository metadata"
 script_runner = "@shell"
 script = '''
-unexpected="$(rg --files --hidden -g '*.md' -g '!.git/**' | rg -v '^(AGENTS\.md|\.claude/skills/[^/]+/SKILL\.md|\.github/pull_request_template\.md|\.github/SECURITY\.md|release/notes\.md|release/notes\.template\.md|editors/vscode/README\.md|packages/[^/]+/README\.md|web-worker/README\.md)$' || true)"
+unexpected="$(rg --files --hidden -g '*.md' -g '!.git/**' | rg -v '^(AGENTS\.md|CHANGELOG\.md|\.claude/skills/[^/]+/SKILL\.md|\.github/pull_request_template\.md|\.github/SECURITY\.md|editors/(vscode|zed)/(README|CHANGELOG)\.md|packages/[^/]+/(README|CHANGELOG)\.md)$' || true)"
 if [ -n "$unexpected" ]; then
   echo "repository documentation must use .adoc except repository metadata:" >&2
   echo "$unexpected" >&2
@@ -696,7 +662,7 @@ fi
 [tasks.build-adoc-check]
 private = true
 command = "cargo"
-args = ["build", "-p", "adocweave-cli", "--bin", "adocweave"]
+args = ["build", "-p", "adocweave", "--bin", "adocweave"]
 
 [tasks.adoc-check-targets]
 private = true
@@ -709,12 +675,6 @@ description = "Check every tracked AsciiDoc file for crashes, losslessness, and 
 dependencies = ["build-adoc-check", "adoc-check-targets"]
 command = "node"
 args = ["tools/adoc-check.mjs"]
-
-[tasks.build-lsp]
-private = true
-description = "Build the Language Server binary used by editor integration tests"
-command = "cargo"
-args = ["build", "-p", "adocweave-lsp", "--bin", "adocweave-lsp"]
 
 [tasks.nix-package-check]
 private = true
@@ -729,22 +689,43 @@ dependencies = [
   "fmt-check",
   "clippy",
   "test",
-  "release-ci-contract",
-  "platform-contract",
+  "native-release-ci",
+  "native-platform-contract",
+  "npm-package-contracts",
+  "third-party-notice-contracts",
   "doc-check",
   "docs-check",
   "adoc-check",
   "textlint-repository-prose-lint",
   "html5-check",
-  "test-web-worker",
+  "test-wasm-package",
   "test-wasm-types",
-  "zed-query-contract",
+  "zed-registry-contract",
   "clippy-zed",
   "test-zed",
   "check-vscode",
   "test-vscode",
   "textlint-plugin-public-js-unit",
 ]
+
+[tasks.test-vscode-acquisition]
+private = true
+description = "Start the VS Code extension without a configured or PATH Language Server and verify release-style acquisition"
+dependencies = ["build-adoc-check", "vscode-dependencies"]
+script_runner = "@shell"
+script = '''
+# 未公開のsourceからReleaseと同じ応答を作り、filesystem、展開、実行およびLSP通信を検査する。
+npm run build --prefix editors/vscode
+npm run build:test --prefix editors/vscode
+if [ "$(uname -s)" = Linux ]; then
+  Xvfb :98 -screen 0 1280x1024x24 >/dev/null 2>&1 &
+  xvfb_pid=$!
+  trap 'kill "$xvfb_pid" 2>/dev/null || true' EXIT
+  DISPLAY=:98 npm run test:acquisition --prefix editors/vscode
+else
+  npm run test:acquisition --prefix editors/vscode
+fi
+'''
 
 [tasks.main-integrations]
 category = "CI entry points"
@@ -755,6 +736,7 @@ dependencies = [
   "protocol-wasm-corpus-check",
   "test-cross-runtime",
   "test-vscode-extension-host",
+  "test-vscode-acquisition",
   "textlint-plugin-wasm-contract",
   "textlint-plugin-browser-isolation",
 ]
@@ -773,19 +755,15 @@ dependencies = [
 
 [tasks.acceptance]
 category = "Developer entry points"
-description = "Run main integrations and candidate acceptance suites available on the current host"
-dependencies = [
-  "main-gate",
-  "release-global-candidate",
-]
+description = "Run main integrations available on the current host"
+dependencies = ["main-gate"]
 
 [tasks.release-check]
 category = "Developer entry points"
-description = "Run the main gate, build publishable candidates, and report release WASM artifact sizes"
+description = "Run repository gates and verify the native cargo-dist plan"
 dependencies = [
   "verify",
   "security-audit",
   "acceptance",
-  "wasm-size",
   "dist-plan",
 ]

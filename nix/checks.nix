@@ -2,8 +2,7 @@
 {
   pkgs,
   package,
-  cliVersion,
-  lspVersion,
+  version,
 }:
 let
   runtimeClosure = pkgs.closureInfo {
@@ -17,8 +16,7 @@ in
         nativeBuildInputs = [ pkgs.jq ];
       }
       ''
-        test "$(${package}/bin/adocweave --version --json | jq -r .packageVersion)" = "${cliVersion}"
-        test "$(${package}/bin/adocweave-lsp --version --json | jq -r .packageVersion)" = "${lspVersion}"
+        test "$(${package}/bin/adocweave --version --json | jq -r .packageVersion)" = "${version}"
         if grep -E '/[^/]*(chromium|nodejs|rust-minimal|rustc|cargo)-' ${runtimeClosure}/store-paths; then
           echo "development or browser tool found in the AdocWeave runtime closure" >&2
           exit 1

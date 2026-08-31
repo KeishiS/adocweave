@@ -1,6 +1,6 @@
-= 拡張境界
+= 利用側アプリの拡張
 
-この文書では、利用側アプリが独自のリンク、メタデータおよび検索を追加する場合の責務境界を定義します。
+この文書では、利用側アプリが独自のリンク、メタデータおよび検索を追加する場合の責務分担を定義します。
 AdocWeave本体は標準AsciiDocを読みます。ノートアプリ固有のデータベースや権限、画面の作りは
 利用側アプリで扱います。
 
@@ -14,7 +14,7 @@ let analysis = Engine::new(options).analyze(source)?;
 let host_result = host_extension.analyze(&analysis, host_context).await?;
 ----
 
-ホストは``Analysis``を変更せず、別の結果型へアプリケーション固有の診断、メタデータ投影、
+ホストは``Analysis``を変更せず、別の結果型へアプリケーション固有の診断、メタデータの変換、
 解決済み参照および検索情報を格納します。標準診断とホスト診断を統合する場合は、範囲、
 診断コードおよび安定IDによる決定的な順序を定義します。
 
@@ -59,23 +59,33 @@ Parserは未知のスキームも``ReferenceDestination::Scheme``へ保持しま
 ``Analysis::reference_queries()``から``ReferenceKey::Scheme``を取得し、scheme、locator、
 anchorを検証・解決します。標準ParserやLintへUUID規則を登録してはいけません。
 
-構文解析中にResolverを呼びません。不完全xrefにも標準解析結果を返し、I/O待ちによって
+構文解析中に外部の解決処理を呼びません。不完全xrefにも標準解析結果を返し、I/O待ちによって
 Parser、Formatterまたは標準Lintを停止させません。
 
-== Resolver
+== 解決結果の受渡し
 
-I/Oを必要とするホストは``ReferenceResolver``を実装します。アプリ専用メソッドではなく、
-``resolve_scheme(scheme, locator)``で不透明な``SourceId``を返し、``resolve_anchor()``で
-アンカー確認と最終href生成を行います。文書候補、相対文書、任意スキーム、アンカーおよび逆参照は
-同じResolver境界で扱い、コアへファイルシステム、DBまたはネットワークの知識を持ち込みません。
+利用側アプリは``Analysis::reference_queries()``と``Analysis::resource_queries()``から問い合わせを取得し、
+必要なI/Oを実行します。参照は``ResolvedReference``、リソースは``ResolvedResource``へ変換し、
+``RenderInputs``へ格納して出力処理へ渡します。コアは解決処理のインターフェイスを定めないため、
+利用側アプリは同期処理または使用する非同期runtimeに合わせて処理を実装できます。
 
-Resolverは次の規則を守ります。
+[source,rust]
+----
+let references = resolve_references(analysis.reference_queries()).await?;
+let resources = resolve_resources(analysis.resource_queries()).await?;
+let inputs = RenderInputs::default()
+    .with_references(references)
+    .with_resources(resources);
+let output = render_with_inputs(analysis.document(), &policy, &inputs);
+----
 
-* ``Send + Sync``による複数文書からの同時利用
+利用側アプリの解決処理は次の規則を守ります。
+
+* 複数文書を同時に処理する場合の共有状態の保全
 * キャンセル時の共有状態の保全
 * 対象不在、アンカー不在、曖昧、ルート外、権限不足および内部障害の安定コードへの正規化
 * 診断とhrefへのOSパス、DB主キーおよび認証情報の漏えい防止
-* 参照元``SourceId``、文書バージョンおよび``TextRange``の保持
+* 参照元``SourceId``、文書バージョンおよび問い合わせの``TextRange``の保持
 
 == キャッシュと無効化
 
@@ -83,28 +93,27 @@ Resolverは次の規則を守ります。
 古い成功結果と失敗結果を再利用しません。キャッシュキーは、この無効化条件を識別できる
 情報を含めます。
 
-== エディター統合
+== エディタ統合
 
 補完、Hover、Definition、ReferencesおよびDocument Linkは同じ``Analysis``、
 ``ReferenceQuery``および解決結果を共有します。機能ごとに対象文字列を再解析しません。
 入力途中の構文失敗と、確定した対象不在を区別します。
 
 LSPアダプターはxref:language-server.adoc[Language Server設計]の通知順序、generation、
-キャンセルおよびlock規則に従います。``ReferenceResolver``の仕様自体は特定async runtimeへ
-依存せず、外部ホストへTokioを要求しません。
+キャンセルおよびlock規則に従います。コアは特定の非同期runtimeを要求しません。
 
-== HTMLと信頼境界
+== HTMLの安全性
 
-Resolverが返すhrefは信頼済みHTMLではありません。HTML出力前にAdocWeaveの``ActiveUrlPolicy``を
+利用側アプリが解決したhrefは信頼済みHTMLではありません。HTML出力前にAdocWeaveの``ActiveUrlPolicy``を
 必ず通過させます。拡張はraw HTML、イベント属性、``javascript:``または許可されていない
 `data:` URIを許可する経路を提供してはいけません。
 
-URL検査では文書入力とResolver出力のcontextを混同しません。たとえばhostは文書入力の
-``/notes/id``を拒否したまま、Resolverが生成した同じroot-relative URLだけを許可できます。外部リンク属性、
+URL検査では文書入力と解決結果のcontextを混同しません。たとえばhostは文書入力の
+``/notes/id``を拒否したまま、利用側アプリが生成した同じroot-relative URLだけを許可できます。外部リンク属性、
 source言語、数式言語、未解決参照表示およびresource capabilityは``RenderPolicy``へ設定し、HTML文字列の
 置換で実装しません。
 
 == 互換性
 
-ホストは起動時またはビルド時にパッケージバージョンを照合します。公開型またはResolver仕様の
+ホストは起動時またはビルド時にパッケージバージョンを照合します。公開型または解決結果の形式の
 破壊的変更に備え、Rust enumの序数を永続化せず、未知の値を安全な未解決状態として扱います。

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-version="$(node --input-type=module -e "import manifest from './web-worker/package.json' with { type: 'json' }; process.stdout.write(manifest.version)")"
+version="$(node --input-type=module -e "import manifest from './packages/wasm/package.json' with { type: 'json' }; process.stdout.write(manifest.version)")"
 # npm packが作るtarballのrootは、versionを含まない``package``に正規化される。
 package="package"
 archive="target/distrib/adocweave-wasm-$version.tgz"
@@ -21,6 +21,7 @@ tar -tzf "$archive" | LC_ALL=C sort > "$actual"
 printf '%s\n' \
   "$package/LICENSE-APACHE" \
   "$package/LICENSE-MIT" \
+  "$package/CHANGELOG.md" \
   "$package/README.md" \
   "$package/THIRD_PARTY_NOTICES.adoc" \
   "$package/package.json" \
@@ -31,7 +32,6 @@ printf '%s\n' \
   "$package/wasm/adocweave_wasm_bg.wasm" \
   "$package/worker/analysis.mjs" \
   "$package/worker/client.mjs" \
-  "$package/worker/contracts.mjs" \
   "$package/worker/direct.d.mts" \
   "$package/worker/direct.mjs" \
   "$package/worker/index.d.mts" \
@@ -47,5 +47,14 @@ node --input-type=module -e '
   if (publicApi.PROTOCOL_SCHEMA_VERSION !== protocol.PROTOCOL_SCHEMA_VERSION) {
     throw new Error("WebAssembly archive protocol schema version mismatch");
   }
-' "$root/$package/worker/index.mjs" "$root/$package/worker/worker-protocol.mjs"
+  const direct = await import(process.argv[3]);
+  const result = await direct.analyze({
+    source: { text: "= Node candidate\\n" },
+    products: { html: true },
+  });
+  if (!result.html.includes("Node candidate")) {
+    throw new Error("WebAssembly archive direct entry did not return HTML");
+  }
+' "$root/$package/worker/index.mjs" "$root/$package/worker/worker-protocol.mjs" \
+  "$root/$package/worker/direct.mjs"
 echo "WebAssembly release package verified: $second"

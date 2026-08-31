@@ -1,0 +1,168 @@
+= ADR 0040: 単一バージョン・Release・native実行ファイル
+:status: 一部有効。配布物ごとの公開単位はADR 0043により改訂
+
+== 状態
+
+{status}
+
+== 文脈
+
+ADR 0027では、CLI、Language Server、Browser向けWebAssembly、textlint用Processor、VS Code拡張および
+Zed拡張に、製品ごとに別のバージョン、タグ、GitHub Releaseを設けました。機能変更のない配布物を再公開せずに
+済む一方、製品ごとのバージョンの正本、タグ、Release Notes、成果物の選択および公開処理が必要です。
+
+個人開発では、構築時間や外部サービスへの送信回数より、公開のたびに製品を選び、製品間の対応を保守する負担が
+大きくなりました。現在は、共通する実装を含むCLIとLanguage Serverについて、成果物の構築、エディタ拡張による
+取得および検査を別々に保守しています。本ADRでは、OS上で直接動く実行ファイルをnative実行ファイルと呼びます。
+
+== 決定
+
+=== バージョンとReleaseの単位
+
+一つのコミット、一つのバージョン、一つの``vX.Y.Z``タグおよび一つのGitHub Releaseを、リポジトリ全体の公開単位と
+します。バージョンの正本は、リポジトリ直下の``Cargo.toml``にある``workspace.package.version``とします。
+Rust workspaceに属する各crateは、Cargo標準の``version.workspace = true``でこの値を継承します。npmパッケージと
+エディタ拡張を含むその他の設定ファイルにあるバージョン項目も、この値から同期します。製品ごとの正本は持ちません。
+
+次の配布物と公開APIに同じバージョンを設定します。
+
+* native実行ファイル``adocweave``
+* Browser向けWebAssemblyパッケージ
+* textlint用Processorパッケージ
+* VS Code拡張
+* Zed拡張の配布用圧縮ファイル
+* 共通タグを指定して利用するRust crateの公開API
+
+Rust crate専用の配布用圧縮ファイルとRelease Notesは廃止します。Rustの公開APIに互換性のない変更がある場合は、共通の
+Release Notesに``Rust API``の項目を設けて記載します。
+
+複数の配布物または公開APIに変更がある場合は、利用者への影響が最も大きい変更に合わせて一つの更新種別を選びます。
+メジャーバージョンが0の間は、互換性のない変更と互換性を保つ機能追加をminor版、互換性を保つ修正をpatch版とします。
+1.0.0以降は、互換性に応じて版番号を決めるSemantic Versioningに従い、互換性のない変更をmajor版とします。
+最初の統合版には、いずれかの製品で公開済みの最大のバージョンより大きい値を使用します。公開済みの番号を別の内容へ
+再利用しません。
+
+=== 単一のnative実行ファイル
+
+CLIとLanguage Serverを``adocweave``へ統合し、Language Serverは``adocweave lsp``で起動します。
+``adocweave-lsp``実行ファイルと移行用の別名は残しません。OSとCPUアーキテクチャを表す``<target>``ごとに
+``adocweave-<target>.zip``を配布し、``adocweave``だけを収録します。
+
+一つのCLIからLanguage Serverを起動し、CLIとLanguage Serverを接続する別のプロセスは設けません。統合した
+実行ファイルには、Language Serverの非同期処理を動かすruntimeを含めます。構文解析と出力を担うコアは、引き続き
+ファイル操作と非同期処理のruntimeへ依存しません。
+
+=== エディタ拡張とLanguage Server
+
+VS Code拡張とZed拡張は、設定で指定した絶対パス、``PATH``、自動取得の順で実行ファイルを探すADR 0028の方針を
+維持します。自動取得では共通の``vX.Y.Z``タグと``adocweave-<target>.zip``を使い、取得した``adocweave``を
+``lsp``サブコマンド付きで起動します。拡張には実行ファイルを同梱しません。
+
+拡張とLanguage Serverのバージョンが一致することは、実行時の互換条件にしません。利用者が設定した実行ファイルと
+``PATH``上の実行ファイルも使用できます。利用できる機能は、LSPの``initialize``でLanguage Serverが対応機能を示す
+標準のcapabilityから判断します。製品のバージョンを起動前に比較しません。
+
+=== 公開と失敗時の再実行
+
+[NOTE]
+====
+この節の配布物を一括公開する判断はxref:0043-independent-distribution-units.adoc[ADR 0043]で置き換えました。
+現在の公開単位とworkflowの分離はxref:../release-distribution.adoc[配布仕様]、資格情報の境界は
+xref:0023-publication-boundary.adoc[ADR 0023]を参照してください。以下は置き換え前の判断です。
+====
+
+一つのGitHub Releaseへ、その版のnative実行ファイルの圧縮ファイル、npmパッケージ、VSIXおよびZed拡張の
+配布用圧縮ファイルを添付します。
+Open VSX、Visual Studio Marketplace、npmの二つのパッケージおよびCachixには、機能変更のない配布物も含めて
+毎回新しいバージョンを公開します。Zed拡張はGitHub Releaseへの添付までを対象とし、外部の拡張配布サービスへは
+投稿しません。
+
+すべてを公開することは、OSS全般で一般的な方針ではありません。実行ファイルとエディタ拡張の公開単位はOSSによって
+異なります。AdocWeaveでは、機能変更の有無を判定する処理、公開先の選択およびどの製品版が対応するかを示す表を
+廃止するために、外部サービスへの送信と機能変更のない拡張への更新通知を受け入れます。
+
+GitHub Releaseを一次公開先とするADR 0023の方針を維持します。npmパッケージとVSIXは、GitHub Releaseへ添付して
+検証したものと同じバイト列を配布サービスへ送ります。配布サービス向けには構築し直しません。Cachixには、同じタグの
+コミットから構築して検証したNixパッケージを送ります。依存物は、``cache.nixos.org``に存在しないものだけをCachixへ
+送ります。
+
+GitHub Releaseを作成したRelease workflowから、公開先ごとの再利用workflowを直接かつ並列に呼び出します。
+Release workflow全体の成功には、各外部サービスへの公開と公開後検査の成功も必要です。ただし、GitHub Releaseの公開と、
+各外部サービスで成果物を利用できる時点が同時になることは保証しません。
+
+外部サービスへの送信だけが失敗した場合は、Release workflowの標準操作``Re-run failed jobs``を使用します。成功済みの
+GitHub Release作成jobと公開jobは再実行せず、失敗した再利用workflowと後続jobだけを同じタグとコミットで実行します。
+再実行時は、タグとコミットの対応、checksumによる成果物の同一性、attestationによる構築元および公開先の状態を
+検査します。公開済みの同一バージョンは置き換えません。
+
+npmとVisual Studio MarketplaceのTrusted Publisherが照合するworkflow identityは、OIDCを要求する再利用workflow
+ではなく、その呼出し元である``release.yml``です。公開先ごとのGitHub environmentは再利用workflow内の公開jobへ
+設定し、資格情報と承認の境界を維持します。
+
+GitHub Releaseを作成する``host``には``github-release`` environmentを設定します。4つの外部公開environmentと合わせ、
+deployment branch policyはRelease workflowを起動するstable tagのpattern ``v*``だけを許可します。これにより、書込み権限、
+OIDCおよび公開先の資格情報はstable tagから実行した各公開jobだけで使用できます。
+
+=== 検査
+
+製品ごとの候補作成、タグ判定、バージョン同期および公開先の選択だけを目的とする検査は廃止します。次の検査は、
+単一のReleaseと各公開先に合わせて維持します。
+
+* checksumとattestationによる成果物の検証
+* GitHub Actionsと外部サービスの権限制限
+* エディタ拡張が取得する実行ファイルと起動方法の検査
+* 各公開先への公開後検査
+* コミット、タグおよび成果物の対応の検査
+
+== 参考にする標準機能とOSS
+
+バージョンの継承には、
+link:https://doc.rust-lang.org/cargo/reference/workspaces.html#the-package-table[Cargo workspaceの``package``表]を
+使用します。一つの``vX.Y.Z``タグから一つのGitHub Releaseを作る構成は、cargo-distの
+link:https://axodotdev.github.io/cargo-dist/book/reference/concepts.html#announcements-selecting-apps[Announcement]に
+合わせます。native実行ファイルの形は、link:https://docs.deno.com/runtime/reference/cli/lsp/[Denoの``deno lsp``]や
+link:https://docs.astral.sh/ruff/editors/[Ruffの``ruff server``]と同様にします。
+
+これらの標準機能と実績のある実行方法を組み合わせます。AdocWeave専用のRelease管理基盤、実行ファイル探索規則または
+プロセス間通信は追加しません。全配布先へ毎回公開する部分だけは、個人開発で製品別の処理を保守しないための
+AdocWeave固有の判断です。cargo-distは製品別のReleaseにも対応しているため、統一Releaseだけが標準という意味では
+ありません。
+
+== 検討した代替案
+
+**製品別バージョンとReleaseの維持。** 機能変更のない配布物を再公開せずに済みます。一方、製品ごとのバージョン、
+タグ、成果物、公開先および復旧処理を維持する必要があります。
+
+**バージョンだけの統一と変更した配布物だけの公開。** 利用者には一つのバージョンを示せますが、変更の判定と公開先の
+選択が残ります。複雑さを製品別Releaseから別の対応表へ移すため採用しません。
+
+**単一GitHub Releaseと二つのnative実行ファイル。** 公開単位は減りますが、CLIとLanguage Serverの成果物、取得方法
+および検査を二組保守する必要があります。
+
+== 帰結
+
+利用者は一つのバージョン、タグおよびGitHub Releaseから、同じコミットに対応する配布物を選べます。
+エディタ拡張が取得するnative成果物と、利用者が直接導入するCLIも同じになります。公開する製品の選択、製品別の
+バージョン同期および対応関係は不要になります。
+
+機能変更のないnpmパッケージと拡張にも新しいバージョンを公開するため、外部サービスへの送信回数と利用者への更新通知は
+増えます。単一の実行ファイルには非同期処理のruntimeが含まれるため、CLIだけを使う場合も実行ファイルの容量は増える
+可能性があります。公開先の障害によって、同じバージョンが一時的に一部の公開先だけに存在する場合があります。
+
+ADR 0027の製品別バージョン、製品別タグ、製品別GitHub Releaseおよび公開製品の選択を、本ADRで置き換えます。
+
+ADR 0023のGitHub Releaseを一次公開先とする決定、公開先ごとの資格情報と権限の分離、および成果物を配布サービス向けに
+構築し直さない決定は維持します。製品と成果物を製品別の配布計画で選ぶ決定は、本ADRの単一Releaseへ置き換えます。
+
+ADR 0028の実行ファイルの探索順、拡張へ同梱しない決定、取得できる範囲での検証、信頼されていないprojectから
+実行ファイルを起動しない決定、および標準LSP capabilityによる互換性判断は維持します。エディタ標準のLSP clientへ
+プロセス管理を委ねる決定も維持します。独立したLanguage Serverの名前、タグおよびReleaseを使う決定は、本ADRで
+置き換えます。
+
+ADR 0032の一つのGitHub Actions workflowでコミット、検査、成果物、承認およびGitHub Releaseを対応付ける決定と、
+外部サービスへの送信だけを再実行できる決定は維持します。一製品を選択してその成果物だけを構築する決定は、
+本ADRの単一Releaseへ置き換えます。
+
+ADR 0005のmonorepo管理、ADR 0035のNixパッケージを一つにする決定、およびADR 0036のSBOMを公開しない決定は
+維持します。製品別の公開単位、Nixパッケージに二つの実行ファイルを収録する決定、および配布manifestへ製品名と
+製品バージョンを記録する決定は、本ADRの単一Releaseとnative実行ファイルに合わせて置き換えます。

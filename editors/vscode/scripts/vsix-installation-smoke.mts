@@ -9,14 +9,14 @@ import {
 } from "@vscode/test-electron";
 import { unzipSync, zipSync } from "fflate";
 
-import { type ExtensionManifest, readJson } from "./manifests.mts";
+import { type ExtensionManifest, readJson, supportedVSCodeFloor } from "./manifests.mts";
 
 if (process.platform === "linux" && process.env.GITHUB_ACTIONS === "true") {
   delete process.env.LD_LIBRARY_PATH;
 }
 
 const packageJson = readJson<ExtensionManifest>("package.json");
-const baseline = resolve("../../target/distrib", `adocweave-vscode-${packageJson.version}.vsix`);
+const baseline = resolve("../../target/distrib", `adocweave-${packageJson.version}.vsix`);
 const extensionId = `${packageJson.publisher}.${packageJson.name}`;
 const scratch = mkdtempSync(join(tmpdir(), "adocweave-vsix-install-"));
 const extensionsDirectory = join(scratch, "extensions");
@@ -43,7 +43,7 @@ function fixtureVersion(version: string): string {
   entries["extension.vsixmanifest"] = Buffer.from(
     vsixManifest.replace(/(<Identity\b[^>]*\bVersion=")[^"]+(")/, `$1${version}$2`),
   );
-  const path = join(scratch, `adocweave-vscode-${version}.vsix`);
+  const path = join(scratch, `adocweave-${version}.vsix`);
   writeFileSync(path, zipSync(entries, { level: 9 }));
   return path;
 }
@@ -84,7 +84,7 @@ function installedVersion(baseArguments: CliArguments): string | undefined {
 try {
   mkdirSync(extensionsDirectory);
   mkdirSync(userDataDirectory);
-  const executable = await downloadAndUnzipVSCode("1.125.0");
+  const executable = await downloadAndUnzipVSCode(supportedVSCodeFloor(packageJson));
   const cli = resolveCliArgsFromVSCodeExecutablePath(executable);
   const [major, minor, patch] = packageJson.version.split(".").map(Number);
   if (major === undefined || minor === undefined || patch === undefined) {

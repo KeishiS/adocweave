@@ -1,13 +1,13 @@
-= ADR 0011: バージョン付きプロジェクト設定と権限境界
-:status: accepted; schema generation and v1 relative paths amended by ADR 0037; schema v2 amended by ADR 0038
+= ADR 0011: バージョン付きプロジェクト設定と権限制限
+:status: 一部有効。Schema生成はADR 0037、crateの所有はADR 0045により改訂
 
 == 状態
 
-採用
+{status}
 
 == 背景
 
-CLI、Language Serverおよびエディターadapterは、解析、Lint、include、整形およびHTML出力の設定を
+CLI、Language Serverおよびエディタadapterは、解析、Lint、include、整形およびHTML出力の設定を
 別々の入力から構築しています。この構造では同じworkspaceで利用側ごとに結果が変わり、設定field、
 既定値および検証規則の追加も重複します。
 
@@ -18,8 +18,14 @@ CLI、Language Serverおよびエディターadapterは、解析、Lint、includ
 
 設定のwire形式、検証済み設定、探索およびconsumer向け変換は独立した``adocweave-config`` crateが
 所有します。コアcrateはTOML、filesystemおよび設定探索へ依存しません。設定は解析、preprocess、
-resource、local target、formatterおよびHTMLの責務別sectionを持ち、変換後もADR 0009の境界を
+resource、local target、formatterおよびHTMLの責務別sectionを持ち、変換後もADR 0009の責務分担を
 維持します。
+
+[NOTE]
+====
+``adocweave-config`` crateはxref:0045-project-owned-configuration.adoc[ADR 0045]で廃止し、この責務は
+``adocweave-project``が持ちます。コアcrateがTOML、filesystemおよび設定探索へ依存しない判断は維持しています。
+====
 
 プロジェクト設定名は``.adocweave.toml``とし、``schema-version = 1``を必須にします。すべての階層で
 未知field、未知のschemaバージョン、重複keyおよび不正なLint ruleを拒否します。v1では継承、環境変数展開、
@@ -27,7 +33,7 @@ homeディレクトリの展開、command置換およびremote設定を提供し
 
 設定の優先順位は、組み込み既定値、単一のプロジェクト設定、明示的なconsumer overrideの順です。
 CLIは入力ファイルの親から現在のディレクトリまで、Language Serverは文書の親から所属workspace rootまでを
-探索境界とします。境界を越えて親設定を探索せず、include先ごとにも再探索しません。明示設定pathは
+探索の開始ディレクトリと終了ディレクトリを定めます。終了ディレクトリより上の親設定を探索せず、include先ごとにも再探索しません。明示設定pathは
 自動探索を停止し、設定を無効にする操作も提供します。相対pathは設定ファイルのディレクトリを基準にします。
 
 プロジェクト設定はpolicy入力でありauthorityではありません。設定からworkspace外のroot、network、

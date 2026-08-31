@@ -1,0 +1,19 @@
+# zizmorの検査から除外する箇所と、その理由です。
+#
+# 行を指定して除外します。cargo-distがrelease.ymlを作り直して行がずれた場合、除外は一致しなくなり
+# zizmorが再び報告します。見落としを防ぐため、file全体の除外は使いません。
+rules:
+  template-injection:
+    ignore:
+      # release.ymlはcargo-distが生成します。次の3箇所はいずれも生成部分で、planのJSONと
+      # matrixの値をshellへ渡します。値の出所はこのrepositoryのdist-workspace.tomlであり、
+      # 手で書き換えると生成結果と食い違います。
+      - release.yml:149:18
+      - release.yml:159:15
+      - release.yml:170:80
+  unpinned-images:
+    ignore:
+      # 同じくcargo-distの生成部分です。containerはmatrixが指定した場合だけ使い、現在の
+      # dist-workspace.tomlはcontainerを使うtargetを持ちません。
+      - release.yml:117:40
+      - release.yml:117:66

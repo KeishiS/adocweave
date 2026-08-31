@@ -1,5 +1,9 @@
-= ADR 0023: 公開と配布の境界
-:status: accepted; amended by ADR 0027, 0028, 0030, 0031, 0032, 0033, and 0036
+= ADR 0023: 公開先と配布方法
+:status: 一部有効。配布物ごとの公開単位はADR 0043により改訂
+
+== 状態
+
+{status}
 
 == 文脈
 
@@ -8,17 +12,20 @@
 
 == 決定
 
-公開先と権限境界をこのADRで定めます。製品ごとのversionと公開単位は
-xref:0027-product-release-trains.adoc[ADR 0027]、エディターとLanguage Serverの導入境界は
-xref:0028-editor-language-server-boundary.adoc[ADR 0028]、同じrunの成果物を公開する手順は
+公開先と権限の分離方法をこのADRで定めます。配布物ごとの版と公開単位は
+xref:0043-independent-distribution-units.adoc[ADR 0043]、エディタとLanguage Serverの導入方法の分担は
+xref:0028-editor-language-server-boundary.adoc[ADR 0028]、一つのtagとcommitから同じrunで公開する手順は
 xref:0032-same-run-release-publication.adoc[ADR 0032]を基準とします。現在の成果物と公開先は
 xref:../release-distribution.adoc[配布仕様]を基準とし、このADRへ一覧を複製しません。
 
-GitHub Releaseを全製品の一次公開先とします。registryへも公開する製品では、GitHub Releaseで検証した同じbyte列を
-使用し、registry向けに構築し直しません。registryへの公開に必要なcredentialは、対象の専用jobだけが参照します。
+GitHub Releaseを全製品の一次公開先とし、registryへも同じbyte列を送る判断は
+xref:0043-independent-distribution-units.adoc[ADR 0043]で置き換えました。現在は配布物ごとに標準的な公開先へ
+直接公開し、GitHub Releaseはネイティブ実行ファイルだけが使います。registryへの公開に必要なcredentialを
+対象の専用jobだけが参照する判断は維持します。
 
-配布manifestの形式はlink:../../../release/adocweave-dist-manifest.schema.json[JSON Schema]、製品と成果物は
-link:../../../release/distribution-plan.json[配布計画]を正本とします。task名と操作手順は
+製品別の配布manifestと配布計画を正本とする決定は
+xref:0040-unified-release-and-native-executable.adoc[ADR 0040]で置き換えました。現在の配布情報は
+xref:../release-distribution.adoc[配布仕様]、task名と操作手順は
 xref:../../../CONTRIBUTING.adoc[コントリビューションガイド]を基準とします。
 
 [#publication-authority]
@@ -26,10 +33,20 @@ xref:../../../CONTRIBUTING.adoc[コントリビューションガイド]を基�
 
 計画、構築、検査およびcandidate集約はread-onlyで実行します。GitHub Releaseへの書込みと、attestationへ
 署名するためのOIDCは、保護した``github-release`` Environmentを使う公開jobだけへ与えます。外部actionは
-完全なcommit SHAへ固定します。
+完全なcommit SHAへ固定します。各Environmentのdeployment branch policyは、その配布物の公開workflowを起動する
+``main``またはstable tagのpatternだけを許可します。
 
-registryへ公開するjobは、GitHub Releaseの公開後に別のworkflowとして動きます。repositoryへの書込みは持たず、
-公開先ごとに必要な資格情報だけを受け取ります。tokenによる認証しかない公開先ではそのtokenだけを、公開元を
+Release workflowは``main``から手動実行します。書込み権限を持つ``host``より前にnative Releaseの検査を一度実行し、
+指定したstable tagとworkspace版が一致することを検査します。後続の
+Cachix公開jobは検査済みのtagとcommitを使い、``main``との関係を重ねて検査しません。
+
+ネイティブ版のCachix公開jobは``release.yml``へ直接置き、GitHub Releaseの公開後に動かします。このjob自身へ
+``cachix-publish`` Environmentを設定し、Environment Secretの``CACHIX_AUTH_TOKEN``をこのjobだけで参照します。
+再利用workflowへSecretを渡す構成や``secrets: inherit``は使用しません。送信後の取得確認jobはEnvironmentも
+書込みtokenも使用しません。
+
+独立したregistryへ公開するjobは、配布物ごとのstable tagから専用workflowとして動きます。repositoryへの書込みは持たず、
+公開先ごとに必要な資格情報だけを使用します。tokenによる認証しかない公開先ではそのtokenだけを、公開元を
 OIDCで確認できる公開先ではtokenを持たず``id-token``の書込みだけを与えます。後者ではCIに長期の資格情報が
 残らないため、公開先が対応している場合はこちらを選びます。
 

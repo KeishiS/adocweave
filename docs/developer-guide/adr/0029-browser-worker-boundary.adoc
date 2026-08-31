@@ -1,5 +1,13 @@
-= ADR 0029: Browser clientとWeb Workerの処理境界
-:status: accepted
+= ADR 0029: Browser clientとWeb Workerの処理分担
+:status: 一部有効。公開する要求、応答およびエラーはADR 0042により改訂
+
+== 状態
+
+{status}
+
+公開clientの要求、応答およびerrorの形式は、
+xref:0042-wasm-public-contract.adoc[ADR 0042]で改訂しました。Promise、取消し、Workerの寿命および配備の決定は
+維持します。
 
 == 文脈
 
@@ -50,7 +58,7 @@ WASMの取得と実行を明示的に許可します。
 generationが分かれます。入力を所有する利用側アプリが、待機、取消しおよび結果採用を一続きに管理します。
 
 **同じWorkerを取消し後も再利用する。** Worker生成回数は減りますが、同期WASMが停止したこととinstanceが再利用可能な
-ことを別々に証明する必要があります。取消しとtrapをWorkerの寿命の境界にします。
+ことを別々に証明する必要があります。取消しとtrapはWorkerの終了時に破棄します。
 
 == 帰結
 

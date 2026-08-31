@@ -1,0 +1,904 @@
+{
+  "schemaVersion": 2,
+  "outputContractVersion": 1,
+  "license": "MIT OR Apache-2.0",
+  "cases": [
+    {
+      "name": "release-lf",
+      "sourceFile": "../release/core.adoc",
+      "expectedHtmlFile": "../release/core.html",
+      "compatibility": "supported-subset",
+      "rationale": "基本ブロックとconstrainedインラインは他実装と同じ意味構造を期待する",
+      "contractImpact": "none"
+    },
+    {
+      "name": "semantic-blocks",
+      "sourceFile": "semantic-blocks.adoc",
+      "expectedHtmlFile": "semantic-blocks.html",
+      "compatibility": "approved-adocweave-output",
+      "rationale": "admonition、quote、verse、example、sidebar、open、collapsibleは型付きblock presentationから安全な固定HTMLへ投影し、quoteの出典、verseの改行、block titleおよび折りたたみの初期状態を保持する",
+      "contractImpact": "core-profile,core-api,html,conformance,wasm-api"
+    },
+    {
+      "name": "attributes-anchors-links-references-lists-stem",
+      "sourceFile": "full.adoc",
+      "expectedHtmlFile": "full.html",
+      "expectedAstFile": "full.ast.json",
+      "expectedProjectionFile": "full.projection.json",
+      "expectedSymbolsFile": "full.symbols.json",
+      "compatibility": "approved-adocweave-output",
+      "rationale": "未解決文書xrefはホストResolverを暗黙に呼ばず安全なテキストとして出力する",
+      "contractImpact": "none",
+      "expectedDiagnostics": []
+    },
+    {
+      "name": "asciidoctor-compatible-lists",
+      "sourceFile": "../lists/asciidoctor-compatible.adoc",
+      "expectedHtmlFile": "../lists/asciidoctor-compatible.html",
+      "compatibility": "supported-subset",
+      "rationale": "対応するリストとblock continuationのHTMLは承認済みの他実装互換fixtureに一致する",
+      "contractImpact": "none"
+    },
+    {
+      "name": "stem-substitutions",
+      "sourceFile": "../stem/substitutions.adoc",
+      "expectedHtmlFile": "../stem/substitutions.html",
+      "compatibility": "approved-adocweave-output",
+      "rationale": "数式は評価せずopaqueなLaTeXとして安全に出力するAdocWeave仕様を固定する",
+      "contractImpact": "none"
+    },
+    {
+      "name": "math-public-contract",
+      "sourceFile": "math-public-contract.adoc",
+      "expectedHtmlFile": "math-public-contract.html",
+      "expectedProjectionFile": "math-public-contract.projection.json",
+      "compatibility": "approved-adocweave-output",
+      "rationale": "inlineとblockの数式は同じ言語・表示形式・source・range契約を共有し、hostileなsourceを実行しない",
+      "contractImpact": "core-api,html,conformance,wasm-api",
+      "expectedDiagnostics": []
+    },
+    {
+      "name": "general-backslash-escapes",
+      "sourceFile": "escapes.adoc",
+      "expectedHtmlFile": "escapes.html",
+      "compatibility": "supported-subset",
+      "rationale": "対応済みinline構文とanchorのescapeは認識を抑止しescape文字を表示から除去する",
+      "contractImpact": "none"
+    },
+    {
+      "name": "unconstrained-inline-formatting",
+      "sourceFile": "unconstrained.adoc",
+      "expectedHtmlFile": "unconstrained.html",
+      "compatibility": "supported-subset",
+      "rationale": "二重マーカーは単語、日本語の文字およびemojiとの隣接関係に依存せずstrong、emphasis、monospaceを表す",
+      "contractImpact": "core-profile"
+    },
+    {
+      "name": "monospace-boundaries",
+      "sourceFile": "monospace-boundaries.adoc",
+      "expectedHtmlFile": "monospace-boundaries.html",
+      "compatibility": "supported-subset",
+      "rationale": "単一backtickは標準の単語区切りと開始記号の条件に従い、二重backtickは単語、日本語の文字およびemojiとの隣接関係に依存しない",
+      "contractImpact": "core-profile,core-api,html,conformance,wasm-api"
+    },
+    {
+      "name": "multiline-inline-spans-crlf",
+      "source": "before *strong\r\n日本語* and ``mono\r\ncode`` https://example.org[label\r\n続き]",
+      "expectedHtmlFile": "multiline.html",
+      "compatibility": "supported-subset",
+      "rationale": "段落inline列はCRLFとUnicodeのsource rangeを保持し、書式とmacro labelを改行を越えて解析する",
+      "contractImpact": "core-api,projection,conformance"
+    },
+    {
+      "name": "unicode-crlf",
+      "source": "= 日本語\r\n\r\n== 節🙂\r\n\r\n本文 é\r\n",
+      "compatibility": "supported-subset",
+      "rationale": "改行表現はCSTで保持し、semantic出力はLF入力と同じ意味を持つ",
+      "contractImpact": "none"
+    },
+    {
+      "name": "source-block-shorthand-default-crlf",
+      "source": "= Source😀\r\n:source-language: rust\r\n\r\n[,python]\r\n----\r\nprint(\"😀\")\r\n----\r\n\r\n----\r\nfn main() {}\r\n----\r\n\r\n[listing]\r\n----\r\nplain\r\n----\r\n",
+      "compatibility": "supported-subset",
+      "rationale": "短縮source属性、文書既定言語、listing明示指定はCRLFとUnicode入力でも同じverbatim意味構造とHTMLを生成する",
+      "contractImpact": "core-profile,core-api,html,conformance,wasm-api"
+    },
+    {
+      "name": "ordered-list-presentation",
+      "source": "[start=4,%reversed,loweralpha]\n. one\n. two\n\n[start=0,style=unknown]\n. invalid\n",
+      "compatibility": "supported-subset",
+      "rationale": "順序付きlistの開始番号、逆順、番号形式および不正値診断はnativeとWASMで同じ型付きpresentation snapshotから決定する",
+      "contractImpact": "core-api,html,projection,conformance,wasm-api"
+    },
+    {
+      "name": "explicit-ordered-list-numbering",
+      "source": "4. four\n5. five\n6. six\n\n9. nine\n11. eleven\n",
+      "compatibility": "supported-subset",
+      "rationale": "明示番号は開始値を型付きpresentationへ確定し、非連番はnativeとWASMで同じ診断を返す",
+      "contractImpact": "core-profile,core-api,html,projection,conformance,wasm-api"
+    },
+    {
+      "name": "invalid-explicit-ordered-list-numbering",
+      "source": "4294967296. overflow\n0. zero\n",
+      "compatibility": "supported-subset",
+      "rationale": "桁あふれと零の明示番号markerは段落に退化させず、lossless list itemと同一diagnosticをnative/WASM/LSP/CLIで保持する",
+      "contractImpact": "core-profile,core-api,html,projection,conformance,wasm-api"
+    },
+    {
+      "name": "document-presentation-toc-and-sectnums",
+      "source": "= Book\n:toc:\n:toclevels: 1\n:sectnums:\n\n== First\n=== Hidden child\n\n== Second\n",
+      "compatibility": "supported-subset",
+      "rationale": "TOC配置、深さ制限およびsection番号は構造を変更せず、一つのpresentationとlayoutからnative/WASMで同じHTMLとprojectionを生成する",
+      "contractImpact": "core-profile,core-api,html,projection,conformance,wasm-api"
+    },
+    {
+      "name": "bibliography-section-back-references",
+      "source": "= References\n\n[bibliography]\n== Sources\n\n* bibanchor:ref[] Entry\n\nSee <<ref,Entry>>.\n",
+      "compatibility": "supported-subset",
+      "rationale": "bibliography sectionは型付きsection presentationとcatalogを共有し、citationとback referenceをnative/WASMで同じIDへ結ぶ",
+      "contractImpact": "core-profile,core-api,html,projection,conformance,wasm-api"
+    },
+    {
+      "name": "bibliography-section-structure-validation",
+      "source": "[bibliography]\n= tool(1)\n:doctype: manpage\n\n* bibanchor:ref[] Entry\n",
+      "compatibility": "supported-subset",
+      "rationale": "bibliography styleのdoctypeとsection位置の診断はnativeとWASMで同じdocument structure snapshotから決定する",
+      "contractImpact": "core-profile,core-api,conformance,wasm-api"
+    },
+    {
+      "name": "bibliography-discrete-heading-validation",
+      "source": "= Title\n\n[discrete,bibliography]\n=== References\n",
+      "compatibility": "supported-subset",
+      "rationale": "bibliography styleはsection scopeだけに適用し、discrete headingへの適用はnativeとWASMで同じ構造診断として拒否する",
+      "contractImpact": "core-profile,core-api,conformance,wasm-api"
+    },
+    {
+      "name": "bibliography-scope-validation",
+      "source": "= Book\n:doctype: book\n\n= Part\n\n== Chapter\n\n[bibliography]\n== Part References\n\n[bibliography]\n= Book References\n",
+      "compatibility": "supported-subset",
+      "rationale": "article、単一book、part、multipart book全体、深いsectionというbibliography scope規則を一つのstructure snapshotから全runtimeで同一に判定する",
+      "contractImpact": "core-profile,core-api,conformance,wasm-api"
+    },
+    {
+      "name": "bibliography-consumer-coverage",
+      "source": "= References\n\n[bibliography]\n== Sources\n\n* bibanchor:used[] Used\n* bibanchor:unused[] Unused\n* bibanchor:used[] Duplicate\n\nSee <<used>> and <<used,Used>>.\n\n=== Nested\n\n* bibanchor:nested[] Nested\n\nSee <<nested>>.\n",
+      "compatibility": "supported-subset",
+      "rationale": "unused・duplicate entry、複数back reference、nested bibliography sectionをHTML、projection、LSP、native/WASMの共通入力として固定する",
+      "contractImpact": "core-profile,core-api,html,projection,conformance,wasm-api"
+    },
+    {
+      "name": "advanced-tables-and-asciidoc-cell",
+      "source": "[format=csv,options=header]\n|===\nname,value\nalpha,\"one, two\"\n|===\n\n[cols=a]\n|===\n|[[cell-section]]\n== Cell section\n\n literal\n\n'''\n\n[source,rust]\n----\nfn main() {}\n----\n\n!===\n!nested\n!===\n|===\n",
+      "compatibility": "supported-subset",
+      "rationale": "format別scannerとAsciiDoc cellのblock解析はnativeとWASMで同じsemantic treeとHTMLを生成する",
+      "contractImpact": "core-profile,core-api,html,conformance"
+    },
+    {
+      "name": "automatic-table-headers",
+      "sourceFile": "automatic-table-headers.adoc",
+      "expectedHtmlFile": "automatic-table-headers.html",
+      "compatibility": "supported-subset",
+      "rationale": "先頭row直後の空行によるheader推論とnoheader抑止をPSV、CSV、DSVおよびTSVで同じsemanticへ確定する",
+      "contractImpact": "core-profile,core-api,html,conformance,wasm-api"
+    },
+    {
+      "name": "table-presentation-attributes",
+      "sourceFile": "table-presentation.adoc",
+      "expectedHtmlFile": "table-presentation.html",
+      "compatibility": "supported-subset",
+      "rationale": "重複属性はfirst-winsで解決し、unitless widthとautowidthの競合、captionおよび固定table classはnativeとWASMで同じHTMLとdiagnosticを生成する",
+      "contractImpact": "core-profile,core-api,html,conformance,wasm-api"
+    },
+    {
+      "name": "empty-table-column-specs",
+      "sourceFile": "empty-table-column-specs.adoc",
+      "expectedAstFile": "empty-table-column-specs.ast.json",
+      "expectedHtmlFile": "empty-table-column-specs.html",
+      "compatibility": "supported-subset",
+      "rationale": "cols属性の空column specを既定列として保持し、native、CLI、WASMおよびHTMLで明示した列数を共有する",
+      "contractImpact": "core-profile,core-api,html,conformance,wasm-api"
+    },
+    {
+      "name": "document-catalogs",
+      "source": "footnote:n[] footnote:[anonymous] footnote:n[named] footnote:n[]\n\n<<ref>> bibanchor:ref[] indexterm:[Rust,Ownership] indexterm:[Rust,Ownership]",
+      "compatibility": "supported-subset",
+      "rationale": "footnote番号・再利用・back reference、bibliography edgeおよび階層index catalogを全runtimeで一致させる",
+      "contractImpact": "core-profile,core-api,html,projection,conformance,wasm-api"
+    },
+    {
+      "name": "document-structure",
+      "source": "= Book\n:doctype: book\n\n= Part\n\n== Chapter\n\n[appendix]\n== Reference\n",
+      "compatibility": "supported-subset",
+      "rationale": "section hierarchy、TOC、book partおよびappendixは全consumerとruntimeで同じ不変構造を共有する",
+      "contractImpact": "core-profile,core-api,html,projection,conformance"
+    },
+    {
+      "name": "html5-complete-document",
+      "sourceFile": "full.adoc",
+      "expectedHtmlFile": "full.complete.html",
+      "renderPolicy": {
+        "documentMode": "complete"
+      },
+      "compatibility": "approved-adocweave-output",
+      "rationale": "完全HTML文書の必須head metadataと本文をnativeおよびWASMで一致させる",
+      "contractImpact": "html,conformance,wasm-api"
+    },
+    {
+      "name": "manpage-structure",
+      "source": "= adocweave(1)\n:doctype: manpage\n\n== NAME\n\nadocweave - convert AsciiDoc safely\n",
+      "compatibility": "supported-subset",
+      "rationale": "manpageのname、section、purposeとsource rangeを全runtimeで同じ構造へ投影する",
+      "contractImpact": "core-profile,core-api,projection,conformance"
+    },
+    {
+      "name": "resolved-render-inputs",
+      "source": "image:x[Alt]",
+      "renderInputs": {
+        "resources": [
+          {
+            "sourceStart": 0,
+            "sourceEnd": 12,
+            "outcome": {
+              "status": "resolved",
+              "href": "https://cdn.example/image.png",
+              "mediaType": "image/png",
+              "byteLength": 42
+            }
+          }
+        ]
+      },
+      "compatibility": "approved-adocweave-output",
+      "rationale": "host解決済みresource入力とURL再検証はnativeとWASMで同じ安全なHTMLを生成する",
+      "contractImpact": "core-profile,core-api,html,conformance,wasm-api"
+    },
+    {
+      "name": "resolved-citation",
+      "source": "[bibliography]\n== Sources\n\n* bibanchor:smith2024[] Smith, Example Work\n\nSee cite:[smith2024, tanaka2025].\n",
+      "expectedHtmlFile": "resolved-citation.html",
+      "renderInputs": {
+        "citations": [
+          {
+            "sourceStart": 76,
+            "sourceEnd": 104,
+            "outcome": {
+              "status": "resolved",
+              "segments": [
+                {
+                  "text": "("
+                },
+                {
+                  "text": "Smith 2024",
+                  "anchor": "smith2024"
+                },
+                {
+                  "text": "; Tanaka 2025)"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "compatibility": "approved-adocweave-output",
+      "rationale": "host解決済みの引用表示、文書内anchorへのlinkおよびback referenceはnativeとWASMで同じ安全なHTMLを生成する",
+      "contractImpact": "core-profile,core-api,html,conformance,wasm-api"
+    },
+    {
+      "name": "generated-bibliography",
+      "source": "See cite:[cpp].\n",
+      "expectedHtmlFile": "generated-bibliography.html",
+      "renderInputs": {
+        "generatedBibliography": {
+          "title": "References",
+          "entries": [
+            {
+              "citationKey": "cpp",
+              "text": "Effective C++ and More Effective C++; <b>& {author} pass:[x] +x+ ++x++ +++x+++",
+              "label": "C++"
+            }
+          ]
+        }
+      },
+      "compatibility": "approved-adocweave-output",
+      "rationale": "host生成の参考文献本文はAsciiDocとして再解析せず、nativeとWASMで同じplain text、引用linkおよびback referenceを生成する",
+      "contractImpact": "core-api,html,conformance,wasm-api"
+    },
+    {
+      "name": "generated-bibliography-numbered",
+      "source": "See cite:[one] and cite:[two].\n",
+      "expectedHtmlFile": "generated-bibliography-numbered.html",
+      "renderInputs": {
+        "generatedBibliography": {
+          "title": "References",
+          "entries": [
+            {
+              "citationKey": "one",
+              "text": "First entry.",
+              "number": 1
+            },
+            {
+              "citationKey": "two",
+              "text": "Second entry.",
+              "number": 2
+            }
+          ]
+        }
+      },
+      "compatibility": "approved-adocweave-output",
+      "rationale": "番号を渡した参考文献一覧はolとして出力し、番号の値そのものはHTMLへ書き込まない",
+      "contractImpact": "core-api,html,conformance,wasm-api"
+    },
+    {
+      "name": "media-backend-presentation",
+      "sourceFile": "media-backend-presentation.adoc",
+      "expectedHtmlFile": "media-backend-presentation.html",
+      "renderInputs": {
+        "resources": [
+          {
+            "sourceStart": 0,
+            "sourceEnd": 65,
+            "outcome": {
+              "status": "resolved",
+              "href": "https://cdn.example/demo.mp4",
+              "mediaType": "video/mp4",
+              "byteLength": 1024
+            }
+          },
+          {
+            "sourceStart": 35,
+            "sourceEnd": 45,
+            "outcome": {
+              "status": "resolved",
+              "href": "https://cdn.example/poster.jpg",
+              "mediaType": "image/jpeg",
+              "byteLength": 512
+            }
+          }
+        ]
+      },
+      "compatibility": "approved-adocweave-output",
+      "rationale": "video本体とposterの独立解決、MIME type検査および属性allowlistをnativeとWASMで一致させる",
+      "contractImpact": "core-profile,core-api,html,conformance,wasm-api"
+    },
+    {
+      "name": "media-families",
+      "source": "image:i[Image] icon:k[Icon] audio:a[Audio] video:v[Video]",
+      "expectedHtmlFile": "media-families.html",
+      "renderInputs": {
+        "resources": [
+          {
+            "sourceStart": 0,
+            "sourceEnd": 14,
+            "outcome": {
+              "status": "resolved",
+              "href": "https://cdn.example/image.png",
+              "mediaType": "image/png",
+              "byteLength": 10
+            }
+          },
+          {
+            "sourceStart": 15,
+            "sourceEnd": 27,
+            "outcome": {
+              "status": "resolved",
+              "href": "https://cdn.example/icon.svg",
+              "mediaType": "image/svg+xml",
+              "byteLength": 20
+            }
+          },
+          {
+            "sourceStart": 28,
+            "sourceEnd": 42,
+            "outcome": {
+              "status": "resolved",
+              "href": "https://cdn.example/audio.ogg",
+              "mediaType": "audio/ogg",
+              "byteLength": 30
+            }
+          },
+          {
+            "sourceStart": 43,
+            "sourceEnd": 57,
+            "outcome": {
+              "status": "resolved",
+              "href": "https://cdn.example/video.mp4",
+              "mediaType": "video/mp4",
+              "byteLength": 40
+            }
+          }
+        ]
+      },
+      "compatibility": "approved-adocweave-output",
+      "rationale": "image、icon、audioおよびvideoのMIME familyと安全なHTML presentationを全runtimeで一致させる",
+      "contractImpact": "core-profile,core-api,html,conformance,wasm-api"
+    },
+    {
+      "name": "media-type-mismatch",
+      "source": "image:diagram.bin[Diagram]",
+      "expectedHtmlFile": "media-type-mismatch.html",
+      "expectedRenderDiagnosticsFile": "media-type-mismatch.render-diagnostics.json",
+      "renderInputs": {
+        "resources": [
+          {
+            "sourceStart": 0,
+            "sourceEnd": 26,
+            "outcome": {
+              "status": "resolved",
+              "href": "https://cdn.example/diagram.bin",
+              "mediaType": "audio/mpeg",
+              "byteLength": 42
+            }
+          }
+        ]
+      },
+      "compatibility": "host-safety-contract",
+      "rationale": "macroとMIME typeの不一致ではactive media要素を生成せず、型付き診断と安全な代替文字列を返す",
+      "contractImpact": "core-profile,core-api,html,conformance,wasm-api"
+    },
+    {
+      "name": "web-host-profile",
+      "sourceFile": "web-host-profile.adoc",
+      "renderInputs": {
+        "references": [
+          {
+            "sourceStart": 78,
+            "sourceEnd": 101,
+            "outcome": {
+              "status": "resolved",
+              "href": "/notes/123",
+              "displayText": "Resolved note title",
+              "notices": [
+                "fallback"
+              ]
+            }
+          }
+        ]
+      },
+      "renderPolicy": {
+        "activeUrls": {
+          "allowResolvedRootRelative": true
+        },
+        "externalLinks": {
+          "openInNewContext": true,
+          "noreferrer": true
+        },
+        "sourceLanguages": {
+          "allowed": [
+            "rust"
+          ],
+          "unknown": "diagnostic"
+        },
+        "mathLanguages": [
+          "latex"
+        ],
+        "unresolvedReferences": "label-only",
+        "resources": {
+          "images": false,
+          "media": false
+        }
+      },
+      "compatibility": "host-extension-contract",
+      "rationale": "任意scheme参照、解決済み表示テキスト、由来別URL、固定link属性、source・数式policyおよびresource無効化をアプリ固有parserなしで全runtimeへ適用する",
+      "contractImpact": "core-api,html,projection,conformance,wasm-api"
+    },
+    {
+      "name": "typed-reference-failure",
+      "source": "xref:note:private[]",
+      "renderInputs": {
+        "references": [
+          {
+            "sourceStart": 0,
+            "sourceEnd": 19,
+            "outcome": {
+              "status": "failed",
+              "kind": "missing-target"
+            }
+          }
+        ]
+      },
+      "renderPolicy": {
+        "unresolvedReferences": "label-only"
+      },
+      "compatibility": "host-safety-contract",
+      "rationale": "解決失敗は安定kindだけを保持し、自由形式のACL・DB・非公開タイトル情報をruntime間で渡さない",
+      "contractImpact": "core-api,projection,conformance,wasm-api"
+    },
+    {
+      "name": "strict-unsupported",
+      "source": "[role=raw]\n",
+      "analysisOptions": {
+        "syntax": {
+          "syntaxMode": "strict"
+        }
+      },
+      "expectedErrorCode": "invalid-input",
+      "compatibility": "intentional-difference",
+      "rationale": "Core profileのstrict modeは未対応ブロックを明示的に拒否する",
+      "contractImpact": "none"
+    },
+    {
+      "name": "input-limit",
+      "source": "12345",
+      "analysisOptions": {
+        "syntax": {
+          "limits": {
+            "maxInputBytes": 4
+          }
+        }
+      },
+      "expectedErrorCode": "limit-exceeded",
+      "compatibility": "host-safety-contract",
+      "rationale": "処理上限はAsciiDoc意味論ではなく全runtime共通のホスト安全仕様である",
+      "contractImpact": "none"
+    },
+    {
+      "name": "aggregate-output-limit",
+      "source": "text",
+      "outputLimits": {
+        "maxOutputBytes": 1
+      },
+      "expectedErrorCode": "limit-exceeded",
+      "compatibility": "host-safety-contract",
+      "rationale": "WASM応答全体にもnative公開処理と同じ出力上限を適用する",
+      "contractImpact": "none"
+    },
+    {
+      "name": "protected-attribute-and-relative-url",
+      "source": "= Options\n:name: source\n\n{name} link.adoc[relative]\n",
+      "analysisOptions": {
+        "diagnostics": {
+          "protectedAttributes": {
+            "name": "host"
+          },
+          "authoredUrls": {
+            "allowRelative": true
+          }
+        }
+      },
+      "compatibility": "host-extension-contract",
+      "rationale": "保護属性とURL policyは標準構文から独立した明示的ホスト設定である",
+      "contractImpact": "none"
+    },
+    {
+      "name": "position-dependent-attribute-diagnostics",
+      "source": ":name: first\n\n{name}\n\n:name: second\n\n{name}\n\n:name!:\n\n{name}\n\n:forward: {later}\n:later: value\n",
+      "compatibility": "approved-adocweave-output",
+      "rationale": "属性Lintは参照位置で有効なbindingを使用し、正当な再定義を重複とせず、unset後と前方参照を未定義としてnativeとWASMで一致させる",
+      "contractImpact": "core-profile,core-api,conformance,wasm-api"
+    },
+    {
+      "name": "position-dependent-attribute-queries-with-include-origin",
+      "source": "include::part.adoc[]\n\n{seen-first} {seen-second} {seen-unset} {forward} {header-only} {multi} {locked} {absent}\n",
+      "analysisOptions": {
+        "attributes": {
+          "locked": "host",
+          "absent": null
+        }
+      },
+      "preprocess": {
+        "resources": {
+          "part.adoc": {
+            "sourceId": "included:part.adoc",
+            "source": ":header-only: root\n:locked: document\n:absent: document\n:multi: first \\\n second\n:name: first\n:seen-first: {name}\n:name: second\n:seen-second: {name}\n:name!:\n:seen-unset: {name}\n:forward: {later}\n:later: later\n"
+          }
+        },
+        "options": {
+          "attributes": {
+            "locked": "host",
+            "absent": null
+          }
+        }
+      },
+      "compatibility": "approved-adocweave-output",
+      "rationale": "位置依存属性queryはset、再定義、unset、前方参照およびheader属性を区別し、include由来のrangeへsource IDを付与する",
+      "contractImpact": "core-api,conformance,wasm-api"
+    },
+    {
+      "name": "source-block-presentation",
+      "sourceFile": "source-block-presentation.adoc",
+      "expectedHtmlFile": "source-block-presentation.html",
+      "expectedDiagnosticsFile": "source-block-presentation.diagnostics.json",
+      "expectedProjectionFile": "source-block-presentation.projection.json",
+      "compatibility": "supported-subset",
+      "rationale": "source blockのtitle、language、linenums、開始行および不正optionを公開projectionと安全なHTMLへ確定する",
+      "contractImpact": "core-profile,core-api,html,projection,conformance,wasm-api"
+    },
+    {
+      "name": "public-document-structure",
+      "sourceId": "public-conformance:document-structure",
+      "analysisOptions": {},
+      "renderPolicy": {
+        "documentMode": "fragment"
+      },
+      "compatibility": "approved-adocweave-output",
+      "rationale": "公開fixtureの文書title、TOCおよび節番号をnativeとWASMで同じ出力契約へ固定する",
+      "contractImpact": "conformance,wasm-api",
+      "source": "= Public Contract\n:toc:\n:toclevels: 2\n:sectnums:\n\n== First\n\n=== Child\n\n== Second\n",
+      "publicContract": {
+        "features": [
+          "document-title",
+          "toc",
+          "section-numbers"
+        ],
+        "stableContract": {
+          "projectionAssertions": [
+            {
+              "pointer": "/title/text",
+              "value": "Public Contract"
+            },
+            {
+              "pointer": "/structure/headings/1/number",
+              "value": [
+                1
+              ]
+            },
+            {
+              "pointer": "/structure/toc/0/children/0/number",
+              "value": [
+                1,
+                1
+              ]
+            }
+          ],
+          "htmlContains": [
+            "<h1 class=\"document-title\" id=\"_public_contract\">Public Contract</h1>",
+            "<div class=\"toc\">",
+            "<h2 id=\"_child\">1.1. Child</h2>"
+          ],
+          "diagnosticCodes": [],
+          "renderDiagnosticCodes": []
+        },
+        "implementationDetails": [
+          "generated heading IDs",
+          "HTML whitespace and attribute order"
+        ]
+      }
+    },
+    {
+      "name": "public-source-block",
+      "sourceId": "public-conformance:source-block",
+      "analysisOptions": {},
+      "renderPolicy": {
+        "documentMode": "fragment"
+      },
+      "compatibility": "approved-adocweave-output",
+      "rationale": "公開fixtureのsource title、linenumsおよび開始行をnativeとWASMで同じ出力契約へ固定する",
+      "contractImpact": "conformance,wasm-api",
+      "source": ".Example <source>\n[source,rust,linenums,start=7]\n----\nfn main() {}\n----\n",
+      "publicContract": {
+        "features": [
+          "source-block",
+          "block-title",
+          "source-language-option",
+          "source-line-numbers",
+          "source-start-line"
+        ],
+        "stableContract": {
+          "projectionAssertions": [
+            {
+              "pointer": "/sourceBlocks/0/title/text",
+              "value": "Example <source>"
+            },
+            {
+              "pointer": "/sourceBlocks/0/language",
+              "value": "rust"
+            },
+            {
+              "pointer": "/sourceBlocks/0/lineNumbers",
+              "value": true
+            },
+            {
+              "pointer": "/sourceBlocks/0/startLine",
+              "value": 7
+            },
+            {
+              "pointer": "/sourceBlocks/0/source",
+              "value": "fn main() {}\n"
+            }
+          ],
+          "htmlContains": [
+            "<figure class=\"source-block\">",
+            "<figcaption>Example &lt;source&gt;</figcaption>",
+            "<pre data-language=\"rust\" data-line-numbers=\"true\" data-line-start=\"7\"><code class=\"language-rust\">fn main() {}"
+          ],
+          "diagnosticCodes": [],
+          "renderDiagnosticCodes": []
+        },
+        "implementationDetails": [
+          "HTML whitespace and attribute order"
+        ]
+      }
+    },
+    {
+      "name": "public-formulas",
+      "sourceId": "public-conformance:formulas",
+      "analysisOptions": {},
+      "renderPolicy": {
+        "documentMode": "fragment"
+      },
+      "compatibility": "approved-adocweave-output",
+      "rationale": "公開fixtureの数式language、表示形式およびsourceをnativeとWASMで同じ出力契約へ固定する",
+      "contractImpact": "conformance,wasm-api",
+      "source": "= Formula Contract\n:stem: latexmath\n\nInline stem:[x < y].\n\n[stem]\n++++\nx^2 < y\n++++\n",
+      "publicContract": {
+        "features": [
+          "inline-formula",
+          "block-formula"
+        ],
+        "stableContract": {
+          "projectionAssertions": [
+            {
+              "pointer": "/formulas/0/kind",
+              "value": "inline"
+            },
+            {
+              "pointer": "/formulas/0/language",
+              "value": "latex"
+            },
+            {
+              "pointer": "/formulas/0/source",
+              "value": "x < y"
+            },
+            {
+              "pointer": "/formulas/1/kind",
+              "value": "block"
+            },
+            {
+              "pointer": "/formulas/1/language",
+              "value": "latex"
+            },
+            {
+              "pointer": "/formulas/1/source",
+              "value": "x^2 < y\n"
+            }
+          ],
+          "htmlContains": [
+            "<code class=\"math-latex\" data-math-language=\"latexmath\" data-math-display=\"inline\">x &lt; y</code>",
+            "<pre class=\"math-latex\" data-math-language=\"latexmath\" data-math-display=\"block\"><code>x^2 &lt; y"
+          ],
+          "diagnosticCodes": [],
+          "renderDiagnosticCodes": []
+        },
+        "implementationDetails": [
+          "math engine integration",
+          "HTML whitespace and attribute order"
+        ]
+      }
+    },
+    {
+      "name": "public-blocks",
+      "sourceId": "public-conformance:blocks",
+      "analysisOptions": {},
+      "renderPolicy": {
+        "documentMode": "fragment"
+      },
+      "compatibility": "approved-adocweave-output",
+      "rationale": "公開fixtureのtable、quoteおよびlistをnativeとWASMで同じ出力契約へ固定する",
+      "contractImpact": "conformance,wasm-api",
+      "source": ".Public table\n[cols=\"1,1\",options=\"header\"]\n|===\n|Name |Value\n\n|alpha |one\n|===\n\n[quote,Author,Work]\n____\nQuoted text.\n____\n\n* first\n** nested\n\n.Public example\n====\nExample body.\n====\n\n.Public details\n[%collapsible]\n====\nHidden body.\n====\n",
+      "publicContract": {
+        "features": [
+          "table",
+          "quote",
+          "unordered-list"
+        ],
+        "stableContract": {
+          "projectionAssertions": [
+            {
+              "pointer": "/blockPresentations/0/kind",
+              "value": "table"
+            },
+            {
+              "pointer": "/blockPresentations/0/caption",
+              "value": "Table 1"
+            },
+            {
+              "pointer": "/blockPresentations/1/kind",
+              "value": "quote"
+            },
+            {
+              "pointer": "/blockPresentations/1/attribution",
+              "value": "Author"
+            },
+            {
+              "pointer": "/blockPresentations/1/citation",
+              "value": "Work"
+            }
+          ],
+          "htmlContains": [
+            "<caption>Table 1. Public table</caption>",
+            "<div class=\"quote\">",
+            "<cite>Work</cite>",
+            "<ul>\n<li>first"
+          ],
+          "diagnosticCodes": [],
+          "renderDiagnosticCodes": []
+        },
+        "implementationDetails": [
+          "HTML whitespace and attribute order",
+          "projection fields not selected by stableContract"
+        ]
+      }
+    },
+    {
+      "name": "public-diagnostics",
+      "sourceId": "public-conformance:diagnostics",
+      "analysisOptions": {},
+      "renderPolicy": {
+        "documentMode": "fragment"
+      },
+      "compatibility": "approved-adocweave-output",
+      "rationale": "公開fixtureの安全でないURL診断とfallbackをnativeとWASMで同じ出力契約へ固定する",
+      "contractImpact": "conformance,wasm-api",
+      "source": "javascript:alert(1)[unsafe]\n",
+      "publicContract": {
+        "features": [
+          "unsafe-url",
+          "diagnostic"
+        ],
+        "stableContract": {
+          "projectionAssertions": [
+            {
+              "pointer": "/externalLinks/0/target",
+              "value": "javascript:alert(1)"
+            }
+          ],
+          "htmlContains": [
+            "<p>unsafe</p>"
+          ],
+          "diagnosticCodes": [
+            "invalid-url-scheme"
+          ],
+          "renderDiagnosticCodes": [
+            "invalid-url-scheme"
+          ]
+        },
+        "implementationDetails": [
+          "diagnostic message wording",
+          "diagnostic IDs and source ranges"
+        ]
+      }
+    },
+    {
+      "name": "public-unsupported-source-option",
+      "sourceId": "public-conformance:unsupported-source-option",
+      "analysisOptions": {},
+      "renderPolicy": {
+        "documentMode": "fragment"
+      },
+      "compatibility": "approved-adocweave-output",
+      "rationale": "公開fixtureの未対応source option診断と安全なlisting回復をnativeとWASMで同じ出力契約へ固定する",
+      "contractImpact": "conformance,wasm-api",
+      "source": "[source,rust,options=unknown]\n----\nunsupported();\n----\n",
+      "publicContract": {
+        "features": [
+          "source-block",
+          "unsupported-source-option",
+          "diagnostic"
+        ],
+        "stableContract": {
+          "projectionAssertions": [
+            {
+              "pointer": "/sourceBlocks/0/language",
+              "value": "rust"
+            }
+          ],
+          "htmlContains": [
+            "<pre><code class=\"language-rust\">unsupported();"
+          ],
+          "diagnosticCodes": [
+            "invalid-attribute"
+          ],
+          "renderDiagnosticCodes": []
+        },
+        "implementationDetails": [
+          "diagnostic message wording",
+          "diagnostic IDs and source ranges"
+        ]
+      }
+    }
+  ],
+  "globalImplementationDetails": [
+    "JSON object key order and whitespace",
+    "HTML byte-for-byte equality outside stableContract"
+  ]
+}

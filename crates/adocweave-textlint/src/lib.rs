@@ -4,15 +4,18 @@
 //! `raw`, `value`, and `loc` without deciding which AsciiDoc constructs are
 //! prose.
 
+#[cfg(any(test, target_arch = "wasm32"))]
+mod wasm;
+
 use std::collections::{BTreeMap, BTreeSet};
 
-use adocweave::Analysis;
-use adocweave::semantic::{
+use adocweave_core::Analysis;
+use adocweave_core::semantic::{
     Block, BlockMetadata, DelimitedBlockKind, DelimitedContent, HeadingKind, Inline, InlineStyle,
     ListBlock, ListItem, ListKind, MacroAttribute, StandardMacro, StandardMacroKind, Table,
     TableCellContent, VerbatimKind, is_plain_inline_text,
 };
-use adocweave::text::{SyntaxKind, TextRange, TextSize};
+use adocweave_core::text::{SyntaxKind, TextRange, TextSize};
 use serde::Serialize;
 
 /// Limits applied while constructing a plan.
@@ -501,8 +504,8 @@ impl<'analysis> Builder<'analysis> {
             // code, prose containers, or no lintable text, so this plan and
             // the search index cannot diverge when a kind is added.
             Block::Delimited(block) => {
-                match adocweave::output::projection::delimited_text_role(block.kind) {
-                    adocweave::output::projection::BlockTextRole::Code => {
+                match adocweave_core::output::projection::delimited_text_role(block.kind) {
+                    adocweave_core::output::projection::BlockTextRole::Code => {
                         self.budget.claim()?;
                         output.push(ByteNode::CodeBlock {
                             range: ByteRange(block.range),
@@ -510,7 +513,7 @@ impl<'analysis> Builder<'analysis> {
                             lang: None,
                         });
                     }
-                    adocweave::output::projection::BlockTextRole::Excluded => {
+                    adocweave_core::output::projection::BlockTextRole::Excluded => {
                         if block.kind == DelimitedBlockKind::Comment {
                             self.budget.claim()?;
                             output.push(ByteNode::Paragraph {
@@ -522,26 +525,28 @@ impl<'analysis> Builder<'analysis> {
                             });
                         }
                     }
-                    adocweave::output::projection::BlockTextRole::Prose
-                    | adocweave::output::projection::BlockTextRole::Container => match block.kind {
-                        DelimitedBlockKind::Quote => {
-                            let mut children = self.compound(&block.content)?;
-                            sort_and_check(&mut children)?;
-                            self.budget.claim()?;
-                            output.push(ByteNode::BlockQuote {
-                                range: ByteRange(block.range),
-                                children,
-                            });
-                        }
-                        DelimitedBlockKind::Table => {
-                            if let DelimitedContent::Table(table) = &block.content {
-                                output.push(self.table(ByteRange(block.range), table)?);
+                    adocweave_core::output::projection::BlockTextRole::Prose
+                    | adocweave_core::output::projection::BlockTextRole::Container => {
+                        match block.kind {
+                            DelimitedBlockKind::Quote => {
+                                let mut children = self.compound(&block.content)?;
+                                sort_and_check(&mut children)?;
+                                self.budget.claim()?;
+                                output.push(ByteNode::BlockQuote {
+                                    range: ByteRange(block.range),
+                                    children,
+                                });
+                            }
+                            DelimitedBlockKind::Table => {
+                                if let DelimitedContent::Table(table) = &block.content {
+                                    output.push(self.table(ByteRange(block.range), table)?);
+                                }
+                            }
+                            _ => {
+                                output.extend(self.compound(&block.content)?);
                             }
                         }
-                        _ => {
-                            output.extend(self.compound(&block.content)?);
-                        }
-                    },
+                    }
                 }
             }
         }
@@ -1365,7 +1370,7 @@ fn collect_offsets(node: &ByteNode, output: &mut BTreeSet<usize>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use adocweave::{AnalysisOptions, Engine};
+    use adocweave_core::{AnalysisOptions, Engine};
 
     fn build(source: &str) -> TxtAstPlan {
         let analysis = Engine::new(AnalysisOptions::default())

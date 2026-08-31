@@ -1,10 +1,10 @@
+import { readFileSync } from "node:fs";
+
 import { type ExtensionManifest, readJson } from "./manifests.mts";
 
-// The release train checks that this package stays private and that its version
-// and repository URL match the release manifest (`tools/release-contract.mjs`).
-// What only the extension can check is what VS Code itself reads: the entry
-// point, the language contribution, and the TextMate grammar. A broken grammar
-// pattern silently stops highlighting rather than failing anything else.
+// The package manifest is the extension version authority. Validate the identity,
+// changelog, entry point, language contribution, and TextMate grammar together.
+// A broken grammar pattern silently stops highlighting rather than failing anything else.
 
 interface LanguageConfiguration {
   brackets?: unknown;
@@ -22,24 +22,31 @@ interface Grammar {
 }
 
 const packageJson = readJson<ExtensionManifest>("package.json");
+const changelog = readFileSync("CHANGELOG.md", "utf8");
 const language = readJson<LanguageConfiguration>("language-configuration.json");
 const grammar = readJson<Grammar>("syntaxes/asciidoc.tmLanguage.json");
 
 if (
+  packageJson.name !== "adocweave" ||
+  packageJson.displayName !== "AdocWeave Language Support" ||
+  packageJson.publisher !== "adocweave" ||
+  packageJson.private !== true ||
+  !/^0\.\d+\.\d+$/u.test(packageJson.version) ||
+  !changelog.includes(`## [${packageJson.version}]`) ||
   packageJson.main !== "./dist/extension.cjs" ||
   packageJson.contributes?.languages?.[0]?.id !== "asciidoc"
 ) {
   throw new Error("The VS Code extension entry point or language contribution is invalid");
 }
 const serverSettings = packageJson.contributes?.configuration?.properties;
+const serverSettingNames = Object.keys(serverSettings ?? {}).sort();
+const commandNames = (packageJson.contributes?.commands ?? []).map(({ command }) => command).sort();
 if (
   packageJson.capabilities?.untrustedWorkspaces?.supported !== false ||
   !packageJson.capabilities.untrustedWorkspaces.description?.trim() ||
+  JSON.stringify(serverSettingNames) !== JSON.stringify(["adocweave.server.path"]) ||
   serverSettings?.["adocweave.server.path"]?.scope !== "machine" ||
-  "adocweave.server.download" in (serverSettings ?? {}) ||
-  packageJson.contributes?.commands?.some(
-    ({ command }) => command === "adocweave.clearManagedServer",
-  )
+  JSON.stringify(commandNames) !== JSON.stringify(["adocweave.restartServer"])
 ) {
   throw new Error("The Language Server trust boundary or settings are invalid");
 }

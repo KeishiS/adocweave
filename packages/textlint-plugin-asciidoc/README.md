@@ -8,7 +8,8 @@
 npm install --save-dev textlint @adocweave/textlint-plugin-asciidoc
 ```
 
-バージョンを固定する場合は、AdocWeaveのReleaseと同じ `X.Y.Z` を指定します。
+バージョンを固定する場合は、使用するパッケージの `X.Y.Z` を指定します。このパッケージのバージョンは
+ネイティブ実行ファイルやほかのnpmパッケージとは独立しています。
 
 ```console
 npm install --save-dev textlint@15.8.0 \
@@ -29,15 +30,6 @@ npx --yes \
 ```
 
 この方法では作業ディレクトリへ `package.json`、`package-lock.json` および `node_modules` を作成しません。取得したパッケージはnpmのキャッシュへ保存されます。継続して使う場合は、前述の方法で依存とバージョンをプロジェクトへ記録してください。
-
-AdocWeaveのGitHub Releaseへ添付した `.tgz` を指定して導入することもできます。checksumとattestationを自分で検証してから導入する場合は、この方法を使います。
-
-```console
-VERSION=X.Y.Z
-RELEASE_URL="https://github.com/KeishiS/adocweave/releases/download/adocweave-textlint%2Fv$VERSION"
-npm install --save-dev textlint@15.8.0 \
-  "$RELEASE_URL/adocweave-textlint-plugin-asciidoc-$VERSION.tgz"
-```
 
 ## 設定
 

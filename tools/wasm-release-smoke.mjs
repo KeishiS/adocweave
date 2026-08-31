@@ -30,12 +30,19 @@ if (
 }
 
 async function main() {
-  const [archive, chromiumCommand = "chromium"] = process.argv.slice(2);
-  if (!archive) throw new Error("usage: wasm-release-smoke.mjs ARCHIVE [CHROMIUM]");
+  const [packageInput, chromiumCommand = "chromium"] = process.argv.slice(2);
+  if (!packageInput) {
+    throw new Error("usage: wasm-release-smoke.mjs PACKAGE_DIRECTORY_OR_ARCHIVE [CHROMIUM]");
+  }
+  const input = resolve(packageInput);
+  if ((await stat(input)).isDirectory()) {
+    await runWasmPackageBrowserSmoke(input, chromiumCommand);
+    return;
+  }
   const chromium = await resolveHostExecutable(chromiumCommand);
   const root = await mkdtemp(join(tmpdir(), "adocweave-browser-smoke-"));
   try {
-    await runArchiveSmoke(archive, chromium, root);
+    await runArchiveSmoke(input, chromium, root);
   } finally {
     await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
@@ -62,8 +69,25 @@ async function runArchiveSmoke(archive, chromium, root) {
   }
   const packageRoot = join(root, entries[0]);
   const archiveBytes = (await stat(archive)).size;
+  await runPackageRootSmoke(packageRoot, chromium, root, archiveBytes);
+}
+
+export async function runWasmPackageBrowserSmoke(
+  packageRoot,
+  chromiumCommand = "chromium",
+) {
+  const chromium = await resolveHostExecutable(chromiumCommand);
+  const root = await mkdtemp(join(tmpdir(), "adocweave-browser-smoke-"));
+  try {
+    await runPackageRootSmoke(resolve(packageRoot), chromium, root);
+  } finally {
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+}
+
+async function runPackageRootSmoke(packageRoot, chromium, root, archiveBytes) {
   const wasmBytes = (await stat(join(packageRoot, "wasm/adocweave_wasm_bg.wasm"))).size;
-  assertWasmArtifactSizes(archiveBytes, wasmBytes);
+  assertWasmArtifactSizes(archiveBytes ?? 0, wasmBytes);
 
   const requests = [];
   const server = createServer(async (request, response) => {
@@ -85,7 +109,7 @@ async function runArchiveSmoke(archive, chromium, root) {
           let trapped = false;
           export default async function initialize() {}
           export function protocolSchemaVersion() { return PROTOCOL_SCHEMA_VERSION; }
-          export function process() {
+          export function analyze() {
             if (!trapped) {
               trapped = true;
               throw new WebAssembly.RuntimeError("browser smoke trap");
@@ -99,7 +123,7 @@ async function runArchiveSmoke(archive, chromium, root) {
         response.end(`
           export default async function initialize() { throw new Error("browser init failure"); }
           export function protocolSchemaVersion() { return 15; }
-          export function process() { return {}; }
+          export function analyze() { return {}; }
         `);
         return;
       }
@@ -107,7 +131,7 @@ async function runArchiveSmoke(archive, chromium, root) {
         response.end(`
           export default async function initialize() {}
           export function protocolSchemaVersion() { return 0; }
-          export function process() { return {}; }
+          export function analyze() { return {}; }
         `);
         return;
       }
@@ -143,28 +167,17 @@ async function runArchiveSmoke(archive, chromium, root) {
     if (expectedAssets.some((asset) => !requests.includes(asset))) {
       throw new Error(`browser assets were not requested: ${requests.join(",")}`);
     }
-    const expectedProducts = {
-      syntax: false,
-      canonicalAst: false,
-      html: true,
-      attributeOccurrences: false,
-      attributeQueries: false,
-      resourceQueries: true,
-      diagnostics: true,
-      symbols: false,
-      projection: true,
-    };
-    if (Object.keys(state.products).length !== Object.keys(expectedProducts).length ||
-        Object.entries(expectedProducts).some(([name, enabled]) => state.products[name] !== enabled) ||
-        !state.diagnosticsAreArrays || state.projectionTitle !== "Latest browser result" ||
-        state.projectionHeadingTitle !== "Latest browser result") {
+    if (Object.keys(state.products).length !== 1 || state.products.html !== true) {
       throw new Error(`browser result products mismatch: ${JSON.stringify(state)}`);
     }
     console.log("browser release smoke: passed non-isolated context");
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));
   }
-  console.log(`browser release smoke passed: archive=${archiveBytes} wasm=${wasmBytes}`);
+  const sizeSummary = archiveBytes === undefined
+    ? `wasm=${wasmBytes}`
+    : `archive=${archiveBytes} wasm=${wasmBytes}`;
+  console.log(`browser release smoke passed: ${sizeSummary}`);
 }
 
 export async function inspectPage(
@@ -365,11 +378,9 @@ export async function inspectPageAttempt(
                 && trapCodes.every((code) => code === 'wasm-trapped'),
               initializationFailuresSettled: initializationCodes.length === 3
                 && initializationCodes.every((code) => code === 'worker-failed'),
-              products: response.products,
-              diagnosticsAreArrays: Array.isArray(response.diagnostics)
-                && Array.isArray(response.renderDiagnostics),
-              projectionTitle: response.projection?.title?.text,
-              projectionHeadingTitle: response.projection?.structure?.headings?.[0]?.title,
+              products: Object.fromEntries(
+                Object.keys(response).map((product) => [product, true]),
+              ),
             });
           } else if (Date.now() >= deadline) {
             reject(new Error('result timeout: ' + status));

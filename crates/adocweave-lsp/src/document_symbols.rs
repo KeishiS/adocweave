@@ -1,7 +1,7 @@
 //! Pure Document Symbols projection over an adopted analysis snapshot.
 
-use adocweave::Analysis;
-use adocweave::semantic::{
+use adocweave_core::Analysis;
+use adocweave_core::semantic::{
     DocumentSymbol as CoreDocumentSymbol, SymbolKind as CoreSymbolKind, document_symbols,
 };
 use async_lsp::lsp_types as lsp;
@@ -102,7 +102,7 @@ fn symbol_kind(kind: CoreSymbolKind) -> lsp::SymbolKind {
 
 #[cfg(test)]
 mod tests {
-    use adocweave::{Analysis, AnalysisOptions, AnalysisRequest, NeverCancel};
+    use adocweave_core::{Analysis, AnalysisOptions, AnalysisRequest, NeverCancel};
     use async_lsp::lsp_types as lsp;
 
     use super::{SymbolPresentation, symbols};

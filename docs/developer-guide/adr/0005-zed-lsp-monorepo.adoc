@@ -1,24 +1,29 @@
 = ADR 0005: Zed LSPのmonorepo管理
-:status: accepted; release unit amended by ADR 0027; editor/LSP boundary amended by ADR 0028
+:status: 一部有効。配布単位はADR 0027、0040および0043、エディタとLanguage Serverの分担はADR 0028により改訂
+
+== 状態
+
+{status}
 
 == 文脈
 
-Zed拡張、Language Serverおよびコアを同じリポジトリで管理すると、同じcommitで起動境界、queryおよび
+Zed拡張、Language Serverおよびコアを同じリポジトリで管理すると、同じcommitで起動時の接続および
 回帰試験を横断して確認できます。
 
 Zed extensionとLanguage Serverを別repositoryへ分離すると、Zed固有のreviewと公開を独立できる可能性があります。一方で、
-releaseのバージョン、binary provenance、LSP protocol、Tree-sitter queryおよびrollbackの整合性をrepository間で新たに
+releaseのバージョン、binary provenance、LSP protocolおよびrollbackの整合性をrepository間で新たに
 保証しなければなりません。
 
 == 決定
 
 Zed拡張とLanguage ServerはAdocWeave monorepoに維持し、独立repositoryを導入しません。Zed固有の責務は
-monorepo内に局所化します。各製品はxref:0027-product-release-trains.adoc[ADR 0027]に従って独立して公開し、
-拡張はxref:0028-editor-language-server-boundary.adoc[ADR 0028]に従ってLanguage Serverを取得しません。
+monorepo内に局所化します。Zed拡張の版と公開先は
+xref:0043-independent-distribution-units.adoc[ADR 0043]に従い、拡張は
+xref:0028-editor-language-server-boundary.adoc[ADR 0028]に従って最新の安定版Language Serverを取得します。
 
 == 非採用案
 
-Zed拡張だけを別repositoryで管理する案は採用しません。protocol変更、Tree-sitter queryおよび回帰fixtureを
+Zed拡張だけを別repositoryで管理する案は採用しません。protocol変更および回帰fixtureを
 repository間で調整する運用費用が、現在の開発規模に対して大きいためです。
 
 == 再評価条件
@@ -29,7 +34,7 @@ repository間で調整する運用費用が、現在の開発規模に対して�
   各回1件以上の必要性
 * 連続する10回のmain runにおける、Zed固有jobによるCI critical path中央値の50%超の占有と、
   monorepo内のjob分離による解消不能
-* Zed extensionを本体と異なる所有者、権限境界またはsecurity response期限で運用する
+* Zed extensionを本体と異なる所有者、権限制限またはsecurity response期限で運用する
   明確な要件の発生
 
 再評価では、repository分離前にCore/LSP/Zedの互換性範囲、artifact digest、ソースのrevisionおよびrollback対象を
@@ -37,5 +42,5 @@ repository間で調整する運用費用が、現在の開発規模に対して�
 
 == 帰結
 
-一つのcommitでコア、Language ServerおよびZed拡張の横断変更を確認できます。各製品のversionとReleaseは
-独立したまま、Zed固有の変更と試験をmonorepo内へ局所化できます。
+一つのcommitでコア、Language ServerおよびZed拡張の横断変更を確認できます。Zed拡張は独立した版を持ち、
+公式レジストリからmonorepo内のsourceを参照します。Zed固有の変更と試験はmonorepo内へ局所化できます。

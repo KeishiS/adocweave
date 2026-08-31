@@ -1,0 +1,107 @@
+= ADR 0042: WebAssemblyの要求・応答・エラー公開仕様
+:status: 採用
+
+== 状態
+
+{status}
+
+== 文脈
+
+Browser向けWebAssemblyの公開入口は、Web Worker経由とNode.jsのdirect入口で
+``analyze(request)``という名前に揃っています。一方、従来の``request``はRustとJavaScriptの接続に使う
+``WasmRequest``から導出しており、次の項目がトップレベルに並んでいました。
+
+[source,javascript]
+----
+const result = await analyze({
+  sourceId,
+  source,
+  preprocess,
+  products,
+  renderInputs,
+  analysisOptions,
+  renderPolicy,
+  outputLimits,
+});
+----
+
+``preprocess``、``renderInputs``および``outputLimits``は、WebAssembly内部の処理段階や上限を
+そのまま表します。``analysisOptions``と``renderPolicy``は責務を分けていますが、利用者は必要な結果を
+選ぶために、入力の処理順序と各設定の適用段階を知る必要がありました。
+
+従来の応答は、要求しなかった結果も空文字列、空配列または``null``として全て返していました。さらに、要求した
+product（名前を指定して選ぶ解析結果）の写し、構文解析数を表す``parse``およびHTML変換時だけに生じる
+``renderDiagnostics``を公開していました。利用者が必要とする結果と、内部処理の確認に使う値が区別されて
+いませんでした。
+
+処理できた失敗は、WebAssemblyからJSON文字列としてthrowされていました。Workerとdirect入口はこの文字列を
+再度parseして公開するエラーへ変換するため、失敗した場所によって同じ``code``と``message``を持つ値でも
+JavaScript上の型が異なりました。
+
+本ADRでは、従来の形式との互換性を要件とせず、利用者が渡す入力と受け取る結果だけを公開仕様として定めます。
+Rust内部の処理段階、上限の実装およびWorker内の通信objectは公開しません。
+
+== 決定
+
+Browserの``AdocWeaveClient``とNode.jsのdirect入口は、同じ``AnalyzeRequest``、``AnalyzeResult``および
+``AdocWeaveError``を使います。``AnalyzeRequest``を、入力文書を表す``source``、必要な結果を選ぶ
+``products``、利用側アプリが解決した外部入力を表す``resources``の3項目に分けます。
+
+``products``はproduct名をキーに持つobjectとし、必要な結果だけを要求します。HTMLと診断の設定は、それぞれ
+``products.html``と``products.diagnostics``に置きます。応答には要求したproductと同名の項目だけを含め、
+内部の処理段階、使用量および要求自体の写しを含めません。
+
+未知の項目、無効な列挙値、対象外の範囲および固定上限を超える入力は、一部だけを採用せず要求全体を拒否します。
+全ての公開入口は、安定した``code``と英語の``message``を持つ``AdocWeaveError``を使います。取消しを含めて
+エラーの型を統一し、WebAssemblyからJSON文字列をthrowして再度parseする経路は設けません。
+
+RustのSerde型を要求、応答およびエラーの正本とし、利用者が参照するTypeScript宣言を標準libraryで生成します。
+独自IDL、独自serializer、独自コード生成器および新しいclient階層は追加しません。公開TypeScript名には
+``Wasm``接頭辞を付けず、内部のwire型とWorkerの通信objectを公開型の階層へ写しません。
+
+現行の項目、既定値、拒否条件およびエラーcodeは
+xref:../core-profile.adoc#wasm-api[WebAssembly API]を基準とします。
+
+== 移行方針
+
+旧形式の別名と変換処理は残さず、一度に新しい形式へ切り替えます。旧``analysisOptions.attributes``は
+``source.attributes``、旧``analysisOptions.syntax.syntaxMode``は``source.syntaxMode``、
+旧``analysisOptions.diagnostics``は``products.diagnostics``へ移しました。旧``renderPolicy``は
+``products.html``、include文書と解決済みリソースは``resources``へ移しました。
+
+旧``products.projection``と応答の``projection``は、``products.document``と応答の``document``へ変更しました。
+処理上限を増やす項目には移行先を設けず、packageの固定値を使います。版ごとの変更内容は
+link:../../../packages/wasm/CHANGELOG.md[WebAssembly packageのChangelog]へ記録します。
+
+== 検討した代替案
+
+**現行のトップレベル項目を減らさない。** 実装の移動量は減りますが、利用者が``preprocess``や
+``renderInputs``という処理段階を理解する必要が残ります。入力、必要な結果および外部リソースの3責務へ
+まとめます。
+
+**``products``を文字列の配列にする。** 出力選択だけなら簡潔ですが、HTMLと診断の設定を別のトップレベル項目へ
+戻す必要があります。product名をキーとし、必要なproductだけ設定を持てるobjectを採用します。
+
+**未知の項目を無視する。** 新しい送信側から古い実装へ値を送れる場合がありますが、安全方針や出力選択の
+綴り誤りも無視します。全てのobjectで未知項目を拒否します。
+
+**旧形式と新形式を同時に受理する。** 段階的に移行できますが、二つの既定値、エラーおよびTypeScript宣言を
+保守する必要があります。共通versionを更新し、利用者向けの移行例を示して一度に切り替えます。
+
+**JSON Schemaを正本にする。** プログラムで検査できる仕様を得られますが、Rust型との同期と生成処理が必要です。
+ADR 0022のとおりRustのSerde型を正本とし、標準libraryでTypeScript宣言だけを導出します。
+
+== 帰結
+
+利用者は、入力文書、必要な結果および外部リソースだけを指定します。要求していない大きな結果を構築して
+JavaScriptへ渡さないため、出力の量も選択したproductに対応します。
+
+解析設定とHTML方針を別の責務として扱うADR 0009の判断は維持しますが、WASMで別のトップレベルobjectにする決定を
+本ADRで置き換えます。解析設定は``source``または``products.diagnostics``、HTML方針は``products.html``へ
+配置します。
+
+Rust型を正本としてTypeScript宣言を生成し、WebAssembly側で要求と応答を検証するADR 0022の判断は維持します。
+``Wasm``接頭辞のwire型を公開仕様とする部分だけを本ADRで置き換えます。
+
+公開clientのPromise、取消しおよびWorkerの寿命を定めたADR 0029の判断は維持します。公開する要求、応答、エラーおよび
+schema handshake以外の互換versionを持たないことを本ADRで明確にします。

@@ -1,40 +1,33 @@
-//! Stateless navigation conversion over selected document and workspace analyses.
+//! Stateless navigation conversion over selected document and expanded_analysis analyses.
 
-use adocweave::resolution::ReferenceKey;
-use adocweave::text::SourceDocument;
+use adocweave_core::resolution::ReferenceKey;
+use adocweave_core::text::SourceDocument;
 use async_lsp::lsp_types as lsp;
 
 use crate::cancellation::{QueryCancellation, QueryResult};
 use crate::position::{PositionEncoding, range_contains_offset, range_to_lsp, request_offset};
-use crate::state::{DocumentSnapshot, WorkspaceAnalysis};
+use crate::state::{DocumentSnapshot, ExpandedDocumentAnalysis};
 
 pub(crate) struct NavigationInput<'a> {
     pub document: &'a DocumentSnapshot,
     pub snapshots: &'a [DocumentSnapshot],
-    pub workspaces: &'a [&'a WorkspaceAnalysis],
+    pub expanded_analyses: &'a [&'a ExpandedDocumentAnalysis],
     pub encoding: PositionEncoding,
     pub source_document: &'a dyn Fn(&lsp::Url) -> Result<SourceDocument, String>,
 }
 
 pub(crate) enum Definition {
     Resolved(Option<lsp::GotoDefinitionResponse>),
-    Host(ReferenceKey),
+    Unresolved,
 }
 
 pub(crate) struct References {
     pub fallback: Vec<lsp::Location>,
-    pub host_target: Option<ReferenceKey>,
     pub anchor_occurrences_are_authored: bool,
 }
 
 pub(crate) struct DocumentLinks {
     links: Vec<lsp::DocumentLink>,
-    pub unresolved: Vec<UnresolvedDocumentLink>,
-}
-
-pub(crate) struct UnresolvedDocumentLink {
-    pub target: ReferenceKey,
-    range: lsp::Range,
 }
 
 pub(crate) fn definition(
@@ -49,11 +42,12 @@ pub(crate) fn definition(
         position,
         input.encoding,
     )?;
-    for workspace in input.workspaces {
+    for expanded_analysis in input.expanded_analyses {
         cancellation.checkpoint()?;
-        if let Some((reference, _)) = projected_attribute_reference_at(workspace, uri, offset)
+        if let Some((reference, _)) =
+            projected_attribute_reference_at(expanded_analysis, uri, offset)
             && let Some(binding_id) = reference.binding_id
-            && let Some(binding) = workspace
+            && let Some(binding) = expanded_analysis
                 .projection
                 .attribute_bindings
                 .iter()
@@ -61,7 +55,11 @@ pub(crate) fn definition(
             && let Some(origin) = binding.name_origins.first()
         {
             return Ok(Definition::Resolved(Some(
-                lsp::GotoDefinitionResponse::Scalar(attribute_origin_location(input, origin)?),
+                lsp::GotoDefinitionResponse::Scalar(attribute_origin_location(
+                    input,
+                    expanded_analysis,
+                    origin,
+                )?),
             )));
         }
     }
@@ -86,18 +84,22 @@ pub(crate) fn definition(
             )),
         )));
     }
-    for workspace in input.workspaces {
+    for expanded_analysis in input.expanded_analyses {
         cancellation.checkpoint()?;
-        if let Some(directive) = workspace.projection.directives.iter().find(|directive| {
-            directive
-                .source_id
-                .as_ref()
-                .is_some_and(|source_id| source_id.as_str() == uri.as_str())
-                && range_contains_offset(directive.target_range, offset)
-        }) && let Some(target) = directive.resource_source_id.as_ref()
+        if let Some(directive) = expanded_analysis
+            .projection
+            .directives
+            .iter()
+            .find(|directive| {
+                directive.source_id.as_ref().is_some_and(|source_id| {
+                    expanded_analysis.uri_for_source_id(source_id) == Some(uri.as_str())
+                }) && range_contains_offset(directive.target_range, offset)
+            })
+            && let Some(target) = directive.resource_source_id.as_ref()
         {
-            let target: lsp::Url = target
-                .as_str()
+            let target: lsp::Url = expanded_analysis
+                .uri_for_source_id(target)
+                .ok_or_else(|| "include target URI is unavailable".to_owned())?
                 .parse()
                 .map_err(|error| format!("invalid include resource URI: {error}"))?;
             return Ok(Definition::Resolved(Some(
@@ -127,7 +129,8 @@ pub(crate) fn definition(
             lsp::GotoDefinitionResponse::Scalar(location),
         )));
     }
-    Ok(Definition::Host(key))
+    let _ = key;
+    Ok(Definition::Unresolved)
 }
 
 pub(crate) fn references(
@@ -143,53 +146,63 @@ pub(crate) fn references(
         position,
         input.encoding,
     )?;
-    let projected_binding_origin = input.workspaces.iter().find_map(|workspace| {
-        let binding_id = projected_attribute_reference_at(workspace, uri, offset)
-            .and_then(|(reference, _)| reference.binding_id)
-            .or_else(|| projected_attribute_binding_at(workspace, uri, offset))?;
-        workspace
-            .projection
-            .attribute_bindings
-            .iter()
-            .find(|binding| binding.value.id() == binding_id)?
-            .name_origins
-            .first()
-            .cloned()
-    });
-    if let Some(binding_origin) = projected_binding_origin {
-        let mut locations = Vec::new();
-        for workspace in input.workspaces {
-            cancellation.checkpoint()?;
-            let Some(binding) = workspace
+    let projected_binding_origin = input
+        .expanded_analyses
+        .iter()
+        .find_map(|expanded_analysis| {
+            let binding_id = projected_attribute_reference_at(expanded_analysis, uri, offset)
+                .and_then(|(reference, _)| reference.binding_id)
+                .or_else(|| projected_attribute_binding_at(expanded_analysis, uri, offset))?;
+            let origin = expanded_analysis
                 .projection
                 .attribute_bindings
                 .iter()
-                .find(|binding| {
-                    binding
-                        .name_origins
-                        .iter()
-                        .any(|origin| same_origin(origin, &binding_origin))
-                })
+                .find(|binding| binding.value.id() == binding_id)?
+                .name_origins
+                .first()?;
+            Some((
+                expanded_analysis
+                    .uri_for_source_id(origin.source_id.as_ref()?)?
+                    .to_owned(),
+                origin.range,
+            ))
+        });
+    if let Some(binding_origin) = projected_binding_origin {
+        let mut locations = Vec::new();
+        for expanded_analysis in input.expanded_analyses {
+            cancellation.checkpoint()?;
+            let Some(binding) =
+                expanded_analysis
+                    .projection
+                    .attribute_bindings
+                    .iter()
+                    .find(|binding| {
+                        binding.name_origins.iter().any(|origin| {
+                            origin.range == binding_origin.1
+                                && origin.source_id.as_ref().and_then(|source_id| {
+                                    expanded_analysis.uri_for_source_id(source_id)
+                                }) == Some(binding_origin.0.as_str())
+                        })
+                    })
             else {
                 continue;
             };
             if include_declaration && let Some(origin) = binding.name_origins.first() {
-                locations.push(attribute_origin_location(input, origin)?);
+                locations.push(attribute_origin_location(input, expanded_analysis, origin)?);
             }
-            for reference in &workspace.projection.attribute_references {
+            for reference in &expanded_analysis.projection.attribute_references {
                 cancellation.checkpoint()?;
                 if reference.value.binding_id != Some(binding.value.id()) {
                     continue;
                 }
                 for origin in &reference.name_origins {
-                    locations.push(attribute_origin_location(input, origin)?);
+                    locations.push(attribute_origin_location(input, expanded_analysis, origin)?);
                 }
             }
         }
         sort_and_dedup_locations(&mut locations);
         return Ok(References {
             fallback: locations,
-            host_target: None,
             anchor_occurrences_are_authored: true,
         });
     }
@@ -208,7 +221,7 @@ pub(crate) fn references(
                 .bindings()
                 .iter()
                 .find(|binding| range_contains_offset(binding.occurrence().name_range, offset))
-                .map(adocweave::semantic::AttributeBinding::id)
+                .map(adocweave_core::semantic::AttributeBinding::id)
         });
     if let Some(binding_id) = local_binding_id {
         let mut locations = Vec::new();
@@ -243,7 +256,6 @@ pub(crate) fn references(
         }
         return Ok(References {
             fallback: locations,
-            host_target: None,
             anchor_occurrences_are_authored: true,
         });
     }
@@ -269,7 +281,6 @@ pub(crate) fn references(
     let Some(key) = key else {
         return Ok(References {
             fallback: Vec::new(),
-            host_target: None,
             anchor_occurrences_are_authored: true,
         });
     };
@@ -291,7 +302,6 @@ pub(crate) fn references(
     let Some(identity) = identity else {
         return Ok(References {
             fallback: Vec::new(),
-            host_target: Some(key),
             anchor_occurrences_are_authored: true,
         });
     };
@@ -328,9 +338,9 @@ pub(crate) fn references(
             }
         }
     }
-    for workspace in input.workspaces {
+    for expanded_analysis in input.expanded_analyses {
         cancellation.checkpoint()?;
-        for reference in &workspace.projection.references {
+        for reference in &expanded_analysis.projection.references {
             cancellation.checkpoint()?;
             let Some(source_origin) = reference.origins.first() else {
                 continue;
@@ -338,8 +348,9 @@ pub(crate) fn references(
             let Some(source_id) = &source_origin.source_id else {
                 continue;
             };
-            let source_uri: lsp::Url = source_id
-                .as_str()
+            let source_uri: lsp::Url = expanded_analysis
+                .uri_for_source_id(source_id)
+                .ok_or_else(|| "projected reference URI is unavailable".to_owned())?
                 .parse()
                 .map_err(|error| format!("invalid projected reference URI: {error}"))?;
             if reference_identity(&source_uri, reference.value.target.as_ref()).as_ref()
@@ -377,15 +388,14 @@ pub(crate) fn references(
     sort_and_dedup_locations(&mut locations);
     Ok(References {
         fallback: locations,
-        host_target: Some(key),
         anchor_occurrences_are_authored,
     })
 }
 
 fn reference_location_range(
-    reference: &adocweave::semantic::Reference,
+    reference: &adocweave_core::semantic::Reference,
     identity: &TargetIdentity,
-) -> adocweave::text::TextRange {
+) -> adocweave_core::text::TextRange {
     if identity.anchor.is_some() {
         reference
             .authored_anchor_range()
@@ -403,10 +413,9 @@ pub(crate) fn document_links(
 ) -> QueryResult<DocumentLinks> {
     cancellation.check_now()?;
     let mut links = Vec::new();
-    let mut unresolved = Vec::new();
     for link in input.document.analysis.links() {
         cancellation.checkpoint()?;
-        if !adocweave::resolution::AuthoredUrlPolicy::default().allows(&link.target) {
+        if !adocweave_core::resolution::AuthoredUrlPolicy::default().allows(&link.target) {
             continue;
         }
         let Ok(target) = lsp::Url::parse(&link.target) else {
@@ -439,25 +448,24 @@ pub(crate) fn document_links(
                 tooltip: tooltips.then(|| "参照先を開く".to_owned()),
                 data: None,
             });
-        } else if let Some(target) = reference.target.clone() {
-            unresolved.push(UnresolvedDocumentLink { target, range });
         }
     }
-    for workspace in input.workspaces {
+    for expanded_analysis in input.expanded_analyses {
         cancellation.checkpoint()?;
-        for directive in &workspace.projection.directives {
+        for directive in &expanded_analysis.projection.directives {
             cancellation.checkpoint()?;
-            if directive
-                .source_id
-                .as_ref()
-                .is_none_or(|source_id| source_id.as_str() != uri.as_str())
-            {
+            if directive.source_id.as_ref().is_none_or(|source_id| {
+                expanded_analysis.uri_for_source_id(source_id) != Some(uri.as_str())
+            }) {
                 continue;
             }
             let Some(target) = directive.resource_source_id.as_ref() else {
                 continue;
             };
-            let Ok(target) = target.as_str().parse() else {
+            let Some(target_uri) = expanded_analysis.uri_for_source_id(target) else {
+                continue;
+            };
+            let Ok(target) = target_uri.parse() else {
                 continue;
             };
             links.push(lsp::DocumentLink {
@@ -472,26 +480,10 @@ pub(crate) fn document_links(
             });
         }
     }
-    Ok(DocumentLinks { links, unresolved })
+    Ok(DocumentLinks { links })
 }
 
 impl DocumentLinks {
-    pub(crate) fn resolve(
-        &mut self,
-        unresolved: UnresolvedDocumentLink,
-        location: Option<lsp::Location>,
-        tooltips: bool,
-    ) {
-        if let Some(location) = location {
-            self.links.push(lsp::DocumentLink {
-                range: unresolved.range,
-                target: Some(location.uri),
-                tooltip: tooltips.then(|| "参照先を開く".to_owned()),
-                data: None,
-            });
-        }
-    }
-
     pub(crate) fn finish(
         mut self,
         cancellation: &QueryCancellation,
@@ -548,14 +540,16 @@ fn target_location(
 
 fn attribute_origin_location(
     input: &NavigationInput<'_>,
-    origin: &adocweave::preprocess::SourceOrigin,
+    expanded: &ExpandedDocumentAnalysis,
+    origin: &adocweave_core::preprocess::SourceOrigin,
 ) -> Result<lsp::Location, String> {
     let source_id = origin
         .source_id
         .as_ref()
         .ok_or_else(|| "attribute origin has no source ID".to_owned())?;
-    let uri: lsp::Url = source_id
-        .as_str()
+    let uri: lsp::Url = expanded
+        .uri_for_source_id(source_id)
+        .ok_or_else(|| "attribute origin URI is unavailable".to_owned())?
         .parse()
         .map_err(|error| format!("invalid attribute origin URI: {error}"))?;
     let source_document = (input.source_document)(&uri)?;
@@ -566,14 +560,14 @@ fn attribute_origin_location(
 }
 
 fn projected_attribute_reference_at<'a>(
-    workspace: &'a WorkspaceAnalysis,
+    expanded: &'a ExpandedDocumentAnalysis,
     uri: &lsp::Url,
     offset: u32,
 ) -> Option<(
-    &'a adocweave::semantic::AttributeReference,
-    &'a adocweave::preprocess::SourceOrigin,
+    &'a adocweave_core::semantic::AttributeReference,
+    &'a adocweave_core::preprocess::SourceOrigin,
 )> {
-    workspace
+    expanded
         .projection
         .attribute_references
         .iter()
@@ -582,42 +576,31 @@ fn projected_attribute_reference_at<'a>(
                 .origins
                 .iter()
                 .find(|origin| {
-                    origin
-                        .source_id
-                        .as_ref()
-                        .is_some_and(|source_id| source_id.as_str() == uri.as_str())
-                        && range_contains_offset(origin.range.text_range(), offset)
+                    origin.source_id.as_ref().is_some_and(|source_id| {
+                        expanded.uri_for_source_id(source_id) == Some(uri.as_str())
+                    }) && range_contains_offset(origin.range.text_range(), offset)
                 })
                 .map(|origin| (&reference.value, origin))
         })
 }
 
 fn projected_attribute_binding_at(
-    workspace: &WorkspaceAnalysis,
+    expanded: &ExpandedDocumentAnalysis,
     uri: &lsp::Url,
     offset: u32,
-) -> Option<adocweave::semantic::AttributeBindingId> {
-    workspace
+) -> Option<adocweave_core::semantic::AttributeBindingId> {
+    expanded
         .projection
         .attribute_bindings
         .iter()
         .find(|binding| {
             binding.name_origins.iter().any(|origin| {
-                origin
-                    .source_id
-                    .as_ref()
-                    .is_some_and(|source_id| source_id.as_str() == uri.as_str())
-                    && range_contains_offset(origin.range.text_range(), offset)
+                origin.source_id.as_ref().is_some_and(|source_id| {
+                    expanded.uri_for_source_id(source_id) == Some(uri.as_str())
+                }) && range_contains_offset(origin.range.text_range(), offset)
             })
         })
         .map(|binding| binding.value.id())
-}
-
-fn same_origin(
-    left: &adocweave::preprocess::SourceOrigin,
-    right: &adocweave::preprocess::SourceOrigin,
-) -> bool {
-    left.source_id == right.source_id && left.range == right.range
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -669,7 +652,7 @@ fn sort_and_dedup_locations(locations: &mut Vec<lsp::Location>) {
 mod tests {
     use std::sync::Arc;
 
-    use adocweave::{AnalysisOptions, AnalysisRequest, NeverCancel, SourceId};
+    use adocweave_core::{AnalysisOptions, AnalysisRequest, NeverCancel, SourceId};
 
     use super::*;
 
@@ -686,7 +669,7 @@ mod tests {
             uri: uri.to_owned(),
             revision: result.revision,
             analysis: Arc::new(result.analysis),
-            format: adocweave::output::formatter::FormatConfig::default(),
+            format: adocweave_core::output::formatter::FormatConfig::default(),
         }
     }
 
@@ -765,7 +748,7 @@ mod tests {
         let input = NavigationInput {
             document: &first,
             snapshots: &snapshots,
-            workspaces: &[],
+            expanded_analyses: &[],
             encoding: PositionEncoding::Utf16,
             source_document: &no_projected_source,
         };
@@ -798,7 +781,7 @@ mod tests {
             let input = NavigationInput {
                 document: &document,
                 snapshots: &snapshots,
-                workspaces: &[],
+                expanded_analyses: &[],
                 encoding,
                 source_document: &no_projected_source,
             };
@@ -812,24 +795,16 @@ mod tests {
     }
 
     #[test]
-    fn document_links_keep_deterministic_order_when_host_resolution_fails() {
+    fn document_links_keep_deterministic_order() {
         let direct = lsp::DocumentLink {
             range: lsp::Range::new(lsp::Position::new(2, 0), lsp::Position::new(2, 3)),
             target: Some(lsp::Url::parse("file:///direct.adoc").expect("URI")),
             tooltip: None,
             data: None,
         };
-        let unresolved = UnresolvedDocumentLink {
-            target: ReferenceKey::Local {
-                anchor: "unused".to_owned(),
-            },
-            range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 3)),
-        };
-        let mut links = DocumentLinks {
+        let links = DocumentLinks {
             links: vec![direct.clone(), direct.clone()],
-            unresolved: Vec::new(),
         };
-        links.resolve(unresolved, None, false);
         assert_eq!(
             links
                 .finish(&crate::cancellation::test_cancellation())
