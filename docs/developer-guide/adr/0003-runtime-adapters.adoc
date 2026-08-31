@@ -1,5 +1,9 @@
 = ADR 0003: ランタイムアダプターの分離
-:status: accepted
+:status: 採用
+
+== 状態
+
+{status}
 
 == 文脈
 

@@ -1,11 +1,9 @@
 = ADR 0019: 初期ワークスペース走査とリソース読込の分離
-
-:status: superseded by ADR 0044
+:status: 置換済み。ADR 0044により置換
 
 == 状態
 
-ADR 0044により置換されました。Language Serverは起動時にディレクトリを走査しないため、走査の除外patternと
-走査のための読込上限は廃止しました。設定``workspace.scan``は受理しません。
+{status}
 
 == 背景
 

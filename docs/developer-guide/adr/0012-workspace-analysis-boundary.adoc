@@ -1,9 +1,9 @@
 = ADR 0012: runtime非依存のWorkspace解析
-:status: superseded by ADR 0041
+:status: 置換済み。ADR 0041により置換
 
 == 状態
 
-ADR 0041により置換済み
+{status}
 
 == 背景
 

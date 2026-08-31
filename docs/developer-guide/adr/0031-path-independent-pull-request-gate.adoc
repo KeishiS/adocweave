@@ -1,5 +1,9 @@
 = ADR 0031: 変更pathに依存しないPull Request検査
-:status: accepted; amended by ADR 0032, ADR 0033, and ADR 0034
+:status: 一部有効。ADR 0032、0033および0034により改訂
+
+== 状態
+
+{status}
 
 == 文脈
 

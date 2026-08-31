@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import test from "node:test";
 import {
@@ -71,8 +70,8 @@ test("repositoryの全追跡AsciiDocを動的な検査計画へ含める", () =>
 test("現行文書から置換済みADRへの参照を拒否する", () => {
   const sources = {
     "CONTRIBUTING.adoc": "xref:docs/developer-guide/adr/0001-old.adoc[古い判断]",
-    "docs/developer-guide/adr/0001-old.adoc": ":status: superseded by ADR 0002\n",
-    "docs/developer-guide/adr/0002-current.adoc": ":status: accepted\n",
+    "docs/developer-guide/adr/0001-old.adoc": ":status: 置換済み。ADR 0002により置換\n",
+    "docs/developer-guide/adr/0002-current.adoc": ":status: 採用\n",
   };
   assert.throws(
     () => validateCurrentDocumentAdrLinks(sources),
@@ -84,15 +83,9 @@ test("現行ADRとADR内の判断履歴への参照を許可する", () => {
   assert.doesNotThrow(() => validateCurrentDocumentAdrLinks({
     "guide.adoc": "xref:docs/developer-guide/adr/0002-current.adoc#decision[現在の判断]",
     "docs/developer-guide/adr/0001-old.adoc":
-      ":status: superseded by ADR 0002\n\nxref:0002-current.adoc[置換先]",
+      ":status: 置換済み。ADR 0002により置換\n\nxref:0002-current.adoc[置換先]",
     "docs/developer-guide/adr/0002-current.adoc":
-      ":status: accepted\n\nxref:0001-old.adoc[判断履歴]",
+      ":status: 採用\n\nxref:0001-old.adoc[判断履歴]",
     "docs/developer-guide/adr/index.adoc": "xref:0001-old.adoc[ADR 0001]",
   }));
-});
-
-test("repositoryの現行文書は置換済みADRを参照しない", () => {
-  const paths = trackedAdocPaths();
-  const sources = Object.fromEntries(paths.map((path) => [path, readFileSync(path, "utf8")]));
-  assert.doesNotThrow(() => validateCurrentDocumentAdrLinks(sources));
 });

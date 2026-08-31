@@ -1,5 +1,9 @@
 = ADR 0001: 単一解析パイプライン
-:status: accepted
+:status: 採用
+
+== 状態
+
+{status}
 
 == 文脈
 

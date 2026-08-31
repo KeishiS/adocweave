@@ -1,6 +1,9 @@
 = ADR 0039: CI検査ごとのNix開発shellの分担
+:status: 採用
 
-:status: accepted
+== 状態
+
+{status}
 
 == 文脈
 

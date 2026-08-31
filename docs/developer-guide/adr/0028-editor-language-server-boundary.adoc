@@ -1,5 +1,9 @@
 = ADR 0028: エディタとLanguage Serverの導入方法の分担
-:status: accepted; executable amended by ADR 0040; distribution amended by ADR 0043
+:status: 一部有効。実行ファイルはADR 0040、配布方法はADR 0043により改訂
+
+== 状態
+
+{status}
 
 == 文脈
 

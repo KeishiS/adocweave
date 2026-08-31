@@ -1,6 +1,9 @@
 = ADR 0044: Language Serverの解析対象を開いた文書へ限定
+:status: 採用
 
-:status: accepted
+== 状態
+
+{status}
 
 == 文脈
 

@@ -1,8 +1,9 @@
 = ADR 0010: 読込順に従う文書属性environment
+:status: 採用
 
 == 状態
 
-採用
+{status}
 
 == 背景
 

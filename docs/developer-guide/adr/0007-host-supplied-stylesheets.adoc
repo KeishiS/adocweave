@@ -1,5 +1,9 @@
 = ADR 0007: ホスト供給スタイルシートの完全文書限定出力
-:status: accepted
+:status: 採用
+
+== 状態
+
+{status}
 
 == 文脈
 

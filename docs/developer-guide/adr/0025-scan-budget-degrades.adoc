@@ -1,5 +1,9 @@
 = ADR 0025: 走査の上限超過で部分結果を残す
-:status: superseded by ADR 0044 for Language Server workspace scanning
+:status: 置換済み。ADR 0044および0046により置換
+
+== 状態
+
+{status}
 
 [NOTE]
 ====
