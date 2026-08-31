@@ -7,28 +7,20 @@ separate changelogs for the
 [VS Code extension](https://github.com/KeishiS/adocweave/blob/main/editors/vscode/CHANGELOG.md), and
 [Zed extension](https://github.com/KeishiS/adocweave/blob/main/editors/zed/CHANGELOG.md).
 
-## [0.58.0] - 2026-08-31
-
-### Rust API
-
-- The unused `preprocess_and_analyze` and `preprocess_and_analyze_with` free functions are removed. `EffectiveProcessingOptions` is now the only combined preprocessing and analysis entry point, and `PreprocessedAnalysisError::Options` is removed because option validation occurs when that value is constructed.
-- The unused `PRODUCT_NAME` constant is removed from `adocweave-core`.
-
-### Migration
-
-- Construct `EffectiveProcessingOptions` from `AnalysisOptions` and `PreprocessOptions`, handle `ProcessingOptionsError` at construction, and call `EffectiveProcessingOptions::preprocess_and_analyze`. Applications that displayed `PRODUCT_NAME` must own their product display name.
-
 ## [0.57.0] - 2026-08-31
 
 ### Rust API
 
 - `AnalysisCacheKey`, `AnalysisRequest::cache_key`, and `AnalysisResult::cache_key` are removed. Core analysis no longer computes an unused SHA-256 cache key.
 - `ReferenceResolver`, `ResourceResolver`, their future aliases, and the unused resolver-only `ResolutionCacheKey`, `DocumentCandidate`, and `ReverseReference` types are removed. Host resolution now uses the existing owned query and result values.
+- The unused `preprocess_and_analyze` and `preprocess_and_analyze_with` free functions are removed. `EffectiveProcessingOptions` is now the only combined preprocessing and analysis entry point, and `PreprocessedAnalysisError::Options` is removed because option validation occurs when that value is constructed.
+- The unused `PRODUCT_NAME` constant is removed from `adocweave-core`.
 
 ### Migration
 
 - Applications that cache analysis results must build a cache key from the source, `SourceId`, `AnalysisOptions`, and any external inputs that affect the result.
 - Replace resolver trait implementations by reading `Analysis::reference_queries()` and `Analysis::resource_queries()`, resolving them in application-owned code, and passing `ResolvedReference` and `ResolvedResource` values through `RenderInputs`.
+- Construct `EffectiveProcessingOptions` from `AnalysisOptions` and `PreprocessOptions`, handle `ProcessingOptionsError` at construction, and call `EffectiveProcessingOptions::preprocess_and_analyze`. Applications that displayed `PRODUCT_NAME` must own their product display name.
 
 ## [0.56.5] - 2026-08-30
 
@@ -114,7 +106,6 @@ if let Ok(expanded) = analysis.expanded {
 }
 ```
 
-[0.58.0]: https://github.com/KeishiS/adocweave/compare/v0.57.0...v0.58.0
 [0.57.0]: https://github.com/KeishiS/adocweave/compare/v0.56.5...v0.57.0
 [0.56.5]: https://github.com/KeishiS/adocweave/compare/v0.56.4...v0.56.5
 [0.56.4]: https://github.com/KeishiS/adocweave/compare/v0.56.3...v0.56.4
