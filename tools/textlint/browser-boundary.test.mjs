@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -15,17 +14,14 @@ function errorPayload(operation) {
   assert.fail("WebAssembly呼出しが成功しました");
 }
 
-test("文章校正用exportをBrowser成果物から分離する", () => {
-  const browser = readFileSync(
-    `${repositoryRoot}target/adocweave-wasm-dev/adocweave_wasm.js`,
-    "utf8"
+test("Browser用とtextlint用の公開項目を確認する", async () => {
+  const browser = await import(
+    new URL("../../target/adocweave-wasm-dev/adocweave_wasm.js", import.meta.url)
   );
-  const textlint = readFileSync(
-    `${repositoryRoot}target/adocweave-textlint-wasm-node/adocweave_textlint_wasm.js`,
-    "utf8"
+  assert.deepEqual(
+    Object.keys(browser).sort(),
+    ["analyze", "default", "initSync", "protocolSchemaVersion"]
   );
-  assert.doesNotMatch(browser, /parseText/);
-  assert.match(textlint, /parseText/);
   assert.deepEqual(
     Object.keys(
       require(

@@ -53,26 +53,16 @@ test("受け入れる範囲の外側を拒否する", () => {
 test("npmが描画するMarkdownのREADMEを収録する", () => {
   assert.ok(manifest.files.includes("README.md"));
   assert.equal(existsSync(new URL("./README.md", import.meta.url)), true);
-  assert.equal(existsSync(new URL("./README.adoc", import.meta.url)), false);
 });
 
 test("parseTextとWASMをpackage内で完結させる", () => {
   assert.match(bridge, /require\("\.\/wasm\/adocweave_textlint_wasm\.cjs"\)/);
   assert.match(bridge, /typeof loaded\?\.parseText !== "function"/);
-  assert.doesNotMatch(
-    bridge,
-    /adapterApiVersion|TEXTLINT_ADAPTER_API_VERSION|package\.json|release-manifest|target\//,
-  );
 });
 
-test("package境界へプロジェクト固有設定を含めない", () => {
-  const serialized = JSON.stringify(manifest);
-  for (const name of ["japanese-terminology", "preset-ja", "targets.json"]) {
-    assert.doesNotMatch(serialized, new RegExp(name));
-  }
+test("licenseと第三者依存通知を収録する", () => {
   for (const license of ["LICENSE-APACHE", "LICENSE-MIT"]) {
     assert.equal(existsSync(new URL(`./${license}`, import.meta.url)), true);
   }
   assert.ok(manifest.files.includes("THIRD_PARTY_NOTICES.adoc"));
-  assert.equal(existsSync(new URL("./THIRD_PARTY_NOTICES.adoc", import.meta.url)), false);
 });

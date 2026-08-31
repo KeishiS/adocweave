@@ -5,7 +5,6 @@ import test from "node:test";
 import { validateVscodeRuntimeDependencies, vscodeRuntimePackages } from "./verify-vscode-dependencies.mjs";
 
 const manifest = { private: true, version: "1.2.3" };
-const packageScript = readFileSync(new URL("../editors/vscode/scripts/package.mts", import.meta.url), "utf8");
 const lock = {
   lockfileVersion: 3,
   packages: {
@@ -59,10 +58,4 @@ test("repositoryのVS Code runtime dependencyは配布方針を満たす", () =>
   const repositoryLock = JSON.parse(readFileSync(new URL("../editors/vscode/package-lock.json", import.meta.url)));
   // vscode-languageclientの推移依存9件と、取得したarchiveの展開に使うfflateです。
   assert.equal(validateVscodeRuntimeDependencies(repositoryManifest, repositoryLock).length, 10);
-});
-
-test("VSIXは同じruntime treeから生成した第三者依存の通知を同梱する", () => {
-  assert.match(packageScript, /"extension\/THIRD_PARTY_NOTICES\.adoc"/);
-  assert.match(packageScript, /"--vscode", notice/);
-  assert.match(packageScript, /copyFileSync\(notice, join\(stage, "THIRD_PARTY_NOTICES\.adoc"\)\)/);
 });

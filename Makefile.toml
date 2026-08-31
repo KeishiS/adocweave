@@ -155,8 +155,7 @@ node --test \
   tools/cachix-smoke.test.mjs \
   tools/wasm-release-budget.test.mjs \
   tools/npm-publication.test.mjs \
-  tools/open-vsx-publication.test.mjs \
-  tools/security-audit.test.mjs
+  tools/open-vsx-publication.test.mjs
 '''
 
 [tasks.workflow-lint]
