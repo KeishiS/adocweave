@@ -1,5 +1,9 @@
 = ADR 0043: 単一のネイティブ実行ファイルと配布物ごとの公開単位
-:status: accepted
+:status: 採用
+
+== 状態
+
+{status}
 
 == 文脈
 

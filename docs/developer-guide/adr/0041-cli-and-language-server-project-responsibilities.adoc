@@ -1,5 +1,9 @@
 = ADR 0041: CLIとLanguage Serverのプロジェクト処理責務
-:status: partially superseded by ADR 0044
+:status: 一部有効。Language Serverの解析対象はADR 0044により改訂
+
+== 状態
+
+{status}
 
 == 文脈
 

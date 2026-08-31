@@ -1,6 +1,9 @@
 = ADR 0020: hostが許可したblock roleだけのclass出力
+:status: 一部有効。WebAssembly APIの設定配置はADR 0042により改訂
 
-:status: accepted; WebAssembly public request path amended by ADR 0042
+== 状態
+
+{status}
 
 WebAssembly APIの設定pathはxref:0042-wasm-public-contract.adoc[ADR 0042]で改訂しました。許可したroleだけを
 classへ出力する本ADRの判断は維持します。

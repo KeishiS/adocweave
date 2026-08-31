@@ -1,5 +1,9 @@
 = ADR 0030: textlintの責務分担と配布検査の最小化
-:status: accepted; gate amended by ADR 0031; metadata amended by ADR 0036; publication amended by ADR 0043
+:status: 一部有効。検査はADR 0031、メタデータはADR 0036、公開方法はADR 0043により改訂
+
+== 状態
+
+{status}
 
 == 文脈
 

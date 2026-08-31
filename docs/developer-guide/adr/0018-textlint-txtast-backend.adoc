@@ -1,5 +1,9 @@
 = ADR 0018: textlint専用TxtAST backendへの責務集約
-:status: accepted; component identity amended by ADR 0030
+:status: 一部有効。コンポーネントの識別方法はADR 0030により改訂
+
+== 状態
+
+{status}
 
 == 文脈
 

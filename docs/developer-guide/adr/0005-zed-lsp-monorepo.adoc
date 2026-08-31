@@ -1,5 +1,9 @@
 = ADR 0005: Zed LSPのmonorepo管理
-:status: accepted; release unit amended by ADR 0027, ADR 0040, and ADR 0043; editor/LSP boundary amended by ADR 0028
+:status: 一部有効。配布単位はADR 0027、0040および0043、エディタとLanguage Serverの分担はADR 0028により改訂
+
+== 状態
+
+{status}
 
 == 文脈
 

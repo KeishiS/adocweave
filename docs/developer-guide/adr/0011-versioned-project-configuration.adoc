@@ -1,9 +1,9 @@
 = ADR 0011: バージョン付きプロジェクト設定と権限制限
-:status: accepted; schema generation amended by ADR 0037; crate ownership amended by ADR 0045
+:status: 一部有効。Schema生成はADR 0037、crateの所有はADR 0045により改訂
 
 == 状態
 
-採用
+{status}
 
 == 背景
 

@@ -1,5 +1,9 @@
 = ADR 0027: 配布製品ごとのバージョンと公開単位
-:status: superseded by ADR 0040; independent distribution units replaced by ADR 0043
+:status: 置換済み。ADR 0028、0040および0043により置換
+
+== 状態
+
+{status}
 
 == 文脈
 

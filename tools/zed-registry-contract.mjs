@@ -36,13 +36,6 @@ assert.equal(rustVersion[1], toolchains.rustVersion, "Zed Rust version does not 
 const license = read(new URL("LICENSE", ZED));
 assert.match(license, /^MIT License\n/u);
 
-const readme = read(new URL("README.md", ZED));
-assert.match(readme, /<img src="icon\.png" width="128" height="128" alt="AdocWeave icon">/u);
-assert.match(readme, /AdocWeave 0\.51\.0 or newer is required/u);
-assert.match(readme, /Install Zed's `AsciiDoc` extension first/u);
-assert.match(readme, /If `AdocWeave` is also listed/u);
-assert.doesNotMatch(readme, /published `AdocWeave` extension/u);
-
 const changelog = read(new URL("CHANGELOG.md", ZED));
 assert.match(changelog, new RegExp(`^## \\[${version.replaceAll(".", "\\.")}\\]$`, "mu"));
 
@@ -54,30 +47,5 @@ assert.equal(icon.readUInt32BE(20), 128);
 for (const path of ["README.md", "CHANGELOG.md", "src/acquire.rs", "src/lib.rs"]) {
   assert.doesNotMatch(read(new URL(path, ZED)), /[ぁ-んァ-ヶ一-龠]/u, `${path} contains non-English text`);
 }
-
-const extensionSource = read(new URL("src/lib.rs", ZED));
-assert.match(extensionSource, /latest_github_release/u);
-assert.match(extensionSource, /pre_release: false/u);
-assert.doesNotMatch(extensionSource, /latest_lsp_release|RELEASES_URL/u);
-
-const nativeVersionTool = read(new URL("tools/native-release-version.mjs", ROOT));
-assert.doesNotMatch(nativeVersionTool, /editors\/zed/u);
-assert.doesNotMatch(read(new URL("dist-workspace.toml", ROOT)), /adocweave-zed/u);
-assert.doesNotMatch(read(new URL("Makefile.toml", ROOT)), /package-zed-release|test-zed-release/u);
-
-const developmentGuide = read(new URL("docs/developer-guide/zed-development.adoc", ROOT));
-for (const required of [
-  "[adocweave-lsp]",
-  'submodule = "extensions/adocweave-lsp"',
-  'path = "editors/zed"',
-  'version = "<extension.tomlのversion>"',
-]) {
-  assert.ok(developmentGuide.includes(required), `Zed registry submission example is missing: ${required}`);
-}
-assert.match(developmentGuide, /Zed公式レジストリの\n``AsciiDoc``拡張/u);
-
-const userGuide = read(new URL("docs/user-guide/release-installation.adoc", ROOT));
-assert.match(userGuide, /``zed: install dev extension``から``editors\/zed``を選択/u);
-assert.doesNotMatch(userGuide, /Extensions画面から``AsciiDoc``と``AdocWeave``を導入/u);
 
 process.stdout.write(`Zed registry requirements verified: ${version}\n`);

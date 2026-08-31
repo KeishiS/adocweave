@@ -1,5 +1,9 @@
 = ADR 0029: Browser clientとWeb Workerの処理分担
-:status: accepted; public contract amended by ADR 0042
+:status: 一部有効。公開する要求、応答およびエラーはADR 0042により改訂
+
+== 状態
+
+{status}
 
 公開clientの要求、応答およびerrorの形式は、
 xref:0042-wasm-public-contract.adoc[ADR 0042]で改訂しました。Promise、取消し、Workerの寿命および配備の決定は

@@ -1,9 +1,9 @@
 = ADR 0009: 公開設定と検査ポリシーの責務分離
+:status: 一部有効。WebAssembly APIの設定配置はADR 0042により改訂
 
 == 状態
 
-採用。WASM protocolで解析設定と描画設定を別のトップレベルobjectにする決定は、
-xref:0042-wasm-public-contract.adoc[ADR 0042]で改訂しました。
+{status}
 
 == 背景
 

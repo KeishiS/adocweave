@@ -1,5 +1,9 @@
 = ADR 0024: includeの既定での展開
-:status: accepted
+:status: 採用
+
+== 状態
+
+{status}
 
 == 背景
 

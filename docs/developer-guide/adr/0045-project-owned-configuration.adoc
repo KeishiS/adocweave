@@ -1,9 +1,9 @@
 = ADR 0045: プロジェクト設定をプロジェクト処理へ統合
-:status: accepted
+:status: 採用
 
 == 状態
 
-採用
+{status}
 
 == 背景
 

@@ -1,5 +1,9 @@
 = ADR 0017: GitHub Releaseでのtextlint Processorパッケージ配布
-:status: superseded
+:status: 置換済み。ADR 0018、0023、0030、0036および0043により置換
+
+== 状態
+
+{status}
 
 この判断は、adapterの責務をxref:0018-textlint-txtast-backend.adoc[ADR 0018]、公開先と権限を
 xref:0023-publication-boundary.adoc[ADR 0023]、配布検査を

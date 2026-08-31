@@ -1,6 +1,9 @@
 = ADR 0033: Make taskの外向き入口と実処理の分離
+:status: 一部有効。依存関係の監査方法はADR 0034により改訂
 
-:status: accepted; dependency audit boundary amended by ADR 0034
+== 状態
+
+{status}
 
 == 文脈
 

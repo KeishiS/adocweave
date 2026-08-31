@@ -52,13 +52,7 @@ impl AdocWeaveExtension {
             id,
             &zed::LanguageServerInstallationStatus::CheckingForUpdate,
         );
-        let executable = match zed::latest_github_release(
-            REPOSITORY,
-            zed::GithubReleaseOptions {
-                require_assets: true,
-                pre_release: false,
-            },
-        ) {
+        let executable = match zed::latest_github_release(REPOSITORY, github_release_options()) {
             Ok(release) => {
                 let expected_asset = asset_name(&target);
                 let asset = release
@@ -99,6 +93,13 @@ impl AdocWeaveExtension {
             Err(error) => downloaded_executable(os, &target).ok_or(error)?,
         };
         Ok(executable)
+    }
+}
+
+fn github_release_options() -> zed::GithubReleaseOptions {
+    zed::GithubReleaseOptions {
+        require_assets: true,
+        pre_release: false,
     }
 }
 
@@ -205,6 +206,14 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
+
+    #[test]
+    fn automatic_acquisition_uses_stable_releases_with_assets() {
+        let options = github_release_options();
+
+        assert!(options.require_assets);
+        assert!(!options.pre_release);
+    }
 
     #[test]
     fn server_command_uses_lsp_subcommand_and_preserves_shell_environment() {

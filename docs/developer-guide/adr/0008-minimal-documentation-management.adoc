@@ -1,5 +1,9 @@
 = ADR 0008: 現行情報に限定した文書管理
-:status: accepted
+:status: 採用
+
+== 状態
+
+{status}
 
 == 文脈
 

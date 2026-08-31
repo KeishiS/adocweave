@@ -1,6 +1,9 @@
 = ADR 0034: 配布runtimeの依存監査を標準toolへ集約
+:status: 一部有効。SBOMの公開方針はADR 0036により改訂
 
-:status: accepted; SBOM publication amended by ADR 0036
+== 状態
+
+{status}
 
 == 文脈
 

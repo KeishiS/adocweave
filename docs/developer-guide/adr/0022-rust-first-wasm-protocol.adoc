@@ -1,6 +1,9 @@
 = ADR 0022: WASM protocolの型をRust定義から導出する
+:status: 一部有効。taskの分担はADR 0033、公開仕様はADR 0042により改訂
 
-:status: accepted; task boundary amended by ADR 0033; public contract amended by ADR 0042
+== 状態
+
+{status}
 
 公開仕様の正本を生成TypeScript宣言へ移す決定は維持します。``release-claims``によるtag間比較の決定は、
 xref:0026-no-unverified-release-claims.adoc[ADR 0026]で改訂しました。Worker内の通信objectを公開version付きの仕様とする決定は、

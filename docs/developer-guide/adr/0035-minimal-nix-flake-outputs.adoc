@@ -1,6 +1,9 @@
 = ADR 0035: Nix flakeの公開出力と検査を最小化
+:status: 一部有効。開発用shellはADR 0039、ネイティブ実行ファイルはADR 0040により改訂
 
-:status: accepted; development shell boundary superseded by ADR 0039; native executable amended by ADR 0040
+== 状態
+
+{status}
 
 == 文脈
 
