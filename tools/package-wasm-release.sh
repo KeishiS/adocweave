@@ -39,7 +39,7 @@ cp packages/wasm/analysis.mjs packages/wasm/client.mjs \
 cp packages/wasm/example/index.html packages/wasm/example/app.mjs "$stage/example/"
 cp packages/wasm/package.json packages/wasm/README.md packages/wasm/CHANGELOG.md \
   LICENSE-MIT LICENSE-APACHE "$stage/"
-node tools/generate-third-party-notices.mjs "$stage/THIRD_PARTY_NOTICES.adoc"
+node tools/generate-third-party-notices.mjs --wasm "$stage/THIRD_PARTY_NOTICES.adoc"
 
 mkdir -p target/distrib
 pack_result="$(npm --cache "$npm_cache" pack --ignore-scripts --json --pack-destination "$scratch" "$stage")"

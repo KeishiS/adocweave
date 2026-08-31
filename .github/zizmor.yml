@@ -8,9 +8,9 @@ rules:
       # release.ymlはcargo-distが生成します。次の3箇所はいずれも生成部分で、planのJSONと
       # matrixの値をshellへ渡します。値の出所はこのrepositoryのdist-workspace.tomlであり、
       # 手で書き換えると生成結果と食い違います。
-      - release.yml:146:18
-      - release.yml:156:15
-      - release.yml:167:80
+      - release.yml:149:18
+      - release.yml:159:15
+      - release.yml:170:80
   unpinned-images:
     ignore:
       # 同じくcargo-distの生成部分です。containerはmatrixが指定した場合だけ使い、現在の

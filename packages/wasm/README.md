@@ -70,7 +70,7 @@ WASMがtrapした場合、`direct` は同じNode.jsプロセスで実行して�
 - `worker/client.mjs` と `worker/worker.mjs` — 一つの要求をWeb Workerで実行する内部実装
 - `worker/protocol.d.mts` — WebAssemblyとやり取りするJSONの型。Rustのwire定義から生成します
 - `worker/worker-protocol.mjs` — clientとWorkerが交換する内部封筒
-- `THIRD_PARTY_NOTICES.adoc` — rootとZedのlockfileから生成したthird-party package一覧
+- `THIRD_PARTY_NOTICES.adoc` — 同梱するWebAssemblyから到達するRust crateの名前、バージョンおよびSPDX license一覧
 
 ## 最小例
 
