@@ -8,14 +8,16 @@
 
 == 決定
 
-公開先と権限の分離方法をこのADRで定めます。製品ごとのversionと公開単位は
-xref:0027-product-release-trains.adoc[ADR 0027]、エディタとLanguage Serverの導入方法の分担は
-xref:0028-editor-language-server-boundary.adoc[ADR 0028]、同じrunの成果物を公開する手順は
+公開先と権限の分離方法をこのADRで定めます。配布物ごとの版と公開単位は
+xref:0043-independent-distribution-units.adoc[ADR 0043]、エディタとLanguage Serverの導入方法の分担は
+xref:0028-editor-language-server-boundary.adoc[ADR 0028]、一つのtagとcommitから同じrunで公開する手順は
 xref:0032-same-run-release-publication.adoc[ADR 0032]を基準とします。現在の成果物と公開先は
 xref:../release-distribution.adoc[配布仕様]を基準とし、このADRへ一覧を複製しません。
 
-GitHub Releaseを全製品の一次公開先とします。registryへも公開する製品では、GitHub Releaseで検証した同じbyte列を
-使用し、registry向けに構築し直しません。registryへの公開に必要なcredentialは、対象の専用jobだけが参照します。
+GitHub Releaseを全製品の一次公開先とし、registryへも同じbyte列を送る判断は
+xref:0043-independent-distribution-units.adoc[ADR 0043]で置き換えました。現在は配布物ごとに標準的な公開先へ
+直接公開し、GitHub Releaseはネイティブ実行ファイルだけが使います。registryへの公開に必要なcredentialを
+対象の専用jobだけが参照する判断は維持します。
 
 製品別の配布manifestと配布計画を正本とする決定は
 xref:0040-unified-release-and-native-executable.adoc[ADR 0040]で置き換えました。現在の配布情報は

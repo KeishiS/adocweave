@@ -1,6 +1,13 @@
 = ADR 0025: 走査の上限超過で部分結果を残す
 :status: superseded by ADR 0044 for Language Server workspace scanning
 
+[NOTE]
+====
+Language Serverの初期走査はxref:0044-lsp-open-document-scope.adoc[ADR 0044]で廃止しました。本文に現れる
+``adocweave-host`` crateもxref:0046-project-owned-local-filesystem.adoc[ADR 0046]で廃止し、ファイル操作は
+``adocweave-project``が持ちます。以下は廃止前の判断です。
+====
+
 == 背景
 
 Language Serverの初期走査は、ディレクトリの項目数が10万件に達すると失敗していました。失敗した走査は

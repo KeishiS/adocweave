@@ -128,4 +128,4 @@ trap時はWorkerを終了して、そのインスタンスを次の要求へ再�
 
 debounce、文書の版、古い結果の判定、認証、ネットワーク、CSPおよび表示サンドボックスは利用側アプリが所有します。
 生成HTMLを信頼済みDOMとして扱いません。配備方法は
-xref:../user-guide/release-installation.adoc#wasm-library-deployment[ブラウザーライブラリーの配備]を参照してください。
+xref:../user-guide/release-installation.adoc#wasm-library-deployment[WebAssemblyライブラリの配備]を参照してください。

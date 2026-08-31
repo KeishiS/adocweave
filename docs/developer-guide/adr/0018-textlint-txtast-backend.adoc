@@ -56,6 +56,13 @@ coreの``text-projection`` featureと``adocweave::output::text``は削除しま�
 利用箇所がなく、対象固有の校正方針をcoreの公開APIとして維持する理由がないためです。Node.js専用
 WebAssemblyはBrowser向けWebAssemblyと引き続き分離します。
 
+[NOTE]
+====
+ここでいうcore crateの``adocweave``は、現在の``adocweave-core``です。``adocweave``という名前は、利用者が
+実行するCLIのcrateが持ちます。現在のcrate構成はxref:0046-project-owned-local-filesystem.adoc[ADR 0046]に
+一覧があります。
+====
+
 == 採用しない案
 
 既存の``TextProjection``へ本体範囲を追加し、JavaScriptの位置変換だけを差し替える方法は、当面の不具合を

@@ -42,7 +42,7 @@ Rustの型定義を正本とし、ほかの成果物を既製のlibraryで導出
   封筒の中身(requestとresponse)はWebAssembly側のserdeが``deny_unknown_fields``付きで検査するため、
   JavaScript側で同じ検査を持ちません
 
-移行の安全網として、既存の``fixtures/protocol/request-corpus.json``を使うworkspace testのnative corpus検査と
+移行の安全網として、既存の``fixtures/corpus.json``を使うworkspace testのnative corpus検査と
 実際のWebAssemblyインターフェイスを通すcorpus検査をそのまま使います。これらは同じ入力に対する
 受理と拒否の結果を固定しているため、置き換えの前後で挙動が変わらないことを確認できます。
 

@@ -15,6 +15,13 @@ Linux向けpackageは``packages.${system}.default``だけを公開します。�
 ``apps.${system}.default``と``apps.${system}.adocweave-lsp``で区別します。専用のNixpkgs overlayとNixOS moduleは
 提供しません。
 
+[NOTE]
+====
+xref:0040-unified-release-and-native-executable.adoc[ADR 0040]で実行ファイルを``adocweave``一つへ統合したため、
+``apps.${system}.adocweave-lsp``は公開していません。現在の実行入口は``apps.${system}.default``だけで、
+Language Serverは``adocweave lsp``で起動します。次の段落の「二つの実行ファイル」も、現在は一つです。
+====
+
 packageの構築、二つの実行ファイルのバージョン確認、および開発用toolがruntime closureへ混入していないことの確認は、
 ``checks.${system}.default``へ集約します。公開時はx86_64-linuxとaarch64-linuxの両方でこのcheckを構築してから、
 packageをbinary cacheへ送信します。
