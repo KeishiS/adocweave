@@ -1,84 +1,62 @@
 {
-    "schemaVersion": 2,
+    "schemaVersion": 3,
     "forbiddenTerms": [
         {
             "id": "legal-contract-metaphor",
             "term": "契約",
-            "match": "substring",
-            "message": "この語が指す保証、条件または判定を具体的に記述してください。",
-            "documentation": "docs/developer-guide/terminology.adoc#legal-contract-metaphor"
+            "message": "この語が指す保証、条件または判定を具体的に記述してください。"
         },
         {
             "id": "syntax-mode-permissive-label",
             "term": "寛容モード",
-            "match": "substring",
-            "message": "設定値の原綴りを用いて``permissive``モードと記載してください。",
-            "documentation": "docs/README.adoc#syntax-mode-terminology"
+            "message": "設定値の原綴りを用いて``permissive``モードと記載してください。"
         },
         {
             "id": "syntax-mode-strict-label",
             "term": "厳格モード",
-            "match": "substring",
-            "message": "設定値の原綴りを用いて``strict``モードと記載してください。",
-            "documentation": "docs/README.adoc#syntax-mode-terminology"
+            "message": "設定値の原綴りを用いて``strict``モードと記載してください。"
         },
         {
             "id": "katakana-editor-long-vowel",
             "term": "エディター",
-            "match": "substring",
-            "message": "末尾を伸ばさず``エディタ``と記載してください。",
-            "documentation": "docs/developer-guide/terminology.adoc#katakana-editor-long-vowel"
+            "message": "末尾を伸ばさず``エディタ``と記載してください。"
         },
         {
             "id": "katakana-header-long-vowel",
             "term": "ヘッダー",
-            "match": "substring",
-            "message": "末尾を伸ばさず``ヘッダ``と記載してください。",
-            "documentation": "docs/developer-guide/terminology.adoc#katakana-header-long-vowel"
+            "message": "末尾を伸ばさず``ヘッダ``と記載してください。"
         },
         {
             "id": "abstract-resource-limit",
             "term": "資源上限",
-            "match": "substring",
-            "message": "上限を設ける対象を具体的に記載してください。",
-            "documentation": "docs/developer-guide/terminology.adoc#abstract-resource-limit"
+            "message": "上限を設ける対象を具体的に記載してください。"
         },
         {
             "id": "byte-count-notation",
             "term": "byte数",
-            "match": "substring",
-            "message": "日本語の地の文では``バイト数``と記載してください。",
-            "documentation": "docs/developer-guide/terminology.adoc#byte-count-notation"
+            "message": "日本語の地の文では``バイト数``と記載してください。"
         },
         {
             "id": "abstract-projection",
             "term": "投影",
-            "match": "substring",
-            "message": "対応付ける対象または変換後の情報を具体的に記載してください。",
-            "documentation": "docs/developer-guide/terminology.adoc#abstract-projection"
+            "message": "対応付ける対象または変換後の情報を具体的に記載してください。"
         },
         {
             "id": "english-projection",
             "term": "projection",
-            "match": "substring",
-            "message": "取得または変換する情報を具体的に記載してください。",
-            "documentation": "docs/developer-guide/terminology.adoc#english-projection"
+            "message": "取得または変換する情報を具体的に記載してください。"
         },
         {
             "id": "abstract-machine-readable",
             "term": "機械可読",
-            "match": "substring",
-            "message": "JSON、schema、manifestなど、プログラムが処理する対象を具体的に記載してください。",
-            "documentation": "docs/developer-guide/terminology.adoc#abstract-machine-readable"
+            "message": "JSON、schema、manifestなど、プログラムが処理する対象を具体的に記載してください。"
         }
     ],
     "warningTerms": [
         {
             "id": "version-wording-review",
             "term": "版",
-            "match": "substring",
-            "message": "\"バージョン\"の意味であれば\"バージョン\"を使ってください。",
-            "documentation": "docs/developer-guide/terminology.adoc#version-wording-review"
+            "message": "\"バージョン\"の意味であれば\"バージョン\"を使ってください。"
         }
     ]
 }

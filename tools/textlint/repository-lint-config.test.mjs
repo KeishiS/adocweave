@@ -15,14 +15,12 @@ const targets = {
 };
 
 const terminology = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   forbiddenTerms: [
     {
       id: "sample",
       term: "禁止語",
-      match: "substring",
-      message: "別の表現を検討してください。",
-      documentation: "docs/developer-guide/terminology.adoc#sample"
+      message: "別の表現を検討してください。"
     }
   ],
   warningTerms: []

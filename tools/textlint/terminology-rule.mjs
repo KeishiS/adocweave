@@ -1,5 +1,5 @@
 const catalogKeys = ["forbiddenTerms", "schemaVersion", "warningTerms"];
-const entryKeys = ["documentation", "id", "match", "message", "term"];
+const entryKeys = ["id", "message", "term"];
 
 function assertRecord(value, name) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -24,7 +24,7 @@ function validateCatalog(catalog) {
   assertRecord(catalog, "日本語用語集");
   assertExactKeys(catalog, catalogKeys, "日本語用語集");
   if (
-    catalog.schemaVersion !== 2 ||
+    catalog.schemaVersion !== 3 ||
     !Array.isArray(catalog.forbiddenTerms) ||
     !Array.isArray(catalog.warningTerms)
   ) {
@@ -40,10 +40,6 @@ function validateCatalog(catalog) {
       assertNonEmptyString(entry.id, `${name}.id`);
       assertNonEmptyString(entry.term, `${name}.term`);
       assertNonEmptyString(entry.message, `${name}.message`);
-      assertNonEmptyString(entry.documentation, `${name}.documentation`);
-      if (entry.match !== "substring") {
-        throw new Error(`${name}.matchを解釈できません: ${String(entry.match)}`);
-      }
       if (ids.has(entry.id)) {
         throw new Error(`日本語用語集のidが重複しています: ${entry.id}`);
       }
@@ -51,9 +47,7 @@ function validateCatalog(catalog) {
       return Object.freeze({
         id: entry.id,
         term: entry.term,
-        match: entry.match,
-        message: entry.message,
-        documentation: entry.documentation
+        message: entry.message
       });
     })
   );

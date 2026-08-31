@@ -4,14 +4,14 @@ import test from "node:test";
 import { runCheckedGh } from "./checked-gh-prose.mjs";
 
 const catalog = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   forbiddenTerms: [{
-    id: "sample", term: "禁止語", match: "substring",
-    message: "推奨表現へ変更してください。", documentation: "docs/example.adoc#sample"
+    id: "sample", term: "禁止語",
+    message: "推奨表現へ変更してください。"
   }],
   warningTerms: [{
-    id: "review", term: "版", match: "substring",
-    message: "バージョンの意味か確認してください。", documentation: "docs/example.adoc#review"
+    id: "review", term: "版",
+    message: "バージョンの意味か確認してください。"
   }]
 };
 
