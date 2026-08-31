@@ -1,6 +1,6 @@
 import technicalWriting from "textlint-rule-preset-ja-technical-writing";
 
-import { createTerminologyRule } from "./terminology-rule.mjs";
+import { createTerminologyRules } from "./terminology-rule.mjs";
 
 const targetKeys = [
   "authoredDirectories",
@@ -192,9 +192,6 @@ export function createRepositoryRules(terminologyCatalog) {
           : structuredClone(technicalWriting.rulesConfig[ruleId])
     };
   });
-  rules.push({
-    ruleId: "adocweave-terminology",
-    rule: createTerminologyRule(terminologyCatalog)
-  });
+  rules.push(...createTerminologyRules(terminologyCatalog));
   return rules;
 }

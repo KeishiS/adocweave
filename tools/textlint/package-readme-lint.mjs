@@ -37,7 +37,7 @@ async function main() {
   }));
   const diagnostics = await lintGitHubMarkdown(documents);
   for (const diagnostic of diagnostics) process.stderr.write(`${formatDiagnostic(diagnostic)}\n`);
-  if (diagnostics.length > 0) process.exitCode = 1;
+  if (diagnostics.some(({ severity }) => severity === 2)) process.exitCode = 1;
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

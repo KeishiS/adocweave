@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { TextlintKernel } from "@textlint/kernel";
 import markdownPlugin from "@textlint/textlint-plugin-markdown";
 
-import { createTerminologyRule } from "./terminology-rule.mjs";
+import { createTerminologyRules } from "./terminology-rule.mjs";
 
 export const terminologyCatalog = JSON.parse(
   readFileSync(new URL("../../config/japanese-terminology.json", import.meta.url), "utf8")
@@ -13,7 +13,7 @@ const markdown = markdownPlugin.default ?? markdownPlugin;
 
 export async function lintGitHubMarkdown(documents, catalog = terminologyCatalog) {
   const kernel = new TextlintKernel();
-  const rule = createTerminologyRule(catalog, { ignoreStandaloneUrls: true });
+  const rules = createTerminologyRules(catalog, { ignoreStandaloneUrls: true });
   const diagnostics = [];
   for (const document of documents) {
     if (typeof document?.field !== "string" || typeof document?.markdown !== "string") {
@@ -23,7 +23,7 @@ export async function lintGitHubMarkdown(documents, catalog = terminologyCatalog
       ext: ".md",
       filePath: "github.md",
       plugins: [{ pluginId: "markdown", plugin: markdown }],
-      rules: [{ ruleId: "adocweave-terminology", rule }]
+      rules
     });
     for (const message of result.messages) {
       diagnostics.push(Object.freeze({
@@ -32,6 +32,7 @@ export async function lintGitHubMarkdown(documents, catalog = terminologyCatalog
         line: message.line,
         column: message.column,
         range: message.range,
+        severity: message.severity,
         message: message.message
       }));
     }
@@ -40,8 +41,11 @@ export async function lintGitHubMarkdown(documents, catalog = terminologyCatalog
 }
 
 export function formatDiagnostic(diagnostic) {
+  const severity = diagnostic.severity === 1
+    ? "warning"
+    : diagnostic.severity === 2 ? "error" : "info";
   return `${diagnostic.field}:${diagnostic.line}:${diagnostic.column}: ` +
-    `${diagnostic.message} (${diagnostic.ruleId})`;
+    `${severity}: ${diagnostic.message} (${diagnostic.ruleId})`;
 }
 
 async function main() {
@@ -55,7 +59,7 @@ async function main() {
   }
   const diagnostics = await lintGitHubMarkdown(documents);
   for (const diagnostic of diagnostics) process.stderr.write(`${formatDiagnostic(diagnostic)}\n`);
-  if (diagnostics.length > 0) process.exitCode = 1;
+  if (diagnostics.some(({ severity }) => severity === 2)) process.exitCode = 1;
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

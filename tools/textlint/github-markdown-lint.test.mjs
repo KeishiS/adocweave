@@ -4,13 +4,18 @@ import test from "node:test";
 import { formatDiagnostic, lintGitHubMarkdown } from "./github-markdown-lint.mjs";
 
 const catalog = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   forbiddenTerms: [{
     id: "sample",
     term: "禁止語",
     match: "substring",
     message: "推奨表現へ変更してください。",
     documentation: "docs/example.adoc#sample"
+  }],
+  warningTerms: [{
+    id: "review", term: "版", match: "substring",
+    message: "バージョンの意味か確認してください。",
+    documentation: "docs/example.adoc#review"
   }]
 };
 
@@ -37,13 +42,17 @@ test("codeとURLを検査しない", async () => {
   assert.equal(diagnostics.length, 0);
 });
 
-test("Unicodeを含む位置と複数の一致を報告する", async () => {
-  const diagnostics = await lint("😀禁止語と禁止語です。", "title");
-  assert.deepEqual(diagnostics.map(({ line, column, range }) => ({ line, column, range })), [
-    { line: 1, column: 3, range: [2, 5] },
-    { line: 1, column: 7, range: [6, 9] }
+test("Unicodeを含む位置、複数の一致および重大度を報告する", async () => {
+  const diagnostics = await lint("😀禁止語と禁止語、版です。", "title");
+  assert.deepEqual(diagnostics.map(({ line, column, range, severity }) => ({
+    line, column, range, severity
+  })), [
+    { line: 1, column: 3, range: [2, 5], severity: 2 },
+    { line: 1, column: 7, range: [6, 9], severity: 2 },
+    { line: 1, column: 11, range: [10, 11], severity: 1 }
   ]);
-  assert.match(formatDiagnostic(diagnostics[0]), /^title:1:3: 推奨表現/u);
+  assert.match(formatDiagnostic(diagnostics[0]), /^title:1:3: error: 推奨表現/u);
+  assert.match(formatDiagnostic(diagnostics[2]), /^title:1:11: warning: バージョン/u);
 });
 
 test("空の文章を成功として扱う", async () => {

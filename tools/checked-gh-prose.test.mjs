@@ -4,10 +4,14 @@ import test from "node:test";
 import { runCheckedGh } from "./checked-gh-prose.mjs";
 
 const catalog = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   forbiddenTerms: [{
     id: "sample", term: "禁止語", match: "substring",
     message: "推奨表現へ変更してください。", documentation: "docs/example.adoc#sample"
+  }],
+  warningTerms: [{
+    id: "review", term: "版", match: "substring",
+    message: "バージョンの意味か確認してください。", documentation: "docs/example.adoc#review"
   }]
 };
 
@@ -35,6 +39,23 @@ test("禁止語があればghを実行しない", async () => {
   );
   assert.equal(status, 1);
   assert.equal(executed, false);
+});
+
+test("注意語だけなら警告を報告してghを実行する", async () => {
+  const reports = [];
+  let executed = false;
+  const status = await runCheckedGh(
+    ["issue", "comment", "683", "--body", "安定版です。"],
+    {
+      catalog,
+      execute: () => { executed = true; return { status: 0 }; },
+      report: (diagnostic) => reports.push(diagnostic)
+    }
+  );
+  assert.equal(status, 0);
+  assert.equal(executed, true);
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].severity, 1);
 });
 
 test("検査対象のない操作とstdinの本文を拒否する", async () => {

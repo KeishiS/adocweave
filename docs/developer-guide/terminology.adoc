@@ -126,7 +126,7 @@ link:../../config/japanese-terminology.json[`config/japanese-terminology.json`]�
 
 | version
 | ``schema-version``、``packageVersion``、``--version``
-| 版を指す「バージョン」
+| 「バージョン」
 
 | target
 | ``--project-root``、``target``ディレクトリ、``local-target-unverifiable``
@@ -148,6 +148,13 @@ link:../../config/japanese-terminology.json[`config/japanese-terminology.json`]�
 | ``DocumentRevision``の解析世代やfilesystem resource bindingの世代など、異なる識別子を指します
 | 「世代」。同名で意味が異なるため、文書では対象となる識別子を必ず特定します
 |===
+
+[#version-wording-review]
+=== 「版」の確認
+
+「版」は、バージョン、配布形態、刊行物および組版など複数の意味を持つため、禁止語にはしません。
+用語検査は「版」を見つけると警告を表示します。バージョンの意味で使用している場合は「バージョン」と
+記載してください。それ以外の意味で適切に使用している場合は変更不要です。
 
 == 単純に置き換える語
 

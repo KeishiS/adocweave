@@ -86,7 +86,7 @@ export async function runCheckedGh(
   const checked = checkedArguments(args, readText);
   const diagnostics = await lintGitHubMarkdown(checked.documents, catalog);
   for (const diagnostic of diagnostics) report(diagnostic);
-  if (diagnostics.length > 0) return 1;
+  if (diagnostics.some(({ severity }) => severity === 2)) return 1;
   const result = execute("gh", checked.ghArgs, { stdio: "inherit" });
   if (result.error) throw result.error;
   return result.status ?? 1;

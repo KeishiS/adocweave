@@ -1,4 +1,4 @@
-const catalogKeys = ["forbiddenTerms", "schemaVersion"];
+const catalogKeys = ["forbiddenTerms", "schemaVersion", "warningTerms"];
 const entryKeys = ["documentation", "id", "match", "message", "term"];
 
 function assertRecord(value, name) {
@@ -23,39 +23,47 @@ function assertNonEmptyString(value, name) {
 function validateCatalog(catalog) {
   assertRecord(catalog, "日本語用語集");
   assertExactKeys(catalog, catalogKeys, "日本語用語集");
-  if (catalog.schemaVersion !== 1 || !Array.isArray(catalog.forbiddenTerms)) {
+  if (
+    catalog.schemaVersion !== 2 ||
+    !Array.isArray(catalog.forbiddenTerms) ||
+    !Array.isArray(catalog.warningTerms)
+  ) {
     throw new Error("日本語用語集のschemaVersionを解釈できません。");
   }
 
   const ids = new Set();
-  const entries = catalog.forbiddenTerms.map((entry, index) => {
-    const name = `日本語用語集のforbiddenTerms[${index}]`;
-    assertRecord(entry, name);
-    assertExactKeys(entry, entryKeys, name);
-    assertNonEmptyString(entry.id, `${name}.id`);
-    assertNonEmptyString(entry.term, `${name}.term`);
-    assertNonEmptyString(entry.message, `${name}.message`);
-    assertNonEmptyString(entry.documentation, `${name}.documentation`);
-    if (entry.match !== "substring") {
-      throw new Error(`${name}.matchを解釈できません: ${String(entry.match)}`);
-    }
-    if (ids.has(entry.id)) {
-      throw new Error(`日本語用語集のidが重複しています: ${entry.id}`);
-    }
-    ids.add(entry.id);
-    return Object.freeze({
-      id: entry.id,
-      term: entry.term,
-      match: entry.match,
-      message: entry.message,
-      documentation: entry.documentation
-    });
+  const validateEntries = (entries, key) => Object.freeze(
+    entries.map((entry, index) => {
+      const name = `日本語用語集の${key}[${index}]`;
+      assertRecord(entry, name);
+      assertExactKeys(entry, entryKeys, name);
+      assertNonEmptyString(entry.id, `${name}.id`);
+      assertNonEmptyString(entry.term, `${name}.term`);
+      assertNonEmptyString(entry.message, `${name}.message`);
+      assertNonEmptyString(entry.documentation, `${name}.documentation`);
+      if (entry.match !== "substring") {
+        throw new Error(`${name}.matchを解釈できません: ${String(entry.match)}`);
+      }
+      if (ids.has(entry.id)) {
+        throw new Error(`日本語用語集のidが重複しています: ${entry.id}`);
+      }
+      ids.add(entry.id);
+      return Object.freeze({
+        id: entry.id,
+        term: entry.term,
+        match: entry.match,
+        message: entry.message,
+        documentation: entry.documentation
+      });
+    })
+  );
+  return Object.freeze({
+    forbiddenTerms: validateEntries(catalog.forbiddenTerms, "forbiddenTerms"),
+    warningTerms: validateEntries(catalog.warningTerms, "warningTerms")
   });
-  return Object.freeze(entries);
 }
 
-export function createTerminologyRule(catalog, options = {}) {
-  const entries = validateCatalog(catalog);
+function createRule(entries, options) {
   const { ignoreStandaloneUrls = false } = options;
   return (context) => {
     const { Syntax, RuleError, locator, report } = context;
@@ -83,4 +91,19 @@ export function createTerminologyRule(catalog, options = {}) {
       }
     };
   };
+}
+
+export function createTerminologyRules(catalog, options = {}) {
+  const entries = validateCatalog(catalog);
+  return Object.freeze([
+    Object.freeze({
+      ruleId: "adocweave-terminology",
+      rule: createRule(entries.forbiddenTerms, options)
+    }),
+    Object.freeze({
+      ruleId: "adocweave-terminology-warning",
+      rule: createRule(entries.warningTerms, options),
+      options: Object.freeze({ severity: "warning" })
+    })
+  ]);
 }
