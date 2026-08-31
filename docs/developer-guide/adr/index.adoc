@@ -49,3 +49,4 @@ ADRは、複数の機能に影響する長期的な設計判断と、その理�
 * xref:0044-lsp-open-document-scope.adoc[ADR 0044: Language Serverの解析対象を開いた文書へ限定]
 * xref:0045-project-owned-configuration.adoc[ADR 0045: プロジェクト設定をプロジェクト処理へ統合]
 * xref:0046-project-owned-local-filesystem.adoc[ADR 0046: ローカルファイル操作をプロジェクト処理へ統合]
+* xref:0047-standard-workflow-audit.adoc[ADR 0047: workflowの検査を標準toolへ委ねる]

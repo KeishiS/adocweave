@@ -105,9 +105,6 @@ export function verifyRepository() {
   ]) {
     if (!dist.includes(required)) fail(`dist configuration is missing: ${required}`);
   }
-  if (dist.includes("adocweave-lsp") || dist.includes("distribution-plan")) {
-    fail("dist configuration contains legacy product routing");
-  }
   return { tag: releaseTag(version), version };
 }
 

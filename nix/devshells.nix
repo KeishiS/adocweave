@@ -51,6 +51,7 @@ let
     yq-go
     zip
     unzip
+    zizmor
   ];
 
   # The VS Code extension host is a downloaded Electron binary rather than a Nix
