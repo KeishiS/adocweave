@@ -17,7 +17,7 @@
 
 == 決定
 
-開発者が直接使用する検査入口を、sourceの``verify``、securityの``security-audit``、配布candidateの
+開発者が直接使用する検査入口を、sourceの``verify``、securityの``security-audit``、実行環境を使う統合検査の
 ``acceptance``、公開前の``release-check``に分けます。整形操作の``fmt``と``fmt-check``、引数なしの
 ``cargo make``を``verify``へ接続する``default``も維持します。CIが製品を選択するために直接呼ぶtaskは
 名前と用途を固定し、それ以外のtaskは``private``にします。
@@ -25,8 +25,9 @@
 ``verify``はsource検査の実体とし、``source-gate``との別名関係を廃止します。``verify``ではlockfileから生成する
 noticeと配布metadataを検査し、``security-audit``では配布runtimeのlicense、取得元およびadvisoryを監査します。
 ``security-audit``は旧``dependency-governance``との中間関係を持ちません。``acceptance``は``verify``を前提としてmain向けの
-統合検査とglobal配布candidateの受入検査だけを行い、source検査を繰り返しません。``release-check``が
-``verify``、``security-audit``、``acceptance``、配布計画および成果物sizeの検査を一つの実行計画へ合成します。
+統合検査だけを行い、source検査を繰り返しません。``release-check``が``verify``、``security-audit``、``acceptance``および
+native配布計画の検査を一つの実行計画へ合成します。独立したnpmパッケージとエディタ拡張の候補は、各公開workflowが
+自身の候補検査だけを実行します。
 
 Makefileにはtask間の依存関係、実行するtoolおよび引数だけを置きます。archiveの構築、展開、内容一覧、再構築および
 checksum比較は``tools/``以下の専用scriptへ置きます。Web向けとNode.js向けで共通するWebAssemblyのcompileは一つの
