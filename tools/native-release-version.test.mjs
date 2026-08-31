@@ -77,7 +77,7 @@ test("CLI引数はnative版の検査と更新だけを受理する", () => {
     mode: "update",
     version: "1.2.3",
   });
-  for (const args of [[], ["--product", "cli", "--check"], ["--version"], ["--check", "extra"]]) {
+  for (const args of [[], ["--unknown", "value"], ["--version"], ["--check", "extra"]]) {
     assert.throws(() => parseNativeVersionArguments(args), /usage:/);
   }
 });

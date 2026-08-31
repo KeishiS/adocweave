@@ -86,10 +86,7 @@ args = ["--test", "packages/wasm/protocol-wasm.test.mjs"]
 [tasks.native-release-checks]
 category = "CI entry points"
 description = "Verify the native version, release tag, cargo-dist artifacts, and Cargo metadata"
-dependencies = [
-  "native-version-check",
-  "workflow-policy",
-]
+dependencies = ["native-version-check"]
 script_runner = "@shell"
 script = '''
 node --test \
@@ -149,50 +146,42 @@ description = "Audit distributed dependency licenses, sources, and current advis
 command = "bash"
 args = ["tools/security-audit.sh"]
 
-[tasks.workflow-policy]
+[tasks.release-tool-tests]
 private = true
-description = "Verify common workflow safety and each distribution workflow"
+description = "Test the scripts that build, publish, and observe the distribution artifacts"
 script_runner = "@shell"
 script = '''
-node tools/workflow-safety.mjs
-node tools/native-release-workflow.mjs
-node tools/cachix-publish-workflow.mjs
-node tools/textlint-plugin-publish-workflow.mjs
-node tools/wasm-publish-workflow.mjs
-node tools/vscode-publish-workflow.mjs
 node --test \
-  tools/workflow-safety.test.mjs \
-  tools/native-release-workflow.test.mjs \
-  tools/cachix-publish-workflow.test.mjs \
-  tools/textlint-plugin-publish-workflow.test.mjs \
-  tools/wasm-publish-workflow.test.mjs \
-  tools/vscode-publish-workflow.test.mjs \
   tools/cachix-smoke.test.mjs \
   tools/wasm-release-budget.test.mjs \
   tools/npm-publication.test.mjs \
   tools/open-vsx-publication.test.mjs \
-  tools/workflow-policy-library.test.mjs \
   tools/security-audit.test.mjs
 '''
 
 [tasks.workflow-lint]
 private = true
-description = "Lint GitHub Actions syntax and enforce the release security policy"
-dependencies = ["workflow-policy"]
-command = "actionlint"
-args = [
-  "-ignore",
-  'unknown permission scope "vulnerability-alerts"',
-  "-ignore",
-  "SC2086",
-  "-ignore",
-  "SC2129",
-]
+description = "Lint GitHub Actions syntax and audit workflow security"
+script_runner = "@shell"
+script = '''
+actionlint \
+  -ignore 'unknown permission scope "vulnerability-alerts"' \
+  -ignore SC2086 \
+  -ignore SC2129
+# 除外した箇所と理由は.github/zizmor.ymlにあります。medium未満は確度が低く、現在は
+# 成果物のsha256を比較する式だけが該当するため、失敗の条件をmedium以上にします。
+zizmor --offline --no-progress --min-severity medium .github/workflows
+'''
 
 [tasks.native-release-ci]
 private = true
-description = "Run the native release checks, workflow lint, and cargo-dist plan used by pull requests"
-dependencies = ["native-release-checks", "workflow-lint", "dist-plan"]
+description = "Run the native release checks, workflow lint, tool tests, and cargo-dist plan used by pull requests"
+dependencies = [
+  "native-release-checks",
+  "workflow-lint",
+  "release-tool-tests",
+  "dist-plan",
+]
 
 [tasks.native-platform-contract]
 private = true
