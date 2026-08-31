@@ -723,13 +723,26 @@ const fn math_language_feature(language: crate::inline_model::MathLanguage) -> (
 mod tests {
     use crate::inline_model::MathLanguage;
     use crate::preprocessor::{
-        PreprocessOptions, ResourceDocument, ResourceSnapshot, preprocess_and_analyze,
+        EffectiveProcessingOptions, PreprocessInputs, PreprocessOptions, ResourceDocument,
+        ResourceSnapshot,
     };
     use crate::reference::ResolvedReference;
     use crate::{AnalysisOptions, Engine, SourceId};
 
     use super::*;
     use crate::core::AnalysisInputs;
+
+    fn analyze_preprocessed_fixture(
+        analysis_options: AnalysisOptions,
+        source: &str,
+        snapshot: &ResourceSnapshot,
+        options: &PreprocessOptions,
+    ) -> crate::preprocessor::PreprocessedAnalysis {
+        EffectiveProcessingOptions::new(analysis_options, options.clone())
+            .expect("fixture analysis and preprocess options must match")
+            .preprocess_and_analyze(source, snapshot, PreprocessInputs::default())
+            .expect("preprocessed analysis")
+    }
 
     #[test]
     fn rendering_features_are_typed_unique_and_deterministically_sorted() {
@@ -784,13 +797,12 @@ mod tests {
             enable_includes: true,
             ..PreprocessOptions::default()
         };
-        let preprocessed = preprocess_and_analyze(
-            &Engine::new(AnalysisOptions::default()),
+        let preprocessed = analyze_preprocessed_fixture(
+            AnalysisOptions::default(),
             "include::features.adoc[]\n",
             &snapshot,
             &options,
-        )
-        .expect("preprocessed analysis");
+        );
 
         assert_eq!(
             rendering_features(&preprocessed.analysis),

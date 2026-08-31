@@ -4,9 +4,9 @@ use std::sync::Arc;
 use adocweave_core::output::diagnostics::PROTECTED_ATTRIBUTE;
 use adocweave_core::preprocess::{
     EffectiveProcessingOptions, PreprocessErrorKind, PreprocessInputs, PreprocessOptions,
-    ProcessingOptionsError, ResourceDocument, ResourceSnapshot, preprocess, preprocess_and_analyze,
+    ProcessingOptionsError, ResourceDocument, ResourceSnapshot, preprocess,
 };
-use adocweave_core::{AnalysisOptions, Engine, SourceId};
+use adocweave_core::{AnalysisOptions, SourceId};
 
 fn matching_options() -> (AnalysisOptions, PreprocessOptions) {
     let attributes = BTreeMap::from([("selected".to_owned(), Some("part".to_owned()))]);
@@ -65,41 +65,6 @@ fn one_effective_contract_drives_conditionals_includes_analysis_and_protected_at
 }
 
 #[test]
-fn compatibility_entry_rejects_every_shared_setting_mismatch_before_preprocessing() {
-    for (expected, change) in [
-        (ProcessingOptionsError::ExternalAttributes, 0_u8),
-        (ProcessingOptionsError::AttributeExpansionDepth, 1_u8),
-        (ProcessingOptionsError::AttributeExpansionBytes, 2_u8),
-    ] {
-        let (analysis, mut preprocess) = matching_options();
-        match change {
-            0 => {
-                preprocess.attributes.clear();
-            }
-            1 => {
-                preprocess.max_attribute_expansion_depth += 1;
-            }
-            2 => {
-                preprocess.max_attribute_expansion_bytes += 1;
-            }
-            _ => unreachable!(),
-        }
-        let error = preprocess_and_analyze(
-            &Engine::new(analysis),
-            "include::missing.adoc[]\n",
-            &ResourceSnapshot::default(),
-            &preprocess,
-        )
-        .expect_err("mismatched settings");
-        assert!(matches!(
-            error,
-            adocweave_core::preprocess::PreprocessedAnalysisError::Options(actual)
-                if actual == expected
-        ));
-    }
-}
-
-#[test]
 fn processing_option_errors_keep_stable_codes_and_public_error_classification() {
     for (expected, code, change) in [
         (
@@ -130,16 +95,6 @@ fn processing_option_errors_keep_stable_codes_and_public_error_classification() 
         assert!(matches!(
             EffectiveProcessingOptions::new(analysis.clone(), preprocess.clone()),
             Err(actual) if actual == expected
-        ));
-        assert!(matches!(
-            preprocess_and_analyze(
-                &Engine::new(analysis),
-                "include::missing.adoc[]\n",
-                &ResourceSnapshot::default(),
-                &preprocess,
-            ),
-            Err(adocweave_core::preprocess::PreprocessedAnalysisError::Options(actual))
-                if actual == expected && actual.as_str() == code
         ));
     }
 }

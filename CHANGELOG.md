@@ -7,6 +7,17 @@ separate changelogs for the
 [VS Code extension](https://github.com/KeishiS/adocweave/blob/main/editors/vscode/CHANGELOG.md), and
 [Zed extension](https://github.com/KeishiS/adocweave/blob/main/editors/zed/CHANGELOG.md).
 
+## [0.58.0] - 2026-08-31
+
+### Rust API
+
+- The unused `preprocess_and_analyze` and `preprocess_and_analyze_with` free functions are removed. `EffectiveProcessingOptions` is now the only combined preprocessing and analysis entry point, and `PreprocessedAnalysisError::Options` is removed because option validation occurs when that value is constructed.
+- The unused `PRODUCT_NAME` constant is removed from `adocweave-core`.
+
+### Migration
+
+- Construct `EffectiveProcessingOptions` from `AnalysisOptions` and `PreprocessOptions`, handle `ProcessingOptionsError` at construction, and call `EffectiveProcessingOptions::preprocess_and_analyze`. Applications that displayed `PRODUCT_NAME` must own their product display name.
+
 ## [0.57.0] - 2026-08-31
 
 ### Rust API
@@ -103,6 +114,7 @@ if let Ok(expanded) = analysis.expanded {
 }
 ```
 
+[0.58.0]: https://github.com/KeishiS/adocweave/compare/v0.57.0...v0.58.0
 [0.57.0]: https://github.com/KeishiS/adocweave/compare/v0.56.5...v0.57.0
 [0.56.5]: https://github.com/KeishiS/adocweave/compare/v0.56.4...v0.56.5
 [0.56.4]: https://github.com/KeishiS/adocweave/compare/v0.56.3...v0.56.4

@@ -4,6 +4,17 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use super::*;
 use crate::cancellation::CHECKPOINT_INTERVAL;
 
+fn analyze_preprocessed_fixture(
+    analysis_options: crate::core::AnalysisOptions,
+    source: &str,
+    snapshot: &ResourceSnapshot,
+    options: &PreprocessOptions,
+) -> Result<PreprocessedAnalysis, PreprocessedAnalysisError> {
+    EffectiveProcessingOptions::new(analysis_options, options.clone())
+        .expect("fixture analysis and preprocess options must match")
+        .preprocess_and_analyze(source, snapshot, PreprocessInputs::default())
+}
+
 struct CancelAfter {
     checks: AtomicUsize,
     completed_checks: usize,
@@ -747,66 +758,22 @@ fn line_selection_normalizes_unordered_overlapping_and_boundary_ranges() {
 fn combined_processing_classifies_preprocess_cancellation_separately() {
     let cancellation = crate::core::CancellationToken::new();
     cancellation.cancel();
+    let options = EffectiveProcessingOptions::new(
+        crate::core::AnalysisOptions::default(),
+        PreprocessOptions::default(),
+    )
+    .expect("matching options");
 
     assert!(matches!(
-        preprocess_and_analyze_with(
-            &Engine::new(crate::core::AnalysisOptions::default()),
+        options.preprocess_and_analyze(
             "paragraph\n",
             &ResourceSnapshot::default(),
-            &PreprocessOptions::default(),
             PreprocessInputs {
                 cancellation: Some(&cancellation)
             }
         ),
         Err(PreprocessedAnalysisError::Cancelled)
     ));
-}
-
-#[test]
-fn never_cancel_combined_processing_preserves_success_and_preprocess_errors() {
-    let mut snapshot = ResourceSnapshot::default();
-    snapshot.insert(
-        "part.adoc",
-        ResourceDocument {
-            source_id: SourceId::new("part"),
-            source: "included\n".into(),
-        },
-    );
-    let engine = Engine::new(crate::core::AnalysisOptions::default());
-    let options = PreprocessOptions::default();
-    let expected = preprocess_and_analyze(&engine, "include::part.adoc[]\n", &snapshot, &options)
-        .expect("compatibility analysis");
-    let actual = preprocess_and_analyze_with(
-        &engine,
-        "include::part.adoc[]\n",
-        &snapshot,
-        &options,
-        PreprocessInputs::default(),
-    )
-    .expect("cancellable analysis");
-
-    assert_eq!(actual.document, expected.document);
-    assert_eq!(
-        actual.analysis.document().snapshot(),
-        expected.analysis.document().snapshot()
-    );
-    assert_eq!(
-        actual.analysis.diagnostics(),
-        expected.analysis.diagnostics()
-    );
-
-    let expected_error =
-        preprocess_and_analyze(&engine, "include::missing.adoc[]\n", &snapshot, &options)
-            .expect_err("compatibility preprocessing error");
-    let actual_error = preprocess_and_analyze_with(
-        &engine,
-        "include::missing.adoc[]\n",
-        &snapshot,
-        &options,
-        PreprocessInputs::default(),
-    )
-    .expect_err("cancellable preprocessing error");
-    assert_eq!(actual_error, expected_error);
 }
 
 #[test]
@@ -1148,9 +1115,8 @@ endif::[]
 
     let mut analysis_options = crate::AnalysisOptions::default();
     analysis_options.attributes.clone_from(&options.attributes);
-    let analyzed =
-        preprocess_and_analyze(&Engine::new(analysis_options), source, &snapshot, &options)
-            .expect("preprocessed analysis");
+    let analyzed = analyze_preprocessed_fixture(analysis_options, source, &snapshot, &options)
+        .expect("preprocessed analysis");
     let locked = analyzed
         .analysis
         .attribute_environment()
@@ -1298,9 +1264,8 @@ fn analysis_projection_maps_reference_resource_and_symbol_targets() {
             source: "== Included\nSee xref:other.adoc#target[] and image::cover.png[].\n".into(),
         },
     );
-    let engine = Engine::new(crate::core::AnalysisOptions::default());
-    let analysis = preprocess_and_analyze(
-        &engine,
+    let analysis = analyze_preprocessed_fixture(
+        crate::core::AnalysisOptions::default(),
         "include::part.adoc[]\n",
         &snapshot,
         &PreprocessOptions {
@@ -1351,9 +1316,8 @@ fn analysis_projection_marks_transformed_anchor_ranges_as_uneditable() {
             source: "  xref:other.adoc#target[]\n".into(),
         },
     );
-    let engine = Engine::new(crate::core::AnalysisOptions::default());
-    let analysis = preprocess_and_analyze(
-        &engine,
+    let analysis = analyze_preprocessed_fixture(
+        crate::core::AnalysisOptions::default(),
         "include::part.adoc[indent=-2]\n",
         &snapshot,
         &PreprocessOptions {
@@ -1381,9 +1345,8 @@ fn analysis_projection_maps_included_body_attribute_occurrences() {
             source: included.into(),
         },
     );
-    let engine = Engine::new(crate::core::AnalysisOptions::default());
-    let analysis = preprocess_and_analyze(
-        &engine,
+    let analysis = analyze_preprocessed_fixture(
+        crate::core::AnalysisOptions::default(),
         "include::attributes.adoc[]\n",
         &snapshot,
         &PreprocessOptions {
@@ -1447,8 +1410,8 @@ fn analysis_projection_connects_attribute_references_to_included_bindings() {
             source: included.into(),
         },
     );
-    let analysis = preprocess_and_analyze(
-        &Engine::new(crate::core::AnalysisOptions::default()),
+    let analysis = analyze_preprocessed_fixture(
+        crate::core::AnalysisOptions::default(),
         root,
         &snapshot,
         &PreprocessOptions {
@@ -1502,9 +1465,8 @@ fn analysis_projection_preserves_each_included_attribute_value_line() {
             source: included.into(),
         },
     );
-    let engine = Engine::new(crate::core::AnalysisOptions::default());
-    let analysis = preprocess_and_analyze(
-        &engine,
+    let analysis = analyze_preprocessed_fixture(
+        crate::core::AnalysisOptions::default(),
         "include::multiline.adoc[]\n",
         &snapshot,
         &PreprocessOptions {
@@ -1556,8 +1518,8 @@ fn empty_attribute_value_at_an_include_boundary_projects_to_the_include() {
             source: included.into(),
         },
     );
-    let analysis = preprocess_and_analyze(
-        &Engine::new(crate::core::AnalysisOptions::default()),
+    let analysis = analyze_preprocessed_fixture(
+        crate::core::AnalysisOptions::default(),
         "include::empty.adoc[]\n\nBody\n",
         &snapshot,
         &PreprocessOptions {
@@ -1605,9 +1567,8 @@ fn source_map_and_projection_limits_fail_explicitly() {
     .expect_err("source map limit");
     assert_eq!(source_map_error.kind, PreprocessErrorKind::SourceMapLimit);
 
-    let engine = Engine::new(crate::core::AnalysisOptions::default());
-    let analysis = preprocess_and_analyze(
-        &engine,
+    let analysis = analyze_preprocessed_fixture(
+        crate::core::AnalysisOptions::default(),
         "= Title\n\n== Section\n",
         &ResourceSnapshot::default(),
         &PreprocessOptions::default(),

@@ -159,9 +159,6 @@ fn parse_error(error: ParseError) -> AdocWeaveError {
 
 fn preprocessed_analysis_error(error: PreprocessedAnalysisError) -> AdocWeaveError {
     match error {
-        PreprocessedAnalysisError::Options(error) => {
-            request_conversion::invalid_request(error.to_string())
-        }
         PreprocessedAnalysisError::Preprocess(error) => {
             let code = match error.kind {
                 PreprocessErrorKind::DepthLimit

@@ -5,9 +5,9 @@ use adocweave_core::preprocess::{
     DirectiveKind, EffectivePreprocessStep, EffectiveProcessingOptions, PreparedAnalysisError,
     PreprocessErrorKind, PreprocessFailure, PreprocessInputs, PreprocessOptions, ProjectionFailure,
     ProjectionLimits, ResourceDocument, ResourceLookup, ResourceLookupResult, ResourceSnapshot,
-    SourceMapping, preprocess, preprocess_and_analyze_with, preprocess_with,
+    SourceMapping, preprocess, preprocess_with,
 };
-use adocweave_core::{AnalysisOptions, CancellationToken, Engine, NeverCancel};
+use adocweave_core::{AnalysisOptions, CancellationToken, NeverCancel};
 use serde_json::Value;
 
 fn public_fixture() -> Value {
@@ -244,13 +244,16 @@ fn cancellable_preprocess_and_projection_apis_are_public() {
         PreprocessFailure::Cancelled
     );
 
-    let analysis = adocweave_core::preprocess::preprocess_and_analyze(
-        &Engine::new(AnalysisOptions::default()),
-        "text\n",
-        &ResourceSnapshot::default(),
-        &PreprocessOptions::default(),
-    )
-    .expect("analysis");
+    let options =
+        EffectiveProcessingOptions::new(AnalysisOptions::default(), PreprocessOptions::default())
+            .expect("matching options");
+    let analysis = options
+        .preprocess_and_analyze(
+            "text\n",
+            &ResourceSnapshot::default(),
+            PreprocessInputs::default(),
+        )
+        .expect("analysis");
     assert_eq!(
         analysis
             .project_origins_cancellable(ProjectionLimits::default(), &cancellation)
@@ -258,11 +261,9 @@ fn cancellable_preprocess_and_projection_apis_are_public() {
         ProjectionFailure::Cancelled
     );
     assert!(matches!(
-        preprocess_and_analyze_with(
-            &Engine::new(AnalysisOptions::default()),
+        options.preprocess_and_analyze(
             "text\n",
             &ResourceSnapshot::default(),
-            &PreprocessOptions::default(),
             PreprocessInputs {
                 cancellation: Some(&cancellation)
             }
