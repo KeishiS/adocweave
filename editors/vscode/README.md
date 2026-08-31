@@ -9,14 +9,14 @@ This extension provides the following features:
 
 ## Installation
 
-After `adocweave.adocweave` is listed in Visual Studio Marketplace or Open VSX, install it with the command for your editor. The official publisher is the `adocweave` namespace.
+Install `adocweave.adocweave` from Visual Studio Marketplace or Open VSX with the command for your editor. The official publisher is the `adocweave` namespace.
 
 ```sh
 code --install-extension adocweave.adocweave
 codium --install-extension adocweave.adocweave
 ```
 
-Until it is listed, build and install a VSIX from a repository checkout:
+To try a development or unpublished version, build and install a VSIX from a repository checkout:
 
 ```sh
 nix develop

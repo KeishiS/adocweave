@@ -45,10 +45,6 @@ xref:zed-development.adoc[Zed拡張の開発]に記載しています。作業�
 https://github.com/KeishiS/adocweave/issues/848[Zed拡張を公式レジストリへ提出できる構成にする]で
 管理します。
 
-Visual Studio Marketplaceは2026-08-28に方針を改め、公開する対象としました。Open VSX Registryを
-利用しないVisual Studio Codeでは、拡張の発見と自動更新を利用できなかったためです。作業は
-https://github.com/KeishiS/adocweave/issues/82[公式extension registryへの公開]で管理します。
-
 CLIのnpm公開は、効果が利用側1リポジトリのCIに限られる一方で、標準的な構成では公開packageが
 5つに増えて継続的な負担となるため中止しました。``npx``による単発実行を対外的な入口として
 提供する必要が生じた場合に再評価します。
