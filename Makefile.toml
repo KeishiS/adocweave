@@ -170,7 +170,6 @@ node --test \
   tools/cachix-smoke.test.mjs \
   tools/wasm-release-budget.test.mjs \
   tools/npm-publication.test.mjs \
-  tools/normalize-darwin-archives.test.mjs \
   tools/open-vsx-publication.test.mjs \
   tools/workflow-policy-library.test.mjs \
   tools/security-audit.test.mjs
@@ -338,18 +337,6 @@ dependencies = [
   "textlint-plugin-release-consumer-e2e",
 ]
 
-[tasks.textlint-plugin-post-publication-npm-smoke]
-category = "CI entry points"
-description = "Observe the clean install and one-shot npx paths from the npm Registry after publication"
-command = "node"
-args = ["tools/textlint-plugin-npm-smoke.mjs"]
-
-[tasks.wasm-post-publication-npm-smoke]
-category = "CI entry points"
-description = "Observe the clean install and public entry resolution from the npm Registry after publication"
-command = "node"
-args = ["tools/wasm-npm-smoke.mjs"]
-
 [tasks.test-wasm-release-package]
 private = true
 description = "Verify WebAssembly release archive layout and deterministic bytes"
@@ -514,23 +501,6 @@ description = "Compare native and actual WASM results over shared conformance fi
 dependencies = ["build-conformance-native", "build-wasm-node"]
 command = "npm"
 args = ["run", "test:cross-runtime", "--prefix", "packages/wasm"]
-
-[tasks.wasm-size]
-private = true
-description = "Report the byte sizes of the WebAssembly artifacts that ship"
-dependencies = ["package-wasm-release"]
-script_runner = "@shell"
-script = '''
-# package-wasm-release leaves the wasm profile wasm-bindgen output here and
-# copies it into the archive, so these are the bytes consumers download.
-for artifact in target/adocweave-wasm/*; do
-  bytes="$(wc -c < "$artifact")"
-  echo "$bytes $artifact"
-done
-version="$(node --input-type=module -e "import manifest from './packages/wasm/package.json' with { type: 'json' }; process.stdout.write(manifest.version)")"
-archive="target/distrib/adocweave-wasm-$version.tgz"
-echo "$(wc -c < "$archive") $archive"
-'''
 
 [tasks.fuzz-smoke]
 category = "CI entry points"

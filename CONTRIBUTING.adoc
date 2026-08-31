@@ -155,12 +155,13 @@ Rustの許可licenseと取得元は``deny.toml``、VS Code拡張の配布runtime
 
 . 対象のmanifestとlockfileだけを更新し、無関係な依存関係の変更を分離します。
 . ``cargo make security-audit``を実行します。
-. license、取得元、生成されるnoticeおよびbrowser sizeの差分を確認します。
+. license、取得元、生成されるnoticeおよび``@adocweave/wasm``の大きさの差分を確認します。
 . 通常の品質検査を通してからpull requestを統合します。
 
 同じcrateの複数バージョンが依存関係へ入ることは禁止しません。上流のバージョン制約で決まる値であり、
-一覧を保守しても実害を防げないためです。重複が問題になるのは成果物の大きさとbuild時間であり、
-これらはbrowser archiveとraw WebAssemblyの上限、VSIXのsize上限および``wasm-size``が検査します。
+一覧を保守しても実害を防げないためです。重複が問題になるのは成果物の大きさとbuild時間です。大きさは
+次の2つが上限を超えていないことを確かめます。``test-wasm-smoke``は``@adocweave/wasm``のarchiveと
+WebAssembly本体の大きさを、``test-vscode-release-determinism``はVSIXの大きさを検査します。
 
 ``security-audit``は、``cargo-deny``が実行時に取得する最新のRustSec Advisory Databaseを使い、root workspaceと
 Zed拡張のadvisory、licenseおよび取得元を検査します。npmはVS Code拡張の配布runtime treeだけを標準の
