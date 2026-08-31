@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-const ROOT = new URL("../", import.meta.url);
 const ZED = new URL("../editors/zed/", import.meta.url);
 
 function read(url, encoding = "utf8") {
@@ -27,10 +26,6 @@ assert.doesNotMatch(manifest, /^\[grammars\./mu);
 
 const cargoManifest = read(new URL("Cargo.toml", ZED));
 assert.match(cargoManifest, /^version = "0\.0\.0"$/mu);
-const toolchains = JSON.parse(read(new URL("toolchains.json", ROOT)));
-const rustVersion = /^rust-version = "([^"]+)"$/mu.exec(cargoManifest);
-assert.ok(rustVersion, "editors/zed/Cargo.toml is missing rust-version");
-assert.equal(rustVersion[1], toolchains.rustVersion, "Zed Rust version does not match toolchains.json");
 
 const license = read(new URL("LICENSE", ZED));
 assert.match(license, /^MIT License\n/u);

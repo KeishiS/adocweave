@@ -44,6 +44,8 @@ node tools/zed-registry-contract.mjs
 Rustのテストは実行ファイルの選択と``adocweave lsp``の起動引数を検査します。レジストリ用の検査は
 拡張の基本情報、license、iconおよびバージョン管理を確認します。また、README、Changelogおよび拡張ソースに
 日本語が含まれていないことを確認します。
+Pull RequestのCIでは、公式レジストリが固定しているRustで``wasm32-wasip2``向けに構築します。
+``editors/zed/Cargo.toml``の``rust-version``はその版以下とし、root workspaceの開発用Rustとは別に管理します。
 
 [#zed-development-install]
 == 開発用拡張の導入
@@ -77,7 +79,9 @@ GitHub Releaseから現在のOSとCPUに合うnative実行ファイルを取得�
 ``fixtures/zed/manual.adoc``で次を確認します。
 
 * ``AsciiDoc``拡張による言語認識と基本的な構文強調
-* AdocWeaveによる診断、Outline、hover、補完、定義参照、参照検索および文書整形
+* AdocWeaveによる診断、Outline、hoverおよび文書整形
+* ``<<zed-manual-target``まで入力したときの補完
+* ``<<zed-manual-target,参照先>>``から見出しへの移動と、``[#zed-manual-target]``からの参照検索
 * 編集後の診断更新と、同じ文書を再び整形したときに差分が生じないこと
 
 起動に失敗した場合は``zed: open log``でZedのログを開きます。明示した実行ファイルについては

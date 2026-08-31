@@ -63,17 +63,37 @@ jobs:
           rustup toolchain install "$rust_version" --profile minimal
           rustup run "$rust_version" cargo test --locked -p adocweave-project -p adocweave-lsp --all-features
 
+  zed-registry:
+    name: zed-registry
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build with the official Zed registry Rust version
+        shell: bash
+        run: |
+          # The official registry builds extensions with Rust 1.90.
+          rustup toolchain install 1.90 --profile minimal --target wasm32-wasip2
+          rustup run 1.90 cargo build --locked --release \
+            --manifest-path editors/zed/Cargo.toml --target wasm32-wasip2
+
   verify:
     name: verify
     if: always()
-    needs: [source, portable-project]
+    needs: [source, portable-project, zed-registry]
     runs-on: ubuntu-24.04
     steps:
       - name: Require every source check
         env:
           SOURCE_RESULT: ${{ needs.source.result }}
           PORTABLE_PROJECT_RESULT: ${{ needs.portable-project.result }}
-        run: test "$SOURCE_RESULT" = success && test "$PORTABLE_PROJECT_RESULT" = success
+          ZED_REGISTRY_RESULT: ${{ needs.zed-registry.result }}
+        run: |
+          test "$SOURCE_RESULT" = success
+          test "$PORTABLE_PROJECT_RESULT" = success
+          test "$ZED_REGISTRY_RESULT" = success
 
   security:
     name: security-audit
