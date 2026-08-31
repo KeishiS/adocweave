@@ -141,7 +141,10 @@ jobs:
         shell: "bash"
         run: "echo \"MACOSX_DEPLOYMENT_TARGET=14.0\" >> \"$GITHUB_ENV\""
       - name: "Generate third-party notices"
-        run: "node tools/generate-third-party-notices.mjs THIRD_PARTY_NOTICES.adoc"
+        shell: "bash"
+        env:
+          NATIVE_TARGET: ${{ matrix.targets[0] }}
+        run: "node tools/generate-third-party-notices.mjs --native \"$NATIVE_TARGET\" THIRD_PARTY_NOTICES.adoc"
       - name: Install dist
         run: ${{ matrix.install_dist.run }}
       # Get the dist-manifest

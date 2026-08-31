@@ -90,10 +90,8 @@ dependencies = ["native-version-check"]
 script_runner = "@shell"
 script = '''
 node --test \
-  tools/generate-third-party-notices.test.mjs \
   tools/native-release-acceptance.test.mjs \
-  tools/native-release-checks.test.mjs \
-  tools/verify-vscode-dependencies.test.mjs
+  tools/native-release-checks.test.mjs
 metadata="$(mktemp "${TMPDIR:-/tmp}/adocweave-release-metadata.XXXXXX.json")"
 notice="$(mktemp "${TMPDIR:-/tmp}/adocweave-third-party-notices.XXXXXX.adoc")"
 trap 'rm -f "$metadata" "$notice"' EXIT
@@ -104,7 +102,7 @@ else
 fi
 cargo metadata --locked --format-version=1 > "$metadata"
 node tools/verify-cargo-release-metadata.mjs "$metadata"
-node tools/generate-third-party-notices.mjs "$notice"
+node tools/generate-third-party-notices.mjs --native x86_64-unknown-linux-musl "$notice"
 '''
 
 [tasks.native-release-acceptance]
@@ -238,7 +236,7 @@ private = true
 description = "Run the pinned cargo-dist plan for the native release"
 script_runner = "@shell"
 script = '''
-node tools/generate-third-party-notices.mjs THIRD_PARTY_NOTICES.adoc
+node tools/generate-third-party-notices.mjs --native x86_64-unknown-linux-musl THIRD_PARTY_NOTICES.adoc
 root="$(mktemp -d "${TMPDIR:-/tmp}/adocweave-dist-plan.XXXXXX")"
 trap 'rm -rf "$root"' EXIT
 version="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\([^"]*\)"/\1/p' Cargo.toml)"
@@ -545,6 +543,16 @@ description = "Install the locked VS Code extension dependencies without lifecyc
 command = "npm"
 args = ["ci", "--ignore-scripts", "--prefix", "editors/vscode"]
 
+[tasks.third-party-notice-contracts]
+private = true
+description = "Verify each distribution notice against its runtime dependency boundary"
+command = "node"
+args = [
+  "--test",
+  "tools/generate-third-party-notices.test.mjs",
+  "tools/verify-vscode-dependencies.test.mjs",
+]
+
 [tasks.check-vscode]
 private = true
 description = "Type-check and validate the VS Code extension manifest and TextMate grammar"
@@ -684,6 +692,7 @@ dependencies = [
   "native-release-ci",
   "native-platform-contract",
   "npm-package-contracts",
+  "third-party-notice-contracts",
   "doc-check",
   "docs-check",
   "adoc-check",
