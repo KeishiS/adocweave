@@ -183,7 +183,7 @@ Cachixと``cache.nixos.org``から必要な内容を取得します。Cachixの�
 
 最初の自動公開より前に、``github-release``、``cachix-publish``、``marketplace-publish``、``npm-publish``および
 ``open-vsx-publish``の各environmentを作成します。VS Code用の二つのenvironmentは``vscode/v*``タグだけを許可します。
-``github-release``と``cachix-publish``は``main``と``v*``、``npm-publish``は``wasm/v*``と
+``github-release``と``cachix-publish``は``main``だけ、``npm-publish``は``wasm/v*``と
 ``textlint-plugin-asciidoc/v*``を許可します。
 Open VSXのtokenはrepository全体ではなく``open-vsx-publish`` environmentへ置きます。
 ``marketplace-publish`` environmentには``AZURE_CLIENT_ID``と``AZURE_TENANT_ID``を変数として登録します。

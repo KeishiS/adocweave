@@ -29,10 +29,10 @@
 製品tag、Releaseの不在、checksumおよび成果物集合を再検査します。候補SHAの入力、過去runの検索、別runからのdownload、
 artifactの再アップロードは行いません。
 
-書き込み権限とOIDCは、``github-release`` Environmentを使う公開jobだけに付与します。Environmentにはrequired reviewerを
-設定し、deployment branch policyは``main``とstable tagのpattern``v*``だけを許可します。native Release workflowは
-``main``から手動実行し、独立したパッケージの公開workflowは各製品のstable tagから起動します。承認待ちのrunを
-新しいpushで取り消しません。
+書き込み権限とOIDCは、対応するEnvironmentを使う公開jobだけに付与します。Environmentにはrequired reviewerを
+設定します。native ReleaseとCachixのEnvironmentは``main``だけを許可し、native Release workflowは``main``から
+手動実行します。独立したパッケージの公開workflowは各製品のstable tagから起動し、対応するEnvironmentもそのtagだけを
+許可します。承認待ちのrunを新しいpushで取り消しません。
 
 Open VSX、Visual Studio Marketplace、npmおよびCachixへの後続公開はGitHub Releaseを入力とする
 独立workflowにします。通常は同じrunから呼び出しますが、

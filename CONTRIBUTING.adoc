@@ -342,8 +342,8 @@ xref:docs/developer-guide/release-distribution.adoc[GitHub Releases配布仕様]
 ``open-vsx-publish``の5つのenvironmentを作成します。各environmentのdeployment branch policyではSelected branches
 and tagsを選びます。``npm-publish``では``wasm/v*``と``textlint-plugin-asciidoc/v*``、
 ``marketplace-publish``と``open-vsx-publish``では
-``vscode/v*``を許可します。``github-release``と``cachix-publish``では``main``と``v*``を許可します。
-ネイティブ版は``main``から手動実行し、``v*``は移行前のworkflow runを再実行するために残します。
+``vscode/v*``を許可します。``github-release``と``cachix-publish``では``main``だけを許可します。
+ネイティブ版は``main``から手動実行します。
 Open VSXとCachixのtokenは対応するenvironmentへ移します。
 textlint用Processorのnpm Trusted Publisherには``textlint-plugin-publish.yml``と``npm-publish`` environment、
 Visual Studio Marketplace用の``marketplace-publish`` environmentには``AZURE_CLIENT_ID``と

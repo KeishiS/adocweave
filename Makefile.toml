@@ -741,29 +741,17 @@ dependencies = [
   "nix-package-check",
 ]
 
-[tasks.release-candidates]
-private = true
-description = "Build and verify every independently versioned package candidate"
-dependencies = [
-  "test-wasm-release-candidate",
-  "test-textlint-plugin-release-candidate",
-  "test-vscode-release-candidate",
-]
-
 # 3製品(AdocWeave、Marginalis、Renkan)で共通の外向きtask名。fmt、fmt-check、verify、security-audit、
 # acceptanceおよびrelease-checkを同じ意味で使い、既定taskはverifyとします。
 
 [tasks.acceptance]
 category = "Developer entry points"
-description = "Run main integrations and candidate acceptance suites available on the current host"
-dependencies = [
-  "main-gate",
-  "release-candidates",
-]
+description = "Run main integrations available on the current host"
+dependencies = ["main-gate"]
 
 [tasks.release-check]
 category = "Developer entry points"
-description = "Run the main gate and build publishable candidates"
+description = "Run repository gates and verify the native cargo-dist plan"
 dependencies = [
   "verify",
   "security-audit",
