@@ -212,21 +212,6 @@ impl EffectiveProcessingOptions {
     pub const fn preprocess(&self) -> &PreprocessOptions {
         &self.preprocess
     }
-
-    /// Returns whether both values belong to the same private contract.
-    ///
-    /// Equal option fields are not sufficient: only an instance and its clones
-    /// share the contract identity.
-    pub fn same_contract(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.contract, &other.contract)
-    }
-
-    /// Returns equivalent settings with one source identity and a new contract.
-    pub fn with_source_id(mut self, source_id: Option<SourceId>) -> Self {
-        self.preprocess.source_id = source_id;
-        self.contract = Arc::new(ProcessingContract);
-        self
-    }
 }
 
 /// Inconsistent values supplied while constructing effective processing options.

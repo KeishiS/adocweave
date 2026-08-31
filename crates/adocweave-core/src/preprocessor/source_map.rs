@@ -1,8 +1,8 @@
 #[cfg(test)]
 use super::SourceMapInvariantError;
 use super::{
-    Directive, ExpandedOffset, ExpandedRange, OriginRange, PreprocessNotice, PreprocessedDocument,
-    SourceId, SourceMapSegment, SourceMapping, SourceOrigin, TextRange, TextSize,
+    Directive, ExpandedRange, OriginRange, PreprocessNotice, PreprocessedDocument, SourceId,
+    SourceMapSegment, SourceMapping, SourceOrigin, TextRange, TextSize,
 };
 
 pub(super) struct SourceMapBuilder {
@@ -153,36 +153,6 @@ impl PreprocessedDocument {
 
     pub fn source_map(&self) -> &[SourceMapSegment] {
         &self.source_map
-    }
-
-    pub fn origin_at(&self, output_offset: ExpandedOffset) -> Option<&SourceOrigin> {
-        let output_offset = output_offset.text_size();
-        let index = self
-            .source_map
-            .partition_point(|segment| segment.output_range.end() <= output_offset);
-        self.source_map
-            .get(index)
-            .filter(|segment| segment.output_range.start() <= output_offset)
-            .map(|segment| &segment.origin)
-    }
-
-    /// Maps an output range to the originating source segment.
-    ///
-    /// When a range crosses include boundaries, the origin containing its
-    /// start is returned. Consumers that need exact pieces should inspect
-    /// `source_map` directly.
-    pub fn origin_for_range(&self, output_range: ExpandedRange) -> Option<&SourceOrigin> {
-        if let Some(origin) = self.origin_at(ExpandedOffset::new(output_range.start())) {
-            return Some(origin);
-        }
-        if !output_range.is_empty() {
-            return None;
-        }
-        self.source_map
-            .iter()
-            .rev()
-            .find(|segment| segment.output_range.end() == output_range.start())
-            .map(|segment| &segment.origin)
     }
 
     /// Projects an expanded range into all originating source ranges.

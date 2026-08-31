@@ -15,12 +15,14 @@ separate changelogs for the
 - `ReferenceResolver`, `ResourceResolver`, their future aliases, and the unused resolver-only `ResolutionCacheKey`, `DocumentCandidate`, and `ReverseReference` types are removed. Host resolution now uses the existing owned query and result values.
 - The unused `preprocess_and_analyze` and `preprocess_and_analyze_with` free functions are removed. `EffectiveProcessingOptions` is now the only combined preprocessing and analysis entry point, and `PreprocessedAnalysisError::Options` is removed because option validation occurs when that value is constructed.
 - The unused `PRODUCT_NAME` constant is removed from `adocweave-core`.
+- The unused `EffectiveProcessingOptions::same_contract`, `EffectiveProcessingOptions::with_source_id`, `AttributeEnvironment::expand_at_event`, `PreprocessedDocument::origin_at`, and `PreprocessedDocument::origin_for_range` methods are removed.
 
 ### Migration
 
 - Applications that cache analysis results must build a cache key from the source, `SourceId`, `AnalysisOptions`, and any external inputs that affect the result.
 - Replace resolver trait implementations by reading `Analysis::reference_queries()` and `Analysis::resource_queries()`, resolving them in application-owned code, and passing `ResolvedReference` and `ResolvedResource` values through `RenderInputs`.
 - Construct `EffectiveProcessingOptions` from `AnalysisOptions` and `PreprocessOptions`, handle `ProcessingOptionsError` at construction, and call `EffectiveProcessingOptions::preprocess_and_analyze`. Applications that displayed `PRODUCT_NAME` must own their product display name.
+- Use `PreprocessedDocument::origins_for_range` when mapping an expanded range to its source pieces. Use `AttributeEnvironment::expand_at` for expansion at a source offset, or resolve attributes with `resolve_at_event` when an event position is required.
 
 ## [0.56.5] - 2026-08-30
 
