@@ -1,0 +1,103 @@
+name: npm package publication
+
+on:
+  workflow_call:
+    inputs:
+      artifact-name:
+        required: true
+        type: string
+      archive-name:
+        required: true
+        type: string
+      package-name:
+        required: true
+        type: string
+      package-version:
+        required: true
+        type: string
+      sha256:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      PACKAGE_ARCHIVE: ${{ inputs.archive-name }}
+      PACKAGE_NAME: ${{ inputs.package-name }}
+      PACKAGE_VERSION: ${{ inputs.package-version }}
+      PACKAGE_SHA256: ${{ inputs.sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Resolve the pinned Node.js version
+        id: node-version
+        run: echo "value=$(jq -er .nodeVersion toolchains.json)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ steps.node-version.outputs.value }}
+          package-manager-cache: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: target/distrib
+      - name: Candidate verification
+        run: |
+          if [[ ! "$PACKAGE_ARCHIVE" =~ ^[A-Za-z0-9._-]+\.tgz$ ]]; then
+            echo "The package archive must be a safe tgz file name" >&2
+            exit 1
+          fi
+          if [[ ! "$PACKAGE_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "The package sha256 must contain 64 lowercase hexadecimal digits" >&2
+            exit 1
+          fi
+          tarball="$(realpath "target/distrib/$PACKAGE_ARCHIVE")"
+          test "$(sha256sum "$tarball" | cut -d ' ' -f 1)" = "$PACKAGE_SHA256"
+          manifest="$(tar -xzOf "$tarball" package/package.json)"
+          test "$(jq -er .name <<<"$manifest")" = "$PACKAGE_NAME"
+          test "$(jq -er .version <<<"$manifest")" = "$PACKAGE_VERSION"
+          echo "tarball=$tarball" >> "$GITHUB_ENV"
+      - name: Existing npm publication verification
+        id: registry
+        run: |
+          state="$(node tools/npm-publication.mjs \
+            --candidate "$tarball" --name "$PACKAGE_NAME" --version "$PACKAGE_VERSION")"
+          case "$state" in
+            missing|published) echo "state=$state" >> "$GITHUB_OUTPUT" ;;
+            *) exit 1 ;;
+          esac
+      - name: npm publication
+        if: steps.registry.outputs.state == 'missing'
+        run: |
+          minimum=11.5.1
+          actual="$(npm --version)"
+          if [ "$(printf '%s\n%s\n' "$minimum" "$actual" | sort -V | head -n1)" != "$minimum" ]; then
+            echo "Trusted Publishing requires npm $minimum or newer: $actual" >&2
+            exit 1
+          fi
+          npm publish "$tarball"
+      - name: Published package and provenance verification
+        run: |
+          for _attempt in {1..60}; do
+            state="$(node tools/npm-publication.mjs \
+              --candidate "$tarball" --name "$PACKAGE_NAME" --version "$PACKAGE_VERSION")"
+            attestations="$(npm view "$PACKAGE_NAME@$PACKAGE_VERSION" dist.attestations --json 2>/dev/null || true)"
+            predicate="$(jq -r '.provenance.predicateType // empty' <<<"$attestations")"
+            if [ "$state" = published ] && [ "$predicate" = "https://slsa.dev/provenance/v1" ]; then
+              echo "Published and verified $PACKAGE_NAME $PACKAGE_VERSION on npm"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "npm did not expose the verified package and provenance within 5 minutes" >&2
+          exit 1

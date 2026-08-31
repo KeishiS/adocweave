@@ -18,9 +18,3 @@ rules:
       # dist-workspace.tomlはcontainerを使うtargetを持ちません。
       - release.yml:116:40
       - release.yml:116:66
-  cache-poisoning:
-    ignore:
-      # actions/setup-nodeは、cache入力を与えたときだけ依存関係をcacheします。次の2箇所は
-      # node-versionだけを渡すためcacheを使いません。
-      - textlint-plugin-publish.yml:90:9
-      - wasm-publish.yml:89:9

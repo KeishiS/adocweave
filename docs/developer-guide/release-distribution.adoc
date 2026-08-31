@@ -155,19 +155,20 @@ OIDC tokenでMicrosoft Entra IDへログインします。Visual Studio Marketpl
 publisherのContributorとして登録します。PAT、client secretおよび証明書は使用しません。二つのjobは候補構築jobが
 保存した同じVSIXだけを使用します。
 
-textlint用Processorでは、``textlint-plugin-publish.yml``の公開jobだけがGitHub environment``npm-publish``で
-``id-token``の書込みを持ちます。Trusted Publisherへ登録するworkflow identityは
-``textlint-plugin-publish.yml``、Environment名は``npm-publish``です。workflowは
+textlint用Processorでは、``textlint-plugin-publish.yml``から呼び出す共通のnpm公開jobだけが
+GitHub environment``npm-publish``で``id-token``の書込みを持ちます。呼出元と共通workflowの双方で
+``id-token``の書込みを許可します。Trusted Publisherへ登録するworkflow identityは
+``textlint-plugin-publish.yml``、Environment名は``npm-publish``です。呼出元workflowは
 ``textlint-plugin-asciidoc/vX.Y.Z``タグ、パッケージの版、commitおよび``main``への統合を照合してから
-構築済みの成果物を送信します。公開後はnpmから導入し直し、署名、provenance、固定した利用側および
-``npx``での動作を確認します。
+構築済みの成果物を共通workflowへ渡します。公開後は別のjobでnpmから導入し直し、署名、provenance、
+固定した利用側および``npx``での動作を確認します。
 
-WebAssemblyパッケージでは、``wasm-publish.yml``の公開jobだけがGitHub environment``npm-publish``で
-``id-token``の書込みを持ちます。Trusted Publisherへ登録するworkflow identityは``wasm-publish.yml``、
-Environment名は``npm-publish``です。workflowは
+WebAssemblyパッケージでは、``wasm-publish.yml``から同じnpm公開jobを呼び出します。呼出元と共通workflowの
+双方で``id-token``の書込みを許可します。Trusted Publisherへ登録するworkflow identityは
+``wasm-publish.yml``、Environment名は``npm-publish``です。呼出元workflowは
 ``wasm/vX.Y.Z``タグ、``packages/wasm/package.json``の版、commitおよび``main``への統合を照合してから
-構築済みの成果物を送信します。公開後はnpmから導入し直し、``npm audit signatures``で署名とprovenanceを検証して、
-Node.jsと実ブラウザーで同じパッケージを確認します。
+構築済みの成果物を共通workflowへ渡します。公開後は別のjobでnpmから導入し直し、
+``npm audit signatures``で署名とprovenanceを検証して、Node.jsと実ブラウザーで同じパッケージを確認します。
 
 stable Releaseの公開後に、``release.yml``の``publish-cachix`` jobだけが``CACHIX_AUTH_TOKEN``を使用します。公開jobは
 公開済みのtag、commitおよびworkspace版を照合し、同じcommitから``x86_64-linux``と``aarch64-linux``向けに
