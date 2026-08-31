@@ -8,23 +8,19 @@ import plugin from "./processor.mjs";
 import { createTerminologyRules } from "./terminology-rule.mjs";
 
 const catalog = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   forbiddenTerms: [
     {
       id: "sample",
       term: "禁止語",
-      match: "substring",
-      message: "別の表現を検討してください。",
-      documentation: "docs/developer-guide/terminology.adoc#sample"
+      message: "別の表現を検討してください。"
     }
   ],
   warningTerms: [
     {
       id: "review",
       term: "版",
-      match: "substring",
-      message: "バージョンの意味か確認してください。",
-      documentation: "docs/developer-guide/terminology.adoc#review"
+      message: "バージョンの意味か確認してください。"
     }
   ]
 };
@@ -73,12 +69,6 @@ test("空のtermを規則生成時に拒否する", () => {
   const invalid = structuredClone(catalog);
   invalid.forbiddenTerms[0].term = "";
   assert.throws(() => createTerminologyRules(invalid), /termは空でない文字列/);
-});
-
-test("未対応のmatchを規則生成時に拒否する", () => {
-  const invalid = structuredClone(catalog);
-  invalid.forbiddenTerms[0].match = "word";
-  assert.throws(() => createTerminologyRules(invalid), /matchを解釈できません/);
 });
 
 test("重複するidを規則生成時に拒否する", () => {
