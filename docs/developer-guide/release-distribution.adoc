@@ -52,8 +52,9 @@ link:../../editors/vscode/CHANGELOG.md[拡張のChangelog]に記録します。
 
 公開処理の正本は、native版が``release.yml``、WebAssemblyパッケージが
 ``wasm-publish.yml``、textlint用Processorが``textlint-plugin-publish.yml``、VS Code拡張が
-``vscode-publish.yml``です。Zed拡張は公式レジストリへ``editors/zed``を提出します。各workflowは自身のtag、
-manifest、候補の検査、公開および公開後確認だけを扱います。
+``vscode-publish.yml``です。Zed拡張は公式レジストリへ``editors/zed``を提出します。native版は``main``から
+Release workflowを手動実行し、ほかの公開workflowは自身のtagから起動します。各workflowは自身のmanifest、
+候補の検査、公開および公開後確認だけを扱います。
 
 [#distribution-boundary]
 == 配布単位
@@ -182,24 +183,25 @@ Cachixと``cache.nixos.org``から必要な内容を取得します。Cachixの�
 
 最初の自動公開より前に、``github-release``、``cachix-publish``、``marketplace-publish``、``npm-publish``および
 ``open-vsx-publish``の各environmentを作成します。VS Code用の二つのenvironmentは``vscode/v*``タグだけを許可します。
-``github-release``と``cachix-publish``は``v*``、``npm-publish``は``wasm/v*``と
+``github-release``と``cachix-publish``は``main``と``v*``、``npm-publish``は``wasm/v*``と
 ``textlint-plugin-asciidoc/v*``を許可します。
 Open VSXのtokenはrepository全体ではなく``open-vsx-publish`` environmentへ置きます。
 ``marketplace-publish`` environmentには``AZURE_CLIENT_ID``と``AZURE_TENANT_ID``を変数として登録します。
 textlint packageのTrusted Publisherには``textlint-plugin-publish.yml``、WebAssemblyパッケージのTrusted Publisherには
 ``wasm-publish.yml``を登録し、それぞれ``npm-publish`` environmentと対応させます。
 
-repositoryへの書込み権限がある利用者による手元からのtag作成を、workflowだけで機械的に禁止することはできません。
-tag rulesetを追加せず、公開前検査によって権限を制限する理由は
+native版のtag pushはRelease workflowを起動しません。``main``からの手動実行とenvironmentの承認で公開を制限します。
+独自のtag rulesetを追加せず、公開前検査とenvironmentで権限を分ける理由は
 xref:adr/0023-publication-boundary.adoc#publication-authority[ADR 0023]を参照してください。
 
 [#publication-failure]
 == 公開と失敗時保証
 
-公開前検査に成功した``main``のcommitへ``vX.Y.Z``タグを作成すると、cargo-distのRelease workflowが起動します。
-native Releaseの検査は、checkout時に``origin/main``を含む履歴を取得し、tag、commitおよびworkspace版の対応と、
-tagのcommitが``main``に含まれることを``host``より前に一度だけ検査します。workflowはplanを生成し、native成果物を
-構築して検査した後、一つのGitHub Releaseへ公開します。
+公開前検査に成功した``main``から、まずRelease workflowへ``dry-run``を指定します。``dry-run``は4対象プラットフォームの
+native成果物を構築して検査しますが、tagとGitHub Releaseを作成しません。成功したcommitが現在の``main``の先端と
+一致することを確認してから、同じworkflowへ``vX.Y.Z``を指定します。native Releaseの検査は、指定したtag、workspace版
+および実行元が``main``であることを``host``より前に一度だけ確認します。workflowはplanを生成し、native成果物を
+構築して検査した後、一つのGitHub Releaseとtagを作成します。
 異なるworkflow runや手元の成果物を途中で混在させません。Release作成に成功すると、Release workflow内の
 ``publish-cachix`` jobがplanで確定したtagとReleaseを作成した完全なcommit SHAを使ってNixパッケージを構築し、
 Cachixへ送信します。このjobはstableなRelease、tagのcommit、checkoutしたcommitおよびworkspace版を照合します。

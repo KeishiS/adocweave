@@ -2,13 +2,19 @@ name: Native release checks
 
 on:
   workflow_call:
+    inputs:
+      release_tag:
+        description: Stable release tag to validate
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: read
 
 jobs:
   verify:
-    if: github.event_name == 'push'
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -19,14 +25,5 @@ jobs:
       - uses: DeterminateSystems/determinate-nix-action@527f17dd63d2d60d3e5552934bc84b9a33a14d11 # v3.22.2
       - name: Native version, tag, and cargo-dist plan
         env:
-          RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: nix develop .#ci -c cargo make native-release-checks
-      - name: Stable tag commit belongs to main
-        if: ${{ github.event_name == 'push' }}
-        env:
-          RELEASE_COMMIT: ${{ github.sha }}
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          tag_commit="$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")"
-          test "$tag_commit" = "$RELEASE_COMMIT"
-          git merge-base --is-ancestor "$tag_commit" refs/remotes/origin/main

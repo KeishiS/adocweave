@@ -30,10 +30,10 @@ xref:../../../CONTRIBUTING.adoc[コントリビューションガイド]を基�
 計画、構築、検査およびcandidate集約はread-onlyで実行します。GitHub Releaseへの書込みと、attestationへ
 署名するためのOIDCは、保護した``github-release`` Environmentを使う公開jobだけへ与えます。外部actionは
 完全なcommit SHAへ固定します。各Environmentのdeployment branch policyは、その配布物の公開workflowを起動する
-stable tagのpatternだけを許可します。
+``main``またはstable tagのpatternだけを許可します。
 
-Release workflowは書込み権限を持つ``host``より前にnative Releaseの検査を一度実行し、stable tagのcommitが
-``main``に含まれることを検査します。この検査に必要な``origin/main``の履歴は検査job内で取得します。後続の
+Release workflowは``main``から手動実行します。書込み権限を持つ``host``より前にnative Releaseの検査を一度実行し、
+指定したstable tagとworkspace版が一致することを検査します。後続の
 Cachix公開jobは検査済みのtagとcommitを使い、``main``との関係を重ねて検査しません。
 
 ネイティブ版のCachix公開jobは``release.yml``へ直接置き、GitHub Releaseの公開後に動かします。このjob自身へ

@@ -243,7 +243,8 @@ cargo make acceptance
 ----
 
 このtaskは``verify``済みのsourceを前提に、cross target、実WASM、エディタ、fuzzおよびNixの統合検査を行い、
-WebAssemblyパッケージとVS Code拡張の配布candidateを構築して受入検査を実行し、Zed開発用拡張を検査します。
+WebAssemblyパッケージ、textlint用ProcessorおよびVS Code拡張の配布candidateを構築して受入検査を実行し、
+Zed開発用拡張を検査します。
 ``release-check``は
 ``verify``と``acceptance``を一つの実行計画へ合成するため、同じtaskを重複して実行しません。
 
@@ -259,8 +260,9 @@ required status checkを``verify``一件へ置き換えます。
 == Tag
 
 ネイティブ版には``vX.Y.Z``形式のtagを使用します。リリース用Pull Requestを``main``へ統合し、そのcommitに対する
-release gateが成功した後にtagを作成して``upstream``へpushします。tagのpushを契機にcargo-distが成果物を構築し、
-GitHub Releaseを作成します。公開済みtagの更新と削除は行いません。tagの作成条件と公開失敗時の扱いは
+release gateが成功した後、cargo-distのRelease workflowを``main``から手動実行します。cargo-distが成果物を構築し、
+GitHub Releaseとtagを作成します。ネイティブ版のtagを手元からpushしません。公開済みtagの更新と削除は行いません。
+tagの作成条件と公開失敗時の扱いは
 xref:docs/developer-guide/release-distribution.adoc[GitHub Releases配布仕様]を基準とします。
 
 Zed拡張はこのtagとGitHub Releaseに含めません。``editors/zed/extension.toml``で独立してバージョンを管理し、
@@ -296,14 +298,21 @@ node tools/native-release-version.mjs --check
 ----
 . ``cargo make release-check``を実行し、pull requestの必須checkが成功したことを確認して``main``へ統合します。
 . release対象のPull Requestをすべて統合し、公開対象が``main``の先端であることと、そのcommitに対するrelease gateの
-  成功を確認します。対象commitへannotated tagを作成し、``upstream``へpushします。
+  成功を確認します。Release workflowを``dry-run``で実行します。``dry-run``は公開せず、4対象プラットフォームのnative archiveを
+  構築して成果物試験まで実行します。
 +
 [source,console]
 ----
-git tag -a vX.Y.Z -m "AdocWeave vX.Y.Z"
-git push upstream vX.Y.Z
+gh workflow run release.yml --ref main -f tag=dry-run
 ----
-. cargo-distのworkflowが、4つのnative成果物を構築して検査し、一つのGitHub Releaseへ添付します。
+. ``dry-run``が成功したcommitと現在の``main``の先端が同じであることを確認し、同じworkflowへ
+  ``vX.Y.Z``を指定してstable releaseを開始します。
++
+[source,console]
+----
+gh workflow run release.yml --ref main -f tag=vX.Y.Z
+----
+. cargo-distのworkflowが、検査済みの4つのnative成果物を一つのGitHub Releaseへ添付し、tagを作成します。
   独立版のnpmパッケージとVS Code拡張は、このReleaseに含めません。
 . Release workflowがCachixの公開jobを実行し、書込みtokenを持たない後続jobが公開済みパッケージを取得して確認します。
 . Cachixへの公開を含むRelease workflow全体が成功し、予定されたassetを含むstableなGitHub Releaseが作成されたことを
@@ -333,8 +342,9 @@ xref:docs/developer-guide/release-distribution.adoc[GitHub Releases配布仕様]
 ``open-vsx-publish``の5つのenvironmentを作成します。各environmentのdeployment branch policyではSelected branches
 and tagsを選びます。``npm-publish``では``wasm/v*``と``textlint-plugin-asciidoc/v*``、
 ``marketplace-publish``と``open-vsx-publish``では
-``vscode/v*``、ほかのenvironmentでは``v*``だけを許可します。公開workflowはtag pushで動くため、``main``だけを
-許可する設定では公開jobを開始できません。Open VSXとCachixのtokenは対応するenvironmentへ移します。
+``vscode/v*``を許可します。``github-release``と``cachix-publish``では``main``と``v*``を許可します。
+ネイティブ版は``main``から手動実行し、``v*``は移行前のworkflow runを再実行するために残します。
+Open VSXとCachixのtokenは対応するenvironmentへ移します。
 textlint用Processorのnpm Trusted Publisherには``textlint-plugin-publish.yml``と``npm-publish`` environment、
 Visual Studio Marketplace用の``marketplace-publish`` environmentには``AZURE_CLIENT_ID``と
 ``AZURE_TENANT_ID``を変数として登録します。
@@ -458,7 +468,7 @@ clean環境で、公開assetだけを使って実行します。
 === 公開前
 
 * [ ] 公開する変更をすべて統合し、対象commitの``main``向けrelease gateが成功しています。
-* [ ] workspace版、``CHANGELOG.md``の対象項目および作成する``vX.Y.Z``tagが一致しています。
+* [ ] workspace版、``CHANGELOG.md``の対象項目およびRelease workflowへ指定する``vX.Y.Z``tagが一致しています。
 * [ ] VS Code拡張を公開する場合は、``editors/vscode/package.json``の版、
       ``editors/vscode/CHANGELOG.md``の対象項目および作成する``vscode/vX.Y.Z``tagが一致しています。
 
