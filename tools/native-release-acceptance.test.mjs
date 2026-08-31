@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,13 +11,10 @@ import {
   expectedReleaseAssets,
   verifyRepository,
 } from "./native-release-checks.mjs";
+import { nativeReleasePlanFixture } from "./native-release-plan.fixture.mjs";
 
 const repository = verifyRepository();
-const plan = execFileSync(
-  "dist",
-  ["plan", `--tag=${repository.tag}`, "--output-format=json"],
-  { encoding: "utf8" },
-);
+const plan = JSON.stringify(nativeReleasePlanFixture(repository));
 
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");

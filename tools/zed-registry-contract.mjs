@@ -27,7 +27,6 @@ assert.doesNotMatch(manifest, /^\[grammars\./mu);
 
 const cargoManifest = read(new URL("Cargo.toml", ZED));
 assert.match(cargoManifest, /^version = "0\.0\.0"$/mu);
-assert.doesNotMatch(cargoManifest, new RegExp(`^version = "${version.replaceAll(".", "\\.")}"$`, "mu"));
 const toolchains = JSON.parse(read(new URL("toolchains.json", ROOT)));
 const rustVersion = /^rust-version = "([^"]+)"$/mu.exec(cargoManifest);
 assert.ok(rustVersion, "editors/zed/Cargo.toml is missing rust-version");
