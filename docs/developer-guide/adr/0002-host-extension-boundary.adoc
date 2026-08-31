@@ -10,10 +10,13 @@
 
 コアは標準構文、汎用属性、通常リンクおよび型付きxrefを解析します。任意スキームの意味、
 永続化、アクセス制御および解決済みURLはホストが解析後に付加します。
-xrefは記述時の構造とソースのrangeを``authored_destination``へ保持し、属性展開後にresolver、
+xrefは記述時の構造とソースのrangeを``authored_destination``へ保持し、属性展開後に利用側アプリ、
 用途別の解析結果および出力が共有する参照先を``target``へ保持します。consumerは意味判定に``target``を使用します。
 
-コアはlocalのファイル候補を型付きqueryとして公開しますが、filesystemへアクセスしません。
+コアは参照とリソースを型付きqueryとして公開しますが、filesystemへアクセスしません。
+利用側アプリは解析後にqueryを解決し、``ResolvedReference``と``ResolvedResource``を
+``RenderInputs``へ格納して出力処理へ渡します。コアは非同期処理のインターフェイスを定めず、
+解決済みの所有値だけを受け取ります。
 project root、path正規化、symlink解決、実在性、ファイル種別および読み取り上限はホストが所有します。
 一つのcommandまたはrequestでは、include読込とlocal target検査が同じsessionを使用し、
 正規化済みpathごとの成功・失敗とUTF-8本文を共有します。
@@ -31,6 +34,6 @@ Canonical pathはfilesystemのcache keyと安全性検査にだけ使用しま�
 == 帰結
 
 製品拡張は別リポジトリで実装できます。Parserへ任意コードを注入するplug-in ABIは提供せず、
-拡張は公開Analysis、用途別の解析結果およびResolver仕様だけを利用します。
+拡張は公開Analysis、型付きquery、解決結果および用途別の解析結果だけを利用します。
 同じtargetが複数回現れる場合も位置は個別に保持し、filesystemへの問い合わせだけを共有します。
 検証済みtargetは取得時点のbyte列を所有するため、後続処理はfilesystemの状態変化に依存しません。

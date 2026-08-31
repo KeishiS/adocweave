@@ -1,16 +1,10 @@
-//! Host boundary for generic cross-document and scheme reference resolution.
+//! Typed queries and owned results for cross-document and scheme references.
 //!
-//! Parsing never calls a resolver. Hosts translate parsed `Reference` values into
-//! queries, await this interface, and pass validated results to consumers.
-
-use std::future::Future;
-use std::pin::Pin;
+//! Parsing exposes queries without performing I/O. Hosts resolve those queries and
+//! pass validated results to consumers as owned values.
 
 use crate::core::SourceId;
 use crate::source::TextRange;
-
-pub type ResolverFuture<'a, T> =
-    Pin<Box<dyn Future<Output = Result<T, ResolverFailure>> + Send + 'a>>;
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum ReferenceKey {
@@ -70,14 +64,6 @@ pub struct ReferenceQuery {
     pub source_id: Option<SourceId>,
     pub source_range: TextRange,
     pub target: ReferenceKey,
-}
-
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct ResolutionCacheKey {
-    pub source_id: Option<SourceId>,
-    pub target: ReferenceKey,
-    pub profile_version: u16,
-    pub document_version: i64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -179,49 +165,6 @@ impl ResolvedReference {
             outcome: ResolutionOutcome::Failed(failure),
         }
     }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DocumentCandidate {
-    pub source_id: SourceId,
-    pub label: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ReverseReference {
-    pub source_id: SourceId,
-    pub source_range: TextRange,
-}
-
-/// Asynchronous I/O owned by a CLI, editor, server, or WASM host.
-pub trait ReferenceResolver: Send + Sync {
-    fn document_candidates<'a>(
-        &'a self,
-        query: &'a str,
-    ) -> ResolverFuture<'a, Vec<DocumentCandidate>>;
-
-    fn resolve_document<'a>(
-        &'a self,
-        source: Option<&'a SourceId>,
-        document: &'a str,
-    ) -> ResolverFuture<'a, SourceId>;
-
-    fn resolve_scheme<'a>(
-        &'a self,
-        scheme: &'a str,
-        locator: &'a str,
-    ) -> ResolverFuture<'a, SourceId>;
-
-    fn resolve_anchor<'a>(
-        &'a self,
-        document: &'a SourceId,
-        anchor: Option<&'a str>,
-    ) -> ResolverFuture<'a, String>;
-
-    fn reverse_references<'a>(
-        &'a self,
-        target: &'a ReferenceKey,
-    ) -> ResolverFuture<'a, Vec<ReverseReference>>;
 }
 
 pub fn query_from_reference(

@@ -363,12 +363,6 @@ impl LintConfig {
                 .map_or(Severity::Warning, |descriptor| descriptor.default_severity),
         })
     }
-
-    pub(crate) fn configured_rules(
-        &self,
-    ) -> impl ExactSizeIterator<Item = (LintRuleId, RuleSettings)> + '_ {
-        self.rules.iter().map(|(rule, settings)| (*rule, *settings))
-    }
 }
 
 struct LintDiagnosticSink<'a> {

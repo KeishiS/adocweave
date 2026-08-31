@@ -1,8 +1,6 @@
-//! Host boundary for media resources referenced by standard macros.
+//! Typed queries and owned results for media resources referenced by standard macros.
 
 use std::fmt;
-use std::future::Future;
-use std::pin::Pin;
 use std::str::FromStr;
 
 use crate::core::SourceId;
@@ -310,14 +308,6 @@ impl ResolvedResource {
             outcome: ResourceOutcome::Failed(failure),
         }
     }
-}
-
-pub type ResourceFuture<'a> =
-    Pin<Box<dyn Future<Output = Result<ResourceValue, ResourceFailure>> + Send + 'a>>;
-
-/// Resource I/O is exclusively owned by the host and is never called while parsing.
-pub trait ResourceResolver: Send + Sync {
-    fn resolve<'a>(&'a self, query: &'a ResourceQuery) -> ResourceFuture<'a>;
 }
 
 #[cfg(test)]
