@@ -39,17 +39,18 @@ fn one_session_owns_connection_lifecycle_and_cancellation() {
 
 #[test]
 fn one_project_request_captures_primary_and_open_include_overlays() {
+    let fixture = IncludeFixture::new("include::part.adoc[]\n", "included overlay\n");
     let mut session = Session::default();
     initialize(&mut session, &["utf-16"]);
     open(
         &mut session,
-        "file:///book/part.adoc",
+        fixture.include_uri.as_str(),
         1,
         "included overlay\n",
     );
     let jobs = session.begin_open(typed(json!({
         "textDocument": {
-            "uri": "file:///book/root.adoc",
+            "uri": fixture.root_uri.clone(),
             "languageId": "asciidoc",
             "version": 1,
             "text": "include::part.adoc[]\n"
@@ -59,7 +60,7 @@ fn one_project_request_captures_primary_and_open_include_overlays() {
     assert_eq!(jobs.len(), 1);
     let project = jobs
         .iter()
-        .find(|job| job.uri == "file:///book/root.adoc")
+        .find(|job| job.uri == fixture.root_uri.as_str())
         .and_then(|job| job.prepared_request.as_ref())
         .expect("root project request");
     assert_eq!(project.request.targets.len(), 1);
@@ -75,13 +76,19 @@ fn one_project_request_captures_primary_and_open_include_overlays() {
 
 #[test]
 fn changed_include_overlay_retries_project_processing() {
+    let fixture = IncludeFixture::new("include::part.adoc[]\n", "old overlay\n");
     let mut session = Session::default();
     initialize(&mut session, &["utf-16"]);
-    open(&mut session, "file:///book/part.adoc", 1, "old overlay\n");
+    open(
+        &mut session,
+        fixture.include_uri.as_str(),
+        1,
+        "old overlay\n",
+    );
     let root = session
         .begin_open(typed(json!({
             "textDocument": {
-                "uri": "file:///book/root.adoc",
+                "uri": fixture.root_uri.clone(),
                 "languageId": "asciidoc",
                 "version": 1,
                 "text": "include::part.adoc[]\n"
@@ -91,7 +98,7 @@ fn changed_include_overlay_retries_project_processing() {
         .expect("root analysis");
     let overlay_jobs = session
         .begin_change(typed(json!({
-            "textDocument": {"uri": "file:///book/part.adoc", "version": 2},
+            "textDocument": {"uri": fixture.include_uri.clone(), "version": 2},
             "contentChanges": [{"text": "new overlay\n"}]
         })))
         .expect("overlay change");
@@ -116,21 +123,22 @@ fn changed_include_overlay_retries_project_processing() {
     assert!(
         session
             .documents
-            .snapshot("file:///book/root.adoc")
+            .snapshot(fixture.root_uri.as_str())
             .is_none()
     );
 }
 
 #[test]
 fn closed_include_overlay_retries_project_processing() {
+    let fixture = IncludeFixture::new("include::part.adoc[]\n", "overlay\n");
     let mut session = Session::default();
     initialize(&mut session, &["utf-16"]);
-    let overlay_uri = uri("file:///book/part.adoc");
+    let overlay_uri = fixture.include_uri.clone();
     open(&mut session, overlay_uri.as_str(), 1, "overlay\n");
     let root = session
         .begin_open(typed(json!({
             "textDocument": {
-                "uri": "file:///book/root.adoc",
+                "uri": fixture.root_uri.clone(),
                 "languageId": "asciidoc",
                 "version": 1,
                 "text": "include::part.adoc[]\n"
@@ -157,20 +165,26 @@ fn closed_include_overlay_retries_project_processing() {
     assert!(
         session
             .documents
-            .snapshot("file:///book/root.adoc")
+            .snapshot(fixture.root_uri.as_str())
             .is_none()
     );
 }
 
 #[test]
 fn changed_include_overlay_retries_while_observations_are_validated() {
+    let fixture = IncludeFixture::new("include::part.adoc[]\n", "old overlay\n");
     let mut session = Session::default();
     initialize(&mut session, &["utf-16"]);
-    open(&mut session, "file:///book/part.adoc", 1, "old overlay\n");
+    open(
+        &mut session,
+        fixture.include_uri.as_str(),
+        1,
+        "old overlay\n",
+    );
     let root = session
         .begin_open(typed(json!({
             "textDocument": {
-                "uri": "file:///book/root.adoc",
+                "uri": fixture.root_uri.clone(),
                 "languageId": "asciidoc",
                 "version": 1,
                 "text": "include::part.adoc[]\n"
@@ -187,11 +201,11 @@ fn changed_include_overlay_retries_while_observations_are_validated() {
 
     let jobs = session
         .begin_change(typed(json!({
-            "textDocument": {"uri": "file:///book/part.adoc", "version": 2},
+            "textDocument": {"uri": fixture.include_uri.clone(), "version": 2},
             "contentChanges": [{"text": "new overlay\n"}]
         })))
         .expect("overlay change");
-    assert!(jobs.iter().any(|job| job.uri == "file:///book/root.adoc"));
+    assert!(jobs.iter().any(|job| job.uri == fixture.root_uri.as_str()));
     assert!(matches!(
         session.complete_analysis(validate(*completed)),
         crate::service::ProjectAnalysisAction::Ignore
@@ -200,14 +214,15 @@ fn changed_include_overlay_retries_while_observations_are_validated() {
 
 #[test]
 fn closed_include_overlay_retries_while_observations_are_validated() {
+    let fixture = IncludeFixture::new("include::part.adoc[]\n", "overlay\n");
     let mut session = Session::default();
     initialize(&mut session, &["utf-16"]);
-    let overlay_uri = uri("file:///book/part.adoc");
+    let overlay_uri = fixture.include_uri.clone();
     open(&mut session, overlay_uri.as_str(), 1, "overlay\n");
     let root = session
         .begin_open(typed(json!({
             "textDocument": {
-                "uri": "file:///book/root.adoc",
+                "uri": fixture.root_uri.clone(),
                 "languageId": "asciidoc",
                 "version": 1,
                 "text": "include::part.adoc[]\n"
@@ -228,7 +243,7 @@ fn closed_include_overlay_retries_while_observations_are_validated() {
         closed
             .reanalysis_jobs
             .iter()
-            .any(|job| job.uri == "file:///book/root.adoc")
+            .any(|job| job.uri == fixture.root_uri.as_str())
     );
     assert!(matches!(
         session.complete_analysis(validate(*completed)),
@@ -238,14 +253,15 @@ fn closed_include_overlay_retries_while_observations_are_validated() {
 
 #[test]
 fn changed_unreferenced_overlay_is_not_retried_or_retained() {
+    let fixture = IncludeFixture::new("= Root\n", "old overlay\n");
     let mut session = Session::default();
     initialize(&mut session, &["utf-16"]);
-    let overlay_uri = "file:///book/part.adoc";
-    open(&mut session, overlay_uri, 1, "old overlay\n");
+    let overlay_uri = fixture.include_uri.clone();
+    open(&mut session, overlay_uri.as_str(), 1, "old overlay\n");
     let root = session
         .begin_open(typed(json!({
             "textDocument": {
-                "uri": "file:///book/root.adoc",
+                "uri": fixture.root_uri.clone(),
                 "languageId": "asciidoc",
                 "version": 1,
                 "text": "= Root\n"
@@ -255,7 +271,7 @@ fn changed_unreferenced_overlay_is_not_retried_or_retained() {
         .expect("root analysis");
     session
         .begin_change(typed(json!({
-            "textDocument": {"uri": overlay_uri, "version": 2},
+            "textDocument": {"uri": overlay_uri.clone(), "version": 2},
             "contentChanges": [{"text": "new overlay\n"}]
         })))
         .expect("overlay change");
@@ -271,11 +287,11 @@ fn changed_unreferenced_overlay_is_not_retried_or_retained() {
     ));
     let sources = &session
         .documents
-        .get("file:///book/root.adoc")
+        .get(fixture.root_uri.as_str())
         .and_then(|document| document.view.as_ref())
         .expect("adopted root analysis")
         .sources;
-    assert!(sources.source_for_uri(overlay_uri).is_none());
+    assert!(sources.source_for_uri(overlay_uri.as_str()).is_none());
 }
 
 #[test]

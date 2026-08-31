@@ -27,8 +27,6 @@ pub struct PreparedProjectRequest {
     pub request: ProjectRequest,
     pub source_index: ProjectSourceIndex,
     pub observation_access: ProjectObservationAccess,
-    #[cfg(test)]
-    pub(crate) _synthetic_root: Option<tempfile::TempDir>,
 }
 
 #[derive(Clone, Debug)]

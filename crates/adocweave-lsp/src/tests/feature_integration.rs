@@ -219,21 +219,25 @@ fn attribute_features_follow_the_binding_visible_at_the_cursor() {
 
 #[test]
 fn attribute_definition_and_references_project_through_includes() {
+    let fixture = IncludeFixture::new(
+        "include::part.adoc[]\n\n😀 {shared}\n",
+        ":shared: included\n",
+    );
     let mut service = Session::default();
     open(
         &mut service,
-        "file:///book/part.adoc",
+        fixture.include_uri.as_str(),
         1,
         ":shared: included\n",
     );
     open(
         &mut service,
-        "file:///book/root.adoc",
+        fixture.root_uri.as_str(),
         1,
         "include::part.adoc[]\n\n😀 {shared}\n",
     );
-    let root = uri("file:///book/root.adoc");
-    let part = uri("file:///book/part.adoc");
+    let root = fixture.root_uri.clone();
+    let part = fixture.include_uri.clone();
 
     let hover = service
         .hover(&root, lsp::Position::new(2, 4))
@@ -269,7 +273,7 @@ fn attribute_definition_and_references_project_through_includes() {
     assert!(
         change(
             &mut service,
-            "file:///book/part.adoc",
+            fixture.include_uri.as_str(),
             2,
             json!([{"text": ":shared: changed\n"}])
         )
@@ -289,13 +293,13 @@ fn attribute_definition_and_references_project_through_includes() {
     let mut restarted = Session::default();
     open(
         &mut restarted,
-        "file:///book/part.adoc",
+        fixture.include_uri.as_str(),
         2,
         ":shared: changed\n",
     );
     open(
         &mut restarted,
-        "file:///book/root.adoc",
+        fixture.root_uri.as_str(),
         1,
         "include::part.adoc[]\n\n😀 {shared}\n",
     );

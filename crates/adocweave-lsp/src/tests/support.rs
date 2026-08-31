@@ -10,6 +10,27 @@ pub(super) fn uri(value: &str) -> lsp::Url {
     value.parse().expect("valid URI")
 }
 
+pub(super) struct IncludeFixture {
+    pub root_uri: lsp::Url,
+    pub include_uri: lsp::Url,
+    _directory: tempfile::TempDir,
+}
+
+impl IncludeFixture {
+    pub(super) fn new(root_source: &str, include_source: &str) -> Self {
+        let directory = tempfile::tempdir().expect("project directory");
+        let root = directory.path().join("root.adoc");
+        let include = directory.path().join("part.adoc");
+        std::fs::write(&root, root_source).expect("root document");
+        std::fs::write(&include, include_source).expect("included document");
+        Self {
+            root_uri: lsp::Url::from_file_path(root).expect("root URI"),
+            include_uri: lsp::Url::from_file_path(include).expect("include URI"),
+            _directory: directory,
+        }
+    }
+}
+
 pub(super) fn initialize_with_params(
     service: &mut Session,
     params: lsp::InitializeParams,

@@ -56,12 +56,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Verify portable project filesystem behavior
+      - name: Verify portable project and Language Server filesystem behavior
         shell: bash
         run: |
           rust_version="$(node -p "require('./toolchains.json').rustVersion")"
           rustup toolchain install "$rust_version" --profile minimal
-          rustup run "$rust_version" cargo test --locked -p adocweave-project --all-features
+          rustup run "$rust_version" cargo test --locked -p adocweave-project -p adocweave-lsp --all-features
 
   verify:
     name: verify
