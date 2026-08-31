@@ -38,6 +38,22 @@ function occurrences(source, literal) {
   return source.split(literal).length - 1;
 }
 
+function validateChangelogVersion(source, version) {
+  const escaped = version.replaceAll(".", "\\.");
+  const headings = source.match(
+    new RegExp(`^## \\[${escaped}\\] - \\d{4}-\\d{2}-\\d{2}$`, "gmu"),
+  ) ?? [];
+  if (headings.length !== 1) {
+    fail(`CHANGELOG.md must contain one dated heading for native version ${version}`);
+  }
+  const references = source.match(
+    new RegExp(`^\\[${escaped}\\]: \\S+$`, "gmu"),
+  ) ?? [];
+  if (references.length !== 1) {
+    fail(`CHANGELOG.md must contain one link reference for native version ${version}`);
+  }
+}
+
 function validateCargoLock(source, path, packages, version) {
   const blocks = source.split(/\n\n/u);
   for (const packageName of packages) {
@@ -54,9 +70,7 @@ function validateCargoLock(source, path, packages, version) {
 export function checkNativeReleaseVersion(root = ROOT) {
   const version = workspaceVersion(root);
   const changelog = readFileSync(new URL("CHANGELOG.md", root), "utf8");
-  if (occurrences(changelog, `[${version}]`) !== 2) {
-    fail(`CHANGELOG.md must contain the native version ${version} exactly twice`);
-  }
+  validateChangelogVersion(changelog, version);
   validateCargoLock(
     readFileSync(new URL("Cargo.lock", root), "utf8"),
     "Cargo.lock",
@@ -103,6 +117,10 @@ export function updateNativeReleaseVersion(version, {
   if (compareVersions(version, current) <= 0) {
     fail(`native version must be greater than ${current}: ${version}`);
   }
+  validateChangelogVersion(
+    readFileSync(new URL("CHANGELOG.md", root), "utf8"),
+    version,
+  );
   const manifestUrl = new URL("Cargo.toml", root);
   writeFileSync(
     manifestUrl,
@@ -112,17 +130,6 @@ export function updateNativeReleaseVersion(version, {
       `version = "${version}"`,
       1,
       "Cargo.toml",
-    ),
-  );
-  const changelogUrl = new URL("CHANGELOG.md", root);
-  writeFileSync(
-    changelogUrl,
-    replaceExactly(
-      readFileSync(changelogUrl, "utf8"),
-      `[${current}]`,
-      `[${version}]`,
-      2,
-      "CHANGELOG.md",
     ),
   );
   runCommand(["generate-lockfile"], root);

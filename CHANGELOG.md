@@ -1,5 +1,12 @@
 # Changelog
 
+This changelog covers the native `adocweave` executable and the public Rust APIs. See the
+separate changelogs for the
+[WebAssembly package](https://github.com/KeishiS/adocweave/blob/main/packages/wasm/CHANGELOG.md),
+[textlint plugin](https://github.com/KeishiS/adocweave/blob/main/packages/textlint-plugin-asciidoc/CHANGELOG.md),
+[VS Code extension](https://github.com/KeishiS/adocweave/blob/main/editors/vscode/CHANGELOG.md), and
+[Zed extension](https://github.com/KeishiS/adocweave/blob/main/editors/zed/CHANGELOG.md).
+
 ## [0.56.5] - 2026-08-30
 
 ### Fixed
