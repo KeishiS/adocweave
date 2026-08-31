@@ -44,7 +44,6 @@ node tools/zed-registry-contract.mjs
 Rustのテストは実行ファイルの選択と``adocweave lsp``の起動引数を検査します。レジストリ用の検査は
 拡張の基本情報、license、iconおよびバージョン管理を確認します。また、README、Changelogおよび拡張ソースに
 日本語が含まれていないことを確認します。
-
 Pull RequestのCIでは、公式レジストリが固定しているRustで``wasm32-wasip2``向けに構築します。
 ``editors/zed/Cargo.toml``の``rust-version``はその版以下とし、root workspaceの開発用Rustとは別に管理します。
 
