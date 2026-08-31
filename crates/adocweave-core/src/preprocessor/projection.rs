@@ -597,11 +597,24 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
-    use crate::core::{AnalysisOptions, CancellationCheck, Engine, SourceId};
+    use crate::core::{AnalysisOptions, CancellationCheck, SourceId};
     use crate::preprocessor::{
-        PreprocessOptions, ResourceDocument, ResourceSnapshot, preprocess_and_analyze,
+        EffectiveProcessingOptions, PreprocessInputs, PreprocessOptions, ResourceDocument,
+        ResourceSnapshot,
     };
     use std::sync::Arc;
+
+    fn analyze_preprocessed_fixture(
+        analysis_options: AnalysisOptions,
+        source: &str,
+        snapshot: &ResourceSnapshot,
+        options: &PreprocessOptions,
+    ) -> PreprocessedAnalysis {
+        EffectiveProcessingOptions::new(analysis_options, options.clone())
+            .expect("fixture analysis and preprocess options must match")
+            .preprocess_and_analyze(source, snapshot, PreprocessInputs::default())
+            .expect("preprocessed analysis")
+    }
 
     #[test]
     fn origin_projection_cancels_at_a_bounded_range_checkpoint() {
@@ -614,13 +627,12 @@ mod tests {
         }
 
         let source = "xref:target[Target]\n\n".repeat(crate::cancellation::CHECKPOINT_INTERVAL * 2);
-        let input = preprocess_and_analyze(
-            &Engine::new(AnalysisOptions::default()),
+        let input = analyze_preprocessed_fixture(
+            AnalysisOptions::default(),
             &source,
             &ResourceSnapshot::default(),
             &PreprocessOptions::default(),
-        )
-        .expect("analysis");
+        );
         let cancellation = CancelAfterFirstCheckpoint(AtomicUsize::new(0));
 
         let failure = input
@@ -633,13 +645,12 @@ mod tests {
 
     #[test]
     fn never_cancel_projection_preserves_success_and_limit_errors() {
-        let input = preprocess_and_analyze(
-            &Engine::new(AnalysisOptions::default()),
+        let input = analyze_preprocessed_fixture(
+            AnalysisOptions::default(),
             "== Section\n\nxref:missing[Missing]\n",
             &ResourceSnapshot::default(),
             &PreprocessOptions::default(),
-        )
-        .expect("analysis");
+        );
 
         assert_eq!(
             input
@@ -676,16 +687,15 @@ mod tests {
                 ),
             },
         );
-        let input = preprocess_and_analyze(
-            &Engine::new(crate::core::AnalysisOptions::default()),
+        let input = analyze_preprocessed_fixture(
+            crate::core::AnalysisOptions::default(),
             "include::part.adoc[]\n",
             &snapshot,
             &PreprocessOptions {
                 source_id: Some(SourceId::new("root")),
                 ..PreprocessOptions::default()
             },
-        )
-        .expect("analysis");
+        );
 
         let projection = input
             .project_origins(ProjectionLimits::default())

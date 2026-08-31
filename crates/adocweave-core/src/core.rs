@@ -342,10 +342,6 @@ impl Engine {
         Self { options }
     }
 
-    pub(crate) const fn options(&self) -> &AnalysisOptions {
-        &self.options
-    }
-
     pub fn analyze(&self, source: &str) -> Result<Analysis, ParseError> {
         analyze(source, &self.options)
     }

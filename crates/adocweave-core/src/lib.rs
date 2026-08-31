@@ -169,8 +169,7 @@ pub mod preprocess {
         ProjectedResource, ProjectionError, ProjectionFailure, ProjectionLimits, ResourceDocument,
         ResourceLookup, ResourceLookupResult, ResourceRequest, ResourceResponse, ResourceSnapshot,
         SafeMode, SourceMapSegment, SourceMapping, SourceOrigin, discover_includes, preprocess,
-        preprocess_and_analyze, preprocess_and_analyze_with, preprocess_with,
-        resolve_include_target,
+        preprocess_with, resolve_include_target,
     };
 }
 
@@ -215,5 +214,4 @@ pub use execution::{AnalysisRequest, AnalysisResult, DocumentRevision};
 pub use limits::{AnalysisLimits, OutputLimits, SyntaxMode};
 pub use local_target::{LocalTargetKind, LocalTargetReference, LocalTargetSyntax};
 
-pub const PRODUCT_NAME: &str = "AdocWeave";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

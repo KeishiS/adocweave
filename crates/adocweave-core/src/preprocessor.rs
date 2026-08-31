@@ -229,7 +229,7 @@ impl EffectiveProcessingOptions {
     }
 }
 
-/// Inconsistent values supplied through a compatibility processing entry point.
+/// Inconsistent values supplied while constructing effective processing options.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProcessingOptionsError {
     /// External attributes differ between analysis and preprocessing.
@@ -486,8 +486,6 @@ impl Error for PreparedAnalysisError {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PreprocessedAnalysisError {
-    /// Combined processing settings are inconsistent.
-    Options(ProcessingOptionsError),
     Preprocess(PreprocessError),
     Parse(ParseError),
     Cancelled,
@@ -496,7 +494,6 @@ pub enum PreprocessedAnalysisError {
 impl fmt::Display for PreprocessedAnalysisError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Options(error) => error.fmt(formatter),
             Self::Preprocess(error) => error.fmt(formatter),
             Self::Parse(error) => error.fmt(formatter),
             Self::Cancelled => formatter.write_str("processing was cancelled"),
@@ -520,35 +517,6 @@ impl PreprocessInputs<'_> {
     fn cancellation(&self) -> &dyn CancellationCheck {
         self.cancellation.unwrap_or(&NeverCancel)
     }
-}
-
-/// Expands a caller-provided snapshot and analyzes the resulting text.
-pub fn preprocess_and_analyze(
-    engine: &Engine,
-    source: &str,
-    snapshot: &ResourceSnapshot,
-    options: &PreprocessOptions,
-) -> Result<PreprocessedAnalysis, PreprocessedAnalysisError> {
-    preprocess_and_analyze_with(
-        engine,
-        source,
-        snapshot,
-        options,
-        PreprocessInputs::default(),
-    )
-}
-
-/// Expands and analyzes caller-provided input with optional inputs.
-pub fn preprocess_and_analyze_with(
-    engine: &Engine,
-    source: &str,
-    snapshot: &ResourceSnapshot,
-    options: &PreprocessOptions,
-    inputs: PreprocessInputs<'_>,
-) -> Result<PreprocessedAnalysis, PreprocessedAnalysisError> {
-    let options = EffectiveProcessingOptions::new(engine.options().clone(), options.clone())
-        .map_err(PreprocessedAnalysisError::Options)?;
-    options.preprocess_and_analyze(source, snapshot, inputs)
 }
 
 impl EffectiveProcessingOptions {
