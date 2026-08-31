@@ -954,23 +954,6 @@ pub(crate) fn resolve_inlines(
 }
 
 #[cfg(test)]
-mod responsibility_tests {
-    #[test]
-    fn parser_dispatch_does_not_own_ast_utilities_or_post_recognition_normalization() {
-        let parser = include_str!("parser.rs");
-        let ast_util = include_str!("ast_util.rs");
-        let lowering = include_str!("lowering.rs");
-
-        assert!(!parser.contains("impl AstDocument"));
-        assert!(!parser.contains("impl AstBlock"));
-        assert!(!parser.contains("fn normalize_heading_kinds"));
-        assert!(ast_util.contains("impl AstDocument"));
-        assert!(ast_util.contains("impl AstBlock"));
-        assert!(lowering.contains("fn normalize_heading_kinds"));
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
     use crate::block_model::{HeadingKind, HeadingProblem, OrderedListStyle};

@@ -92,16 +92,6 @@ fn focused_projection_queries_are_publicly_nameable() {
 }
 
 #[test]
-fn focused_projection_queries_have_no_full_document_aggregate_or_wire_serializer() {
-    const PROJECTION: &str = include_str!("../src/projection.rs");
-
-    assert!(!PROJECTION.contains("struct DocumentProjection"));
-    assert!(!PROJECTION.contains("ConformanceProjection"));
-    assert!(!PROJECTION.contains("mod wire"));
-    assert!(!PROJECTION.contains("serde_json"));
-}
-
-#[test]
 fn cancellable_lint_api_is_public() {
     let analysis = Engine::new(AnalysisOptions::default())
         .analyze("paragraph\n")

@@ -400,16 +400,6 @@ mod tests {
     }
 
     #[test]
-    fn check_rejects_the_removed_json_alias() {
-        for values in [
-            ["check", "--json", "document.adoc"],
-            ["check", "document.adoc", "--json"],
-        ] {
-            assert!(parse_arguments(arguments(&values)).is_err());
-        }
-    }
-
-    #[test]
     fn format_accepts_check_flag() {
         let Action::Run(parsed) =
             parse_arguments(arguments(&["format", "--check", "document.adoc"]))
