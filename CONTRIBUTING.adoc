@@ -479,7 +479,8 @@ clean環境で、公開assetだけを使って実行します。
 
 * [ ] VS Code拡張: Open VSXまたはVisual Studio Marketplaceから導入し、AsciiDoc認識、基本構文色付けおよび
       設定したLanguage Serverとの接続を確認する。
-* [ ] Zed拡張: 公式レジストリ版を導入し、``AsciiDoc``拡張との併用とLanguage ServerによるLSP機能を確認する。
+* [ ] Zed拡張: 公式レジストリへ登録した場合は、その版を導入し、``AsciiDoc``拡張との併用と
+      Language ServerによるLSP機能を確認する。
 * [ ] browser package: cross-origin isolationを使わない環境で実WASMを読み込み、HTML、診断、構造情報、解析の取消しおよび
       取消し後の再解析を確認する。
 * [ ] textlint用Processor: 新しいプロジェクトへ導入し、``.adoc``の検査と``textlint --fix``で入力が変化しないことを

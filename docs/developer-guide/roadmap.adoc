@@ -8,43 +8,11 @@ GitHub Issueを参照してください。
 https://github.com/KeishiS/adocweave/releases[GitHub Releases]のRelease Notesに記録します。
 このページには完了したmilestoneの履歴を残しません。
 
-以下は、着手するかどうかの判断が先に必要な項目です。判断の材料が揃うまで実装へ進みません。
+== Zed拡張の公式レジストリ対応
 
-== 保留中の対話的な確認環境
-
-公開済みのBrowser APIとHTML出力の仕様を利用し、Webブラウザーだけで文書を試せる環境を提供する案を
-保留しています。
-
-* https://github.com/KeishiS/adocweave/issues/84[公式Playground]
-
-公式Playgroundの公開には、配信先、公開URL、公開作業を行う権限および問題発生時に以前の状態へ戻す
-権限を決める必要があります。これらが決まるまで実装済みのローカルプレビューとは分離し、
-製品バージョンの更新やほかの機能を公開するための前提にはしません。
-
-== 条件付き候補
-
-次の作業は具体的な需要や運用上の問題が確認されるまで着手しません。
-
-* https://github.com/KeishiS/adocweave/issues/33[単体CLIのlocal resource profile評価]
-* https://github.com/KeishiS/adocweave/issues/34[RenovateによるNix依存更新の評価]
-
-単体CLIのlocal resource profileは、相対resourceを解決する需要が確認された場合に再評価します。
-RenovateによるNix依存更新は、手動更新が継続的な負担となった場合に再評価します。
-
-== 実施しない公開経路
-
-Rust libraryのcrates.ioへの公開、CLIのnpm Registryへの公開、およびOSのpackage managerへの登録と公開は
-行いません。次のIssueは実装候補ではなく、この判断と過去の検討内容を残す記録として保留します。
-
-* https://github.com/KeishiS/adocweave/issues/86[Homebrew・WinGet・Scoopの評価]
-
-Zed拡張レジストリは2026-08-30に方針を改め、公開する対象としました。通常のZedから拡張を導入するには
-公式レジストリへの登録が必要であり、GitHub Releaseへ圧縮ファイルを添付してもその代わりにならないためです。
-現在の公開先はxref:adr/0043-independent-distribution-units.adoc[ADR 0043]、提出の手順は
+公式レジストリへ提出できるように、公式の構築環境で拡張を構築できることと、
+開発用拡張でLanguage Serverの機能が動作することを確認しています。
+現在の公開方針はxref:adr/0043-independent-distribution-units.adoc[ADR 0043]、提出の手順は
 xref:zed-development.adoc[Zed拡張の開発]に記載しています。作業は
 https://github.com/KeishiS/adocweave/issues/848[Zed拡張を公式レジストリへ提出できる構成にする]で
 管理します。
-
-CLIのnpm公開は、効果が利用側1リポジトリのCIに限られる一方で、標準的な構成では公開packageが
-5つに増えて継続的な負担となるため中止しました。``npx``による単発実行を対外的な入口として
-提供する必要が生じた場合に再評価します。

@@ -42,7 +42,8 @@ node tools/zed-registry-contract.mjs
 ----
 
 Rustのテストは実行ファイルの選択と``adocweave lsp``の起動引数を検査します。レジストリ用の検査は
-manifest、README、license、icon、バージョン管理および提出例を確認します。
+拡張の基本情報、license、iconおよびバージョン管理を確認します。また、README、Changelogおよび拡張ソースに
+日本語が含まれていないことを確認します。
 
 [#zed-development-install]
 == 開発用拡張の導入
