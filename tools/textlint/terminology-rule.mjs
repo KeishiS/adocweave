@@ -1,5 +1,5 @@
 const catalogKeys = ["forbiddenTerms", "schemaVersion", "warningTerms"];
-const entryKeys = ["id", "message", "term"];
+const entryKeys = ["message", "term"];
 
 function assertRecord(value, name) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -24,28 +24,21 @@ function validateCatalog(catalog) {
   assertRecord(catalog, "日本語用語集");
   assertExactKeys(catalog, catalogKeys, "日本語用語集");
   if (
-    catalog.schemaVersion !== 3 ||
+    catalog.schemaVersion !== 4 ||
     !Array.isArray(catalog.forbiddenTerms) ||
     !Array.isArray(catalog.warningTerms)
   ) {
     throw new Error("日本語用語集のschemaVersionを解釈できません。");
   }
 
-  const ids = new Set();
   const validateEntries = (entries, key) => Object.freeze(
     entries.map((entry, index) => {
       const name = `日本語用語集の${key}[${index}]`;
       assertRecord(entry, name);
       assertExactKeys(entry, entryKeys, name);
-      assertNonEmptyString(entry.id, `${name}.id`);
       assertNonEmptyString(entry.term, `${name}.term`);
       assertNonEmptyString(entry.message, `${name}.message`);
-      if (ids.has(entry.id)) {
-        throw new Error(`日本語用語集のidが重複しています: ${entry.id}`);
-      }
-      ids.add(entry.id);
       return Object.freeze({
-        id: entry.id,
         term: entry.term,
         message: entry.message
       });
@@ -75,7 +68,7 @@ function createRule(entries, options) {
             }
             report(
               node,
-              new RuleError(`${entry.message} [${entry.id}]`, {
+              new RuleError(entry.message, {
                 padding: locator.range([index, index + entry.term.length])
               })
             );
