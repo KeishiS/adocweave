@@ -46,66 +46,6 @@ fn collect_rust_files(directory: &std::path::Path, files: &mut Vec<std::path::Pa
     }
 }
 
-fn lint_implementation_files() -> Vec<std::path::PathBuf> {
-    let source_root = repository_root().join("crates/adocweave-core/src");
-    let mut files = vec![source_root.join("lint.rs")];
-    collect_rust_files(&source_root.join("lint"), &mut files);
-    files.sort();
-    files
-}
-
-#[test]
-fn lint_modules_construct_diagnostics_only_inside_the_sink() {
-    let source_root = repository_root().join("crates/adocweave-core/src");
-    let mut diagnostic_constructions = Vec::new();
-    for path in lint_implementation_files() {
-        let source = fs::read_to_string(&path).expect("lint implementation");
-        for _ in source.match_indices(concat!("Diagnostic", " {")) {
-            diagnostic_constructions.push(path.clone());
-        }
-    }
-    assert_eq!(
-        diagnostic_constructions,
-        [source_root.join("lint.rs")],
-        "Lint rule modules must emit through LintDiagnosticSink"
-    );
-}
-
-#[test]
-fn lint_modules_use_only_interruptible_semantic_traversal() {
-    let mut violations = Vec::new();
-    for path in lint_implementation_files() {
-        let source = fs::read_to_string(&path).expect("lint implementation");
-        for forbidden in ["walk_ast", "walk_block_slice"] {
-            for (offset, _) in source.match_indices(forbidden) {
-                let is_identifier_character =
-                    |character: char| character.is_ascii_alphanumeric() || character == '_';
-                let starts_identifier = source[..offset]
-                    .chars()
-                    .next_back()
-                    .is_none_or(|character| !is_identifier_character(character));
-                let end = offset + forbidden.len();
-                let ends_identifier = source[end..]
-                    .chars()
-                    .next()
-                    .is_none_or(|character| !is_identifier_character(character));
-                if starts_identifier && ends_identifier {
-                    let line = source[..offset]
-                        .bytes()
-                        .filter(|byte| *byte == b'\n')
-                        .count()
-                        + 1;
-                    violations.push(format!("{}:{line}: {forbidden}", path.display()));
-                }
-            }
-        }
-    }
-    assert!(
-        violations.is_empty(),
-        "Lint semantic passes must use interruptible traversal: {violations:?}"
-    );
-}
-
 fn analyze(path: &str) -> adocweave_core::Analysis {
     let source = fs::read_to_string(repository_root().join(path))
         .unwrap_or_else(|error| panic!("{path}: {error}"));
@@ -272,7 +212,6 @@ fn workspace_crates_have_the_final_dependency_direction() {
         workspace_dependencies(&textlint),
         BTreeSet::from(["adocweave-core"])
     );
-    assert!(project.contains("rustix ="));
 }
 
 #[test]

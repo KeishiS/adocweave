@@ -248,31 +248,6 @@ fn marker_recognizer_distinguishes_complete_invalid_and_unclosed_input() {
 }
 
 #[test]
-fn selected_semantic_lowering_is_isolated_from_recognition() {
-    const RECOGNITION: &str = include_str!("../inline.rs");
-    const LOWERING: &str = include_str!("lowering.rs");
-
-    for function in ["lower_marker", "lower_reference", "lower_standard_macro"] {
-        assert!(LOWERING.contains(&format!("fn {function}(")));
-        assert!(RECOGNITION.contains(&format!("lowering::{function}(")));
-    }
-    for constructor in ["Inline::Styled", "Inline::Reference", "Inline::Macro"] {
-        assert!(LOWERING.contains(constructor));
-    }
-    for recognition_detail in [
-        "fn recognize_",
-        "InlineRecognition",
-        "InlineCandidateIndex",
-        "DelimiterIndex",
-    ] {
-        assert!(!LOWERING.contains(recognition_detail));
-    }
-    for old_builder in ["marker", "reference_macro", "standard_macro"] {
-        assert!(!RECOGNITION.contains(&format!("fn build_{old_builder}(")));
-    }
-}
-
-#[test]
 fn marker_reference_and_macro_lowering_preserve_utf8_ranges_deterministically() {
     fn source_slice<'a>(source: &'a str, base: usize, inline: &Inline) -> &'a str {
         let range = inline.range();

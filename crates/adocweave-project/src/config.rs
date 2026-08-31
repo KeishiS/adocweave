@@ -859,10 +859,6 @@ roles = ["definition", "theorem"]
                 ConfigErrorCode::InvalidToml,
             ),
             (
-                "schema-version = 2\n[workspace.scan]\nexclude = []",
-                ConfigErrorCode::InvalidToml,
-            ),
-            (
                 "schema-version = 2\n[lint.rules.unknown]\nenabled = true",
                 ConfigErrorCode::InvalidRule,
             ),

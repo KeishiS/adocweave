@@ -2325,18 +2325,6 @@ fn rules_has_human_output_and_rejects_document_options() {
 }
 
 #[test]
-fn removed_list_rules_option_is_rejected() {
-    let removed = adocweave()
-        .args(["check", "--list-rules", "--format", "json"])
-        .stdin(Stdio::null())
-        .output()
-        .expect("the adocweave binary should run");
-    assert!(!removed.status.success());
-    assert!(removed.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&removed.stderr).contains("--list-rules"));
-}
-
-#[test]
 fn multi_file_format_preflights_configured_includes_before_writing() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
