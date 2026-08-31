@@ -2,16 +2,17 @@ use super::*;
 
 #[test]
 fn definition_resolves_local_and_open_document_targets() {
+    let project = TestProject::new();
     let mut service = Session::default();
-    open_reference_workspace(&mut service);
-    let document_uri = uri("file:///a.adoc");
+    open_reference_workspace(&mut service, &project);
+    let document_uri = project.uri("a.adoc");
 
     let local = service
         .definition(&document_uri, lsp::Position::new(3, 7))
         .expect("definition")
         .expect("local definition");
     let local = serde_json::to_value(local).expect("serialize");
-    assert_eq!(local["uri"], "file:///a.adoc");
+    assert_eq!(local["uri"], document_uri.as_str());
     assert_eq!(local["range"]["start"]["line"], 1);
 
     let external = service
@@ -19,16 +20,17 @@ fn definition_resolves_local_and_open_document_targets() {
         .expect("definition")
         .expect("document definition");
     let external = serde_json::to_value(external).expect("serialize");
-    assert_eq!(external["uri"], "file:///b.adoc");
+    assert_eq!(external["uri"], project.uri("b.adoc").as_str());
     assert_eq!(external["range"]["start"]["line"], 1);
 }
 
 #[test]
 fn references_use_one_workspace_identity_for_local_and_document_xrefs() {
+    let project = TestProject::new();
     let mut service = Session::default();
-    open_reference_workspace(&mut service);
+    open_reference_workspace(&mut service, &project);
     let locations = service
-        .references(&uri("file:///a.adoc"), lsp::Position::new(0, 3), true)
+        .references(&project.uri("a.adoc"), lsp::Position::new(0, 3), true)
         .expect("references")
         .expect("locations");
     let values = serde_json::to_value(locations).expect("serialize");
@@ -39,7 +41,7 @@ fn references_use_one_workspace_identity_for_local_and_document_xrefs() {
             .as_array()
             .expect("locations")
             .iter()
-            .any(|location| location["uri"] == "file:///b.adoc")
+            .any(|location| location["uri"] == project.uri("b.adoc").as_str())
     );
 }
 
@@ -47,15 +49,12 @@ fn references_use_one_workspace_identity_for_local_and_document_xrefs() {
 fn references_report_unicode_ranges_in_utf8_and_utf16() {
     let source = "[[節😀]]\n== 見出し\n\n<<節😀>>\n";
     for (encoding, expected_end) in [(PositionEncoding::Utf8, 9), (PositionEncoding::Utf16, 5)] {
+        let project = TestProject::new();
         let mut service = Session::default();
         service.position_encoding = encoding;
-        open(&mut service, "file:///unicode-ref.adoc", 1, source);
+        let document = project.open(&mut service, "unicode-ref.adoc", 1, source);
         let references = service
-            .references(
-                &uri("file:///unicode-ref.adoc"),
-                lsp::Position::new(0, 2),
-                false,
-            )
+            .references(&document, lsp::Position::new(0, 2), false)
             .expect("references")
             .expect("locations");
 
@@ -67,10 +66,11 @@ fn references_report_unicode_ranges_in_utf8_and_utf16() {
 
 #[test]
 fn document_links_keep_safe_urls_and_xrefs_separate_but_navigable() {
+    let project = TestProject::new();
     let mut service = Session::default();
-    open_reference_workspace(&mut service);
+    open_reference_workspace(&mut service, &project);
     let links = service
-        .document_links(&uri("file:///a.adoc"))
+        .document_links(&project.uri("a.adoc"))
         .expect("document links")
         .expect("links");
     let values = serde_json::to_value(links).expect("serialize");
@@ -83,8 +83,10 @@ fn document_links_keep_safe_urls_and_xrefs_separate_but_navigable() {
 
     assert_eq!(targets.len(), 3);
     assert!(targets.contains(&"https://example.com/"));
-    assert!(targets.contains(&"file:///a.adoc#target"));
-    assert!(targets.contains(&"file:///b.adoc#other"));
+    let local_target = format!("{}#target", project.uri("a.adoc"));
+    let external_target = format!("{}#other", project.uri("b.adoc"));
+    assert!(targets.contains(&local_target.as_str()));
+    assert!(targets.contains(&external_target.as_str()));
 }
 
 #[test]
@@ -93,10 +95,10 @@ fn document_links_keep_exact_target_ranges_and_reject_unsafe_or_invalid_urls() {
 javascript:alert(1)[Unsafe]\n\
 https://example.com:99999[Invalid port]\n";
     for (encoding, expected_start) in [("utf-8", 5), ("utf-16", 3)] {
+        let project = TestProject::new();
         let mut service = Session::default();
         initialize(&mut service, &[encoding]);
-        let document = uri("file:///external-links.adoc");
-        open(&mut service, document.as_str(), 1, source);
+        let document = project.open(&mut service, "external-links.adoc", 1, source);
 
         let links = service
             .document_links(&document)
@@ -123,19 +125,20 @@ https://example.com:99999[Invalid port]\n";
 
 #[test]
 fn rename_uses_open_document_analyses() {
+    let project = TestProject::new();
     let mut incomplete = Session::default();
-    open(
+    let document = project.open(
         &mut incomplete,
-        "file:///a.adoc",
+        "a.adoc",
         1,
         "[[target]]\n== A\n\nSee <<target>>.\n",
     );
     let local_edit = incomplete
-        .rename(&uri("file:///a.adoc"), lsp::Position::new(0, 3), "renamed")
+        .rename(&document, lsp::Position::new(0, 3), "renamed")
         .expect("rename")
         .expect("workspace edit");
     let local_changes = local_edit.changes.expect("changes");
-    let edits = &local_changes[&uri("file:///a.adoc")];
+    let edits = &local_changes[&document];
     assert_eq!(edits.len(), 2);
     assert!(edits.contains(&lsp::TextEdit::new(
         lsp::Range::new(lsp::Position::new(0, 2), lsp::Position::new(0, 8)),
@@ -155,15 +158,16 @@ fn rename_uses_open_document_analyses() {
 
 #[test]
 fn rename_preserves_cross_document_reference_locators() {
+    let project = TestProject::new();
     let mut service = Session::default();
-    open_reference_workspace(&mut service);
+    open_reference_workspace(&mut service, &project);
 
     let edit = service
-        .rename(&uri("file:///a.adoc"), lsp::Position::new(0, 3), "renamed")
+        .rename(&project.uri("a.adoc"), lsp::Position::new(0, 3), "renamed")
         .expect("rename")
         .expect("workspace edit");
     let changes = edit.changes.expect("changes");
-    let external_edits = &changes[&uri("file:///b.adoc")];
+    let external_edits = &changes[&project.uri("b.adoc")];
     assert!(
         external_edits.contains(&lsp::TextEdit::new(
             lsp::Range::new(lsp::Position::new(3, 12), lsp::Position::new(3, 18)),
@@ -181,18 +185,19 @@ fn rename_preserves_cross_document_reference_locators() {
 
 #[test]
 fn rename_refuses_expanded_reference_destinations() {
+    let project = TestProject::new();
     let mut service = Session::default();
     initialize(&mut service, &["utf-16"]);
-    open(&mut service, "file:///a.adoc", 1, "[[target]]\n== A\n");
-    open(
+    let document = project.open(&mut service, "a.adoc", 1, "[[target]]\n== A\n");
+    project.open(
         &mut service,
-        "file:///b.adoc",
+        "b.adoc",
         1,
         ":destination: a.adoc#target\n\nxref:{destination}[A]\n",
     );
 
     let edit = service
-        .rename(&uri("file:///a.adoc"), lsp::Position::new(0, 3), "renamed")
+        .rename(&document, lsp::Position::new(0, 3), "renamed")
         .expect("rename query");
 
     assert_eq!(
@@ -201,7 +206,7 @@ fn rename_refuses_expanded_reference_destinations() {
     );
     assert!(
         service
-            .prepare_rename(&uri("file:///a.adoc"), lsp::Position::new(0, 3))
+            .prepare_rename(&document, lsp::Position::new(0, 3))
             .expect("prepare rename")
             .is_none(),
         "prepareRename and rename must apply the same safety check",
@@ -210,17 +215,18 @@ fn rename_refuses_expanded_reference_destinations() {
 
 #[test]
 fn rename_rejects_an_existing_target_id() {
+    let project = TestProject::new();
     let mut service = Session::default();
-    open(
+    let document = project.open(
         &mut service,
-        "file:///a.adoc",
+        "a.adoc",
         1,
         "[[one]]\n== One\n\n[[two]]\n== Two\n\n<<one>>\n",
     );
 
     assert!(
         service
-            .rename(&uri("file:///a.adoc"), lsp::Position::new(0, 3), "two")
+            .rename(&document, lsp::Position::new(0, 3), "two")
             .expect("rename")
             .is_none(),
         "rename must not create a duplicate target ID",
@@ -229,15 +235,15 @@ fn rename_rejects_an_existing_target_id() {
 
 #[test]
 fn rename_accepts_only_authored_anchor_ids() {
+    let project = TestProject::new();
     let mut service = Session::default();
     initialize(&mut service, &["utf-16"]);
-    open(
+    let document = project.open(
         &mut service,
-        "file:///a.adoc",
+        "a.adoc",
         1,
         "== Generated Heading\n\n[[explicit]]\n== Explicit Heading\n\nanchor:inline[]\n",
     );
-    let document = uri("file:///a.adoc");
 
     assert!(
         service
@@ -287,15 +293,15 @@ fn rename_accepts_only_authored_anchor_ids() {
 
 #[test]
 fn prepare_rename_answers_only_where_rename_produces_an_edit() {
+    let project = TestProject::new();
     let mut service = Session::default();
     initialize(&mut service, &["utf-16"]);
-    open(
+    let document = project.open(
         &mut service,
-        "file:///a.adoc",
+        "a.adoc",
         1,
         "[[target]]\n== A\n\nplain text\n",
     );
-    let document = uri("file:///a.adoc");
 
     let anchor = lsp::Position::new(0, 3);
     let response = service
@@ -337,6 +343,7 @@ fn prepare_rename_answers_only_where_rename_produces_an_edit() {
 
 #[test]
 fn prepare_rename_is_silent_for_clients_that_do_not_declare_support() {
+    let project = TestProject::new();
     let mut service = Session::default();
     let params = typed(json!({
         "processId": null,
@@ -353,16 +360,16 @@ fn prepare_rename_is_silent_for_clients_that_do_not_declare_support() {
         "a client without prepare support keeps the plain declaration",
     );
 
-    open(&mut service, "file:///a.adoc", 1, "[[target]]\n== A\n");
+    let document = project.open(&mut service, "a.adoc", 1, "[[target]]\n== A\n");
     assert!(
         service
-            .prepare_rename(&uri("file:///a.adoc"), lsp::Position::new(0, 3))
+            .prepare_rename(&document, lsp::Position::new(0, 3))
             .expect("prepare rename")
             .is_none(),
     );
     assert!(
         service
-            .rename(&uri("file:///a.adoc"), lsp::Position::new(0, 3), "renamed")
+            .rename(&document, lsp::Position::new(0, 3), "renamed")
             .expect("rename")
             .is_some(),
         "rename itself keeps working without prepare support",

@@ -590,20 +590,6 @@ impl Session {
         })?;
         let (project_root, authority_roots) = self.project_scope(&primary_path);
         let overlay_scope = project_root.clone();
-        #[cfg(test)]
-        let (project_root, authority_roots, synthetic_test_root) =
-            if !project_root.is_dir() || project_root.parent().is_none() {
-                let temporary = tempfile::tempdir().map_err(|error| ProjectProblem {
-                    document_uri: Some(snapshot.uri.clone()),
-                    range: zero_text_range(),
-                    code: "project-authority-error".to_owned(),
-                    message: error.to_string(),
-                })?;
-                let root = temporary.path().to_owned();
-                (root.clone(), vec![root], Some(temporary))
-            } else {
-                (project_root, authority_roots, None)
-            };
         let authority = ProjectAuthority::open(project_root, authority_roots).map_err(|error| {
             ProjectProblem {
                 document_uri: Some(snapshot.uri.clone()),
@@ -617,27 +603,6 @@ impl Session {
         let mut project_sources = Vec::new();
         let mut source_index = ProjectSourceIndex::default();
         let primary_id = SourceId::new("lsp:source:0");
-        #[cfg(test)]
-        let primary_path = synthetic_test_root
-            .as_ref()
-            .map_or(primary_path.clone(), |root| {
-                root.path().join(
-                    primary_path
-                        .strip_prefix("/")
-                        .unwrap_or(primary_path.as_path()),
-                )
-            });
-        #[cfg(test)]
-        if synthetic_test_root.is_some()
-            && let Some(parent) = primary_path.parent()
-        {
-            std::fs::create_dir_all(parent).map_err(|error| ProjectProblem {
-                document_uri: Some(snapshot.uri.clone()),
-                range: zero_text_range(),
-                code: "project-authority-error".to_owned(),
-                message: error.to_string(),
-            })?;
-        }
         project_sources.push(ProjectSource::new(
             primary_id.clone(),
             primary_path,
@@ -669,22 +634,6 @@ impl Session {
             };
             if !path.starts_with(&overlay_scope) {
                 continue;
-            }
-            #[cfg(test)]
-            let path = synthetic_test_root.as_ref().map_or(path.clone(), |root| {
-                root.path()
-                    .join(path.strip_prefix("/").unwrap_or(path.as_path()))
-            });
-            #[cfg(test)]
-            if synthetic_test_root.is_some()
-                && let Some(parent) = path.parent()
-            {
-                std::fs::create_dir_all(parent).map_err(|error| ProjectProblem {
-                    document_uri: Some(snapshot.uri.clone()),
-                    range: zero_text_range(),
-                    code: "project-authority-error".to_owned(),
-                    message: error.to_string(),
-                })?;
             }
             let source_id = SourceId::new(format!("lsp:source:{next_source}"));
             next_source += 1;
@@ -725,8 +674,6 @@ impl Session {
             },
             source_index,
             observation_access,
-            #[cfg(test)]
-            _synthetic_root: synthetic_test_root,
         })
     }
 

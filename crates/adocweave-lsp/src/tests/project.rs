@@ -25,14 +25,15 @@ fn workspace_folder(name: &str, path: &std::path::Path) -> serde_json::Value {
 
 #[test]
 fn unrelated_watched_file_does_not_reanalyze_an_open_document() {
-    let root = tempfile::tempdir().expect("workspace");
-    let document = root.path().join("guide.adoc");
+    let project = TestProject::new();
+    let root = project.root();
+    let document = root.join("guide.adoc");
     fs::write(&document, "= Guide\n").expect("document");
     let document_uri = lsp::Url::from_file_path(&document).expect("document URI");
     let unrelated_uri =
-        lsp::Url::from_file_path(root.path().join("unrelated.txt")).expect("unrelated URI");
+        lsp::Url::from_file_path(root.join("unrelated.txt")).expect("unrelated URI");
     let mut session = Session::default();
-    initialize_root(&mut session, root.path());
+    initialize_root(&mut session, root);
     open(&mut session, document_uri.as_str(), 1, "= Guide\n");
 
     let jobs = session.handle_workspace_files_changed(typed(json!({
@@ -44,10 +45,11 @@ fn unrelated_watched_file_does_not_reanalyze_an_open_document() {
 
 #[test]
 fn include_change_reanalyzes_only_the_observing_document() {
-    let root = tempfile::tempdir().expect("workspace");
-    let include = root.path().join("part.txt");
-    let first = root.path().join("first.adoc");
-    let second = root.path().join("second.adoc");
+    let project = TestProject::new();
+    let root = project.root();
+    let include = root.join("part.txt");
+    let first = root.join("first.adoc");
+    let second = root.join("second.adoc");
     fs::write(&include, "old\n").expect("include");
     fs::write(&first, "include::part.txt[]\n").expect("first document");
     fs::write(&second, "= Second\n").expect("second document");
@@ -55,7 +57,7 @@ fn include_change_reanalyzes_only_the_observing_document() {
     let first_uri = lsp::Url::from_file_path(&first).expect("first URI");
     let second_uri = lsp::Url::from_file_path(&second).expect("second URI");
     let mut session = Session::default();
-    initialize_root(&mut session, root.path());
+    initialize_root(&mut session, root);
     open(&mut session, first_uri.as_str(), 1, "include::part.txt[]\n");
     open(&mut session, second_uri.as_str(), 1, "= Second\n");
     fs::write(&include, "new\n").expect("changed include");
@@ -70,14 +72,15 @@ fn include_change_reanalyzes_only_the_observing_document() {
 
 #[test]
 fn missing_include_creation_reanalyzes_the_document() {
-    let root = tempfile::tempdir().expect("workspace");
-    let document = root.path().join("guide.adoc");
-    let include = root.path().join("missing.txt");
+    let project = TestProject::new();
+    let root = project.root();
+    let document = root.join("guide.adoc");
+    let include = root.join("missing.txt");
     fs::write(&document, "include::missing.txt[]\n").expect("document");
     let document_uri = lsp::Url::from_file_path(&document).expect("document URI");
     let include_uri = lsp::Url::from_file_path(&include).expect("include URI");
     let mut session = Session::default();
-    initialize_root(&mut session, root.path());
+    initialize_root(&mut session, root);
     open(
         &mut session,
         document_uri.as_str(),
@@ -96,14 +99,15 @@ fn missing_include_creation_reanalyzes_the_document() {
 
 #[test]
 fn project_config_creation_reanalyzes_the_document() {
-    let root = tempfile::tempdir().expect("workspace");
-    let document = root.path().join("guide.adoc");
-    let config = root.path().join(".adocweave.toml");
+    let project = TestProject::new();
+    let root = project.root();
+    let document = root.join("guide.adoc");
+    let config = root.join(".adocweave.toml");
     fs::write(&document, "= Guide\n").expect("document");
     let document_uri = lsp::Url::from_file_path(&document).expect("document URI");
     let config_uri = lsp::Url::from_file_path(&config).expect("config URI");
     let mut session = Session::default();
-    initialize_root(&mut session, root.path());
+    initialize_root(&mut session, root);
     open(&mut session, document_uri.as_str(), 1, "= Guide\n");
     fs::write(&config, "schema-version = 2\n").expect("config");
 
@@ -117,13 +121,14 @@ fn project_config_creation_reanalyzes_the_document() {
 
 #[test]
 fn innermost_folder_and_file_folder_select_the_expected_authority() {
-    let root = tempfile::tempdir().expect("workspace");
-    let nested = root.path().join("nested");
-    let sibling = root.path().join("sibling");
+    let project = TestProject::new();
+    let root = project.root();
+    let nested = root.join("nested");
+    let sibling = root.join("sibling");
     fs::create_dir(&nested).expect("nested folder");
     fs::create_dir(&sibling).expect("sibling folder");
     let document = nested.join("guide.adoc");
-    fs::write(root.path().join("outer.txt"), "outer\n").expect("outer resource");
+    fs::write(root.join("outer.txt"), "outer\n").expect("outer resource");
     fs::write(sibling.join("secret.txt"), "secret\n").expect("sibling resource");
     let source = "include::../outer.txt[]\ninclude::../sibling/secret.txt[]\n";
     fs::write(&document, source).expect("document");
@@ -136,7 +141,7 @@ fn innermost_folder_and_file_folder_select_the_expected_authority() {
             "processId": null,
             "capabilities": {"workspace": {"workspaceFolders": true}},
             "workspaceFolders": [
-                workspace_folder("root", root.path()),
+                workspace_folder("root", root),
                 workspace_folder("nested", &nested),
                 workspace_folder("sibling", &sibling)
             ]
@@ -243,11 +248,12 @@ fn innermost_folder_and_file_folder_select_the_expected_authority() {
 
 #[test]
 fn config_and_local_target_changes_reanalyze_only_the_observing_document() {
-    let root = tempfile::tempdir().expect("workspace");
-    let config = root.path().join(".adocweave.toml");
-    let target = root.path().join("target.adoc");
-    let first = root.path().join("first.adoc");
-    let second = root.path().join("second.adoc");
+    let project = TestProject::new();
+    let root = project.root();
+    let config = root.join(".adocweave.toml");
+    let target = root.join("target.adoc");
+    let first = root.join("first.adoc");
+    let second = root.join("second.adoc");
     fs::write(
         &config,
         "schema-version = 2\n[local-targets]\nenabled = true\nproject-root = \".\"\n",
@@ -261,7 +267,7 @@ fn config_and_local_target_changes_reanalyze_only_the_observing_document() {
     let first_uri = lsp::Url::from_file_path(&first).expect("first URI");
     let second_uri = lsp::Url::from_file_path(&second).expect("second URI");
     let mut session = Session::default();
-    initialize_root(&mut session, root.path());
+    initialize_root(&mut session, root);
     open(
         &mut session,
         first_uri.as_str(),
@@ -295,16 +301,19 @@ fn config_and_local_target_changes_reanalyze_only_the_observing_document() {
 
 #[test]
 fn closing_one_root_removes_only_its_observations() {
-    let root = tempfile::tempdir().expect("workspace");
-    let include = root.path().join("shared.txt");
-    let first = root.path().join("first.adoc");
-    let second = root.path().join("second.adoc");
+    let project = TestProject::new();
+    let root = project.root();
+    let include = root.join("shared.txt");
+    let first = root.join("first.adoc");
+    let second = root.join("second.adoc");
     fs::write(&include, "shared\n").expect("include");
+    fs::write(&first, "include::shared.txt[]\n").expect("first document");
+    fs::write(&second, "include::shared.txt[]\n").expect("second document");
     let include_uri = lsp::Url::from_file_path(&include).expect("include URI");
     let first_uri = lsp::Url::from_file_path(&first).expect("first URI");
     let second_uri = lsp::Url::from_file_path(&second).expect("second URI");
     let mut session = Session::default();
-    initialize_root(&mut session, root.path());
+    initialize_root(&mut session, root);
     open(
         &mut session,
         first_uri.as_str(),
@@ -328,17 +337,18 @@ fn closing_one_root_removes_only_its_observations() {
 
 #[test]
 fn watch_overflow_reanalyzes_each_open_document_once() {
-    let root = tempfile::tempdir().expect("workspace");
-    let first_uri = lsp::Url::from_file_path(root.path().join("first.adoc")).expect("first URI");
-    let second_uri = lsp::Url::from_file_path(root.path().join("second.adoc")).expect("second URI");
+    let project = TestProject::new();
+    let root = project.root();
+    let first_uri = lsp::Url::from_file_path(root.join("first.adoc")).expect("first URI");
+    let second_uri = lsp::Url::from_file_path(root.join("second.adoc")).expect("second URI");
     let mut session = Session::default();
-    initialize_root(&mut session, root.path());
+    initialize_root(&mut session, root);
     open(&mut session, first_uri.as_str(), 1, "= First\n");
     open(&mut session, second_uri.as_str(), 1, "= Second\n");
     let changes = (0..=crate::service::MAX_WORKSPACE_WATCH_CHANGES)
         .map(|index| {
             json!({
-                "uri": lsp::Url::from_file_path(root.path().join(format!("changed-{index}.txt")))
+                "uri": lsp::Url::from_file_path(root.join(format!("changed-{index}.txt")))
                     .expect("changed URI"),
                 "type": 2
             })
@@ -358,13 +368,12 @@ fn watch_overflow_reanalyzes_each_open_document_once() {
 
 #[test]
 fn repeated_watch_events_count_toward_the_overflow_limit() {
-    let root = tempfile::tempdir().expect("workspace");
-    let document_uri =
-        lsp::Url::from_file_path(root.path().join("guide.adoc")).expect("document URI");
-    let repeated_uri =
-        lsp::Url::from_file_path(root.path().join("unrelated.txt")).expect("repeated URI");
+    let project = TestProject::new();
+    let root = project.root();
+    let document_uri = lsp::Url::from_file_path(root.join("guide.adoc")).expect("document URI");
+    let repeated_uri = lsp::Url::from_file_path(root.join("unrelated.txt")).expect("repeated URI");
     let mut session = Session::default();
-    initialize_root(&mut session, root.path());
+    initialize_root(&mut session, root);
     open(&mut session, document_uri.as_str(), 1, "= Guide\n");
     let changes = (0..=crate::service::MAX_WORKSPACE_WATCH_CHANGES)
         .map(|_| json!({"uri": repeated_uri, "type": 2}))
