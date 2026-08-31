@@ -240,6 +240,38 @@ struct DependencyPoll {
     next_force_hash: Instant,
 }
 
+#[derive(Clone, Debug)]
+struct ChangeDebounce {
+    delay: Duration,
+    changed_at: Option<Instant>,
+}
+
+impl ChangeDebounce {
+    fn new(delay: Duration) -> Self {
+        Self {
+            delay,
+            changed_at: None,
+        }
+    }
+
+    fn observe(&mut self, now: Instant) {
+        self.changed_at.get_or_insert(now);
+    }
+
+    fn ready(&self, now: Instant) -> bool {
+        self.changed_at
+            .is_some_and(|start| now.saturating_duration_since(start) >= self.delay)
+    }
+
+    fn restart(&mut self, now: Instant) {
+        self.changed_at = Some(now);
+    }
+
+    fn clear(&mut self) {
+        self.changed_at = None;
+    }
+}
+
 impl DependencyPoll {
     fn new(now: Instant) -> Self {
         Self {
@@ -319,7 +351,7 @@ pub fn run(
     let first = first.map_err(Error::Build)?;
     let mut state = State::from_build(1, first);
     let http_workers = HttpWorkers::new().map_err(Error::Io)?;
-    let mut changed_at = None;
+    let mut debounce = ChangeDebounce::new(options.debounce);
     let mut dependency_poll = DependencyPoll::new(Instant::now());
     while !shutdown.load(Ordering::Acquire) {
         let now = Instant::now();
@@ -327,9 +359,9 @@ pub fn run(
             .mode(now)
             .is_some_and(|force_hash| state.changed(force_hash, &mut snapshot))
         {
-            changed_at.get_or_insert(now);
+            debounce.observe(now);
         }
-        if changed_at.is_some_and(|start| start.elapsed() >= options.debounce) {
+        if debounce.ready(now) {
             state.refresh(&mut snapshot);
             dependency_poll.reset(Instant::now());
             let cancellation = CancellationToken::new();
@@ -366,7 +398,7 @@ pub fn run(
             if superseded {
                 state.refresh(&mut snapshot);
                 dependency_poll.reset(Instant::now());
-                changed_at = Some(std::time::Instant::now());
+                debounce.restart(Instant::now());
                 continue;
             }
             let next_generation = state.http.generation().saturating_add(1);
@@ -376,7 +408,7 @@ pub fn run(
                     if next.changed(&mut snapshot) {
                         state.refresh(&mut snapshot);
                         dependency_poll.reset(Instant::now());
-                        changed_at = Some(std::time::Instant::now());
+                        debounce.restart(Instant::now());
                         continue;
                     }
                     state = State::from_build(next_generation, next);
@@ -385,7 +417,7 @@ pub fn run(
                     state.replace_failure(next_generation, &message, &mut snapshot);
                 }
             }
-            changed_at = None;
+            debounce.clear();
         }
 
         match listener.accept() {
@@ -596,6 +628,26 @@ mod tests {
     }
 
     #[test]
+    fn changes_observed_during_the_delay_share_one_rebuild_deadline() {
+        let start = Instant::now();
+        let delay = Duration::from_millis(50);
+        let mut debounce = ChangeDebounce::new(delay);
+
+        debounce.observe(start);
+        debounce.observe(start + Duration::from_millis(30));
+
+        assert!(!debounce.ready(start + delay - Duration::from_millis(1)));
+        assert!(debounce.ready(start + delay));
+
+        debounce.clear();
+        assert!(!debounce.ready(start + delay));
+
+        debounce.restart(start + delay);
+        assert!(!debounce.ready(start + delay));
+        assert!(debounce.ready(start + delay + delay));
+    }
+
+    #[test]
     fn shutdown_cancels_the_initial_build_at_its_next_cooperative_boundary() {
         let reservation = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("reserve port");
         let address = reservation.local_addr().expect("address");
@@ -692,55 +744,6 @@ mod tests {
         shutdown.store(true, Ordering::Release);
         thread.join().expect("server thread").expect("server");
         TcpListener::bind(address).expect("shutdown released port");
-    }
-
-    #[test]
-    fn rapid_changes_are_combined_into_one_rebuild() {
-        let directory = tempfile::tempdir().expect("tempdir");
-        let dependency = directory.path().join("dependency.adoc");
-        fs::write(&dependency, "initial").expect("dependency");
-        let reservation = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("reserve port");
-        let address = reservation.local_addr().expect("address");
-        drop(reservation);
-        let shutdown = Arc::new(AtomicBool::new(false));
-        let builds = Arc::new(AtomicU64::new(0));
-        let server_shutdown = Arc::clone(&shutdown);
-        let server_builds = Arc::clone(&builds);
-        let server_dependency = dependency.clone();
-        let thread = std::thread::spawn(move || {
-            run(
-                Options {
-                    bind: address.ip(),
-                    port: address.port(),
-                    debounce: Duration::from_millis(50),
-                },
-                |_| {
-                    let generation = server_builds.fetch_add(1, Ordering::Relaxed) + 1;
-                    Ok(Build::new(
-                        format!("<p>{generation}</p>"),
-                        "[]".to_owned(),
-                        snapshots([server_dependency.clone()]),
-                    ))
-                },
-                snapshot_dependencies,
-                &server_shutdown,
-            )
-        });
-
-        request(address, "/events");
-        for contents in ["one", "two", "three"] {
-            fs::write(&dependency, contents).expect("rapid change");
-        }
-        for _ in 0..200 {
-            if request(address, "/events").contains("\"generation\":2") {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        assert_eq!(builds.load(Ordering::Relaxed), 2);
-
-        shutdown.store(true, Ordering::Release);
-        thread.join().expect("server thread").expect("server");
     }
 
     #[test]
