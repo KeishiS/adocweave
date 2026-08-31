@@ -2,30 +2,46 @@
 
 image::docs/assets/adocweave-logo.png[AdocWeave,width=420,align=center]
 
+++++
+<p align="center">
+  <a href="https://github.com/KeishiS/adocweave/actions/workflows/ci.yml">
+    <img alt="CI" src="https://github.com/KeishiS/adocweave/actions/workflows/ci.yml/badge.svg?branch=main">
+  </a>
+  <a href="https://github.com/KeishiS/adocweave/releases/latest">
+    <img alt="CLI release"
+         src="https://img.shields.io/github/v/release/KeishiS/adocweave?filter=v%2A&amp;label=CLI%20release">
+  </a>
+  <a href="#license">
+    <img alt="License" src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue">
+  </a>
+</p>
+++++
+
 AdocWeaveは、AsciiDoc文書の確認、整形、HTML変換を行うRust製ツールです。
 コマンドライン、WebAssembly、Language Serverを提供します。
 
-== 機能
+== 主な機能
 
 * AsciiDocからHTMLへの変換
 * AsciiDocファイルの整形
-* VS CodeとZedのためのLanguage Serverの提供
-* ブラウザやWebアプリのためのライブラリ提供
-* textlintでの日本語規則検査のためのプラグイン提供
+* VS CodeとZedでの診断、移動および補完
+* ブラウザとNode.jsで利用できるWebAssemblyライブラリ
+* textlintによるAsciiDoc文書の検査
 
-対応状況は xref:docs/user-guide/syntax-support.adoc[対応している書式]を参照してください。AdocWeaveはAsciiDocの全機能を実装しません。
-対応範囲と他の実装との差異はxref:docs/user-guide/compatibility.adoc[AsciiDocとの互換性]に記載します。
+AdocWeaveはAsciiDocの全機能を実装していません。対応状況は
+xref:docs/user-guide/syntax-support.adoc[対応している書式]、差異と制約は
+xref:docs/user-guide/compatibility.adoc[AsciiDocとの互換性]を参照してください。
 
-== 使用方法
+== インストール
 
-GitHub Releasesからの導入方法は xref:docs/user-guide/release-installation.adoc[インストールと更新]を参照してください。
-Nix環境での実行と導入も xref:docs/user-guide/release-installation.adoc#nix-installation[Nixによる導入]を参照してください。
-VS CodeまたはZedで文書解析機能を使う場合は、
-xref:docs/user-guide/release-installation.adoc#editor-language-server[エディタからLanguage Serverを使う]を参照してください。
-textlintでAsciiDocを検査する場合は
-xref:docs/user-guide/release-installation.adoc#textlint-plugin-installation[textlint用Processorの導入]を参照してください。
+利用する環境に応じた導入方法は、xref:docs/user-guide/release-installation.adoc[インストールと更新]にまとめています。
 
-基本的な実行例:
+* コマンドラインとNix
+* VS CodeとZed
+* WebAssemblyライブラリ
+* textlint用Processor
+
+== 基本的な使い方
 
 [source,console]
 ----
@@ -35,63 +51,38 @@ adocweave convert manual.adoc > manual.html
 # CIでディレクトリ全体を確認する
 adocweave check --fail-on warning --format github --summary docs
 
-# 整形が必要かだけを確認する
+# 整形が必要か確認する
 adocweave format --check docs
 
-# 確認後に複数のファイルを安全に整形する
+# 差分を確認してから整形する
 adocweave format --diff docs
 adocweave format --write docs
 ----
 
-全オプション、標準入力、``include::``の扱いは xref:docs/user-guide/command-line.adoc[コマンドライン]を参照してください。
+全オプション、標準入力および``include::``の扱いは、
+xref:docs/user-guide/command-line.adoc[コマンドライン]を参照してください。
 
-== 文書構成
+== ドキュメント
 
-文書一覧は xref:docs/README.adoc[文書構成]を参照してください。
+* xref:docs/README.adoc[ドキュメントの案内]
+* xref:docs/user-guide/syntax-support.adoc[対応している書式]
+* xref:docs/user-guide/command-line.adoc[コマンドライン]
+* xref:docs/user-guide/project-configuration.adoc[プロジェクト設定]
+* xref:docs/user-guide/compatibility.adoc[AsciiDocとの互換性]
+* https://github.com/KeishiS/adocweave/releases[リリース情報]
+* link:CHANGELOG.md[変更履歴]
 
-=== 文書作成
+== コントリビューション
 
-* xref:docs/user-guide/syntax-support.adoc[対応している書式] — 見出し、リスト、表、リンクなどの対応状況を説明します。
-* xref:docs/user-guide/command-line.adoc[コマンドライン] — 変換、確認、整形の実行方法を説明します。
-* xref:docs/user-guide/project-configuration.adoc[プロジェクト設定] — CLIとLanguage Serverで共有する設定です。
-* xref:docs/user-guide/command-line.adoc#diagnostics[問題の確認] — 表示される問題と機械判定用code。
+開発環境、変更時の確認およびPull Requestの手順は、
+xref:CONTRIBUTING.adoc[コントリビューションガイド]を参照してください。
 
-=== エディタ統合
+セキュリティ上の問題は、link:.github/SECURITY.md[セキュリティポリシー]に従って報告してください。
 
-* xref:docs/developer-guide/zed-development.adoc[Zedで開発版を導入する]。
-* xref:docs/developer-guide/vscode-development.adoc[VS Code拡張を開発・検証する]。
-* xref:docs/developer-guide/language-server.adoc[Language Serverの実行仕様] — 提供機能と設定方法を説明します。
-* xref:docs/user-guide/release-installation.adoc#zed-installation[ZedとLanguage Serverを導入する]。
-* xref:docs/user-guide/release-installation.adoc#vscode-installation[VS CodeとLanguage Serverを導入する]。
+[#license]
+== ライセンス
 
-=== アプリケーション統合
+次のいずれかを選択できます。
 
-* xref:docs/developer-guide/core-profile.adoc[コアAPIと対応範囲] — Rustから解析し、HTMLへ変換します。
-* xref:docs/developer-guide/core-profile.adoc#wasm-api[WebAssembly API] — ブラウザーやJavaScriptから解析結果を利用します。
-* xref:docs/user-guide/release-installation.adoc#wasm-library-deployment[WebAssemblyライブラリの配備]。
-* xref:docs/developer-guide/extensions.adoc[独自機能を追加する]。
-
-=== 開発
-
-* xref:docs/developer-guide/architecture.adoc[アーキテクチャ]。
-* xref:docs/developer-guide/terminology.adoc[用語の表記] — 文書を書くときの表記の基準です。
-* xref:docs/README.adoc[文書と公開仕様の一覧]。
-* xref:docs/developer-guide/roadmap.adoc[今後の予定]。
-
-== 開発環境
-
-Nix環境では、リポジトリのルートで次を実行します。
-
-[source,console]
-----
-nix develop
-cargo make verify
-----
-
-``cargo make verify``はPull Request用の標準source検査です。CIではこれにmacOSとWindowsのProject試験、
-およびZed公式レジストリ用の構築を加え、必須checkの``verify``へ結果をまとめます。fuzz、Nixパッケージ、
-そのほかのcross targetおよび実環境を使う統合検査は、``main``へ統合したcommitに対して実行します。
-
-== 設計資料
-
-文法の詳細、公開API、配布手順は``docs/``に置きます。これらはライブラリと配布物の保守者向け資料です。
+* link:LICENSE-MIT[MIT License]
+* link:LICENSE-APACHE[Apache License 2.0]
