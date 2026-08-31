@@ -274,12 +274,14 @@ release作業も通常の変更と同様に、短命なブランチとpull reque
 この節はGitHub Releaseへ含める成果物の手順です。Zed拡張の更新と提出は
 xref:docs/developer-guide/zed-development.adoc#zed-registry-submission[公式レジストリへの提出]に従います。
 
-. ネイティブ版の変更について、互換性および利用者への影響に応じたSemantic Versioningのバージョンを決めます。
-  rootの``CHANGELOG.md``の先頭へネイティブ対象版の項目を追加し、利用者から見える変更を記載します。
+. 公開する版について、rootの``CHANGELOG.md``へ利用者から見える変更を記載します。対応するタグがある場合は、
+  互換性および利用者への影響に応じて次のSemantic Versioningのバージョンを決め、先頭へ項目を追加します。
+  タグがない場合は、既存の先頭項目へ追記します。
   移行操作やRustの公開APIに互換性のない変更がある場合は、その内容も記載します。WebAssemblyパッケージ、
   textlint用Processor、VS Code拡張およびZed拡張の版は更新しません。
-. Cargo workspaceの版とnative用lockfileを更新します。版更新toolは、先に用意したChangelog項目を確認しますが、
-  Changelogの見出し、本文、日付および参照先を変更しません。
+. 次の版へ進む場合は、Cargo workspaceの版とnative用lockfileを更新します。現在の未公開版を使う場合は、
+  この操作を行いません。版更新toolは、先に用意したChangelog項目を確認しますが、Changelogの見出し、本文、
+  日付および参照先を変更しません。
 +
 [source,console]
 ----
