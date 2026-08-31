@@ -84,5 +84,5 @@ xref:CONTRIBUTING.adoc[コントリビューションガイド]を参照して�
 
 次のいずれかを選択できます。
 
-* xref:LICENSE-MIT[MIT License]
-* xref:LICENSE-APACHE[Apache License 2.0]
+* link:LICENSE-MIT[MIT License]
+* link:LICENSE-APACHE[Apache License 2.0]
