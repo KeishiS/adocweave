@@ -4,14 +4,13 @@ import test from "node:test";
 import { formatDiagnostic, lintGitHubMarkdown } from "./github-markdown-lint.mjs";
 
 const catalog = {
-  schemaVersion: 3,
+  schemaVersion: 4,
   forbiddenTerms: [{
-    id: "sample",
     term: "禁止語",
     message: "推奨表現へ変更してください。"
   }],
   warningTerms: [{
-    id: "review", term: "版",
+    term: "版",
     message: "バージョンの意味か確認してください。"
   }]
 };

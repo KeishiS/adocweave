@@ -15,10 +15,9 @@ const targets = {
 };
 
 const terminology = {
-  schemaVersion: 3,
+  schemaVersion: 4,
   forbiddenTerms: [
     {
-      id: "sample",
       term: "禁止語",
       message: "別の表現を検討してください。"
     }

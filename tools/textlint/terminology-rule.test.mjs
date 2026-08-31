@@ -8,17 +8,15 @@ import plugin from "./processor.mjs";
 import { createTerminologyRules } from "./terminology-rule.mjs";
 
 const catalog = {
-  schemaVersion: 3,
+  schemaVersion: 4,
   forbiddenTerms: [
     {
-      id: "sample",
       term: "禁止語",
       message: "別の表現を検討してください。"
     }
   ],
   warningTerms: [
     {
-      id: "review",
       term: "版",
       message: "バージョンの意味か確認してください。"
     }
@@ -42,12 +40,12 @@ test("地の文にある禁止語と注意語の元位置および重大度を�
   assert.equal(result.messages[0].column, 3);
   assert.equal(result.messages[0].severity, 2);
   assert.equal(result.messages[0].ruleId, "adocweave-terminology");
-  assert.match(result.messages[0].message, /\[sample\]/);
+  assert.equal(result.messages[0].message, "別の表現を検討してください。");
   assert.equal(result.messages[1].line, 3);
   assert.equal(result.messages[1].column, 7);
   assert.equal(result.messages[1].severity, 1);
   assert.equal(result.messages[1].ruleId, "adocweave-terminology-warning");
-  assert.match(result.messages[1].message, /\[review\]/);
+  assert.equal(result.messages[1].message, "バージョンの意味か確認してください。");
 });
 
 test("inline codeとsource blockを検査しない", async () => {
@@ -71,19 +69,12 @@ test("空のtermを規則生成時に拒否する", () => {
   assert.throws(() => createTerminologyRules(invalid), /termは空でない文字列/);
 });
 
-test("重複するidを規則生成時に拒否する", () => {
-  const invalid = structuredClone(catalog);
-  invalid.forbiddenTerms.push({ ...invalid.forbiddenTerms[0], term: "別の禁止語" });
-  assert.throws(() => createTerminologyRules(invalid), /idが重複しています/);
-});
-
 test("規則生成後のcatalog変更を検査へ反映しない", () => {
   const mutable = structuredClone(catalog);
   const rule = createTerminologyRules(mutable)[0].rule;
-  mutable.forbiddenTerms[0].id = "changed";
   mutable.forbiddenTerms[0].term = "変更後";
   mutable.forbiddenTerms[0].message = "変更されました。";
-  mutable.forbiddenTerms.push({ ...catalog.forbiddenTerms[0], id: "added", term: "追加語" });
+  mutable.forbiddenTerms.push({ ...catalog.forbiddenTerms[0], term: "追加語" });
 
   const reports = [];
   class RuleError extends Error {
@@ -101,6 +92,6 @@ test("規則生成後のcatalog変更を検査へ反映しない", () => {
   visitor.Str({ value: "禁止語、変更後、追加語" });
 
   assert.equal(reports.length, 1);
-  assert.match(reports[0].message, /\[sample\]/);
+  assert.equal(reports[0].message, "別の表現を検討してください。");
   assert.deepEqual(reports[0].details.padding, [0, 3]);
 });

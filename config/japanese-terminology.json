@@ -1,60 +1,49 @@
 {
-    "schemaVersion": 3,
+    "schemaVersion": 4,
     "forbiddenTerms": [
         {
-            "id": "legal-contract-metaphor",
             "term": "契約",
             "message": "この語が指す保証、条件または判定を具体的に記述してください。"
         },
         {
-            "id": "syntax-mode-permissive-label",
             "term": "寛容モード",
             "message": "設定値の原綴りを用いて``permissive``モードと記載してください。"
         },
         {
-            "id": "syntax-mode-strict-label",
             "term": "厳格モード",
             "message": "設定値の原綴りを用いて``strict``モードと記載してください。"
         },
         {
-            "id": "katakana-editor-long-vowel",
             "term": "エディター",
             "message": "末尾を伸ばさず``エディタ``と記載してください。"
         },
         {
-            "id": "katakana-header-long-vowel",
             "term": "ヘッダー",
             "message": "末尾を伸ばさず``ヘッダ``と記載してください。"
         },
         {
-            "id": "abstract-resource-limit",
             "term": "資源上限",
             "message": "上限を設ける対象を具体的に記載してください。"
         },
         {
-            "id": "byte-count-notation",
             "term": "byte数",
             "message": "日本語の地の文では``バイト数``と記載してください。"
         },
         {
-            "id": "abstract-projection",
             "term": "投影",
             "message": "対応付ける対象または変換後の情報を具体的に記載してください。"
         },
         {
-            "id": "english-projection",
             "term": "projection",
             "message": "取得または変換する情報を具体的に記載してください。"
         },
         {
-            "id": "abstract-machine-readable",
             "term": "機械可読",
             "message": "JSON、schema、manifestなど、プログラムが処理する対象を具体的に記載してください。"
         }
     ],
     "warningTerms": [
         {
-            "id": "version-wording-review",
             "term": "版",
             "message": "\"バージョン\"の意味であれば\"バージョン\"を使ってください。"
         }
