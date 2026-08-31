@@ -1,10 +1,28 @@
 import {
   AdocWeaveClient,
   AdocWeaveError,
+  type AdocWeaveLifecycleErrorCode,
   type AnalyzeRequest,
   PROTOCOL_SCHEMA_VERSION,
   defaultAssetUrls,
+  isAdocWeaveLifecycleError,
 } from "../index.mjs";
+
+const lifecycleCodes = {
+  "cancelled": true,
+  "analysis-in-progress": true,
+  "disposed": true,
+  "unsupported-worker-protocol": true,
+  "wasm-trapped": true,
+  "worker-failed": true,
+} satisfies Record<AdocWeaveLifecycleErrorCode, true>;
+void lifecycleCodes;
+
+declare const unknownError: unknown;
+if (isAdocWeaveLifecycleError(unknownError)) {
+  const lifecycleCode: AdocWeaveLifecycleErrorCode = unknownError.code;
+  void lifecycleCode;
+}
 
 const client = new AdocWeaveClient({
   ...defaultAssetUrls(new URL("../worker/index.mjs", import.meta.url)),

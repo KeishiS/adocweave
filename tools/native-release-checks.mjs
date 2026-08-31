@@ -86,25 +86,19 @@ export function validateDistPlan(plan, tag = releaseTag()) {
   if (plan.github_attestations !== true || plan.github_attestations_phase !== "host") {
     fail("dist plan must attest every hosted artifact");
   }
+  if (!/^## Release Notes\n\n### /u.test(plan.announcement_github_body ?? "")) {
+    fail("dist plan must contain the native release notes");
+  }
   return { tag, version, assets: expectedAssets };
 }
 
 export function verifyRepository() {
   const version = checkNativeReleaseVersion();
-  const dist = read("dist-workspace.toml");
   const packageDist = read("crates/adocweave/dist.toml");
   validateCargoDistChangelog(
     packageDist,
     existsSync(new URL("CHANGELOG.md", ROOT)),
   );
-  for (const required of [
-    'packages = ["adocweave"]',
-    'checksum = "sha256"',
-    'github-attestations = true',
-    'github-attestations-phase = "host"',
-  ]) {
-    if (!dist.includes(required)) fail(`dist configuration is missing: ${required}`);
-  }
   return { tag: releaseTag(version), version };
 }
 

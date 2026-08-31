@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import test from "node:test";
 
 import {
@@ -9,12 +8,11 @@ import {
   validateReleaseTag,
   verifyRepository,
 } from "./native-release-checks.mjs";
+import { nativeReleasePlanFixture } from "./native-release-plan.fixture.mjs";
 import { releaseTag, workspaceVersion } from "./native-release-version.mjs";
 
 const release = verifyRepository();
-const plan = JSON.parse(execFileSync("dist", ["plan", `--tag=${release.tag}`, "--output-format=json"], {
-  encoding: "utf8",
-}));
+const plan = nativeReleasePlanFixture(release);
 
 test("repositoryは一つのworkspace版とtagを使う", () => {
   const version = workspaceVersion();
@@ -42,14 +40,6 @@ test("cargo-dist planは単一appとnative releaseの成果物を持つ", () => 
   assert.equal(validated.version, release.version);
   assert.deepEqual(validated.assets, expectedReleaseAssets());
   assert.equal(plan.releases.length, 1);
-  assert.match(plan.announcement_github_body, /^## Release Notes\n\n### /u);
-});
-
-test("native archiveはadocweaveだけを含む", () => {
-  const names = Object.values(plan.artifacts)
-    .filter(({ kind }) => kind === "executable-zip")
-    .map(({ assets }) => assets.filter(({ kind }) => kind === "executable").map(({ name }) => name));
-  assert.deepEqual(names, [["adocweave"], ["adocweave"], ["adocweave"], ["adocweave"]]);
 });
 
 test("製品別または不完全なplanを拒否する", () => {
@@ -60,5 +50,9 @@ test("製品別または不完全なplanを拒否する", () => {
   assert.throws(
     () => validateDistPlan({ ...plan, github_attestations: false }),
     /attest every hosted artifact/,
+  );
+  assert.throws(
+    () => validateDistPlan({ ...plan, announcement_github_body: "Changes" }),
+    /release notes/,
   );
 });

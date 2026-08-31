@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFile } from "node:fs/promises";
 
 import {
   AdocWeaveClient,
@@ -91,17 +90,18 @@ test("public entry resolves assets without eager work", () => {
   assert.ok(Number.isSafeInteger(PROTOCOL_SCHEMA_VERSION));
 });
 
-test("client exposes only analyze and dispose operations", async () => {
+test("public entry exposes the current module interface", async () => {
   assert.deepEqual(Object.getOwnPropertyNames(AdocWeaveClient.prototype).sort(), [
     "analyze", "constructor", "dispose",
   ]);
   const exports = await import("./index.mjs");
-  for (const removed of [
-    "AdocWeaveClientError", "AdocWeaveResult", "AdocWeaveWorkerClient", "analyzeOnce",
-    "PACKAGE_VERSION", "WASM_PACKAGE_VERSION",
-  ]) {
-    assert.equal(Object.hasOwn(exports, removed), false, removed);
-  }
+  assert.deepEqual(Object.keys(exports).sort(), [
+    "AdocWeaveClient",
+    "AdocWeaveError",
+    "PROTOCOL_SCHEMA_VERSION",
+    "defaultAssetUrls",
+    "isAdocWeaveLifecycleError",
+  ]);
 });
 
 test("analyze sends one fixed snapshot with one requestId", async () => {
@@ -519,21 +519,30 @@ test("SSR import and client construction remain lazy", async () => {
   }
 });
 
-test("public lifecycle union matches the runtime type guard", async () => {
-  const source = await readFile(new URL("./client.mjs", import.meta.url), "utf8");
-  const runtimeBlock = source.match(/const LIFECYCLE_ERROR_CODES = new Set\(\[([\s\S]*?)\]\)/);
-  const types = await readFile(new URL("./index.d.mts", import.meta.url), "utf8");
-  const typeBlock = types.match(/export type AdocWeaveLifecycleErrorCode =([\s\S]*?);/);
-  assert.ok(runtimeBlock);
-  assert.ok(typeBlock);
-  const codes = (block) => [...block.matchAll(/"([a-z-]+)"/g)]
-    .map((match) => match[1]).sort();
-  assert.deepEqual(codes(runtimeBlock[1]), codes(typeBlock[1]));
-  for (const code of codes(runtimeBlock[1])) {
+test("public lifecycle guard accepts only lifecycle error codes", () => {
+  for (const code of [
+    "cancelled",
+    "analysis-in-progress",
+    "disposed",
+    "unsupported-worker-protocol",
+    "wasm-trapped",
+    "worker-failed",
+  ]) {
     assert.equal(isAdocWeaveLifecycleError(
       new AdocWeaveError({ code, message: code }),
     ), true);
   }
+  for (const code of [
+    "invalid-request",
+    "input-limit-exceeded",
+    "output-limit-exceeded",
+    "analysis-failed",
+  ]) {
+    assert.equal(isAdocWeaveLifecycleError(
+      new AdocWeaveError({ code, message: code }),
+    ), false);
+  }
+  assert.equal(isAdocWeaveLifecycleError(new Error("worker failed")), false);
 });
 
 function errorWithCode(code) {

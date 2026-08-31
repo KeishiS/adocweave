@@ -38,10 +38,8 @@ function wasmError(operation) {
 }
 
 test("generated wasm-bindgen accepts the public request and returns selected products", () => {
+  assert.deepEqual(Object.keys(wasm).sort(), ["analyze", "protocolSchemaVersion"]);
   assert.equal(wasm.protocolSchemaVersion(), PROTOCOL_SCHEMA_VERSION);
-  assert.equal(typeof wasm.analyze, "function");
-  assert.equal(Object.hasOwn(wasm, "process"), false);
-  assert.equal(Object.hasOwn(wasm, "preprocess"), false);
 
   const response = wasm.analyze({
     source: { text: "= Title\n\nText" },

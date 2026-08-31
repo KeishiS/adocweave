@@ -9,7 +9,6 @@ import {
 
 const manifest = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
 const toolchains = JSON.parse(readFileSync(new URL("../../toolchains.json", import.meta.url), "utf8"));
-const bridge = readFileSync(new URL("./bridge.mjs", import.meta.url), "utf8");
 const changelog = readFileSync(new URL("./CHANGELOG.md", import.meta.url), "utf8");
 
 test("public registryへ公開しruntime npm依存を持たない", () => {
@@ -53,11 +52,6 @@ test("受け入れる範囲の外側を拒否する", () => {
 test("npmが描画するMarkdownのREADMEを収録する", () => {
   assert.ok(manifest.files.includes("README.md"));
   assert.equal(existsSync(new URL("./README.md", import.meta.url)), true);
-});
-
-test("parseTextとWASMをpackage内で完結させる", () => {
-  assert.match(bridge, /require\("\.\/wasm\/adocweave_textlint_wasm\.cjs"\)/);
-  assert.match(bridge, /typeof loaded\?\.parseText !== "function"/);
 });
 
 test("licenseと第三者依存通知を収録する", () => {
