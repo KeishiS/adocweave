@@ -66,6 +66,20 @@ pub(crate) fn run(arguments: &Arguments) -> Result<CliExitCode, CliError> {
             print_output(finish_output(output)?)?;
             Ok(CliExitCode::Success)
         }
+        CommandOptions::View(options) => {
+            let target = only_target(&result.targets)?;
+            let analysis = expanded_analysis(target)?;
+            let capabilities = commands::view::Capabilities {
+                width: crate::terminal::width(options.width),
+                color: crate::terminal::color_enabled(arguments.color),
+            };
+            let policy = commands::view::build_policy(capabilities);
+            let rendered =
+                commands::view::render_analysis(&analysis.preprocessed.analysis, &policy);
+            let output = commands::view::serialize(&rendered, capabilities.color);
+            print_output(finish_output(output)?)?;
+            Ok(CliExitCode::Success)
+        }
         CommandOptions::Symbols => {
             let target = only_target(&result.targets)?;
             let analysis = expanded_analysis(target)?;
@@ -741,7 +755,11 @@ fn display_path(path: &Path, current: &Path) -> String {
 
 fn print_output(output: String) -> Result<(), CliError> {
     use std::io::Write as _;
-    io::stdout()
-        .write_all(output.as_bytes())
-        .map_err(CliError::Write)
+    match io::stdout().write_all(output.as_bytes()) {
+        Ok(()) => Ok(()),
+        // The reader closed the output, which is what `| head` does once it
+        // has what it asked for. Nothing went wrong.
+        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => Ok(()),
+        Err(error) => Err(CliError::Write(error)),
+    }
 }

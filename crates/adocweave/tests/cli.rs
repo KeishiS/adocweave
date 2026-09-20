@@ -1207,6 +1207,7 @@ fn public_help_paths_describe_every_command() {
         assert!(stdout.contains("Usage: adocweave"), "{arguments:?}");
         for command in [
             "convert",
+            "view",
             "preview",
             "check",
             "format",
@@ -1241,6 +1242,21 @@ fn public_help_paths_describe_every_command() {
                 "--no-config",
                 "--color <WHEN>",
                 "Example:",
+            ][..],
+        ),
+        (
+            &["view"][..],
+            &[
+                "[FILE]",
+                "--width <COLUMNS>",
+                "--include",
+                "--no-include",
+                "--stdin-base <DIR>",
+                "--allow-root <DIR>",
+                "--config <FILE>",
+                "--no-config",
+                "--color <WHEN>",
+                "Examples:",
             ][..],
         ),
         (
@@ -3560,4 +3576,183 @@ fn stylesheet_options_fail_closed() {
     assert!(String::from_utf8_lossy(&fragment_css.stderr).contains("require --complete"));
 
     std::fs::remove_file(evil).expect("cleanup css");
+}
+
+/// A document written for the terminal: a title, a section, a list, and a
+/// table, which together exercise the layout the reader sees.
+const VIEW_DOCUMENT: &str = "= Title\n\n== Section\n\n* one\n* two\n\n|===\n|a |b\n|===\n";
+
+fn view_root() -> tempfile::TempDir {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(root.path().join("document.adoc"), VIEW_DOCUMENT).expect("document");
+    root
+}
+
+/// Removes every escape sequence, so the text of a colored run can be compared
+/// with the text of a plain one.
+fn without_escapes(text: &str) -> String {
+    let mut plain = String::new();
+    let mut characters = text.chars();
+    while let Some(character) = characters.next() {
+        if character != '\u{1b}' {
+            plain.push(character);
+            continue;
+        }
+        for character in characters.by_ref() {
+            if character == 'm' {
+                break;
+            }
+        }
+    }
+    plain
+}
+
+#[test]
+fn view_lays_a_document_out_and_adds_no_escapes_when_the_output_is_not_a_terminal() {
+    let root = view_root();
+
+    let output = adocweave()
+        .current_dir(root.path())
+        .args(["view", "document.adoc"])
+        .output()
+        .expect("command");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success());
+    assert!(stdout.starts_with("Title\n═════\n"), "{stdout}");
+    assert!(stdout.contains("• one"), "{stdout}");
+    assert!(stdout.contains("┌───┬───┐"), "{stdout}");
+    assert!(!stdout.contains('\u{1b}'), "{stdout}");
+}
+
+#[test]
+fn view_wraps_at_the_requested_width() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(
+        root.path().join("document.adoc"),
+        "one two three four five six seven eight nine ten\n",
+    )
+    .expect("document");
+
+    let output = adocweave()
+        .current_dir(root.path())
+        .args(["view", "--width", "20", "document.adoc"])
+        .output()
+        .expect("command");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success());
+    for line in stdout.lines() {
+        assert!(line.chars().count() <= 20, "{line}");
+    }
+    assert!(stdout.lines().count() > 1, "{stdout}");
+}
+
+/// The colored output differs from the plain one only in its escape sequences.
+#[test]
+fn view_colors_on_request_and_changes_nothing_else() {
+    let root = view_root();
+
+    let colored = adocweave()
+        .current_dir(root.path())
+        .args(["view", "--color", "always", "document.adoc"])
+        .output()
+        .expect("command");
+    let plain = adocweave()
+        .current_dir(root.path())
+        .args(["view", "--color", "never", "document.adoc"])
+        .output()
+        .expect("command");
+
+    let colored = String::from_utf8_lossy(&colored.stdout);
+    let plain = String::from_utf8_lossy(&plain.stdout);
+    assert!(colored.contains("\u{1b}["), "{colored}");
+    assert!(!plain.contains('\u{1b}'), "{plain}");
+    assert_eq!(without_escapes(&colored), plain);
+}
+
+/// `NO_COLOR` is a reader's standing decision, and `--color auto` follows it.
+/// An explicit `--color always` is the decision for this run and wins.
+#[test]
+fn view_respects_no_color_unless_color_was_asked_for() {
+    let root = view_root();
+
+    let automatic = adocweave()
+        .current_dir(root.path())
+        .env("NO_COLOR", "1")
+        .args(["view", "--color", "always", "document.adoc"])
+        .output()
+        .expect("command");
+    let requested = adocweave()
+        .current_dir(root.path())
+        .env("NO_COLOR", "1")
+        .args(["view", "--color", "auto", "document.adoc"])
+        .output()
+        .expect("command");
+
+    assert!(String::from_utf8_lossy(&automatic.stdout).contains('\u{1b}'));
+    assert!(!String::from_utf8_lossy(&requested.stdout).contains('\u{1b}'));
+}
+
+#[test]
+fn view_reads_standard_input() {
+    let output = run_with_stdin(&["view", "-"], b"= Title\n\ntext\n");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success());
+    assert!(stdout.starts_with("Title\n"), "{stdout}");
+}
+
+#[test]
+fn view_rejects_a_width_it_cannot_lay_text_out_for() {
+    for width in ["0", "abc", "5000"] {
+        let output = adocweave()
+            .args(["view", "--width", width, "-"])
+            .output()
+            .expect("command");
+
+        assert_eq!(output.status.code(), Some(2), "{width}");
+    }
+}
+
+/// Reading is done one document at a time, so a directory of several is a
+/// usage error rather than a pile of pages run together.
+#[test]
+fn view_requires_exactly_one_input() {
+    let root = view_root();
+    std::fs::write(root.path().join("second.adoc"), VIEW_DOCUMENT).expect("second document");
+
+    let output = adocweave()
+        .current_dir(root.path())
+        .args(["view", "."])
+        .output()
+        .expect("command");
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("exactly one input"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// Reading the first lines of a long document is what `| head` does, and
+/// closing the output early is not a failure.
+#[test]
+fn output_whose_reader_stops_early_is_not_a_failure() {
+    let root = tempfile::tempdir().expect("root");
+    let long = "paragraph\n\n".repeat(20_000);
+    std::fs::write(root.path().join("document.adoc"), &long).expect("document");
+
+    let mut child = adocweave()
+        .current_dir(root.path())
+        .args(["view", "document.adoc"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the adocweave binary should start");
+    drop(child.stdout.take());
+    let status = child.wait().expect("the adocweave binary should exit");
+
+    assert!(status.success(), "{status:?}");
 }

@@ -15,6 +15,7 @@ mod file_workflow;
 mod local_target;
 mod preview;
 mod project_command;
+mod terminal;
 
 static PREVIEW_SHUTDOWN: AtomicBool = AtomicBool::new(false);
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -288,6 +289,7 @@ mod tests {
     fn all_commands_support_help() {
         for command in [
             "convert",
+            "view",
             "preview",
             "check",
             "format",

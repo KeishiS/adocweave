@@ -37,6 +37,7 @@ pub(crate) enum CommandOptions {
     Check(CheckOptions),
     Format(FormatOptions),
     Symbols,
+    View(crate::commands::view::Options),
     ConfigShow,
 }
 
@@ -111,6 +112,12 @@ enum CliCommand {
     /// Convert an AsciiDoc document to HTML.
     #[command(after_help = "Example:\n  adocweave convert --complete manual.adoc")]
     Convert(ConvertArgs),
+
+    /// Render an AsciiDoc document for reading in a terminal.
+    #[command(
+        after_help = "Examples:\n  adocweave view manual.adoc\n  adocweave view --width 100 docs/README.adoc\n  cat manual.adoc | adocweave view -"
+    )]
+    View(ViewArgs),
 
     /// Serve a live document preview.
     #[command(
@@ -209,6 +216,28 @@ struct ConvertArgs {
     /// Link an allowed CSS URL; repeatable.
     #[arg(long = "css-url", value_name = "URL", num_args = 1, value_hint = ValueHint::Url)]
     css_url: Vec<String>,
+
+    #[command(flatten)]
+    include: IncludeArgs,
+    #[command(flatten)]
+    stdin: StdinArgs,
+    #[command(flatten)]
+    roots: AllowedRootArgs,
+    #[command(flatten)]
+    config: ProjectConfigArgs,
+    #[command(flatten)]
+    color: ColorArgs,
+}
+
+#[derive(Debug, Args)]
+struct ViewArgs {
+    /// Input file; omit or use - for standard input.
+    #[arg(value_name = "FILE", value_hint = ValueHint::FilePath)]
+    file: Option<PathBuf>,
+
+    /// Wrap the output at this many columns.
+    #[arg(long, value_name = "COLUMNS", value_parser = terminal_columns)]
+    width: Option<u16>,
 
     #[command(flatten)]
     include: IncludeArgs,
@@ -405,6 +434,23 @@ struct CompletionArgs {
     /// Shell for which to generate completion.
     #[arg(value_enum)]
     shell: CompletionShell,
+}
+
+/// A width the output can actually be laid out for. A single column holds no
+/// text, and a value in the thousands is a typing mistake, not a terminal.
+fn terminal_columns(value: &str) -> Result<u16, String> {
+    let columns = value
+        .parse::<u16>()
+        .map_err(|_| "expected a positive integer".to_owned())?;
+    if (crate::terminal::MIN_WIDTH..=crate::terminal::MAX_WIDTH).contains(&columns) {
+        Ok(columns)
+    } else {
+        Err(format!(
+            "value must be between {} and {}",
+            crate::terminal::MIN_WIDTH,
+            crate::terminal::MAX_WIDTH
+        ))
+    }
 }
 
 fn positive_u64(value: &str) -> Result<u64, String> {
@@ -606,6 +652,25 @@ fn format_action(command: FormatArgs) -> Result<Action, CliError> {
     })
 }
 
+fn view_action(command: ViewArgs) -> Result<Action, CliError> {
+    run_action(Arguments {
+        command: CommandOptions::View(crate::commands::view::Options {
+            width: command.width,
+        }),
+        input: single_input(command.file),
+        additional_inputs: Vec::new(),
+        glob_patterns: Vec::new(),
+        include: command.include.include,
+        no_include: command.include.no_include,
+        stdin_base: command.stdin.stdin_base,
+        allowed_roots: command.roots.allowed_roots,
+        project_root: None,
+        config_path: command.config.config,
+        no_config: command.config.no_config,
+        color: command.color.color,
+    })
+}
+
 fn symbols_action(command: SymbolArgs) -> Result<Action, CliError> {
     run_action(Arguments {
         command: CommandOptions::Symbols,
@@ -657,6 +722,7 @@ where
         CliCommand::Check(command) => check_action(command),
         CliCommand::Format(command) => format_action(command),
         CliCommand::Symbols(command) => symbols_action(command),
+        CliCommand::View(command) => view_action(command),
         CliCommand::Rules(command) => Ok(Action::Rules {
             json: command.format == RuleOutput::Json,
         }),
