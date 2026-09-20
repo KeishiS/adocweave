@@ -76,7 +76,7 @@ fn write_hyperlink_end(output: &mut String) {
 fn write_span(output: &mut String, span: &TerminalSpan, decoration: Decoration) {
     let target = decoration
         .hyperlinks
-        .then(|| span.link.as_deref())
+        .then_some(span.link.as_deref())
         .flatten();
     if let Some(target) = target {
         write_hyperlink_start(output, target);
