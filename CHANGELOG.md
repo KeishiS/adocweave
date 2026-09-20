@@ -134,6 +134,7 @@ if let Ok(expanded) = analysis.expanded {
 }
 ```
 
+[0.58.0]: https://github.com/KeishiS/adocweave/compare/v0.57.0...v0.58.0
 [0.57.0]: https://github.com/KeishiS/adocweave/compare/v0.56.5...v0.57.0
 [0.56.5]: https://github.com/KeishiS/adocweave/compare/v0.56.4...v0.56.5
 [0.56.4]: https://github.com/KeishiS/adocweave/compare/v0.56.3...v0.56.4
