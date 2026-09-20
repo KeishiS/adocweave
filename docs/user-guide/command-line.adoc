@@ -288,6 +288,20 @@ cat manual.adoc | adocweave view -
 出力先が先に閉じた場合は、失敗ではなく正常終了として扱います。
 ``adocweave view manual.adoc | head``のように先頭だけを読む使い方のためです。
 
+画面に収まらない長さの文書は、環境変数``PAGER``が指すプログラムへ渡します。``PAGER``が未設定の場合は
+``less``を使い、色をそのまま通す指定と、1画面に収まる場合はそのまま表示する指定を与えます。
+
+[source,console]
+----
+adocweave view --pager never manual.adoc
+adocweave view --pager always manual.adoc
+PAGER='less -S' adocweave view manual.adoc
+----
+
+既定の``auto``は、標準出力が端末で、かつ組み立てた行数が画面の高さを超える場合だけpagerを起動します。
+``PAGER``を空文字列に設定した場合と、pagerを起動できなかった場合は標準出力へ書きます。pagerへ渡す場合も
+読むのは人であるため、色を付ける条件は端末へ書く場合と同じです。
+
 == ローカルプレビュー
 
 ``preview``は完全なHTML文書を生成し、既定では``127.0.0.1:4000``で配信します。表示されたURLをブラウザーで

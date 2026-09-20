@@ -14,6 +14,19 @@ use crate::commands::format::Options as FormatOptions;
 use crate::commands::html_policy::StylesheetArgument;
 use crate::{DEFAULT_PREVIEW_DEBOUNCE_MS, DEFAULT_PREVIEW_PORT};
 
+/// When the output is handed to the program the reader pages through it with.
+///
+/// The values carry no help of their own: clap prints per-value help only in
+/// the long form, and the two forms of the help are compared to each other.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
+pub(crate) enum PagerChoice {
+    // Only when the page does not fit on the screen.
+    #[default]
+    Auto,
+    Always,
+    Never,
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
 pub(crate) enum ColorChoice {
     #[default]
@@ -238,6 +251,10 @@ struct ViewArgs {
     /// Wrap the output at this many columns.
     #[arg(long, value_name = "COLUMNS", value_parser = terminal_columns)]
     width: Option<u16>,
+
+    /// Hand the output to a pager; auto uses one only when the page is longer than the screen.
+    #[arg(long, value_name = "WHEN", value_enum, default_value_t)]
+    pager: PagerChoice,
 
     #[command(flatten)]
     include: IncludeArgs,
@@ -656,6 +673,7 @@ fn view_action(command: ViewArgs) -> Result<Action, CliError> {
     run_action(Arguments {
         command: CommandOptions::View(crate::commands::view::Options {
             width: command.width,
+            pager: command.pager,
         }),
         input: single_input(command.file),
         additional_inputs: Vec::new(),

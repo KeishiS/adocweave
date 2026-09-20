@@ -13,6 +13,7 @@ mod diagnostic_output;
 mod exit_code;
 mod file_workflow;
 mod local_target;
+mod pager;
 mod preview;
 mod project_command;
 mod terminal;

@@ -49,16 +49,34 @@ fn terminal_width() -> Option<u16> {
         .map(|(terminal_size::Width(columns), _)| columns)
 }
 
+/// How many lines the terminal shows at once, when the output goes to one.
+pub(crate) fn height() -> Option<usize> {
+    io::stdout()
+        .is_terminal()
+        .then(terminal_size::terminal_size)
+        .flatten()
+        .map(|(_, terminal_size::Height(lines))| usize::from(lines))
+}
+
 /// Whether the output carries color.
 ///
 /// `always` and `never` are the reader's decision and are followed. `auto`
 /// means: color a terminal, leave a pipe or a file alone, and respect
 /// `NO_COLOR`, which a reader sets once for every program they run.
 pub(crate) fn color_enabled(choice: ColorChoice) -> bool {
+    color_for(choice, io::stdout().is_terminal())
+}
+
+/// Whether the output carries color when it is read on a screen or not.
+///
+/// Output handed to a pager reaches a screen even though this program writes
+/// to a pipe, so the caller says where the text ends up rather than letting
+/// the pipe decide.
+pub(crate) fn color_for(choice: ColorChoice, reaches_a_screen: bool) -> bool {
     match choice {
         ColorChoice::Always => true,
         ColorChoice::Never => false,
-        ColorChoice::Auto => io::stdout().is_terminal() && !no_color_requested(),
+        ColorChoice::Auto => reaches_a_screen && !no_color_requested(),
     }
 }
 
@@ -92,5 +110,12 @@ mod tests {
     #[test]
     fn automatic_color_stays_off_when_the_output_is_not_a_terminal() {
         assert!(!color_enabled(ColorChoice::Auto));
+    }
+
+    /// A pager puts the text on a screen, whatever this program writes to.
+    #[test]
+    fn output_a_pager_puts_on_a_screen_carries_color() {
+        assert!(color_for(ColorChoice::Auto, true));
+        assert!(!color_for(ColorChoice::Auto, false));
     }
 }
