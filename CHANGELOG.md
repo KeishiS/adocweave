@@ -19,12 +19,14 @@ separate changelogs for the
 - `view` hands a page longer than the screen to a pager. The pager is the one named by `PAGER`, or `less` with the flags that pass style through and leave a short page where it is. `--pager always` and `--pager never` decide it outright, and a pager that cannot be started leaves the page on standard output.
 - `view` writes links a terminal can follow. The text itself leads to the address, so the address is no longer written beside it, except where it cannot be followed and would otherwise be lost. `--hyperlinks` decides it outright, and output that is not read on a terminal keeps the written address.
 - `view` shows the page in the palette written for the background it is read on. `--theme light` and `--theme dark` choose it, `[terminal] theme` says which one a project reads on, and `[terminal.colors]` chooses the color of a single role, such as `heading` or `link`.
+- `view` colors a source block by the language the author named on it, telling comments, text, numbers, keywords, and names apart in the colors of the palette. A language it has no rules for keeps the one color a code block has.
 
 ### Rust API
 
 - `adocweave_core::output::terminal` lays a document out for a terminal. `render` and `render_with_inputs` return a `TerminalOutput` whose `TerminalDocument` holds `TerminalLine` values built from `TerminalSpan` values. A span carries a `TerminalRole` and a `TerminalStyle` rather than escape sequences, so a host chooses its own encoding.
 - `TerminalPolicy` selects the width, the treatment of ambiguous East Asian width, indentation, list markers, table borders, link and media presentation, math presentation, the text of an unresolved reference, and which addresses may become active. `LinkPresentation::TextWhenFollowable` writes an address only where the host cannot lead the reader to it.
 - `display_width` measures text in terminal columns.
+- `TerminalSpan::language` carries the language an author named on a source block, so a host that can color code by its language has it. `TerminalRole::name` and `TerminalRole::NAMES` give every role a name a host configuration can use.
 
 ### Migration
 
