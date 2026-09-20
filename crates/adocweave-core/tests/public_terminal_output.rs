@@ -69,3 +69,18 @@ fn public_display_width_counts_terminal_columns() {
     assert_eq!(display_width("日本語", AmbiguousWidth::Narrow), 6);
     assert_eq!(display_width("text", AmbiguousWidth::Narrow), 4);
 }
+
+#[test]
+fn public_terminal_output_names_what_a_terminal_cannot_show() {
+    let analysis = analyze(
+        "A claim. footnote:[The note.]\n\nimage::figure.png[A figure]\n\nSee https://example.com[the site].\n",
+    );
+
+    let rendered = render(analysis.document(), &TerminalPolicy::default());
+    let text = rendered.document.to_plain_text();
+
+    assert!(text.contains("[1]"), "{text}");
+    assert!(text.contains("Footnotes"), "{text}");
+    assert!(text.contains("[Image: A figure]"), "{text}");
+    assert!(text.contains("the site (https://example.com)"), "{text}");
+}

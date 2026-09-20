@@ -12,6 +12,7 @@
 //! every style still produces a document a reader can follow.
 
 mod blocks;
+mod context;
 mod inline;
 mod layout;
 mod numbering;
@@ -23,6 +24,8 @@ mod tests;
 
 use crate::block_model::AdmonitionKind;
 use crate::diagnostic::Diagnostic;
+use crate::render::RenderInputs;
+use crate::url::ActiveUrlPolicy;
 
 /// How wide the rendered lines may be.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -105,8 +108,51 @@ pub enum TableBorders {
     None,
 }
 
+/// Whether the address of a link is written out after its text.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum LinkPresentation {
+    /// The text, and then the address in brackets when the text is not the
+    /// address itself. A reader cannot click a terminal, so an address that is
+    /// never written is an address that cannot be followed.
+    #[default]
+    TextWithUrl,
+    /// The text alone, for a page where the addresses would crowd it out.
+    TextOnly,
+}
+
+/// What stands in for a picture, a video, or a sound.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum MediaPresentation {
+    /// A short note naming what is there, such as `[Image: a diagram]`.
+    #[default]
+    Placeholder,
+    /// Nothing at all.
+    Hidden,
+}
+
+/// What becomes of a formula, which a terminal cannot set.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum MathPresentation {
+    /// The formula as the author wrote it.
+    #[default]
+    Source,
+    Hidden,
+}
+
+/// What a cross reference that points nowhere shows.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum UnresolvedReferenceText {
+    /// The target the author wrote, so the reader can see what is missing.
+    #[default]
+    Target,
+    /// Only the text of the reference.
+    LabelOnly,
+    /// Nothing.
+    Hidden,
+}
+
 /// Backend settings that a host chooses once for a rendered document.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TerminalPolicy {
     pub width: TerminalWidth,
     pub ambiguous_width: AmbiguousWidth,
@@ -114,6 +160,13 @@ pub struct TerminalPolicy {
     pub indent: IndentPolicy,
     pub list_markers: ListMarkers,
     pub table_borders: TableBorders,
+    pub links: LinkPresentation,
+    pub media: MediaPresentation,
+    pub math: MathPresentation,
+    pub unresolved_references: UnresolvedReferenceText,
+    /// Which addresses a host may turn into something the reader can follow.
+    /// The text of a link is always written, whatever this allows.
+    pub active_urls: ActiveUrlPolicy,
 }
 
 impl Default for TerminalPolicy {
@@ -125,6 +178,11 @@ impl Default for TerminalPolicy {
             indent: IndentPolicy::default(),
             list_markers: ListMarkers::default(),
             table_borders: TableBorders::default(),
+            links: LinkPresentation::default(),
+            media: MediaPresentation::default(),
+            math: MathPresentation::default(),
+            unresolved_references: UnresolvedReferenceText::default(),
+            active_urls: ActiveUrlPolicy::default(),
         }
     }
 }
@@ -291,8 +349,21 @@ pub fn display_width(text: &str, ambiguous: AmbiguousWidth) -> usize {
 
 /// Lays `document` out for a terminal.
 pub fn render(document: &crate::document::Document, policy: &TerminalPolicy) -> TerminalOutput {
-    let mut diagnostics = Vec::new();
-    let lines = blocks::render_document(document.inner(), policy);
+    render_with_inputs(document, policy, &RenderInputs::default())
+}
+
+/// Lays `document` out for a terminal, using what the host resolved for it.
+///
+/// A reference into another document, and the address of a resource, are known
+/// only to the host. What it resolved reaches the page through `inputs`.
+pub fn render_with_inputs(
+    document: &crate::document::Document,
+    policy: &TerminalPolicy,
+    inputs: &RenderInputs,
+) -> TerminalOutput {
+    let mut context = context::RenderContext::new(policy, document.inner(), inputs);
+    let lines = blocks::render_document(document.inner(), policy, &mut context);
+    let mut diagnostics = context.finish();
     crate::diagnostic::sort_diagnostics(&mut diagnostics);
     TerminalOutput {
         package_version: crate::VERSION,

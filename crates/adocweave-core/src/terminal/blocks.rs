@@ -6,8 +6,8 @@ use crate::block_model::{
     DelimitedPresentation, DocumentHeader, Heading, HeadingKind, ListBlock, ListItem, ListKind,
     LiteralParagraph, Paragraph, QuoteKind, QuotePresentation, VerbatimBlock, VerbatimKind,
 };
-use crate::presentation::DocumentPresentation;
 
+use super::context::RenderContext;
 use super::inline;
 use super::layout::Canvas;
 use super::numbering;
@@ -28,11 +28,11 @@ const BORDER: &str = "│ ";
 pub(super) fn render_blocks(
     blocks: &[AstBlock],
     policy: &TerminalPolicy,
-    presentation: &DocumentPresentation,
+    context: &mut RenderContext<'_, '_>,
 ) -> Vec<TerminalLine> {
     let mut canvas = Canvas::new(policy);
     for block in blocks {
-        render_block(&mut canvas, block, presentation);
+        render_block(&mut canvas, block, context);
     }
     canvas.finish()
 }
@@ -40,38 +40,37 @@ pub(super) fn render_blocks(
 pub(super) fn render_document(
     document: &AstDocument,
     policy: &TerminalPolicy,
+    context: &mut RenderContext<'_, '_>,
 ) -> Vec<TerminalLine> {
     let mut canvas = Canvas::new(policy);
-    let presentation = document.presentation();
     for step in plan::body_steps(document, policy) {
         match step {
             BodyStep::Block {
                 block,
                 header_metadata,
             } => {
-                render_block(&mut canvas, block, presentation);
+                render_block(&mut canvas, block, context);
                 if header_metadata {
                     render_header_metadata(&mut canvas, document.header());
                 }
             }
-            // Generated material is placed by the layout and rendered once the
-            // table of contents and the footnote list have a presentation.
-            BodyStep::TableOfContents | BodyStep::FootnoteCatalog => {}
+            BodyStep::TableOfContents => render_table_of_contents(&mut canvas, context),
+            BodyStep::FootnoteCatalog => render_footnotes(&mut canvas, context),
         }
     }
     canvas.finish()
 }
 
-fn render_block(canvas: &mut Canvas<'_>, block: &AstBlock, presentation: &DocumentPresentation) {
+fn render_block(canvas: &mut Canvas<'_>, block: &AstBlock, context: &mut RenderContext<'_, '_>) {
     match block {
-        AstBlock::Heading(heading) => render_heading(canvas, heading, presentation),
-        AstBlock::Paragraph(paragraph) => render_paragraph(canvas, paragraph),
-        AstBlock::LiteralParagraph(literal) => render_literal_paragraph(canvas, literal),
+        AstBlock::Heading(heading) => render_heading(canvas, heading, context),
+        AstBlock::Paragraph(paragraph) => render_paragraph(canvas, paragraph, context),
+        AstBlock::LiteralParagraph(literal) => render_literal_paragraph(canvas, literal, context),
         AstBlock::Break(block) => render_break(canvas, block),
-        AstBlock::Verbatim(verbatim) => render_verbatim(canvas, verbatim),
-        AstBlock::Math(math) => render_verbatim_text(canvas, &math.value, &math.metadata),
-        AstBlock::List(list) => render_list(canvas, list, presentation, 0),
-        AstBlock::Delimited(delimited) => render_delimited(canvas, delimited, presentation),
+        AstBlock::Verbatim(verbatim) => render_verbatim(canvas, verbatim, context),
+        AstBlock::Math(math) => render_math(canvas, math, context),
+        AstBlock::List(list) => render_list(canvas, list, context, 0),
+        AstBlock::Delimited(delimited) => render_delimited(canvas, delimited, context),
         AstBlock::Unsupported(unsupported) => {
             canvas.separate();
             for line in unsupported.raw.lines() {
@@ -81,12 +80,16 @@ fn render_block(canvas: &mut Canvas<'_>, block: &AstBlock, presentation: &Docume
     }
 }
 
-fn render_heading(canvas: &mut Canvas<'_>, heading: &Heading, presentation: &DocumentPresentation) {
+fn render_heading(canvas: &mut Canvas<'_>, heading: &Heading, context: &mut RenderContext<'_, '_>) {
     // A malformed heading is not a heading. It reads as the text the author
     // typed, which is what the HTML backend shows as well.
     if !heading.well_formed {
         canvas.separate();
-        canvas.push_wrapped(&inline::plan(&heading.inlines, TerminalStyle::default()));
+        canvas.push_wrapped(&inline::plan(
+            &heading.inlines,
+            TerminalStyle::default(),
+            context,
+        ));
         return;
     }
 
@@ -100,15 +103,16 @@ fn render_heading(canvas: &mut Canvas<'_>, heading: &Heading, presentation: &Doc
                     bold: true,
                     ..TerminalStyle::default()
                 },
+                context,
             );
             let columns = inline::units_display_width(&units, canvas.policy().ambiguous_width);
             canvas.push_wrapped(&units);
             canvas.push_rule('═', columns, TerminalStyle::of(TerminalRole::Rule));
         }
         HeadingKind::DocumentTitle => {}
-        HeadingKind::Part => render_heading_level(canvas, heading, 1, presentation),
+        HeadingKind::Part => render_heading_level(canvas, heading, 1, context),
         HeadingKind::Section { level } | HeadingKind::Discrete { level } => {
-            render_heading_level(canvas, heading, level, presentation);
+            render_heading_level(canvas, heading, level, context);
         }
     }
 }
@@ -120,7 +124,7 @@ fn render_heading_level(
     canvas: &mut Canvas<'_>,
     heading: &Heading,
     level: u8,
-    presentation: &DocumentPresentation,
+    context: &mut RenderContext<'_, '_>,
 ) {
     canvas.separate();
     let step = usize::from(canvas.policy().indent.heading_step);
@@ -128,7 +132,7 @@ fn render_heading_level(
     let ambiguous = canvas.policy().ambiguous_width;
     canvas.indented(indent, |canvas| {
         let mut units = Vec::new();
-        if let Some(heading_presentation) = presentation.heading_at(heading.range)
+        if let Some(heading_presentation) = context.presentation.heading_at(heading.range)
             && heading_presentation.numbered
             && !heading_presentation.number.is_empty()
         {
@@ -148,6 +152,7 @@ fn render_heading_level(
                 bold: true,
                 ..TerminalStyle::default()
             },
+            context,
         ));
         let columns = inline::units_display_width(&units, ambiguous);
         canvas.push_wrapped(&units);
@@ -201,9 +206,21 @@ fn render_header_metadata(canvas: &mut Canvas<'_>, header: &DocumentHeader) {
     }
 }
 
-fn render_paragraph(canvas: &mut Canvas<'_>, paragraph: &Paragraph) {
+fn render_paragraph(
+    canvas: &mut Canvas<'_>,
+    paragraph: &Paragraph,
+    context: &mut RenderContext<'_, '_>,
+) {
     canvas.separate();
-    let units = inline::plan(&paragraph.inlines, TerminalStyle::default());
+    // A paragraph that is nothing but an image is a figure, and its caption
+    // names it the way the rest of the document refers to it.
+    if crate::caption::block_image(paragraph).is_some() {
+        render_caption(canvas, &paragraph.metadata, paragraph.range, context);
+        let units = inline::plan(&paragraph.inlines, TerminalStyle::default(), context);
+        canvas.push_wrapped(&units);
+        return;
+    }
+    let units = inline::plan(&paragraph.inlines, TerminalStyle::default(), context);
     match &paragraph.admonition {
         // One paragraph of warning reads best on the same line as its label,
         // with the rest of the text lined up under the first word.
@@ -226,8 +243,37 @@ fn admonition_marker(kind: AdmonitionKind) -> Vec<TerminalSpan> {
     )]
 }
 
-fn render_literal_paragraph(canvas: &mut Canvas<'_>, literal: &LiteralParagraph) {
-    render_verbatim_text(canvas, &literal.value, &literal.metadata);
+fn render_literal_paragraph(
+    canvas: &mut Canvas<'_>,
+    literal: &LiteralParagraph,
+    context: &mut RenderContext<'_, '_>,
+) {
+    render_verbatim_text(
+        canvas,
+        &literal.value,
+        &literal.metadata,
+        literal.range,
+        context,
+    );
+}
+
+/// A formula the terminal cannot set. Its source stands in, because the text
+/// an author wrote is still something a reader can follow.
+fn render_math(
+    canvas: &mut Canvas<'_>,
+    math: &crate::block_model::MathBlock,
+    context: &mut RenderContext<'_, '_>,
+) {
+    if context.policy.math == super::MathPresentation::Hidden {
+        return;
+    }
+    canvas.separate();
+    render_caption(canvas, &math.metadata, math.range, context);
+    canvas.bordered(border(TerminalRole::Math, true), |canvas| {
+        for line in math.value.lines() {
+            canvas.push_text(line, TerminalStyle::of(TerminalRole::Math));
+        }
+    });
 }
 
 fn render_break(canvas: &mut Canvas<'_>, block: &BreakBlock) {
@@ -240,19 +286,37 @@ fn render_break(canvas: &mut Canvas<'_>, block: &BreakBlock) {
     canvas.push_rule(character, columns, TerminalStyle::of(TerminalRole::Rule));
 }
 
-/// The title an author gave a block, written directly above it.
-pub(super) fn render_block_title(canvas: &mut Canvas<'_>, metadata: &BlockMetadata) {
-    if let Some(title) = &metadata.title {
-        canvas.push_wrapped(&inline::plan(
-            &title.inlines,
-            TerminalStyle {
-                role: TerminalRole::Caption,
-                bold: true,
-                ..TerminalStyle::default()
-            },
-        ));
-        canvas.keep_tight();
+/// The caption of a block: the number the document gives it, such as
+/// `Figure 1.`, and then the title the author wrote.
+pub(super) fn render_caption(
+    canvas: &mut Canvas<'_>,
+    metadata: &BlockMetadata,
+    range: crate::source::TextRange,
+    context: &mut RenderContext<'_, '_>,
+) {
+    let style = TerminalStyle {
+        role: TerminalRole::Caption,
+        bold: true,
+        ..TerminalStyle::default()
+    };
+    let lead = context
+        .presentation
+        .caption_at(range)
+        .and_then(crate::caption::BlockCaption::lead);
+    let Some(title) = &metadata.title else {
+        if let Some(lead) = lead {
+            canvas.push_wrapped(&inline::plan_text(lead.trim_end(), style));
+            canvas.keep_tight();
+        }
+        return;
+    };
+    let mut units = Vec::new();
+    if let Some(lead) = lead {
+        units.extend(inline::plan_text(&lead, style));
     }
+    units.extend(inline::plan(&title.inlines, style, context));
+    canvas.push_wrapped(&units);
+    canvas.keep_tight();
 }
 
 fn border(role: TerminalRole, dim: bool) -> Vec<TerminalSpan> {
@@ -268,9 +332,15 @@ fn border(role: TerminalRole, dim: bool) -> Vec<TerminalSpan> {
 
 /// Text that keeps the lines the author wrote, behind a border that marks it as
 /// text to be read exactly as it stands.
-fn render_verbatim_text(canvas: &mut Canvas<'_>, value: &str, metadata: &BlockMetadata) {
+fn render_verbatim_text(
+    canvas: &mut Canvas<'_>,
+    value: &str,
+    metadata: &BlockMetadata,
+    range: crate::source::TextRange,
+    context: &mut RenderContext<'_, '_>,
+) {
     canvas.separate();
-    render_block_title(canvas, metadata);
+    render_caption(canvas, metadata, range, context);
     canvas.bordered(border(TerminalRole::Code, true), |canvas| {
         for line in value.lines() {
             canvas.push_text(line, TerminalStyle::of(TerminalRole::Code));
@@ -280,18 +350,28 @@ fn render_verbatim_text(canvas: &mut Canvas<'_>, value: &str, metadata: &BlockMe
 
 /// A listing, literal, or source block. Its lines are never reflowed, because
 /// the line breaks are part of what the text means.
-fn render_verbatim(canvas: &mut Canvas<'_>, verbatim: &VerbatimBlock) {
+fn render_verbatim(
+    canvas: &mut Canvas<'_>,
+    verbatim: &VerbatimBlock,
+    context: &mut RenderContext<'_, '_>,
+) {
     let numbering = match &verbatim.kind {
         VerbatimKind::Source(source) if source.line_numbers => Some(source.start_line.unwrap_or(1)),
         _ => None,
     };
     let Some(first_number) = numbering else {
-        render_verbatim_text(canvas, &verbatim.value, &verbatim.metadata);
+        render_verbatim_text(
+            canvas,
+            &verbatim.value,
+            &verbatim.metadata,
+            verbatim.range,
+            context,
+        );
         return;
     };
 
     canvas.separate();
-    render_block_title(canvas, &verbatim.metadata);
+    render_caption(canvas, &verbatim.metadata, verbatim.range, context);
     let lines: Vec<&str> = verbatim.value.lines().collect();
     let last = first_number.saturating_add(u32::try_from(lines.len()).unwrap_or(u32::MAX));
     let width = last.to_string().len();
@@ -315,29 +395,115 @@ fn render_verbatim(canvas: &mut Canvas<'_>, verbatim: &VerbatimBlock) {
     }
 }
 
+/// The contents of the document, at the place the layout puts it.
+///
+/// The entries are not links, because a terminal page cannot be jumped
+/// through. The numbering and the indentation say where each section sits.
+fn render_table_of_contents(canvas: &mut Canvas<'_>, context: &mut RenderContext<'_, '_>) {
+    let entries = context.presentation.toc();
+    if entries.is_empty() {
+        return;
+    }
+    canvas.separate();
+    canvas.push_text(
+        "Contents",
+        TerminalStyle {
+            role: TerminalRole::Heading { level: 1 },
+            bold: true,
+            ..TerminalStyle::default()
+        },
+    );
+    canvas.keep_tight();
+    let step = usize::from(canvas.policy().indent.heading_step);
+    for entry in entries {
+        push_toc_entry(canvas, entry, step, 0, context.presentation);
+    }
+}
+
+fn push_toc_entry(
+    canvas: &mut Canvas<'_>,
+    entry: &crate::structure::TocEntry,
+    step: usize,
+    depth: usize,
+    presentation: &crate::presentation::DocumentPresentation,
+) {
+    canvas.indented(depth * step, |canvas| {
+        let mut spans = Vec::new();
+        // The contents show a number only where the section itself carries one.
+        if presentation
+            .heading_at(entry.range)
+            .is_some_and(|heading| heading.numbered)
+            && !entry.number.is_empty()
+        {
+            spans.push(TerminalSpan::new(
+                section_number(&entry.number),
+                TerminalStyle::of(TerminalRole::Marker),
+            ));
+        }
+        spans.push(TerminalSpan::new(
+            entry.title.clone(),
+            TerminalStyle::default(),
+        ));
+        canvas.push_line(spans);
+        for child in &entry.children {
+            push_toc_entry(canvas, child, step, depth + 1, presentation);
+        }
+    });
+}
+
+/// The notes of the document, gathered where the layout puts them. Each one
+/// carries the number that stands in the text.
+fn render_footnotes(canvas: &mut Canvas<'_>, context: &mut RenderContext<'_, '_>) {
+    let footnotes = context.catalogs.footnotes();
+    if footnotes.is_empty() {
+        return;
+    }
+    canvas.separate();
+    canvas.push_text(
+        "Footnotes",
+        TerminalStyle {
+            role: TerminalRole::Heading { level: 1 },
+            bold: true,
+            ..TerminalStyle::default()
+        },
+    );
+    canvas.keep_tight();
+    for footnote in footnotes {
+        let marker = vec![TerminalSpan::new(
+            format!("[{}] ", footnote.number),
+            TerminalStyle::of(TerminalRole::FootnoteMarker),
+        )];
+        let units = inline::plan_text(
+            &footnote.text,
+            TerminalStyle::of(TerminalRole::FootnoteText),
+        );
+        canvas.hanging(marker, |canvas| canvas.push_wrapped(&units));
+    }
+}
+
 fn render_delimited(
     canvas: &mut Canvas<'_>,
     block: &DelimitedBlock,
-    presentation: &DocumentPresentation,
+    context: &mut RenderContext<'_, '_>,
 ) {
     match &block.presentation {
         Some(DelimitedPresentation::Admonition(admonition)) => {
-            render_admonition_block(canvas, block, admonition, presentation);
+            render_admonition_block(canvas, block, admonition, context);
         }
         Some(DelimitedPresentation::Quote(quote)) => {
-            render_quote_block(canvas, block, quote, presentation);
+            render_quote_block(canvas, block, quote, context);
         }
         Some(DelimitedPresentation::Collapsible(_)) => {
-            render_collapsible_block(canvas, block, presentation);
+            render_collapsible_block(canvas, block, context);
         }
         None => match &block.content {
             DelimitedContent::Compound(children) => {
-                render_compound_block(canvas, block, children, presentation);
+                render_compound_block(canvas, block, children, context);
             }
             DelimitedContent::Verbatim(value) => {
                 // A comment block is written for the author, not the reader.
                 if block.kind != DelimitedBlockKind::Comment {
-                    render_verbatim_text(canvas, value, &block.metadata);
+                    render_verbatim_text(canvas, value, &block.metadata, block.range, context);
                 }
             }
             DelimitedContent::Passthrough(value) => {
@@ -347,7 +513,7 @@ fn render_delimited(
                 }
             }
             DelimitedContent::Table(table) => {
-                super::table::render(canvas, table, &block.metadata, presentation);
+                super::table::render(canvas, table, &block.metadata, block.range, context);
             }
         },
     }
@@ -356,12 +522,12 @@ fn render_delimited(
 fn render_delimited_children(
     canvas: &mut Canvas<'_>,
     block: &DelimitedBlock,
-    presentation: &DocumentPresentation,
+    context: &mut RenderContext<'_, '_>,
 ) {
     match &block.content {
         DelimitedContent::Compound(children) => {
             for child in children {
-                render_block(canvas, child, presentation);
+                render_block(canvas, child, context);
             }
         }
         DelimitedContent::Verbatim(value) | DelimitedContent::Passthrough(value) => {
@@ -379,7 +545,7 @@ fn render_admonition_block(
     canvas: &mut Canvas<'_>,
     block: &DelimitedBlock,
     admonition: &AdmonitionPresentation,
-    presentation: &DocumentPresentation,
+    context: &mut RenderContext<'_, '_>,
 ) {
     canvas.separate();
     canvas.push_line(vec![TerminalSpan::new(
@@ -393,8 +559,8 @@ fn render_admonition_block(
     canvas.bordered(
         border(TerminalRole::Admonition(admonition.kind), false),
         |canvas| {
-            render_block_title(canvas, &block.metadata);
-            render_delimited_children(canvas, block, presentation);
+            render_caption(canvas, &block.metadata, block.range, context);
+            render_delimited_children(canvas, block, context);
         },
     );
 }
@@ -403,15 +569,15 @@ fn render_quote_block(
     canvas: &mut Canvas<'_>,
     block: &DelimitedBlock,
     quote: &QuotePresentation,
-    presentation: &DocumentPresentation,
+    context: &mut RenderContext<'_, '_>,
 ) {
     canvas.separate();
     canvas.bordered(border(TerminalRole::Quote, false), |canvas| {
-        render_block_title(canvas, &block.metadata);
+        render_caption(canvas, &block.metadata, block.range, context);
         match quote.kind {
             // A verse keeps the line breaks the poet wrote.
-            QuoteKind::Verse => render_verse(canvas, block, presentation),
-            QuoteKind::Quote => render_delimited_children(canvas, block, presentation),
+            QuoteKind::Verse => render_verse(canvas, block, context),
+            QuoteKind::Quote => render_delimited_children(canvas, block, context),
         }
         if let Some(attribution) = attribution_text(quote) {
             canvas.separate();
@@ -443,15 +609,15 @@ fn attribution_text(quote: &QuotePresentation) -> Option<String> {
 fn render_verse(
     canvas: &mut Canvas<'_>,
     block: &DelimitedBlock,
-    presentation: &DocumentPresentation,
+    context: &mut RenderContext<'_, '_>,
 ) {
     let DelimitedContent::Compound(children) = &block.content else {
-        render_delimited_children(canvas, block, presentation);
+        render_delimited_children(canvas, block, context);
         return;
     };
     for child in children {
         let AstBlock::Paragraph(paragraph) = child else {
-            render_block(canvas, child, presentation);
+            render_block(canvas, child, context);
             continue;
         };
         canvas.separate();
@@ -466,7 +632,7 @@ fn render_verse(
 fn render_collapsible_block(
     canvas: &mut Canvas<'_>,
     block: &DelimitedBlock,
-    presentation: &DocumentPresentation,
+    context: &mut RenderContext<'_, '_>,
 ) {
     canvas.separate();
     let title = match &block.metadata.title {
@@ -477,6 +643,7 @@ fn render_collapsible_block(
                 bold: true,
                 ..TerminalStyle::default()
             },
+            context,
         ),
         None => inline::plan_text(
             "Details",
@@ -495,7 +662,7 @@ fn render_collapsible_block(
         |canvas| {
             canvas.push_wrapped(&title);
             canvas.keep_tight();
-            render_delimited_children(canvas, block, presentation);
+            render_delimited_children(canvas, block, context);
         },
     );
 }
@@ -506,7 +673,7 @@ fn render_compound_block(
     canvas: &mut Canvas<'_>,
     block: &DelimitedBlock,
     children: &[AstBlock],
-    presentation: &DocumentPresentation,
+    context: &mut RenderContext<'_, '_>,
 ) {
     let framed = matches!(
         block.kind,
@@ -514,7 +681,7 @@ fn render_compound_block(
     );
     if !framed {
         for child in children {
-            render_block(canvas, child, presentation);
+            render_block(canvas, child, context);
         }
         return;
     }
@@ -522,11 +689,11 @@ fn render_compound_block(
     canvas.separate();
     let columns = canvas.content_width().unwrap_or(UNBOUNDED_RULE_WIDTH);
     let rule = TerminalStyle::of(TerminalRole::Rule);
-    render_block_title(canvas, &block.metadata);
+    render_caption(canvas, &block.metadata, block.range, context);
     canvas.push_rule('─', columns, rule);
     canvas.keep_tight();
     for child in children {
-        render_block(canvas, child, presentation);
+        render_block(canvas, child, context);
     }
     canvas.push_rule('─', columns, rule);
 }
@@ -534,7 +701,7 @@ fn render_compound_block(
 fn render_list(
     canvas: &mut Canvas<'_>,
     list: &ListBlock,
-    presentation: &DocumentPresentation,
+    context: &mut RenderContext<'_, '_>,
     depth: usize,
 ) {
     // A list stands apart from the text around it, but a list nested in an
@@ -548,10 +715,10 @@ fn render_list(
             // A term and what it means are two different things, so the term
             // stands on its own line and the description sits under it.
             (ListKind::Description, false) => {
-                render_description_item(canvas, item, presentation, depth);
+                render_description_item(canvas, item, context, depth);
             }
             _ => canvas.hanging(marker, |canvas| {
-                render_item_body(canvas, item, presentation, depth);
+                render_item_body(canvas, item, context, depth);
             }),
         }
     }
@@ -560,28 +727,30 @@ fn render_list(
 fn render_description_item(
     canvas: &mut Canvas<'_>,
     item: &ListItem,
-    presentation: &DocumentPresentation,
+    context: &mut RenderContext<'_, '_>,
     depth: usize,
 ) {
     for term in &item.terms {
-        canvas.push_wrapped(&inline::plan(
+        let units = inline::plan(
             &term.inlines,
             TerminalStyle {
                 bold: true,
                 ..TerminalStyle::default()
             },
-        ));
+            context,
+        );
+        canvas.push_wrapped(&units);
     }
     let nested = usize::from(canvas.policy().indent.nested);
     canvas.indented(nested, |canvas| {
-        render_item_body(canvas, item, presentation, depth);
+        render_item_body(canvas, item, context, depth);
     });
 }
 
 fn render_item_body(
     canvas: &mut Canvas<'_>,
     item: &ListItem,
-    presentation: &DocumentPresentation,
+    context: &mut RenderContext<'_, '_>,
     depth: usize,
 ) {
     let mut units = Vec::new();
@@ -596,15 +765,19 @@ fn render_item_body(
             TerminalStyle::of(TerminalRole::Marker),
         ));
     }
-    units.extend(inline::plan(&item.inlines, TerminalStyle::default()));
+    units.extend(inline::plan(
+        &item.inlines,
+        TerminalStyle::default(),
+        context,
+    ));
     if !units.is_empty() {
         canvas.push_wrapped(&units);
     }
     for continuation in &item.continuations {
-        render_block(canvas, continuation, presentation);
+        render_block(canvas, continuation, context);
     }
     for child in &item.children {
-        render_list(canvas, child, presentation, depth + 1);
+        render_list(canvas, child, context, depth + 1);
     }
 }
 

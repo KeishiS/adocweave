@@ -5,12 +5,12 @@
 //! cells hold and the room the page has left.
 
 use crate::block_model::BlockMetadata;
-use crate::presentation::DocumentPresentation;
 use crate::table::{
     HorizontalAlignment, Table, TableCell, TableCellContent, TableCellStyle, TableFrame, TableGrid,
     TableSection, VerticalAlignment,
 };
 
+use super::context::RenderContext;
 use super::layout::{Canvas, wrap_units};
 use super::{
     TableBorders, TerminalPolicy, TerminalRole, TerminalSpan, TerminalStyle, blocks, display_width,
@@ -117,13 +117,14 @@ pub(super) fn render(
     canvas: &mut Canvas<'_>,
     table: &Table,
     metadata: &BlockMetadata,
-    presentation: &DocumentPresentation,
+    range: crate::source::TextRange,
+    context: &mut RenderContext<'_, '_>,
 ) {
     let columns = column_count(table);
     if columns == 0 || table.rows.is_empty() {
         return;
     }
-    let policy = *canvas.policy();
+    let policy = canvas.policy().clone();
     let shape = Shape::of(&policy, table);
     let placements = placements(table, columns);
     let widths = column_widths(
@@ -133,11 +134,11 @@ pub(super) fn render(
         columns,
         canvas,
         &shape,
-        presentation,
+        context,
     );
 
     canvas.separate();
-    blocks::render_block_title(canvas, metadata);
+    blocks::render_caption(canvas, metadata, range, context);
     let border_style = TerminalStyle::of(TerminalRole::TableBorder);
 
     if shape.frame
@@ -192,7 +193,7 @@ pub(super) fn render(
             columns,
             &widths,
             &shape,
-            presentation,
+            context,
         );
     }
     if shape.frame
@@ -269,20 +270,20 @@ fn column_widths(
     columns: usize,
     canvas: &Canvas<'_>,
     shape: &Shape,
-    presentation: &DocumentPresentation,
+    context: &mut RenderContext<'_, '_>,
 ) -> Vec<usize> {
     // A column is only ever as wide as it needs to be. The minimum is a floor
     // for shrinking, not a width a short column is padded out to.
     let mut widths = vec![0; columns];
     for placement in placements {
-        let natural = natural_width(policy, placement.cell, presentation);
+        let natural = natural_width(policy, placement.cell, context);
         if placement.column_span == 1 {
             widths[placement.column] = widths[placement.column].max(natural);
         }
     }
     // A cell that reaches across columns still needs room for its text.
     for placement in placements.iter().filter(|one| one.column_span > 1) {
-        let natural = natural_width(policy, placement.cell, presentation);
+        let natural = natural_width(policy, placement.cell, context);
         let span = placement.column..placement.column + placement.column_span;
         let held: usize = widths[span.clone()].iter().sum::<usize>()
             + (placement.column_span - 1) * shape.separator_width();
@@ -375,9 +376,9 @@ fn widest_column(widths: &[usize]) -> Option<usize> {
 fn natural_width(
     policy: &TerminalPolicy,
     cell: &TableCell,
-    presentation: &DocumentPresentation,
+    context: &mut RenderContext<'_, '_>,
 ) -> usize {
-    cell_lines(policy, cell, None, false, presentation)
+    cell_lines(policy, cell, None, false, context)
         .iter()
         .map(|line| {
             line.iter()
@@ -394,12 +395,13 @@ fn cell_lines(
     cell: &TableCell,
     width: Option<usize>,
     header: bool,
-    presentation: &DocumentPresentation,
+    context: &mut RenderContext<'_, '_>,
 ) -> Vec<Vec<TerminalSpan>> {
     let style = cell_style(cell, header);
     match &cell.content {
         TableCellContent::Inlines(inlines) => {
-            wrap_units(&inline::plan(inlines, style), width, policy.ambiguous_width)
+            let units = inline::plan(inlines, style, context);
+            wrap_units(&units, width, policy.ambiguous_width)
         }
         // Text kept as it was typed keeps its own line breaks.
         TableCellContent::Verbatim(value) => value
@@ -414,9 +416,9 @@ fn cell_lines(
                     }
                     None => super::TerminalWidth::Unlimited,
                 },
-                ..*policy
+                ..policy.clone()
             };
-            blocks::render_blocks(children, &nested, presentation)
+            blocks::render_blocks(children, &nested, context)
                 .into_iter()
                 .map(|line| line.spans)
                 .collect()
@@ -451,7 +453,7 @@ fn render_row(
     columns: usize,
     widths: &[usize],
     shape: &Shape,
-    presentation: &DocumentPresentation,
+    context: &mut RenderContext<'_, '_>,
 ) {
     let header = table.rows[row].section == TableSection::Header;
     let cells: Vec<&Placement<'_>> = placements
@@ -461,7 +463,7 @@ fn render_row(
     let mut rendered = Vec::new();
     for placement in &cells {
         let width = span_width(widths, placement, shape);
-        let lines = cell_lines(policy, placement.cell, Some(width), header, presentation);
+        let lines = cell_lines(policy, placement.cell, Some(width), header, context);
         rendered.push((placement, width, lines));
     }
     let height = rendered
