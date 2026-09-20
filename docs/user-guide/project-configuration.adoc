@@ -175,7 +175,36 @@ roles = ["definition", "theorem"]
 |``html.roles``
 |role名の配列（既定値: 空の配列）
 |HTML出力へ残すブロックのroleを指定します。
+
+|``terminal.theme``
+|``dark``または``light``（既定値は``dark``）
+|``view``の配色を、読む端末の背景に合わせて指定します。
+
+|``terminal.colors.<ROLE>``
+|端末の基本色の名前または``default``
+|``view``で``<ROLE>``に使う色を指定します。``<ROLE>``には``heading``や``link``のような、文字列の役割を表す名前を指定します。
 |===
+
+[#terminal-colors]
+=== 端末表示の配色
+
+``terminal.colors.<ROLE>``の``<ROLE>``は設定値ではなく、色を決める対象を表します。指定できる名前と
+色の一覧はlink:../../config/adocweave.schema.json[JSON Schema]にあります。色は端末が元から持つ
+基本色の名前（``black``、``red``、``green``、``yellow``、``blue``、``magenta``、``cyan``、``white``と、
+それぞれに``bright-``を付けた名前）と、端末が使っていた色をそのまま使う``default``です。
+
+[source,toml]
+----
+[terminal]
+theme = "light"
+
+[terminal.colors]
+heading = "blue"
+link = "cyan"
+----
+
+``adocweave view --theme NAME``を指定した場合は、設定より優先します。個々のroleに指定した色は、
+どちらのthemeでも使います。
 
 === 診断規則の設定
 

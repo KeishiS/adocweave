@@ -2,6 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use adocweave_core::output::diagnostics::{LINT_RULES, LintConfig};
+use adocweave_core::output::terminal::TerminalRole;
 use jsonschema::Draft;
 use schemars::generate::SchemaSettings;
 use serde_json::{Map, Value, json};
@@ -140,6 +141,13 @@ fn generated_schema() -> Value {
         "/properties/lint/properties/rules/additionalProperties/properties/enabled",
         json!({ "type": "boolean" }),
     );
+    // The names a color may be chosen for are the roles a page carries.
+    object_at(&mut schema, "/properties/terminal/properties/colors").insert(
+        "propertyNames".into(),
+        json!({ "enum": TerminalRole::NAMES }),
+    );
+    object_at(&mut schema, "/properties/terminal/properties/colors")
+        .insert("default".into(), json!({}));
     let resource_defaults = ProjectResourceLimits::default();
     for (name, maximum) in [
         ("max-files", resource_defaults.max_files as u64),
@@ -254,6 +262,21 @@ fn generated_schema_covers_the_configuration_contract() {
             "enabled local targets with root",
             json!({ "schema-version": SCHEMA_VERSION, "local-targets": { "enabled": true, "project-root": "docs" } }),
             true,
+        ),
+        (
+            "terminal theme and colors",
+            json!({ "schema-version": SCHEMA_VERSION, "terminal": { "theme": "light", "colors": { "heading": "blue" } } }),
+            true,
+        ),
+        (
+            "terminal color for a role that does not exist",
+            json!({ "schema-version": SCHEMA_VERSION, "terminal": { "colors": { "heading-1": "blue" } } }),
+            false,
+        ),
+        (
+            "terminal color a terminal has no name for",
+            json!({ "schema-version": SCHEMA_VERSION, "terminal": { "colors": { "heading": "#00ff00" } } }),
+            false,
         ),
         (
             "equal resource limits",

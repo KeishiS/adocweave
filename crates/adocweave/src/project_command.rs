@@ -74,8 +74,13 @@ pub(crate) fn run(arguments: &Arguments) -> Result<CliExitCode, CliError> {
             // terminal that can follow a link leaves out the written address.
             let reaches_a_screen = io::stdout().is_terminal()
                 || matches!(options.pager, crate::arguments::PagerChoice::Always);
+            let theme = crate::theme::Theme::resolve(
+                options.theme.map(Into::into),
+                target.config.config.terminal(),
+            );
             let decoration = commands::view::Decoration {
                 color: crate::terminal::color_for(arguments.color, reaches_a_screen),
+                theme: &theme,
                 hyperlinks: crate::terminal::hyperlinks_enabled(
                     options.hyperlinks,
                     reaches_a_screen,

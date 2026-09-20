@@ -314,6 +314,18 @@ adocweave view --hyperlinks never manual.adoc
 URLのように辿れる形にできないものだけを併記します。読み手が見ることも辿ることもできないURLを残さない
 ためです。辿れることと色が付くことは別の条件で決まります。
 
+配色は、読む端末の背景に合わせて選べます。既定の``dark``は暗い背景、``light``は明るい背景を前提に
+した色です。
+
+[source,console]
+----
+adocweave view --theme light manual.adoc
+----
+
+``.adocweave.toml``の``[terminal]``でも指定でき、``--theme``はその指定より優先します。見出しやリンク
+などの役割ごとに色を選ぶこともできます。設定の書き方は
+xref:project-configuration.adoc#terminal-colors[プロジェクト設定]を参照してください。
+
 == ローカルプレビュー
 
 ``preview``は完全なHTML文書を生成し、既定では``127.0.0.1:4000``で配信します。表示されたURLをブラウザーで

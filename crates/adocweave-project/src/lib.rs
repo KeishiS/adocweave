@@ -38,7 +38,7 @@ use adocweave_core::{Analysis, AnalysisOptions, ParseError, SourceId};
 use config::{ConfigError, ConfigErrorCode, LoadedProjectConfig};
 use filesystem::{FilesystemAuthority, FilesystemError, RootAuthority};
 
-pub use config::ProjectConfig;
+pub use config::{ProjectConfig, TerminalColor, TerminalSettings, TerminalTheme};
 pub use process::{process, resolve_config};
 
 /// Resolves `path` against `root` without touching the filesystem.
@@ -931,6 +931,7 @@ pub enum ProjectConfigErrorCode {
     InvalidLimit,
     InvalidPath,
     InvalidRole,
+    InvalidTerminalRole,
 }
 
 /// Failure while reading or validating project configuration.
@@ -955,6 +956,7 @@ impl ProjectConfigError {
             ConfigErrorCode::InvalidLimit => ProjectConfigErrorCode::InvalidLimit,
             ConfigErrorCode::InvalidPath => ProjectConfigErrorCode::InvalidPath,
             ConfigErrorCode::InvalidRole => ProjectConfigErrorCode::InvalidRole,
+            ConfigErrorCode::InvalidTerminalRole => ProjectConfigErrorCode::InvalidTerminalRole,
         };
         Self {
             code,
@@ -1113,6 +1115,9 @@ impl ProjectConfig {
     }
     pub fn stylesheet_urls(&self) -> &[String] {
         &self.html.stylesheet_urls
+    }
+    pub fn terminal(&self) -> &TerminalSettings {
+        &self.terminal
     }
 }
 

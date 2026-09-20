@@ -1251,6 +1251,7 @@ fn public_help_paths_describe_every_command() {
                 "--width <COLUMNS>",
                 "--pager <WHEN>",
                 "--hyperlinks <WHEN>",
+                "--theme <NAME>",
                 "--include",
                 "--no-include",
                 "--stdin-base <DIR>",
@@ -3997,5 +3998,107 @@ fn view_writes_no_followable_links_when_the_reader_asked_for_none() {
     assert!(
         stdout.contains("the site (https://example.com)"),
         "{stdout}"
+    );
+}
+
+/// A palette written for a light background differs from the one written for a
+/// dark one, and the reader can say which they read on.
+#[test]
+fn view_shows_the_page_in_the_palette_the_reader_named() {
+    let root = view_root();
+
+    let dark = adocweave()
+        .current_dir(root.path())
+        .args([
+            "view",
+            "--color",
+            "always",
+            "--theme",
+            "dark",
+            "document.adoc",
+        ])
+        .output()
+        .expect("command");
+    let light = adocweave()
+        .current_dir(root.path())
+        .args([
+            "view",
+            "--color",
+            "always",
+            "--theme",
+            "light",
+            "document.adoc",
+        ])
+        .output()
+        .expect("command");
+
+    let dark = String::from_utf8_lossy(&dark.stdout);
+    let light = String::from_utf8_lossy(&light.stdout);
+    assert!(dark.starts_with("\u{1b}[1;36mTitle"), "{dark:?}");
+    assert!(light.starts_with("\u{1b}[1;34mTitle"), "{light:?}");
+    assert_eq!(without_escapes(&dark), without_escapes(&light));
+}
+
+/// The project says what the palette is when the reader does not, and a color
+/// chosen for one role stands over both.
+#[test]
+fn a_project_can_choose_the_palette_and_the_color_of_a_role() {
+    let root = view_root();
+    std::fs::write(
+        root.path().join(".adocweave.toml"),
+        "schema-version = 2\n[terminal]\ntheme = \"light\"\n\n[terminal.colors]\nheading = \"bright-magenta\"\n",
+    )
+    .expect("configuration");
+
+    let configured = adocweave()
+        .current_dir(root.path())
+        .args(["view", "--color", "always", "document.adoc"])
+        .output()
+        .expect("command");
+    let named = adocweave()
+        .current_dir(root.path())
+        .args([
+            "view",
+            "--color",
+            "always",
+            "--theme",
+            "dark",
+            "document.adoc",
+        ])
+        .output()
+        .expect("command");
+
+    let configured = String::from_utf8_lossy(&configured.stdout);
+    assert!(configured.contains("\u{1b}[1;34mTitle"), "{configured:?}");
+    assert!(configured.contains("\u{1b}[1;95mSection"), "{configured:?}");
+    // The command line has the last word about the palette, and the color
+    // chosen for the role still stands.
+    let named = String::from_utf8_lossy(&named.stdout);
+    assert!(named.contains("\u{1b}[1;36mTitle"), "{named:?}");
+    assert!(named.contains("\u{1b}[1;95mSection"), "{named:?}");
+}
+
+/// A color chosen for a role that does not exist would silently do nothing, so
+/// it is reported like any other configuration error.
+#[test]
+fn a_color_for_a_role_that_does_not_exist_is_reported() {
+    let root = view_root();
+    std::fs::write(
+        root.path().join(".adocweave.toml"),
+        "schema-version = 2\n[terminal.colors]\nheading-1 = \"blue\"\n",
+    )
+    .expect("configuration");
+
+    let output = adocweave()
+        .current_dir(root.path())
+        .args(["view", "document.adoc"])
+        .output()
+        .expect("command");
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("terminal.colors.heading-1"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
     );
 }

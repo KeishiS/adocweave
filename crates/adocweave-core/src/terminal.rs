@@ -240,6 +240,84 @@ pub enum TerminalRole {
     Unsupported,
 }
 
+impl TerminalRole {
+    /// Every name a role is known by, in the order the roles are declared.
+    ///
+    /// A host that lets a reader choose how a role looks needs the names to
+    /// check what it was given against. The depth of a heading is not part of
+    /// the name: a reader chooses how headings look, not how the third level
+    /// of them looks.
+    pub const NAMES: &'static [&'static str] = &[
+        "text",
+        "document-title",
+        "heading",
+        "metadata",
+        "marker",
+        "rule",
+        "caption",
+        "muted",
+        "monospace",
+        "code",
+        "math",
+        "link",
+        "reference",
+        "unresolved-reference",
+        "admonition-note",
+        "admonition-tip",
+        "admonition-important",
+        "admonition-warning",
+        "admonition-caution",
+        "quote",
+        "attribution",
+        "table-header",
+        "table-border",
+        "footnote-marker",
+        "footnote-text",
+        "media-placeholder",
+        "unsupported",
+    ];
+
+    /// The name this role is known by.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::DocumentTitle => "document-title",
+            Self::Heading { .. } => "heading",
+            Self::Metadata => "metadata",
+            Self::Marker => "marker",
+            Self::Rule => "rule",
+            Self::Caption => "caption",
+            Self::Muted => "muted",
+            Self::Monospace => "monospace",
+            Self::Code => "code",
+            Self::Math => "math",
+            Self::Link => "link",
+            Self::Reference => "reference",
+            Self::UnresolvedReference => "unresolved-reference",
+            Self::Admonition(kind) => match kind {
+                AdmonitionKind::Note => "admonition-note",
+                AdmonitionKind::Tip => "admonition-tip",
+                AdmonitionKind::Important => "admonition-important",
+                AdmonitionKind::Warning => "admonition-warning",
+                AdmonitionKind::Caution => "admonition-caution",
+            },
+            Self::Quote => "quote",
+            Self::Attribution => "attribution",
+            Self::TableHeader => "table-header",
+            Self::TableBorder => "table-border",
+            Self::FootnoteMarker => "footnote-marker",
+            Self::FootnoteText => "footnote-text",
+            Self::MediaPlaceholder => "media-placeholder",
+            Self::Unsupported => "unsupported",
+        }
+    }
+
+    /// Whether `name` is the name of a role.
+    pub fn is_name(name: &str) -> bool {
+        Self::NAMES.contains(&name)
+    }
+}
+
 /// A role together with the emphasis applied on top of it.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct TerminalStyle {
