@@ -4,6 +4,8 @@ use adocweave_core::output::terminal::{
     LinkPresentation, TerminalDocument, TerminalPolicy, TerminalSpan, TerminalStyle, TerminalWidth,
 };
 
+use crate::highlight::{CodeColors, code_colors};
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Options {
     /// The width the reader asked for, if they asked.
@@ -53,13 +55,36 @@ pub(crate) fn serialize(document: &TerminalDocument, decoration: Decoration<'_>)
         return document.to_plain_text();
     }
     let mut output = String::new();
-    for line in &document.lines {
+    // Code is colored by the language the document named for it, which is
+    // read a block at a time rather than a line at a time.
+    let colors = if decoration.color {
+        code_colors(document)
+    } else {
+        CodeColors::default()
+    };
+    for (index, line) in document.lines.iter().enumerate() {
         for span in &line.spans {
-            write_span(&mut output, span, decoration);
+            match colors.line(index).filter(|_| span.language.is_some()) {
+                Some(tokens) => write_code(&mut output, span, tokens, decoration),
+                None => write_span(&mut output, span, decoration),
+            }
         }
         output.push('\n');
     }
     output
+}
+
+/// Writes one line of code, each piece in the color of what it is.
+fn write_code(
+    output: &mut String,
+    span: &TerminalSpan,
+    tokens: &[crate::highlight::Token],
+    decoration: Decoration<'_>,
+) {
+    for token in tokens {
+        let color = decoration.theme.code_color(token.role);
+        write_parameters(output, &parameters_for(span.style, color), &token.text);
+    }
 }
 
 /// The start and end of a followable link, as OSC 8 writes them. A terminal
@@ -94,8 +119,12 @@ fn write_styled_text(output: &mut String, span: &TerminalSpan, decoration: Decor
     } else {
         Vec::new()
     };
+    write_parameters(output, &parameters, &span.text);
+}
+
+fn write_parameters(output: &mut String, parameters: &[&str], text: &str) {
     if parameters.is_empty() {
-        output.push_str(&span.text);
+        output.push_str(text);
         return;
     }
     output.push_str("\u{1b}[");
@@ -106,8 +135,17 @@ fn write_styled_text(output: &mut String, span: &TerminalSpan, decoration: Decor
         output.push_str(parameter);
     }
     output.push('m');
-    output.push_str(&span.text);
+    output.push_str(text);
     output.push_str("\u{1b}[0m");
+}
+
+/// The emphasis of the block, and the color of the piece inside it.
+fn parameters_for(style: TerminalStyle, color: Option<&'static str>) -> Vec<&'static str> {
+    let mut parameters = emphasis(style);
+    if let Some(color) = color {
+        parameters.push(color);
+    }
+    parameters
 }
 
 /// The SGR parameters for one style.
@@ -116,6 +154,11 @@ fn write_styled_text(output: &mut String, span: &TerminalSpan, decoration: Decor
 /// terminal that shows anything at all shows these, and a reader who set a
 /// palette sees the document in it.
 fn parameters(style: TerminalStyle, theme: &crate::theme::Theme) -> Vec<&'static str> {
+    parameters_for(style, theme.color(style.role))
+}
+
+/// Everything about a style except its color.
+fn emphasis(style: TerminalStyle) -> Vec<&'static str> {
     let mut parameters = Vec::new();
     if style.bold {
         parameters.push("1");
@@ -131,9 +174,6 @@ fn parameters(style: TerminalStyle, theme: &crate::theme::Theme) -> Vec<&'static
     }
     if style.inverse {
         parameters.push("7");
-    }
-    if let Some(color) = theme.color(style.role) {
-        parameters.push(color);
     }
     parameters
 }
@@ -202,9 +242,8 @@ mod tests {
         let document = TerminalDocument {
             lines: vec![TerminalLine {
                 spans: vec![TerminalSpan {
-                    text: "the site".to_owned(),
-                    style: TerminalStyle::of(TerminalRole::Link),
                     link: Some("https://example.com".to_owned()),
+                    ..TerminalSpan::new("the site", TerminalStyle::of(TerminalRole::Link))
                 }],
             }],
         };

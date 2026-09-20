@@ -12,6 +12,7 @@ mod diagnostic_json;
 mod diagnostic_output;
 mod exit_code;
 mod file_workflow;
+mod highlight;
 mod local_target;
 mod pager;
 mod preview;

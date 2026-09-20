@@ -16,6 +16,25 @@ pub(crate) struct Theme {
     chosen: BTreeMap<String, TerminalColor>,
 }
 
+/// What one piece of code is, inside a block the reader is shown.
+///
+/// A terminal has few colors, so code is told apart by the handful of kinds
+/// a reader actually looks for, not by every scope a language defines.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CodeRole {
+    /// Code with nothing else to say about it.
+    Plain,
+    Comment,
+    /// A string, or any other text written inside the code.
+    Text,
+    /// A number or another value the language writes literally.
+    Value,
+    Keyword,
+    Function,
+    /// The name of a type, a class, or another thing the code declares.
+    Name,
+}
+
 /// The background the palette is written for.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum Palette {
@@ -47,6 +66,45 @@ impl Theme {
         match self.chosen.get(role.name()) {
             Some(color) => parameter(*color),
             None => self.palette.color(role),
+        }
+    }
+
+    /// The SGR parameter for one piece of code.
+    ///
+    /// Code sits inside a block that already has a color, so a piece with
+    /// nothing else to say about it keeps that color, and the name of what
+    /// the code declares is left in the color the terminal reads in. The
+    /// rest are told apart from each other and from the block around them.
+    pub(crate) fn code_color(&self, role: CodeRole) -> Option<&'static str> {
+        let dark = self.palette == Palette::Dark;
+        match role {
+            CodeRole::Plain => self.color(TerminalRole::Code),
+            CodeRole::Comment => self.color(TerminalRole::Muted),
+            CodeRole::Name => None,
+            CodeRole::Value => parameter(TerminalColor::Magenta),
+            // Yellow reads on a dark background and washes out on a light
+            // one, where red takes its place.
+            CodeRole::Text => {
+                if dark {
+                    parameter(TerminalColor::Yellow)
+                } else {
+                    parameter(TerminalColor::Red)
+                }
+            }
+            CodeRole::Keyword => {
+                if dark {
+                    parameter(TerminalColor::Cyan)
+                } else {
+                    parameter(TerminalColor::Blue)
+                }
+            }
+            CodeRole::Function => {
+                if dark {
+                    parameter(TerminalColor::Blue)
+                } else {
+                    parameter(TerminalColor::Cyan)
+                }
+            }
         }
     }
 }
@@ -206,6 +264,36 @@ mod tests {
         let theme = Theme::resolve(None, &settings(None, &[("code", TerminalColor::Default)]));
 
         assert_eq!(theme.color(TerminalRole::Code), None);
+    }
+
+    /// No two kinds of code share a color, and none of them is the color of
+    /// the block around them, or they could not be told apart.
+    #[test]
+    fn the_kinds_of_code_are_told_apart_in_either_palette() {
+        for theme in [TerminalTheme::Dark, TerminalTheme::Light] {
+            let theme = Theme::resolve(None, &settings(Some(theme), &[]));
+            let colors = [
+                theme.code_color(CodeRole::Comment),
+                theme.code_color(CodeRole::Text),
+                theme.code_color(CodeRole::Value),
+                theme.code_color(CodeRole::Keyword),
+                theme.code_color(CodeRole::Function),
+                theme.code_color(CodeRole::Name),
+                theme.code_color(CodeRole::Plain),
+            ];
+            let unique: std::collections::BTreeSet<_> = colors.iter().collect();
+
+            assert_eq!(unique.len(), colors.len(), "{colors:?}");
+        }
+    }
+
+    /// Plain code follows the color chosen for a code block, so a reader who
+    /// changed that sees the code change with it.
+    #[test]
+    fn plain_code_follows_the_color_of_the_block_it_sits_in() {
+        let theme = Theme::resolve(None, &settings(None, &[("code", TerminalColor::Blue)]));
+
+        assert_eq!(theme.code_color(CodeRole::Plain), Some("34"));
     }
 
     #[test]

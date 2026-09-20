@@ -160,10 +160,13 @@ fn merge(clusters: &[Cluster]) -> Vec<TerminalSpan> {
             Some(last) if last.style == cluster.style && last.link == cluster.link => {
                 last.text.push_str(&cluster.text);
             }
+            // Text that is wrapped is prose. Code keeps the lines the author
+            // wrote and never reaches this, so no language is carried here.
             _ => spans.push(TerminalSpan {
                 text: cluster.text.clone(),
                 style: cluster.style,
                 link: cluster.link.clone(),
+                language: None,
             }),
         }
     }

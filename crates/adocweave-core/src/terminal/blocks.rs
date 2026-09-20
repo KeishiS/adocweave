@@ -339,13 +339,33 @@ fn render_verbatim_text(
     range: crate::source::TextRange,
     context: &mut RenderContext<'_, '_>,
 ) {
+    render_verbatim_lines(canvas, value, metadata, range, None, context);
+}
+
+/// Verbatim text, behind a border, carrying the language the author named
+/// on the block so a host that can color code by language has it.
+fn render_verbatim_lines(
+    canvas: &mut Canvas<'_>,
+    value: &str,
+    metadata: &BlockMetadata,
+    range: crate::source::TextRange,
+    language: Option<&str>,
+    context: &mut RenderContext<'_, '_>,
+) {
     canvas.separate();
     render_caption(canvas, metadata, range, context);
     canvas.bordered(border(TerminalRole::Code, true), |canvas| {
         for line in value.lines() {
-            canvas.push_text(line, TerminalStyle::of(TerminalRole::Code));
+            canvas.push_line(vec![code_span(line, language)]);
         }
     });
+}
+
+fn code_span(text: &str, language: Option<&str>) -> TerminalSpan {
+    TerminalSpan {
+        language: language.map(str::to_owned),
+        ..TerminalSpan::new(text, TerminalStyle::of(TerminalRole::Code))
+    }
 }
 
 /// A listing, literal, or source block. Its lines are never reflowed, because
@@ -355,16 +375,21 @@ fn render_verbatim(
     verbatim: &VerbatimBlock,
     context: &mut RenderContext<'_, '_>,
 ) {
+    let language = match &verbatim.kind {
+        VerbatimKind::Source(source) => source.language.as_deref(),
+        VerbatimKind::Listing | VerbatimKind::Literal => None,
+    };
     let numbering = match &verbatim.kind {
         VerbatimKind::Source(source) if source.line_numbers => Some(source.start_line.unwrap_or(1)),
         _ => None,
     };
     let Some(first_number) = numbering else {
-        render_verbatim_text(
+        render_verbatim_lines(
             canvas,
             &verbatim.value,
             &verbatim.metadata,
             verbatim.range,
+            language,
             context,
         );
         return;
@@ -387,10 +412,7 @@ fn render_verbatim(
             number_style,
         )];
         spans.extend(border(TerminalRole::Code, true));
-        spans.push(TerminalSpan::new(
-            *line,
-            TerminalStyle::of(TerminalRole::Code),
-        ));
+        spans.push(code_span(line, language));
         canvas.push_line(spans);
     }
 }

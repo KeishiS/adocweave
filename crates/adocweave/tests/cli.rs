@@ -4102,3 +4102,94 @@ fn a_color_for_a_role_that_does_not_exist_is_reported() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+const CODE_DOCUMENT: &str = "\
+[source,rust]
+----
+// a comment
+fn main() {
+    let value = \"text\";
+}
+----
+
+[source,no-such-language]
+----
+plain code
+----
+";
+
+fn code_root() -> tempfile::TempDir {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(root.path().join("code.adoc"), CODE_DOCUMENT).expect("document");
+    root
+}
+
+/// Code is colored by the language the author named, so a comment, a keyword,
+/// and a string can be told apart while scanning a listing.
+#[test]
+fn view_colors_code_by_the_language_the_document_names() {
+    let root = code_root();
+
+    let output = adocweave()
+        .current_dir(root.path())
+        .args(["view", "--color", "always", "--width", "50", "code.adoc"])
+        .output()
+        .expect("command");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(stdout.contains("\u{1b}[90m// a comment"), "{stdout:?}");
+    assert!(stdout.contains("\u{1b}[36mfn"), "{stdout:?}");
+    assert!(stdout.contains("\u{1b}[33m\"text\""), "{stdout:?}");
+}
+
+/// A language these rules do not know keeps the one color a code block has,
+/// which is what the reader saw before.
+#[test]
+fn code_in_a_language_that_is_not_known_keeps_one_color() {
+    let root = code_root();
+
+    let output = adocweave()
+        .current_dir(root.path())
+        .args(["view", "--color", "always", "--width", "50", "code.adoc"])
+        .output()
+        .expect("command");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(stdout.contains("\u{1b}[32mplain code"), "{stdout:?}");
+}
+
+/// Coloring code changes nothing about the text or the layout.
+#[test]
+fn colored_code_reads_as_the_same_text() {
+    let root = code_root();
+
+    let colored = adocweave()
+        .current_dir(root.path())
+        .args(["view", "--color", "always", "--width", "50", "code.adoc"])
+        .output()
+        .expect("command");
+    let plain = adocweave()
+        .current_dir(root.path())
+        .args(["view", "--color", "never", "--width", "50", "code.adoc"])
+        .output()
+        .expect("command");
+
+    assert_eq!(
+        without_escapes(&String::from_utf8_lossy(&colored.stdout)),
+        String::from_utf8_lossy(&plain.stdout)
+    );
+}
+
+#[test]
+fn code_is_not_colored_when_the_page_has_no_color() {
+    let root = code_root();
+
+    let output = adocweave()
+        .current_dir(root.path())
+        .env("NO_COLOR", "1")
+        .args(["view", "--width", "50", "code.adoc"])
+        .output()
+        .expect("command");
+
+    assert!(!String::from_utf8_lossy(&output.stdout).contains('\u{1b}'));
+}

@@ -353,15 +353,22 @@ pub struct TerminalSpan {
     /// terminal hyperlinks uses it; every other host ignores it, because the
     /// rendered text already says where the link goes.
     pub link: Option<String>,
+    /// The language this run is written in, when the document says so.
+    ///
+    /// It is the language the author named on a source block, not a judgement
+    /// about the text. A host that can color code by its language uses it; one
+    /// that cannot shows the run as the code it already is.
+    pub language: Option<String>,
 }
 
 impl TerminalSpan {
-    /// A span of `text` carrying `style` and no link.
+    /// A span of `text` carrying `style`, and neither a link nor a language.
     pub fn new(text: impl Into<String>, style: TerminalStyle) -> Self {
         Self {
             text: text.into(),
             style,
             link: None,
+            language: None,
         }
     }
 }
