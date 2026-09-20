@@ -1249,6 +1249,7 @@ fn public_help_paths_describe_every_command() {
             &[
                 "[FILE]",
                 "--width <COLUMNS>",
+                "--pager <WHEN>",
                 "--include",
                 "--no-include",
                 "--stdin-base <DIR>",
@@ -3755,4 +3756,112 @@ fn output_whose_reader_stops_early_is_not_a_failure() {
     let status = child.wait().expect("the adocweave binary should exit");
 
     assert!(status.success(), "{status:?}");
+}
+
+/// Output read on a screen goes through the pager, which is where the reader
+/// pages through anything else they read.
+#[test]
+fn view_hands_its_output_to_the_pager_the_reader_named() {
+    let root = view_root();
+
+    let output = adocweave()
+        .current_dir(root.path())
+        .env("PAGER", "cat")
+        .args(["view", "--pager", "always", "document.adoc"])
+        .output()
+        .expect("command");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success());
+    assert!(stdout.starts_with('\u{1b}'), "{stdout}");
+    assert!(without_escapes(&stdout).starts_with("Title\n"), "{stdout}");
+}
+
+/// A pager that cannot be started leaves the reader with the page itself,
+/// which is what they would have had without one.
+#[test]
+fn view_writes_the_page_itself_when_no_pager_can_be_started() {
+    let root = view_root();
+
+    let output = adocweave()
+        .current_dir(root.path())
+        .env("PAGER", "adocweave-has-no-such-pager")
+        .args([
+            "view",
+            "--pager",
+            "always",
+            "--color",
+            "never",
+            "document.adoc",
+        ])
+        .output()
+        .expect("command");
+
+    assert!(output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stdout).starts_with("Title\n"),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+}
+
+/// `PAGER` set to nothing asks for no pager at all.
+#[test]
+fn view_uses_no_pager_when_the_reader_named_none() {
+    let root = view_root();
+
+    let output = adocweave()
+        .current_dir(root.path())
+        .env("PAGER", "")
+        .args([
+            "view",
+            "--pager",
+            "always",
+            "--color",
+            "never",
+            "document.adoc",
+        ])
+        .output()
+        .expect("command");
+
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).starts_with("Title\n"));
+}
+
+/// Output that is not read on a screen is written as it stands, whatever the
+/// reader set `PAGER` to.
+#[test]
+fn view_writes_to_a_pipe_without_a_pager() {
+    let root = view_root();
+
+    let paged = adocweave()
+        .current_dir(root.path())
+        .env("PAGER", "cat")
+        .args(["view", "document.adoc"])
+        .output()
+        .expect("command");
+    let plain = adocweave()
+        .current_dir(root.path())
+        .args(["view", "--pager", "never", "document.adoc"])
+        .output()
+        .expect("command");
+
+    assert_eq!(paged.stdout, plain.stdout);
+    assert!(!String::from_utf8_lossy(&paged.stdout).contains('\u{1b}'));
+}
+
+/// A page handed to a pager is still plain when the reader asked for no color.
+#[test]
+fn a_paged_page_stays_plain_when_the_reader_asked_for_no_color() {
+    let root = view_root();
+
+    let output = adocweave()
+        .current_dir(root.path())
+        .env("PAGER", "cat")
+        .env("NO_COLOR", "1")
+        .args(["view", "--pager", "always", "document.adoc"])
+        .output()
+        .expect("command");
+
+    assert!(!String::from_utf8_lossy(&output.stdout).contains('\u{1b}'));
 }

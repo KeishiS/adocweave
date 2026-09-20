@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
-use std::io::{self, Read as _};
+use std::io::{self, IsTerminal as _, Read as _};
 use std::path::{Path, PathBuf};
 
 use adocweave_core::NeverCancel;
@@ -69,15 +69,23 @@ pub(crate) fn run(arguments: &Arguments) -> Result<CliExitCode, CliError> {
         CommandOptions::View(options) => {
             let target = only_target(&result.targets)?;
             let analysis = expanded_analysis(target)?;
-            let capabilities = commands::view::Capabilities {
-                width: crate::terminal::width(options.width),
-                color: crate::terminal::color_enabled(arguments.color),
-            };
-            let policy = commands::view::build_policy(capabilities);
+            let policy = commands::view::build_policy(crate::terminal::width(options.width));
             let rendered =
                 commands::view::render_analysis(&analysis.preprocessed.analysis, &policy);
-            let output = commands::view::serialize(&rendered, capabilities.color);
-            print_output(finish_output(output)?)?;
+            // A pager puts the page on a screen, so the style is chosen after
+            // it is known whether one is used.
+            let paged = crate::pager::wanted(
+                options.pager,
+                rendered.lines.len(),
+                io::stdout().is_terminal(),
+            );
+            let color =
+                crate::terminal::color_for(arguments.color, paged || io::stdout().is_terminal());
+            let output = finish_output(commands::view::serialize(&rendered, color))?;
+            if paged && crate::pager::write(&output).is_ok() {
+                return Ok(CliExitCode::Success);
+            }
+            print_output(output)?;
             Ok(CliExitCode::Success)
         }
         CommandOptions::Symbols => {
@@ -754,12 +762,5 @@ fn display_path(path: &Path, current: &Path) -> String {
 }
 
 fn print_output(output: String) -> Result<(), CliError> {
-    use std::io::Write as _;
-    match io::stdout().write_all(output.as_bytes()) {
-        Ok(()) => Ok(()),
-        // The reader closed the output, which is what `| head` does once it
-        // has what it asked for. Nothing went wrong.
-        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => Ok(()),
-        Err(error) => Err(CliError::Write(error)),
-    }
+    crate::pager::write_to_standard_output(&output).map_err(CliError::Write)
 }

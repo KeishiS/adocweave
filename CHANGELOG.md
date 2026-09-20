@@ -16,6 +16,7 @@ separate changelogs for the
 - What a terminal cannot show is named rather than dropped: a picture, a video, and a sound become a short placeholder, a formula is shown as its source, a link is followed by its address, and a note carries a number that leads to its text at the end of the page.
 - Human-readable color now honors `NO_COLOR`. With `--color auto`, `view`, `check`, and `format --diff` produce plain output when `NO_COLOR` is set to a non-empty value. `--color always` still produces color.
 - Output whose reader closes early, as `adocweave view manual.adoc | head` does, now exits successfully instead of reporting a write failure.
+- `view` hands a page longer than the screen to a pager. The pager is the one named by `PAGER`, or `less` with the flags that pass style through and leave a short page where it is. `--pager always` and `--pager never` decide it outright, and a pager that cannot be started leaves the page on standard output.
 
 ### Rust API
 

@@ -8,18 +8,12 @@ use adocweave_core::output::terminal::{
 pub(crate) struct Options {
     /// The width the reader asked for, if they asked.
     pub(crate) width: Option<u16>,
+    pub(crate) pager: crate::arguments::PagerChoice,
 }
 
-/// What this run of the program can show.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct Capabilities {
-    pub(crate) width: u16,
-    pub(crate) color: bool,
-}
-
-pub(crate) fn build_policy(capabilities: Capabilities) -> TerminalPolicy {
+pub(crate) fn build_policy(width: u16) -> TerminalPolicy {
     TerminalPolicy {
-        width: TerminalWidth::Columns(capabilities.width),
+        width: TerminalWidth::Columns(width),
         ..TerminalPolicy::default()
     }
 }
