@@ -1,0 +1,90 @@
+= Terminal Layout
+Author Name <author@example.com>
+v1.0, 2026-09-20
+:sectnums:
+
+An opening paragraph with *strong* text, _emphasis_, and `monospace`, long
+enough that it has to be wrapped somewhere inside the width of the page.
+
+[[lists]]
+== Lists
+
+* An unordered item
+* An item with a nested list
+** The nested item
+
+. A numbered item
+. Another numbered item
+
+[lowerroman]
+. A numbered item in another style
+. Another one
+
+term:: what the term means
+other:: what the other term means
+
+* [ ] An open task
+* [x] A finished task
+
+== Warnings and quotations
+
+NOTE: A single paragraph of warning, written on the line of its label.
+
+[WARNING]
+====
+A warning of several blocks.
+
+The second block of the warning.
+====
+
+[quote, Someone, A Book]
+____
+A quotation, set apart from the text around it.
+____
+
+[verse, A Poet]
+____
+A line of verse
+Another line of verse
+____
+
+== Text kept as it was written
+
+.A listing with its lines numbered
+[source,rust,linenums]
+----
+fn main() {
+    println!("hello");
+}
+----
+
+....
+Literal text, kept exactly as written.
+....
+
+== A table
+
+.Measurements
+|===
+|Name |Description |Count
+
+|alpha
+|A description long enough that the column has to give way
+|1
+
+|beta
+|Short
+|22
+|===
+
+== Links, pictures, and notes
+
+See https://example.com[the site] and <<lists>> for more. A claim that needs a
+note. footnote:[The text of the note.]
+
+.A figure the terminal cannot draw
+image::diagram.png[A diagram]
+
+'''
+
+A closing paragraph.

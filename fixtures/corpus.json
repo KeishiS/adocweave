@@ -9,6 +9,10 @@
       "ignoredCodes": []
     },
     {
+      "path": "fixtures/terminal/contract.adoc",
+      "ignoredCodes": []
+    },
+    {
       "path": "fixtures/lint/metadata-attribute.adoc",
       "ignoredCodes": []
     }

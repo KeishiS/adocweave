@@ -15,6 +15,9 @@ help、診断、要約およびエラーは英語で表示します。
 |`adocweave convert manual.adoc`
 |HTMLへ変換します。
 
+|`adocweave view manual.adoc`
+|端末で読める形に整形して表示します。
+
 |`adocweave preview manual.adoc`
 |ローカルプレビューを起動します。
 
@@ -194,8 +197,9 @@ adocweave check --fix --diff --summary docs
 
 == 色とshell completion
 
-``--color auto|always|never``で、``human``形式の診断結果と差分に色を付ける条件を指定します。
-既定の``auto``は、標準出力がterminalの場合だけ色を付けます。
+``--color auto|always|never``で、``human``形式の診断結果、差分および``view``の出力に色を付ける条件を
+指定します。既定の``auto``は、標準出力がterminalで、かつ環境変数``NO_COLOR``が空でない値に設定されて
+いない場合だけ色を付けます。``--color always``は``NO_COLOR``より優先します。
 JSON、GitHub Actions annotationおよびSARIFには色を付けません。
 
 completion scriptは標準出力からshellの設定へ保存します。
@@ -215,7 +219,8 @@ xref:project-configuration.adoc[プロジェクト設定]を参照してくだ�
 
 == ローカルファイルの展開
 
-``convert``、`check`および``symbols``は、``include::``で指定したローカルファイルを既定で展開します。
+``convert``、``view``、`check`および``symbols``は、``include::``で指定したローカルファイルを既定で
+展開します。
 展開しない場合は``--no-include``を指定します。設定で無効にした展開を一度だけ有効にする場合は``--include``を
 指定します。
 
@@ -240,6 +245,48 @@ adocweave convert --include --stdin-base docs --allow-root docs - < root.adoc
 
 個別のリソースは10 MiB、全体は50 MiB、ファイル数は10,000件までです。循環、includeの深さ、展開後の要素数と
 バイト数にも上限があります。``format``はroot文書だけを整形し、include先へ書き戻しません。
+
+[#terminal-view]
+== 端末表示
+
+``view``は、文書を端末の幅に合わせて整形し、標準出力へ書きます。見出し、段落、リスト、表、admonition、
+引用およびソースブロックは、字下げ、行頭の記号および罫線で区別します。装飾がなくても構造が読めるため、
+パイプやリダイレクトでもそのまま利用できます。
+
+[source,console]
+----
+adocweave view manual.adoc
+adocweave view --width 100 docs/README.adoc
+cat manual.adoc | adocweave view -
+----
+
+折返しの桁数は次の順で決まります。
+
+. ``--width``で指定した桁数
+. 環境変数``COLUMNS``
+. 標準出力が端末の場合はその幅
+. 既定の80桁
+
+``--width``が受け付けるのは20桁から1000桁までです。字下げが深い場合でも、本文は20桁を下回らず、
+必要ならその行だけが指定した桁数を超えます。読めない幅へ押し込めないためです。
+
+色は``--color``で指定します。既定の``auto``では、標準出力が端末で、かつ環境変数``NO_COLOR``が
+空でない値に設定されていない場合だけ色を付けます。``--color always``は``NO_COLOR``より優先します。
+
+端末で表現できない要素は、内容が失われたと分かる形に置き換えます。
+
+* 画像、動画および音声は``[Image: 説明]``のように、そこに何があるかを示す1行にします。
+* 数式は評価も描画もせず、原文をそのまま表示します。
+* ソースブロックの構文強調は行いません。行番号の指定がある場合だけ、行番号を添えます。
+* 表で縦に結合したセルは、先頭の行に内容を置き、続く行を空欄にします。端末に縦の結合を描く手段がないためです。
+* 表が指定した桁数に収まらない場合は列の幅を詰めます。それでも収まらない場合は、列を3桁より狭くせず、
+  表が幅を超えることを許します。
+* リンクは表示文字列を出し、文字列とURLが異なる場合はURLを後ろへ併記します。端末は押せないためです。
+* 脚注は本文中へ``[1]``のような番号を置き、文書の所定の位置へ番号と本文の一覧を出します。
+* 目次は移動できないため、リンクにはせず字下げで階層を示します。
+
+出力先が先に閉じた場合は、失敗ではなく正常終了として扱います。
+``adocweave view manual.adoc | head``のように先頭だけを読む使い方のためです。
 
 == ローカルプレビュー
 
