@@ -237,11 +237,36 @@ pub(super) fn wrap_units(
     lines
 }
 
-/// The lines rendered so far, plus the indentation the next line starts with.
+/// The lines rendered so far, plus what the next line starts with.
+///
+/// A line begins with the indentation, then the border of every block it is
+/// inside, then the marker of a list item when it is the item's first line.
 pub(super) struct Canvas<'policy> {
     policy: &'policy TerminalPolicy,
     lines: Vec<TerminalLine>,
     indent: usize,
+    border: Vec<TerminalSpan>,
+    border_width: usize,
+    /// The marker the next line starts with, and how wide it is. The current
+    /// indentation already holds room for it.
+    marker: Option<(Vec<TerminalSpan>, usize)>,
+    /// Whether the last line carries no text of its own, border aside.
+    blank_last_line: bool,
+}
+
+/// Removes the spacing a border or a marker ends with, so no line ends in
+/// trailing whitespace.
+fn trim_trailing_spaces(spans: &mut Vec<TerminalSpan>) {
+    while let Some(last) = spans.last_mut() {
+        while last.text.ends_with(' ') {
+            last.text.pop();
+        }
+        if last.text.is_empty() {
+            spans.pop();
+        } else {
+            break;
+        }
+    }
 }
 
 impl<'policy> Canvas<'policy> {
@@ -250,6 +275,10 @@ impl<'policy> Canvas<'policy> {
             policy,
             lines: Vec::new(),
             indent: 0,
+            border: Vec::new(),
+            border_width: 0,
+            marker: None,
+            blank_last_line: false,
         }
     }
 
@@ -265,11 +294,19 @@ impl<'policy> Canvas<'policy> {
                 let columns = usize::from(columns);
                 Some(
                     columns
-                        .saturating_sub(self.indent)
+                        .saturating_sub(self.indent + self.border_width)
                         .max(MIN_CONTENT_WIDTH.min(columns)),
                 )
             }
         }
+    }
+
+    /// The width of `spans` in terminal columns.
+    pub(super) fn width_of(&self, spans: &[TerminalSpan]) -> usize {
+        spans
+            .iter()
+            .map(|span| super::display_width(&span.text, self.policy.ambiguous_width))
+            .sum()
     }
 
     /// Renders `body` with `columns` more indentation.
@@ -280,34 +317,107 @@ impl<'policy> Canvas<'policy> {
         result
     }
 
+    /// Renders `body` inside a border that every one of its lines starts with.
+    ///
+    /// The border is what makes a quotation, an admonition, or a code block
+    /// recognizable when no styling is shown at all.
+    pub(super) fn bordered<R>(
+        &mut self,
+        border: Vec<TerminalSpan>,
+        body: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let width = self.width_of(&border);
+        let outer_width = self.border_width;
+        let outer = std::mem::take(&mut self.border);
+        self.border = outer.iter().cloned().chain(border).collect();
+        self.border_width = outer_width + width;
+        // The first block inside a border starts against its top, not after a
+        // blank line.
+        let start = self.lines.len();
+        let outer_blank = std::mem::replace(&mut self.blank_last_line, true);
+        let result = body(self);
+        self.border = outer;
+        self.border_width = outer_width;
+        if self.lines.len() == start {
+            self.blank_last_line = outer_blank;
+        }
+        result
+    }
+
+    /// Renders `body` behind `marker`, which stands in front of its first line.
+    /// Every line after that begins where the first line's text begins, so an
+    /// item reads as one block.
+    pub(super) fn hanging<R>(
+        &mut self,
+        marker: Vec<TerminalSpan>,
+        body: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let width = self.width_of(&marker);
+        self.marker = Some((marker, width));
+        let start = self.lines.len();
+        self.blank_last_line = true;
+        let result = self.indented(width, body);
+        if self.lines.len() == start {
+            // A marker is never dropped, even when the item has no text.
+            self.indented(width, Self::blank_line);
+        }
+        self.marker = None;
+        result
+    }
+
+    /// Treats the last line as a separator of its own, so what follows sits
+    /// directly under it. A block title belongs to the block below it, not to
+    /// a line of its own with a gap on either side.
+    pub(super) const fn keep_tight(&mut self) {
+        self.blank_last_line = true;
+    }
+
     /// Separates the next block from the one before it. Does nothing at the
-    /// start of the document, so no document begins with a blank line.
+    /// start of the document or of a bordered block, so nothing begins with a
+    /// blank line.
     pub(super) fn separate(&mut self) {
-        if !self.lines.is_empty() && !self.lines.last().is_some_and(TerminalLine::is_empty) {
-            self.lines.push(TerminalLine::default());
-        }
-    }
-
-    pub(super) fn blank_line(&mut self) {
-        self.lines.push(TerminalLine::default());
-    }
-
-    /// Appends one line, indented. An empty line stays empty, so no line ends
-    /// in trailing spaces.
-    pub(super) fn push_line(&mut self, spans: Vec<TerminalSpan>) {
-        if spans.iter().all(|span| span.text.is_empty()) {
+        if !self.lines.is_empty() && !self.blank_last_line {
             self.blank_line();
-            return;
         }
-        let mut line = TerminalLine::default();
-        if self.indent > 0 {
-            line.spans.push(TerminalSpan::new(
-                " ".repeat(self.indent),
+    }
+
+    /// Appends a line with no text of its own. Inside a bordered block the
+    /// border still runs down it, which is what keeps the block one shape.
+    pub(super) fn blank_line(&mut self) {
+        self.emit(Vec::new());
+    }
+
+    /// Appends one line, behind the indentation, the border, and the marker.
+    pub(super) fn push_line(&mut self, spans: Vec<TerminalSpan>) {
+        self.emit(spans);
+    }
+
+    fn emit(&mut self, content: Vec<TerminalSpan>) {
+        let blank = content.iter().all(|span| span.text.is_empty());
+        let marker = self.marker.take();
+        let indent = self
+            .indent
+            .saturating_sub(marker.as_ref().map_or(0, |(_, width)| *width));
+        let mut spans = Vec::new();
+        if indent > 0 {
+            spans.push(TerminalSpan::new(
+                " ".repeat(indent),
                 TerminalStyle::default(),
             ));
         }
-        line.spans.extend(spans);
-        self.lines.push(line);
+        spans.extend(self.border.iter().cloned());
+        if let Some((marker, _)) = marker {
+            spans.extend(marker);
+        }
+        spans.extend(content);
+        if blank {
+            // Nothing follows, so whatever spacing the border and the marker
+            // end with would become trailing whitespace.
+            trim_trailing_spaces(&mut spans);
+        }
+        self.blank_last_line = blank;
+        spans.retain(|span| !span.text.is_empty());
+        self.lines.push(TerminalLine { spans });
     }
 
     pub(super) fn push_text(&mut self, text: &str, style: TerminalStyle) {

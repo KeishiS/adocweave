@@ -14,6 +14,7 @@
 mod blocks;
 mod inline;
 mod layout;
+mod numbering;
 mod plan;
 
 #[cfg(test)]
@@ -54,15 +55,39 @@ pub enum AmbiguousWidth {
 pub struct IndentPolicy {
     /// Columns added for each heading level below the outermost section level.
     pub heading_step: u16,
-    /// Columns in front of literal text, which is never reflowed.
-    pub verbatim: u16,
+    /// Columns in front of content that sits inside another block, such as the
+    /// description of a term or the body of a collapsible block.
+    pub nested: u16,
 }
 
 impl Default for IndentPolicy {
     fn default() -> Self {
         Self {
             heading_step: 2,
-            verbatim: 4,
+            nested: 2,
+        }
+    }
+}
+
+/// The symbols a list item is written with.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ListMarkers {
+    /// One marker per level of nesting, used in turn and then from the start
+    /// again for deeper levels.
+    pub unordered: [char; 3],
+    /// What follows the number of an ordered item.
+    pub ordered_separator: char,
+    /// The checked and unchecked boxes of a checklist. They are written in
+    /// ASCII because the box characters are missing from many terminal fonts.
+    pub checklist: [&'static str; 2],
+}
+
+impl Default for ListMarkers {
+    fn default() -> Self {
+        Self {
+            unordered: ['•', '◦', '▪'],
+            ordered_separator: '.',
+            checklist: ["[ ]", "[x]"],
         }
     }
 }
@@ -74,6 +99,7 @@ pub struct TerminalPolicy {
     pub ambiguous_width: AmbiguousWidth,
     pub render_document_title: bool,
     pub indent: IndentPolicy,
+    pub list_markers: ListMarkers,
 }
 
 impl Default for TerminalPolicy {
@@ -83,6 +109,7 @@ impl Default for TerminalPolicy {
             ambiguous_width: AmbiguousWidth::default(),
             render_document_title: true,
             indent: IndentPolicy::default(),
+            list_markers: ListMarkers::default(),
         }
     }
 }
