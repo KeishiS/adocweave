@@ -24,6 +24,7 @@ AdocWeaveは、AsciiDoc文書の確認、整形、HTML変換を行うRust製ツ�
 == 主な機能
 
 * AsciiDocからHTMLへの変換
+* 端末で読むための整形表示
 * AsciiDocファイルの整形
 * VS CodeとZedでの診断、移動および補完
 * ブラウザとNode.jsで利用できるWebAssemblyライブラリ
@@ -48,6 +49,9 @@ xref:docs/user-guide/compatibility.adoc[AsciiDocとの互換性]を参照して�
 ----
 # HTMLへ変換する
 adocweave convert manual.adoc > manual.html
+
+# 端末で読む
+adocweave view manual.adoc
 
 # CIでディレクトリ全体を確認する
 adocweave check --fail-on warning --format github --summary docs
