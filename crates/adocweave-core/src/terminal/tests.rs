@@ -169,7 +169,7 @@ fn a_malformed_heading_reads_as_ordinary_text() {
 fn a_literal_paragraph_keeps_its_lines_and_is_indented() {
     assert_eq!(
         plain("  literal line one\n    literal line two\n", 40),
-        "     literal line one\n       literal line two\n"
+        "│  literal line one\n│    literal line two\n"
     );
 }
 
@@ -340,7 +340,7 @@ fn an_indented_line_carries_its_indentation_and_no_line_ends_in_spaces() {
     let policy = TerminalPolicy {
         indent: IndentPolicy {
             heading_step: 2,
-            verbatim: 4,
+            nested: 2,
         },
         ..policy(40)
     };
@@ -353,4 +353,238 @@ fn an_indented_line_carries_its_indentation_and_no_line_ends_in_spaces() {
 
     assert_eq!(lines[0].text(), "    text");
     assert_eq!(lines[1].text(), "");
+}
+
+#[test]
+fn an_unordered_list_marks_each_level_with_its_own_symbol() {
+    assert_eq!(
+        plain("* first\n* second\n** nested\n*** deeper\n", 40),
+        "• first\n• second\n  ◦ nested\n    ▪ deeper\n"
+    );
+}
+
+/// The text of an item lines up under itself, so a wrapped item still reads as
+/// one item.
+#[test]
+fn a_wrapped_item_lines_up_under_its_own_text() {
+    assert_eq!(
+        plain("* one two three four five six seven\n", 20),
+        "• one two three four\n  five six seven\n"
+    );
+}
+
+#[test]
+fn an_ordered_list_writes_the_number_the_document_asked_for() {
+    assert_eq!(
+        plain("[lowerroman]\n. one\n. two\n. three\n", 40),
+        "  i. one\n ii. two\niii. three\n"
+    );
+    assert_eq!(
+        plain("[upperalpha]\n. one\n. two\n", 40),
+        "A. one\nB. two\n"
+    );
+    assert_eq!(
+        plain("[start=4]\n. four\n. five\n", 40),
+        "4. four\n5. five\n"
+    );
+}
+
+/// The numbers are right-aligned so that the text of every item starts in the
+/// same column.
+#[test]
+fn ordered_numbers_are_aligned_so_the_text_starts_in_one_column() {
+    let rendered = plain("[start=9]\n. nine\n. ten\n. eleven\n", 40);
+
+    assert_eq!(rendered, " 9. nine\n10. ten\n11. eleven\n");
+}
+
+#[test]
+fn an_item_numbered_by_the_author_continues_from_that_number() {
+    assert_eq!(
+        plain(". one\n5. five\n. six\n", 40),
+        "1. one\n5. five\n6. six\n"
+    );
+}
+
+#[test]
+fn a_checklist_item_shows_a_box_the_terminal_can_draw() {
+    assert_eq!(
+        plain("* [ ] open\n* [x] done\n", 40),
+        "• [ ] open\n• [x] done\n"
+    );
+}
+
+#[test]
+fn a_description_list_puts_the_term_above_what_it_means() {
+    assert_eq!(
+        plain("term:: what it means\nother:: something else\n", 40),
+        "term\n  what it means\nother\n  something else\n"
+    );
+}
+
+#[test]
+fn a_callout_list_keeps_the_numbers_of_the_code_it_explains() {
+    let source = "----\nlet value = 1; <1>\n----\n<1> what the line does\n";
+
+    assert!(plain(source, 40).contains("<1> what the line does"));
+}
+
+/// A continuation and a nested list stay inside the item they belong to.
+#[test]
+fn an_item_keeps_its_continuation_and_its_nested_list() {
+    assert_eq!(
+        plain("* item\n** nested\n+\ncontinued text\n", 40),
+        "• item\n  ◦ nested\n\n    continued text\n"
+    );
+}
+
+#[test]
+fn a_one_paragraph_admonition_reads_on_the_line_of_its_label() {
+    assert_eq!(
+        plain("NOTE: remember this and that\n", 24),
+        "NOTE: remember this and\n      that\n"
+    );
+}
+
+/// An admonition of several blocks names its kind once and runs a border down
+/// everything it covers.
+#[test]
+fn an_admonition_block_is_named_once_and_bordered() {
+    assert_eq!(
+        plain("[WARNING]\n====\nFirst.\n\nSecond.\n====\n", 40),
+        "WARNING\n│ First.\n│\n│ Second.\n"
+    );
+}
+
+#[test]
+fn an_admonition_span_carries_the_kind_it_warns_about() {
+    let rendered = document("TIP: try this\n", 40);
+    let marker = &rendered.lines[0].spans[0];
+
+    assert_eq!(marker.text, "TIP: ");
+    assert_eq!(
+        marker.style.role,
+        TerminalRole::Admonition(crate::block_model::AdmonitionKind::Tip)
+    );
+}
+
+#[test]
+fn a_quotation_is_bordered_and_names_its_source() {
+    assert_eq!(
+        plain("[quote, Someone, A Book]\n____\nQuoted text.\n____\n", 40),
+        "│ Quoted text.\n│\n│ — Someone, A Book\n"
+    );
+}
+
+/// A verse keeps the line breaks the author wrote, because they are the form.
+#[test]
+fn a_verse_keeps_the_lines_the_author_wrote() {
+    assert_eq!(
+        plain("[verse, Poet]\n____\nLine one\nLine two\n____\n", 40),
+        "│ Line one\n│ Line two\n│\n│ — Poet\n"
+    );
+}
+
+#[test]
+fn a_listing_block_is_bordered_and_never_reflowed() {
+    assert_eq!(
+        plain("----\none two three four five six seven\n----\n", 20),
+        "│ one two three four five six seven\n"
+    );
+}
+
+#[test]
+fn a_source_block_numbers_its_lines_when_the_document_asks() {
+    assert_eq!(
+        plain("[source,rust,linenums]\n----\nfirst\nsecond\n----\n", 40),
+        "1 │ first\n2 │ second\n"
+    );
+}
+
+#[test]
+fn a_block_title_stands_directly_above_the_block() {
+    assert_eq!(plain(".Title\n----\ncode\n----\n", 40), "Title\n│ code\n");
+}
+
+#[test]
+fn an_example_and_a_sidebar_are_framed_so_the_container_is_visible() {
+    assert_eq!(
+        plain(".Example title\n====\nBody.\n====\n", 20),
+        "Example title\n────────────────────\nBody.\n────────────────────\n"
+    );
+    assert_eq!(
+        plain("****\nAside.\n****\n", 20),
+        "────────────────────\nAside.\n────────────────────\n"
+    );
+}
+
+/// An open block adds nothing of its own, so its content reads as it would
+/// outside the block.
+#[test]
+fn an_open_block_adds_nothing_of_its_own() {
+    assert_eq!(plain("--\nBody.\n--\n", 40), "Body.\n");
+}
+
+/// A terminal page cannot be unfolded, so a collapsible block is always open.
+#[test]
+fn a_collapsible_block_is_open_and_marked_as_one() {
+    assert_eq!(
+        plain(".More\n[%collapsible]\n====\nHidden.\n====\n", 40),
+        "▾ More\n  Hidden.\n"
+    );
+}
+
+#[test]
+fn a_comment_block_is_written_for_the_author_and_never_shown() {
+    assert_eq!(
+        plain("////\nnot for the reader\n////\n\ntext\n", 40),
+        "text\n"
+    );
+}
+
+#[test]
+fn a_bordered_block_never_ends_a_line_in_spaces() {
+    let rendered = document("[NOTE]\n====\nFirst.\n\nSecond.\n====\n", 40);
+
+    for line in &rendered.lines {
+        assert!(
+            !line.text().ends_with(' '),
+            "line ends in spaces: {:?}",
+            line.text()
+        );
+    }
+}
+
+#[test]
+fn ordered_numbers_carry_on_past_the_end_of_the_alphabet() {
+    use super::numbering::label;
+    use crate::block_model::OrderedListStyle;
+
+    assert_eq!(label(1, OrderedListStyle::LowerAlpha), "a");
+    assert_eq!(label(26, OrderedListStyle::LowerAlpha), "z");
+    assert_eq!(label(27, OrderedListStyle::LowerAlpha), "aa");
+    assert_eq!(label(1, OrderedListStyle::LowerGreek), "α");
+    assert_eq!(label(24, OrderedListStyle::LowerGreek), "ω");
+    assert_eq!(label(25, OrderedListStyle::LowerGreek), "αα");
+    assert_eq!(label(4, OrderedListStyle::UpperRoman), "IV");
+    assert_eq!(label(1994, OrderedListStyle::LowerRoman), "mcmxciv");
+}
+
+/// A number no Roman numeral can write keeps its digits rather than turning
+/// into something unreadable.
+#[test]
+fn a_number_outside_the_roman_range_keeps_its_digits() {
+    use super::numbering::label;
+    use crate::block_model::OrderedListStyle;
+
+    assert_eq!(label(0, OrderedListStyle::LowerRoman), "0");
+    assert_eq!(label(4000, OrderedListStyle::LowerRoman), "4000");
+}
+
+#[test]
+fn a_reversed_list_counts_down_to_one() {
+    assert_eq!(
+        plain("[%reversed]\n. last\n. middle\n. first\n", 40),
+        "3. last\n2. middle\n1. first\n"
+    );
 }
