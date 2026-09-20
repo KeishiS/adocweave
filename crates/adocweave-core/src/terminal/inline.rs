@@ -1,8 +1,18 @@
 //! Inline text planned as styled spans.
 
-use crate::inline_model::{Inline, InlineLiteralKind, InlineStyle};
+use crate::inline_model::{
+    Inline, InlineLiteralKind, InlineStyle, Link, MacroForm, Reference, StandardMacro,
+    StandardMacroKind,
+};
+use crate::reference::{ReferenceKey, ResolutionOutcome};
+use crate::render::ResolutionMatch;
+use crate::url::UrlProvenance;
 
-use super::{AmbiguousWidth, TerminalRole, TerminalSpan, TerminalStyle, display_width};
+use super::context::RenderContext;
+use super::{
+    AmbiguousWidth, LinkPresentation, MathPresentation, MediaPresentation, TerminalRole,
+    TerminalSpan, TerminalStyle, UnresolvedReferenceText, display_width,
+};
 
 /// A piece of planned inline text.
 pub(super) enum InlineUnit {
@@ -28,9 +38,13 @@ pub(super) fn units_display_width(units: &[InlineUnit], ambiguous: AmbiguousWidt
 }
 
 /// Plans `inlines` as spans that all carry `style` unless they change it.
-pub(super) fn plan(inlines: &[Inline], style: TerminalStyle) -> Vec<InlineUnit> {
+pub(super) fn plan(
+    inlines: &[Inline],
+    style: TerminalStyle,
+    context: &mut RenderContext<'_, '_>,
+) -> Vec<InlineUnit> {
     let mut units = Vec::new();
-    plan_sequence(inlines, style, &mut units);
+    plan_sequence(inlines, style, context, &mut units);
     units
 }
 
@@ -41,7 +55,12 @@ pub(super) fn plan_text(value: &str, style: TerminalStyle) -> Vec<InlineUnit> {
     units
 }
 
-fn plan_sequence(inlines: &[Inline], style: TerminalStyle, units: &mut Vec<InlineUnit>) {
+fn plan_sequence(
+    inlines: &[Inline],
+    style: TerminalStyle,
+    context: &mut RenderContext<'_, '_>,
+    units: &mut Vec<InlineUnit>,
+) {
     for inline in inlines {
         match inline {
             Inline::Text(text) => push_text(units, &text.value, style),
@@ -59,7 +78,7 @@ fn plan_sequence(inlines: &[Inline], style: TerminalStyle, units: &mut Vec<Inlin
                 style: inline_style,
                 children,
                 ..
-            } => plan_styled(*inline_style, children, style, units),
+            } => plan_styled(*inline_style, children, style, context, units),
             Inline::AttributeReference { name, value, .. } => match value {
                 Some(value) => push_text(units, value, style),
                 None => {
@@ -73,60 +92,28 @@ fn plan_sequence(inlines: &[Inline], style: TerminalStyle, units: &mut Vec<Inlin
             // the syntax demanded is given back, exactly as in HTML.
             Inline::Link(link) => {
                 drop_demanded_space_between_cjk(units);
-                let label = if link.label.is_empty() {
-                    plan_text(
-                        &link.target,
-                        TerminalStyle {
-                            role: TerminalRole::Link,
-                            underline: true,
-                            ..style
-                        },
-                    )
-                } else {
-                    plan(
-                        &link.label,
-                        TerminalStyle {
-                            role: TerminalRole::Link,
-                            underline: true,
-                            ..style
-                        },
-                    )
-                };
-                units.extend(with_link(label, &link.target));
+                plan_link(link, style, context, units);
             }
             Inline::Reference(reference) => {
                 drop_demanded_space_between_cjk(units);
-                let style = TerminalStyle {
-                    role: TerminalRole::Reference,
-                    ..style
-                };
-                if reference.label.is_empty() {
-                    push_text(units, &reference.expanded_target, style);
-                } else {
-                    plan_sequence(&reference.label, style, units);
-                }
+                plan_reference(reference, style, context, units);
             }
             Inline::Macro(node) => {
                 drop_demanded_space_between_cjk(units);
-                // Until each kind of macro has a presentation of its own, a
-                // macro is shown by the text it carries, so nothing an author
-                // wrote disappears from the page.
-                let text = node
-                    .attributes
-                    .first()
-                    .map(|attribute| attribute.value.as_str())
-                    .filter(|value| !value.is_empty())
-                    .unwrap_or(node.target.as_str());
-                push_text(units, text, style);
+                plan_macro(node, style, context, units);
             }
-            Inline::Formula(formula) => push_text(
-                units,
-                &formula.value,
-                TerminalStyle {
-                    role: TerminalRole::Math,
-                    ..style
-                },
-            ),
+            Inline::Formula(formula) => {
+                if context.policy.math == MathPresentation::Source {
+                    push_text(
+                        units,
+                        &formula.value,
+                        TerminalStyle {
+                            role: TerminalRole::Math,
+                            ..style
+                        },
+                    );
+                }
+            }
             Inline::Passthrough { value, .. } => push_text(units, value, style),
             Inline::HardBreak { .. } => units.push(InlineUnit::HardBreak),
         }
@@ -137,6 +124,7 @@ fn plan_styled(
     inline_style: InlineStyle,
     children: &[Inline],
     style: TerminalStyle,
+    context: &mut RenderContext<'_, '_>,
     units: &mut Vec<InlineUnit>,
 ) {
     match inline_style {
@@ -147,7 +135,7 @@ fn plan_styled(
                 ("‘", "’")
             };
             push_text(units, open, style);
-            plan_sequence(children, style, units);
+            plan_sequence(children, style, context, units);
             push_text(units, close, style);
         }
         // A terminal has no raised or lowered text. The marker the author typed
@@ -159,7 +147,7 @@ fn plan_styled(
                 "~"
             };
             push_text(units, marker, style);
-            plan_sequence(children, style, units);
+            plan_sequence(children, style, context, units);
         }
         InlineStyle::Strong => plan_sequence(
             children,
@@ -167,6 +155,7 @@ fn plan_styled(
                 bold: true,
                 ..style
             },
+            context,
             units,
         ),
         InlineStyle::Emphasis => plan_sequence(
@@ -175,6 +164,7 @@ fn plan_styled(
                 italic: true,
                 ..style
             },
+            context,
             units,
         ),
         InlineStyle::Highlight => plan_sequence(
@@ -183,22 +173,298 @@ fn plan_styled(
                 inverse: true,
                 ..style
             },
+            context,
             units,
         ),
     }
 }
 
-fn with_link(units: Vec<InlineUnit>, target: &str) -> Vec<InlineUnit> {
-    units
-        .into_iter()
-        .map(|unit| match unit {
-            InlineUnit::Span(span) => InlineUnit::Span(TerminalSpan {
-                link: Some(target.to_owned()),
-                ..span
-            }),
-            InlineUnit::HardBreak => unit,
+/// A link is its text, and then the address when the text does not already say
+/// it. A terminal cannot be clicked: an address the reader cannot see is an
+/// address the reader cannot follow.
+fn plan_link(
+    link: &Link,
+    style: TerminalStyle,
+    context: &mut RenderContext<'_, '_>,
+    units: &mut Vec<InlineUnit>,
+) {
+    // Printing an address is harmless whatever it is, so every link keeps its
+    // text. The policy decides only whether a host may turn it into something
+    // the reader can follow.
+    let active = context
+        .policy
+        .active_urls
+        .allows(&link.target, UrlProvenance::Authored);
+    let style = TerminalStyle {
+        role: TerminalRole::Link,
+        underline: true,
+        ..style
+    };
+    let start = units.len();
+    if link.label.is_empty() {
+        push_text(units, &link.target_source, style);
+    } else {
+        plan_sequence(&link.label, style, context, units);
+        if context.policy.links == LinkPresentation::TextWithUrl {
+            push_text(
+                units,
+                &format!(" ({})", link.target),
+                TerminalStyle {
+                    role: TerminalRole::Muted,
+                    ..style
+                },
+            );
+        }
+    }
+    if active {
+        attach_link(units, start, &link.target);
+    }
+}
+
+fn plan_reference(
+    reference: &Reference,
+    style: TerminalStyle,
+    context: &mut RenderContext<'_, '_>,
+    units: &mut Vec<InlineUnit>,
+) {
+    let style = TerminalStyle {
+        role: TerminalRole::Reference,
+        ..style
+    };
+    match resolve_reference(reference, context) {
+        Some(text) => {
+            if reference.label.is_empty() {
+                push_text(units, &text, style);
+            } else {
+                plan_sequence(&reference.label, style, context, units);
+            }
+        }
+        None => {
+            let style = TerminalStyle {
+                role: TerminalRole::UnresolvedReference,
+                ..style
+            };
+            match context.policy.unresolved_references {
+                UnresolvedReferenceText::Target => {
+                    if reference.label.is_empty() {
+                        push_text(units, &reference.target_source, style);
+                    } else {
+                        plan_sequence(&reference.label, style, context, units);
+                    }
+                }
+                UnresolvedReferenceText::LabelOnly => {
+                    plan_sequence(&reference.label, style, context, units);
+                }
+                UnresolvedReferenceText::Hidden => {}
+            }
+        }
+    }
+}
+
+/// The text a reference stands for, or nothing when it points nowhere.
+fn resolve_reference(reference: &Reference, context: &mut RenderContext<'_, '_>) -> Option<String> {
+    match &reference.target {
+        Some(ReferenceKey::Local { anchor }) => match context.identifiers.target_by_id(anchor) {
+            Some(target) => Some(target.label.clone()),
+            None => {
+                context.report(
+                    "unresolved-cross-reference",
+                    "local anchor does not exist",
+                    reference.target_range,
+                );
+                None
+            }
+        },
+        None => {
+            context.report(
+                "invalid-cross-reference",
+                "invalid cross reference target",
+                reference.target_range,
+            );
+            None
+        }
+        // A reference into another document is resolved by the host, which
+        // knows where that document went.
+        Some(ReferenceKey::Document { .. } | ReferenceKey::Scheme { .. }) => {
+            match context.usage.reference_at(reference.range) {
+                ResolutionMatch::Unique(resolution) => match &resolution.outcome {
+                    ResolutionOutcome::Resolved { display_text, .. } => Some(
+                        display_text
+                            .clone()
+                            .unwrap_or_else(|| reference.target_source.clone()),
+                    ),
+                    ResolutionOutcome::Failed(_) => {
+                        context.report(
+                            "unresolved-cross-reference",
+                            "reference target does not exist",
+                            reference.target_range,
+                        );
+                        None
+                    }
+                },
+                ResolutionMatch::Missing | ResolutionMatch::Duplicate => {
+                    context.report(
+                        "unresolved-cross-reference",
+                        "reference target was not resolved by the host",
+                        reference.target_range,
+                    );
+                    None
+                }
+            }
+        }
+    }
+}
+
+fn plan_macro(
+    node: &StandardMacro,
+    style: TerminalStyle,
+    context: &mut RenderContext<'_, '_>,
+    units: &mut Vec<InlineUnit>,
+) {
+    let first = node
+        .attributes
+        .first()
+        .map(|attribute| attribute.value.as_str());
+    match node.kind {
+        StandardMacroKind::Email => {
+            let style = TerminalStyle {
+                role: TerminalRole::Link,
+                underline: true,
+                ..style
+            };
+            let start = units.len();
+            push_text(units, &node.target, style);
+            attach_link(units, start, &format!("mailto:{}", node.target));
+        }
+        // The number is what ties the mark to the note at the end. Without the
+        // catalog there is no number, so the text itself stands in.
+        StandardMacroKind::Footnote => match context.catalogs.footnote_occurrence(node.range) {
+            Some((footnote, _)) => push_text(
+                units,
+                &format!("[{}]", footnote.number),
+                TerminalStyle {
+                    role: TerminalRole::FootnoteMarker,
+                    ..style
+                },
+            ),
+            None => push_text(units, first.unwrap_or(&node.target), style),
+        },
+        // An anchor and an index term are landing points, not text.
+        StandardMacroKind::Anchor
+        | StandardMacroKind::BibliographyAnchor
+        | StandardMacroKind::IndexTerm => {}
+        StandardMacroKind::Citation => plan_citation(node, style, context, units),
+        StandardMacroKind::Keyboard | StandardMacroKind::Button => push_text(
+            units,
+            first.unwrap_or(&node.target),
+            TerminalStyle {
+                role: TerminalRole::Monospace,
+                ..style
+            },
+        ),
+        StandardMacroKind::Menu => {
+            let mut text = node.target.clone();
+            for attribute in &node.attributes {
+                text.push_str(" › ");
+                text.push_str(&attribute.value);
+            }
+            push_text(units, &text, style);
+        }
+        StandardMacroKind::Image | StandardMacroKind::Icon => {
+            plan_media(node, "Image", style, context, units);
+        }
+        StandardMacroKind::Audio => plan_media(node, "Audio", style, context, units),
+        StandardMacroKind::Video => plan_media(node, "Video", style, context, units),
+    }
+}
+
+/// A citation shows the label of the entry it names, or the key itself when
+/// this document defines no such entry.
+fn plan_citation(
+    node: &StandardMacro,
+    style: TerminalStyle,
+    context: &mut RenderContext<'_, '_>,
+    units: &mut Vec<InlineUnit>,
+) {
+    let style = TerminalStyle {
+        role: TerminalRole::Reference,
+        ..style
+    };
+    let keys: Vec<&crate::inline_model::MacroAttribute> = node
+        .attributes
+        .iter()
+        .filter(|attribute| attribute.name.is_none())
+        .collect();
+    let mut separator = "";
+    for key in keys {
+        let entry = context
+            .catalogs
+            .bibliography()
+            .iter()
+            .find(|entry| entry.id == key.value);
+        let text = match entry {
+            Some(entry) => entry.label.clone().unwrap_or_else(|| key.value.clone()),
+            None => match context.policy.unresolved_references {
+                UnresolvedReferenceText::Target | UnresolvedReferenceText::LabelOnly => {
+                    key.value.clone()
+                }
+                UnresolvedReferenceText::Hidden => continue,
+            },
+        };
+        push_text(units, separator, style);
+        push_text(units, &text, style);
+        separator = ", ";
+    }
+}
+
+/// A terminal shows no pictures and plays no sound. What it can say is that
+/// something is there and what it is called.
+fn plan_media(
+    node: &StandardMacro,
+    kind: &str,
+    style: TerminalStyle,
+    context: &mut RenderContext<'_, '_>,
+    units: &mut Vec<InlineUnit>,
+) {
+    if context.policy.media == MediaPresentation::Hidden {
+        return;
+    }
+    let described = node
+        .attributes
+        .iter()
+        .find(|attribute| {
+            attribute.name.as_deref() == Some("alt") || attribute.name.as_deref() == Some("title")
         })
-        .collect()
+        .or_else(|| {
+            node.attributes
+                .iter()
+                .find(|attribute| attribute.name.is_none())
+        })
+        .map(|attribute| attribute.value.as_str())
+        .filter(|value| !value.is_empty());
+    let text = match described {
+        Some(description) => format!("[{kind}: {description}]"),
+        None => format!("[{kind}: {}]", node.target),
+    };
+    let mut style = TerminalStyle {
+        role: TerminalRole::MediaPlaceholder,
+        ..style
+    };
+    if node.form == MacroForm::Block {
+        style.bold = false;
+    }
+    push_text(units, &text, style);
+}
+
+/// Gives every span planned since `start` the address it points at.
+fn attach_link(units: &mut [InlineUnit], start: usize, target: &str) {
+    for unit in &mut units[start..] {
+        if let InlineUnit::Span(span) = unit
+            && span.link.is_none()
+        {
+            span.link = Some(target.to_owned());
+        }
+    }
 }
 
 /// Appends `value` as text, joining the lines of a paragraph the way the HTML

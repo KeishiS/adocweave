@@ -510,7 +510,7 @@ fn a_block_title_stands_directly_above_the_block() {
 fn an_example_and_a_sidebar_are_framed_so_the_container_is_visible() {
     assert_eq!(
         plain(".Example title\n====\nBody.\n====\n", 20),
-        "Example title\n────────────────────\nBody.\n────────────────────\n"
+        "Example 1. Example\ntitle\n────────────────────\nBody.\n────────────────────\n"
     );
     assert_eq!(
         plain("****\nAside.\n****\n", 20),
@@ -736,7 +736,11 @@ fn a_table_narrower_than_its_text_keeps_its_columns_readable() {
 fn a_table_title_stands_above_the_frame() {
     let source = ".Measurements\n|===\n|a |b\n|===\n";
 
-    assert!(plain(source, 30).starts_with("Measurements\n┌"));
+    assert!(
+        plain(source, 30).starts_with("Table 1. Measurements\n┌"),
+        "{}",
+        plain(source, 30)
+    );
 }
 
 #[test]
@@ -752,4 +756,241 @@ fn a_table_cell_carries_the_role_of_a_heading_in_the_header_row() {
 
     assert_eq!(header.style.role, TerminalRole::TableHeader);
     assert!(header.style.bold);
+}
+
+#[test]
+fn a_link_is_followed_by_its_address_when_the_text_is_not_the_address() {
+    assert_eq!(
+        plain(
+            "See https://example.com[the site] and https://plain.example.\n",
+            70
+        ),
+        "See the site (https://example.com) and https://plain.example.\n"
+    );
+}
+
+#[test]
+fn a_link_can_be_shown_without_its_address() {
+    let rendered = render(
+        analyze("See https://example.com[the site].\n").document(),
+        &TerminalPolicy {
+            links: super::LinkPresentation::TextOnly,
+            ..policy(70)
+        },
+    );
+
+    assert_eq!(rendered.document.to_plain_text(), "See the site.\n");
+}
+
+/// The address a host may make followable is the one the policy allows. The
+/// text is written either way, because printing an address is harmless.
+#[test]
+fn only_an_allowed_address_is_attached_to_the_text() {
+    let rendered = document("See link:local/page.html[the page].\n", 70);
+    let span = rendered.lines[0]
+        .spans
+        .iter()
+        .find(|span| span.text == "the page")
+        .expect("the link text");
+
+    assert!(rendered.lines[0].text().contains("local/page.html"));
+    assert_eq!(span.link, None);
+}
+
+/// A mail address is written out even though the default policy lets no host
+/// turn it into something to click: the reader can still copy it.
+#[test]
+fn a_mail_address_is_written_out_for_the_reader() {
+    let rendered = document("Write to mailto:a@example.com[us].\n", 70);
+
+    assert_eq!(
+        rendered.lines[0].text(),
+        "Write to us (mailto:a@example.com)."
+    );
+}
+
+/// The address a host may follow is attached to the text of the link.
+#[test]
+fn an_allowed_address_is_attached_to_the_text_of_its_link() {
+    let rendered = document("See https://example.com[the site].\n", 70);
+    let span = rendered.lines[0]
+        .spans
+        .iter()
+        .find(|span| span.text == "the site")
+        .expect("the link text");
+
+    assert_eq!(span.link.as_deref(), Some("https://example.com"));
+}
+
+/// A terminal shows no pictures. What it can say is that one is there and what
+/// it is called.
+#[test]
+fn a_picture_is_named_where_it_would_be_shown() {
+    assert_eq!(
+        plain("An image: image:diagram.png[A diagram].\n", 70),
+        "An image: [Image: A diagram].\n"
+    );
+    assert_eq!(plain("video::intro.mp4[]\n", 70), "[Video: intro.mp4]\n");
+    assert_eq!(plain("audio::track.ogg[]\n", 70), "[Audio: track.ogg]\n");
+}
+
+#[test]
+fn a_picture_can_be_left_out_altogether() {
+    let rendered = render(
+        analyze("Text image:diagram.png[A diagram] more.\n").document(),
+        &TerminalPolicy {
+            media: super::MediaPresentation::Hidden,
+            ..policy(70)
+        },
+    );
+
+    assert_eq!(rendered.document.to_plain_text(), "Text  more.\n");
+}
+
+#[test]
+fn a_block_picture_is_captioned_the_way_the_document_numbers_it() {
+    assert_eq!(
+        plain(".Figure title\nimage::figure.png[A figure]\n", 40),
+        "Figure 1. Figure title\n[Image: A figure]\n"
+    );
+}
+
+#[test]
+fn a_note_carries_a_number_that_leads_to_the_text_at_the_end() {
+    assert_eq!(
+        plain("A claim. footnote:[The note.] More.\n", 40),
+        "A claim. [1] More.\n\nFootnotes\n[1] The note.\n"
+    );
+}
+
+#[test]
+fn the_contents_are_listed_where_the_document_puts_them() {
+    assert_eq!(
+        plain("= Guide\n:toc:\n\n== First\n\n=== Nested\n", 40),
+        "\
+Guide
+═════
+
+Contents
+First
+  Nested
+
+First
+─────
+
+  Nested
+"
+    );
+}
+
+#[test]
+fn a_cross_reference_reads_as_the_heading_it_points_at() {
+    assert_eq!(
+        plain("See <<intro>>.\n\n[[intro]]\n== Introduction\n", 40),
+        "See Introduction.\n\nIntroduction\n────────────\n"
+    );
+}
+
+/// A reference that points nowhere keeps the target the author wrote, so the
+/// reader can see what is missing, and the problem is reported.
+#[test]
+fn a_reference_that_points_nowhere_is_reported() {
+    let rendered = render(analyze("See <<missing>>.\n").document(), &policy(40));
+
+    assert_eq!(rendered.document.to_plain_text(), "See missing.\n");
+    assert_eq!(
+        rendered.diagnostics[0].code.as_str(),
+        "unresolved-cross-reference"
+    );
+}
+
+#[test]
+fn the_host_decides_what_an_unresolved_reference_shows() {
+    let source = "See <<missing>>.\n";
+    let hidden = render(
+        analyze(source).document(),
+        &TerminalPolicy {
+            unresolved_references: super::UnresolvedReferenceText::Hidden,
+            ..policy(40)
+        },
+    );
+
+    assert_eq!(hidden.document.to_plain_text(), "See .\n");
+}
+
+/// A reference into another document is resolved by the host, and the text it
+/// resolved to is what the page shows.
+#[test]
+fn a_reference_the_host_resolved_reads_as_the_text_the_host_gave() {
+    let analysis = analyze("See xref:other.adoc#x[].\n");
+    let range = analysis
+        .document()
+        .blocks()
+        .iter()
+        .find_map(|block| match block {
+            crate::block_model::AstBlock::Paragraph(paragraph) => {
+                paragraph.inlines.iter().find_map(|inline| match inline {
+                    crate::inline_model::Inline::Reference(reference) => Some(reference.range),
+                    _ => None,
+                })
+            }
+            _ => None,
+        })
+        .expect("a reference");
+    let inputs = crate::render::RenderInputs::default().with_references(vec![
+        crate::reference::ResolvedReference {
+            source_range: range,
+            outcome: crate::reference::ResolutionOutcome::Resolved {
+                href: "https://example.com/other#x".to_owned(),
+                display_text: Some("The other page".to_owned()),
+                notices: Vec::new(),
+            },
+        },
+    ]);
+
+    let rendered = super::render_with_inputs(analysis.document(), &policy(40), &inputs);
+
+    assert_eq!(rendered.document.to_plain_text(), "See The other page.\n");
+    assert!(rendered.diagnostics.is_empty());
+}
+
+#[test]
+fn a_formula_is_shown_as_the_author_wrote_it() {
+    assert_eq!(
+        plain("Formula stem:[a^2] here.\n", 40),
+        "Formula a^2 here.\n"
+    );
+    assert_eq!(plain("[stem]\n++++\nx = y\n++++\n", 40), "│ x = y\n");
+}
+
+#[test]
+fn a_formula_can_be_left_out_for_a_page_that_cannot_use_it() {
+    let rendered = render(
+        analyze("[stem]\n++++\nx = y\n++++\n").document(),
+        &TerminalPolicy {
+            math: super::MathPresentation::Hidden,
+            ..policy(40)
+        },
+    );
+
+    assert_eq!(rendered.document.to_plain_text(), "");
+}
+
+#[test]
+fn a_key_a_button_and_a_menu_read_as_the_text_they_name() {
+    assert_eq!(
+        plain(
+            "Press kbd:[Ctrl+C], then btn:[OK], then menu:File[Save As].\n",
+            70
+        ),
+        "Press Ctrl+C, then OK, then File › Save As.\n"
+    );
+}
+
+#[test]
+fn an_anchor_and_an_index_term_are_landing_points_and_show_nothing() {
+    assert_eq!(
+        plain("Text [[here]] and indexterm:[term] more.\n", 40),
+        "Text  and  more.\n"
+    );
 }

@@ -155,9 +155,10 @@ pub mod output {
     }
     pub mod terminal {
         pub use crate::terminal::{
-            AmbiguousWidth, IndentPolicy, TerminalDocument, TerminalLine, TerminalOutput,
+            AmbiguousWidth, IndentPolicy, LinkPresentation, ListMarkers, MathPresentation,
+            MediaPresentation, TableBorders, TerminalDocument, TerminalLine, TerminalOutput,
             TerminalPolicy, TerminalRole, TerminalSpan, TerminalStyle, TerminalWidth,
-            display_width, render,
+            UnresolvedReferenceText, display_width, render, render_with_inputs,
         };
     }
 }
