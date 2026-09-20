@@ -16,6 +16,7 @@ mod inline;
 mod layout;
 mod numbering;
 mod plan;
+mod table;
 
 #[cfg(test)]
 mod tests;
@@ -92,6 +93,18 @@ impl Default for ListMarkers {
     }
 }
 
+/// How a table is drawn.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TableBorders {
+    /// Box-drawing characters, which every modern terminal can show.
+    #[default]
+    Unicode,
+    /// Only ASCII, for a terminal or a font that cannot draw boxes.
+    Ascii,
+    /// No lines at all. Columns are separated by spacing.
+    None,
+}
+
 /// Backend settings that a host chooses once for a rendered document.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TerminalPolicy {
@@ -100,6 +113,7 @@ pub struct TerminalPolicy {
     pub render_document_title: bool,
     pub indent: IndentPolicy,
     pub list_markers: ListMarkers,
+    pub table_borders: TableBorders,
 }
 
 impl Default for TerminalPolicy {
@@ -110,6 +124,7 @@ impl Default for TerminalPolicy {
             render_document_title: true,
             indent: IndentPolicy::default(),
             list_markers: ListMarkers::default(),
+            table_borders: TableBorders::default(),
         }
     }
 }
