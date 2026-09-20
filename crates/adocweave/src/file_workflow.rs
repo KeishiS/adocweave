@@ -1,6 +1,5 @@
 //! Guarded in-place writes and user-visible file differences.
 
-use std::io;
 use std::path::PathBuf;
 
 use crate::arguments::ColorChoice;
@@ -59,14 +58,7 @@ pub(crate) fn apply_file_writes(writes: Vec<PendingWrite>) -> WriteOutcome {
 }
 
 pub(crate) fn colorize_lines(output: &str, choice: ColorChoice) -> String {
-    use std::io::IsTerminal as _;
-
-    let enabled = match choice {
-        ColorChoice::Always => true,
-        ColorChoice::Never => false,
-        ColorChoice::Auto => io::stdout().is_terminal(),
-    };
-    if !enabled {
+    if !crate::terminal::color_enabled(choice) {
         return output.to_owned();
     }
     let mut colored = String::new();

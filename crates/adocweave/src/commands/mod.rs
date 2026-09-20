@@ -5,3 +5,4 @@ pub(crate) mod format;
 pub(crate) mod html_policy;
 pub(crate) mod preview;
 pub(crate) mod symbols;
+pub(crate) mod view;
