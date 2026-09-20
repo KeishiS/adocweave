@@ -7,6 +7,27 @@ separate changelogs for the
 [VS Code extension](https://github.com/KeishiS/adocweave/blob/main/editors/vscode/CHANGELOG.md), and
 [Zed extension](https://github.com/KeishiS/adocweave/blob/main/editors/zed/CHANGELOG.md).
 
+## [0.58.0] - 2026-09-20
+
+### Main changes
+
+- `adocweave view` renders an AsciiDoc document for reading in a terminal. Headings, paragraphs, lists, tables, admonitions, quotations, and source blocks are laid out for the width of the page, with indentation, markers, and rules that read without any color. Standard input is accepted as `-`.
+- `view` takes the wrap width from `--width`, then `COLUMNS`, then the terminal, and falls back to 80 columns when standard output is not a terminal.
+- What a terminal cannot show is named rather than dropped: a picture, a video, and a sound become a short placeholder, a formula is shown as its source, a link is followed by its address, and a note carries a number that leads to its text at the end of the page.
+- Human-readable color now honors `NO_COLOR`. With `--color auto`, `view`, `check`, and `format --diff` produce plain output when `NO_COLOR` is set to a non-empty value. `--color always` still produces color.
+- Output whose reader closes early, as `adocweave view manual.adoc | head` does, now exits successfully instead of reporting a write failure.
+
+### Rust API
+
+- `adocweave_core::output::terminal` lays a document out for a terminal. `render` and `render_with_inputs` return a `TerminalOutput` whose `TerminalDocument` holds `TerminalLine` values built from `TerminalSpan` values. A span carries a `TerminalRole` and a `TerminalStyle` rather than escape sequences, so a host chooses its own encoding.
+- `TerminalPolicy` selects the width, the treatment of ambiguous East Asian width, indentation, list markers, table borders, link and media presentation, math presentation, the text of an unresolved reference, and which addresses may become active.
+- `display_width` measures text in terminal columns.
+
+### Migration
+
+- A host that colored `check` or `format --diff` output and does not want `NO_COLOR` honored passes `--color always`.
+- A caller that treated a broken pipe as a failure of `adocweave` now sees exit code 0. The output is incomplete by the reader's own choice.
+
 ## [0.57.0] - 2026-08-31
 
 ### Rust API

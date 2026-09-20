@@ -1,0 +1,84 @@
+Terminal Layout
+═══════════════
+Author Name <author@example.com>
+v1.0 — 2026-09-20
+
+An opening paragraph with strong text, emphasis, and monospace, long enough
+that it has to be wrapped somewhere inside the width of the page.
+
+1. Lists
+────────
+
+• An unordered item
+• An item with a nested list
+  ◦ The nested item
+
+1. A numbered item
+2. Another numbered item
+
+ i. A numbered item in another style
+ii. Another one
+
+term
+  what the term means
+other
+  what the other term means
+
+• [ ] An open task
+• [x] A finished task
+
+2. Warnings and quotations
+──────────────────────────
+
+NOTE: A single paragraph of warning, written on the line of its label.
+
+WARNING
+│ A warning of several blocks.
+│
+│ The second block of the warning.
+
+│ A quotation, set apart from the text around it.
+│
+│ — Someone, A Book
+
+│ A line of verse
+│ Another line of verse
+│
+│ — A Poet
+
+3. Text kept as it was written
+──────────────────────────────
+
+A listing with its lines numbered
+1 │ fn main() {
+2 │     println!("hello");
+3 │ }
+
+│ Literal text, kept exactly as written.
+
+4. A table
+──────────
+
+Table 1. Measurements
+┌───────┬───────────────────────────────────────────────────────────┬───────┐
+│ Name  │ Description                                               │ Count │
+├───────┼───────────────────────────────────────────────────────────┼───────┤
+│ alpha │ A description long enough that the column has to give way │ 1     │
+│ beta  │ Short                                                     │ 22    │
+└───────┴───────────────────────────────────────────────────────────┴───────┘
+
+5. Links, pictures, and notes
+─────────────────────────────
+
+See the site (https://example.com) and Lists for more. A claim that needs a
+note. [1]
+
+Figure 1. A figure the terminal cannot draw
+[Image: A diagram]
+
+────────────────────────────────────────────────────────────────────────────────
+
+A closing paragraph.
+
+Footnotes
+[1] The text of the note.

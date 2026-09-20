@@ -994,3 +994,16 @@ fn an_anchor_and_an_index_term_are_landing_points_and_show_nothing() {
         "Text  and  more.\n"
     );
 }
+
+/// The whole layout, as a reader sees it with no styling at all. The expected
+/// file is the page itself, so a change to any part of the layout is visible
+/// in the difference.
+#[test]
+fn terminal_contract_golden_lays_the_whole_page_out() {
+    let source = include_str!("../../../../fixtures/terminal/contract.adoc");
+
+    assert_eq!(
+        plain(source, 80),
+        include_str!("../../../../fixtures/terminal/contract.width80.txt")
+    );
+}
