@@ -588,3 +588,168 @@ fn a_reversed_list_counts_down_to_one() {
         "3. last\n2. middle\n1. first\n"
     );
 }
+
+#[test]
+fn a_table_is_framed_and_its_header_is_ruled_off() {
+    let source = "|===\n|Name |Count\n\n|alpha |1\n|beta |22\n|===\n";
+
+    assert_eq!(
+        plain(source, 40),
+        "\
+┌───────┬───────┐
+│ Name  │ Count │
+├───────┼───────┤
+│ alpha │ 1     │
+│ beta  │ 22    │
+└───────┴───────┘
+"
+    );
+}
+
+/// Every line of a table is exactly as wide as every other, whatever the cells
+/// hold.
+#[test]
+fn every_line_of_a_table_has_the_same_width() {
+    let source =
+        "|===\n|Name |Description\n\n|alpha |text that has to wrap inside its column\n|===\n";
+    let rendered = document(source, 40);
+    let widths: Vec<usize> = rendered
+        .lines
+        .iter()
+        .filter(|line| !line.is_empty())
+        .map(|line| line.display_width(AmbiguousWidth::Narrow))
+        .collect();
+
+    assert!(widths.iter().all(|width| *width == widths[0]), "{widths:?}");
+    assert!(widths[0] <= 40);
+}
+
+#[test]
+fn a_cell_reaching_across_columns_is_not_crossed_by_a_junction() {
+    let source = "[cols=\"1,1\"]\n|===\n2+|across both\n|left |right\n|===\n";
+
+    assert_eq!(
+        plain(source, 30),
+        "\
+┌──────────────┐
+│ across both  │
+│ left │ right │
+└──────┴───────┘
+"
+    );
+}
+
+/// A terminal cannot join cells down the page, so a cell that reaches across
+/// rows keeps its text on the first of them and leaves the rest empty.
+#[test]
+fn a_cell_reaching_across_rows_keeps_its_text_on_the_first_row() {
+    let source = "[cols=\"1,1\"]\n|===\n.2+|two rows |first\n|second\n|===\n";
+
+    assert_eq!(
+        plain(source, 30),
+        "\
+┌──────────┬────────┐
+│ two rows │ first  │
+│          │ second │
+└──────────┴────────┘
+"
+    );
+}
+
+#[test]
+fn a_cell_is_placed_the_way_the_document_asked() {
+    let source = "[cols=\"<,^,>\"]\n|===\n|left |center |right\n|a |b |c\n|===\n";
+
+    assert_eq!(
+        plain(source, 30),
+        "\
+┌──────┬────────┬───────┐
+│ left │ center │ right │
+│ a    │   b    │     c │
+└──────┴────────┴───────┘
+"
+    );
+}
+
+#[test]
+fn a_table_the_host_cannot_draw_with_boxes_uses_ascii() {
+    let source = "|===\n|a |b\n|===\n";
+    let rendered = render(
+        analyze(source).document(),
+        &TerminalPolicy {
+            table_borders: super::TableBorders::Ascii,
+            ..policy(30)
+        },
+    );
+
+    assert_eq!(
+        rendered.document.to_plain_text(),
+        "\
++---+---+
+| a | b |
++---+---+
+"
+    );
+}
+
+#[test]
+fn a_table_without_borders_separates_its_columns_by_spacing() {
+    let source = "|===\n|alpha |beta\n|===\n";
+    let rendered = render(
+        analyze(source).document(),
+        &TerminalPolicy {
+            table_borders: super::TableBorders::None,
+            ..policy(30)
+        },
+    );
+
+    assert_eq!(rendered.document.to_plain_text(), "alpha  beta\n");
+}
+
+/// A cell written as AsciiDoc holds blocks of its own, which are laid out in
+/// the width of the column they sit in.
+#[test]
+fn a_cell_written_as_asciidoc_lays_its_blocks_out_inside_the_column() {
+    let source = "[cols=\"1a,1\"]\n|===\n|* one\n* two\n|plain\n|===\n";
+    let rendered = plain(source, 30);
+
+    assert!(rendered.contains("• one"), "{rendered}");
+    assert!(rendered.contains("• two"), "{rendered}");
+}
+
+#[test]
+fn a_table_narrower_than_its_text_keeps_its_columns_readable() {
+    let source = "|===\n|first column |second column |third column\n|===\n";
+    let rendered = document(source, 20);
+
+    for line in &rendered.lines {
+        assert!(
+            !line.text().contains("  │") || line.text().ends_with('│'),
+            "a column collapsed: {:?}",
+            line.text()
+        );
+    }
+    assert!(rendered.lines.len() > 3);
+}
+
+#[test]
+fn a_table_title_stands_above_the_frame() {
+    let source = ".Measurements\n|===\n|a |b\n|===\n";
+
+    assert!(plain(source, 30).starts_with("Measurements\n┌"));
+}
+
+#[test]
+fn a_table_cell_carries_the_role_of_a_heading_in_the_header_row() {
+    let source = "|===\n|Name |Count\n\n|alpha |1\n|===\n";
+    let rendered = document(source, 30);
+    let header = rendered
+        .lines
+        .iter()
+        .flat_map(|line| &line.spans)
+        .find(|span| span.text == "Name")
+        .expect("a header cell");
+
+    assert_eq!(header.style.role, TerminalRole::TableHeader);
+    assert!(header.style.bold);
+}

@@ -23,6 +23,20 @@ const UNBOUNDED_RULE_WIDTH: usize = 40;
 /// What every line of a quoted, warned, or verbatim block begins with.
 const BORDER: &str = "│ ";
 
+/// Lays a sequence of blocks out on a page of its own. A table cell that holds
+/// blocks of its own is rendered this way, into the width of its column.
+pub(super) fn render_blocks(
+    blocks: &[AstBlock],
+    policy: &TerminalPolicy,
+    presentation: &DocumentPresentation,
+) -> Vec<TerminalLine> {
+    let mut canvas = Canvas::new(policy);
+    for block in blocks {
+        render_block(&mut canvas, block, presentation);
+    }
+    canvas.finish()
+}
+
 pub(super) fn render_document(
     document: &AstDocument,
     policy: &TerminalPolicy,
@@ -227,7 +241,7 @@ fn render_break(canvas: &mut Canvas<'_>, block: &BreakBlock) {
 }
 
 /// The title an author gave a block, written directly above it.
-fn render_block_title(canvas: &mut Canvas<'_>, metadata: &BlockMetadata) {
+pub(super) fn render_block_title(canvas: &mut Canvas<'_>, metadata: &BlockMetadata) {
     if let Some(title) = &metadata.title {
         canvas.push_wrapped(&inline::plan(
             &title.inlines,
@@ -332,8 +346,9 @@ fn render_delimited(
                     canvas.push_text(line, TerminalStyle::of(TerminalRole::Muted));
                 }
             }
-            // A table needs its columns measured before it can be drawn.
-            DelimitedContent::Table(_) => {}
+            DelimitedContent::Table(table) => {
+                super::table::render(canvas, table, &block.metadata, presentation);
+            }
         },
     }
 }
