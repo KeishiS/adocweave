@@ -27,6 +27,16 @@ pub(crate) enum PagerChoice {
     Never,
 }
 
+/// When a link is written in the form a terminal can make followable.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
+pub(crate) enum HyperlinkChoice {
+    // Only when the text reaches a screen.
+    #[default]
+    Auto,
+    Always,
+    Never,
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
 pub(crate) enum ColorChoice {
     #[default]
@@ -255,6 +265,10 @@ struct ViewArgs {
     /// Hand the output to a pager; auto uses one only when the page is longer than the screen.
     #[arg(long, value_name = "WHEN", value_enum, default_value_t)]
     pager: PagerChoice,
+
+    /// Write links in the form a terminal can make followable.
+    #[arg(long, value_name = "WHEN", value_enum, default_value_t)]
+    hyperlinks: HyperlinkChoice,
 
     #[command(flatten)]
     include: IncludeArgs,
@@ -674,6 +688,7 @@ fn view_action(command: ViewArgs) -> Result<Action, CliError> {
         command: CommandOptions::View(crate::commands::view::Options {
             width: command.width,
             pager: command.pager,
+            hyperlinks: command.hyperlinks,
         }),
         input: single_input(command.file),
         additional_inputs: Vec::new(),

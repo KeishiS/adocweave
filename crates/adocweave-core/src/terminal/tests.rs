@@ -1007,3 +1007,40 @@ fn terminal_contract_golden_lays_the_whole_page_out() {
         include_str!("../../../../fixtures/terminal/contract.width80.txt")
     );
 }
+
+/// A host that can lead the reader to the address has no use for it written
+/// beside the text. An address it will not follow is written, because it is
+/// otherwise lost.
+#[test]
+fn an_address_is_written_where_the_host_cannot_lead_the_reader_to_it() {
+    let source = "See https://example.com[the site] and link:local.html[a page].\n";
+    let rendered = render(
+        analyze(source).document(),
+        &TerminalPolicy {
+            links: super::LinkPresentation::TextWhenFollowable,
+            ..policy(70)
+        },
+    );
+
+    assert_eq!(
+        rendered.document.to_plain_text(),
+        "See the site and a page (local.html).\n"
+    );
+}
+
+#[test]
+fn the_host_can_ask_for_no_addresses_at_all() {
+    let source = "See https://example.com[the site] and link:local.html[a page].\n";
+    let rendered = render(
+        analyze(source).document(),
+        &TerminalPolicy {
+            links: super::LinkPresentation::TextOnly,
+            ..policy(70)
+        },
+    );
+
+    assert_eq!(
+        rendered.document.to_plain_text(),
+        "See the site and a page.\n"
+    );
+}

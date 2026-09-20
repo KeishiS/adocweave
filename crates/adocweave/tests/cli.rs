@@ -1250,6 +1250,7 @@ fn public_help_paths_describe_every_command() {
                 "[FILE]",
                 "--width <COLUMNS>",
                 "--pager <WHEN>",
+                "--hyperlinks <WHEN>",
                 "--include",
                 "--no-include",
                 "--stdin-base <DIR>",
@@ -3864,4 +3865,137 @@ fn a_paged_page_stays_plain_when_the_reader_asked_for_no_color() {
         .expect("command");
 
     assert!(!String::from_utf8_lossy(&output.stdout).contains('\u{1b}'));
+}
+
+const LINK_DOCUMENT: &str = "See https://example.com[the site] and link:local.html[a page].\n";
+
+fn link_root() -> tempfile::TempDir {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(root.path().join("links.adoc"), LINK_DOCUMENT).expect("document");
+    root
+}
+
+/// A terminal that can lead the reader to an address is given it, and the text
+/// is no longer followed by the address written out.
+#[test]
+fn view_writes_links_a_terminal_can_follow() {
+    let root = link_root();
+
+    let output = adocweave()
+        .current_dir(root.path())
+        .args([
+            "view",
+            "--hyperlinks",
+            "always",
+            "--color",
+            "never",
+            "links.adoc",
+        ])
+        .output()
+        .expect("command");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        stdout.contains("\u{1b}]8;;https://example.com\u{1b}\\the site\u{1b}]8;;\u{1b}\\"),
+        "{stdout:?}"
+    );
+    assert!(!stdout.contains("(https://example.com)"), "{stdout:?}");
+}
+
+/// An address the terminal will not follow is still written out, because it
+/// would otherwise be lost.
+#[test]
+fn an_address_no_terminal_will_follow_is_still_written() {
+    let root = link_root();
+
+    let output = adocweave()
+        .current_dir(root.path())
+        .args([
+            "view",
+            "--hyperlinks",
+            "always",
+            "--color",
+            "never",
+            "links.adoc",
+        ])
+        .output()
+        .expect("command");
+
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("a page (local.html)"),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+}
+
+/// Output that is not read on a screen keeps the address written out, which is
+/// what a reader of a pipe or a file can use.
+#[test]
+fn view_writes_addresses_where_no_terminal_reads_them() {
+    let root = link_root();
+
+    let output = adocweave()
+        .current_dir(root.path())
+        .args(["view", "links.adoc"])
+        .output()
+        .expect("command");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        stdout.contains("the site (https://example.com)"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("\u{1b}]8"), "{stdout:?}");
+}
+
+/// Whether a link can be followed and whether the page has color are two
+/// questions, and each is answered on its own.
+#[test]
+fn followable_links_do_not_depend_on_color() {
+    let root = link_root();
+
+    let output = adocweave()
+        .current_dir(root.path())
+        .args([
+            "view",
+            "--hyperlinks",
+            "always",
+            "--color",
+            "always",
+            "links.adoc",
+        ])
+        .output()
+        .expect("command");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        stdout.contains("\u{1b}]8;;https://example.com"),
+        "{stdout:?}"
+    );
+    assert!(stdout.contains("\u{1b}["), "{stdout:?}");
+}
+
+#[test]
+fn view_writes_no_followable_links_when_the_reader_asked_for_none() {
+    let root = link_root();
+
+    let output = adocweave()
+        .current_dir(root.path())
+        .args([
+            "view",
+            "--hyperlinks",
+            "never",
+            "--color",
+            "never",
+            "links.adoc",
+        ])
+        .output()
+        .expect("command");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(!stdout.contains("\u{1b}]8"), "{stdout:?}");
+    assert!(
+        stdout.contains("the site (https://example.com)"),
+        "{stdout}"
+    );
 }
