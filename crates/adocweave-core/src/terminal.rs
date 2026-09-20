@@ -116,6 +116,11 @@ pub enum LinkPresentation {
     /// never written is an address that cannot be followed.
     #[default]
     TextWithUrl,
+    /// The text alone where the host can lead the reader to the address, and
+    /// the address as well where it cannot. A terminal that makes the text
+    /// itself followable has no use for the address written beside it, but an
+    /// address it will not follow is lost unless it is written.
+    TextWhenFollowable,
     /// The text alone, for a page where the addresses would crowd it out.
     TextOnly,
 }

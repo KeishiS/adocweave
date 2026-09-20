@@ -205,7 +205,14 @@ fn plan_link(
         push_text(units, &link.target_source, style);
     } else {
         plan_sequence(&link.label, style, context, units);
-        if context.policy.links == LinkPresentation::TextWithUrl {
+        let written = match context.policy.links {
+            LinkPresentation::TextWithUrl => true,
+            // An address the host will not lead the reader to is lost unless
+            // it is written beside the text.
+            LinkPresentation::TextWhenFollowable => !active,
+            LinkPresentation::TextOnly => false,
+        };
+        if written {
             push_text(
                 units,
                 &format!(" ({})", link.target),

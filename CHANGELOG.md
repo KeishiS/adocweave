@@ -17,11 +17,12 @@ separate changelogs for the
 - Human-readable color now honors `NO_COLOR`. With `--color auto`, `view`, `check`, and `format --diff` produce plain output when `NO_COLOR` is set to a non-empty value. `--color always` still produces color.
 - Output whose reader closes early, as `adocweave view manual.adoc | head` does, now exits successfully instead of reporting a write failure.
 - `view` hands a page longer than the screen to a pager. The pager is the one named by `PAGER`, or `less` with the flags that pass style through and leave a short page where it is. `--pager always` and `--pager never` decide it outright, and a pager that cannot be started leaves the page on standard output.
+- `view` writes links a terminal can follow. The text itself leads to the address, so the address is no longer written beside it, except where it cannot be followed and would otherwise be lost. `--hyperlinks` decides it outright, and output that is not read on a terminal keeps the written address.
 
 ### Rust API
 
 - `adocweave_core::output::terminal` lays a document out for a terminal. `render` and `render_with_inputs` return a `TerminalOutput` whose `TerminalDocument` holds `TerminalLine` values built from `TerminalSpan` values. A span carries a `TerminalRole` and a `TerminalStyle` rather than escape sequences, so a host chooses its own encoding.
-- `TerminalPolicy` selects the width, the treatment of ambiguous East Asian width, indentation, list markers, table borders, link and media presentation, math presentation, the text of an unresolved reference, and which addresses may become active.
+- `TerminalPolicy` selects the width, the treatment of ambiguous East Asian width, indentation, list markers, table borders, link and media presentation, math presentation, the text of an unresolved reference, and which addresses may become active. `LinkPresentation::TextWhenFollowable` writes an address only where the host cannot lead the reader to it.
 - `display_width` measures text in terminal columns.
 
 ### Migration

@@ -69,19 +69,30 @@ pub(crate) fn run(arguments: &Arguments) -> Result<CliExitCode, CliError> {
         CommandOptions::View(options) => {
             let target = only_target(&result.targets)?;
             let analysis = expanded_analysis(target)?;
-            let policy = commands::view::build_policy(crate::terminal::width(options.width));
+            // A pager puts the page on a screen, so what the terminal is given
+            // is decided before the page is laid out, and a page laid out for a
+            // terminal that can follow a link leaves out the written address.
+            let reaches_a_screen = io::stdout().is_terminal()
+                || matches!(options.pager, crate::arguments::PagerChoice::Always);
+            let decoration = commands::view::Decoration {
+                color: crate::terminal::color_for(arguments.color, reaches_a_screen),
+                hyperlinks: crate::terminal::hyperlinks_enabled(
+                    options.hyperlinks,
+                    reaches_a_screen,
+                ),
+            };
+            let policy = commands::view::build_policy(
+                crate::terminal::width(options.width),
+                decoration.hyperlinks,
+            );
             let rendered =
                 commands::view::render_analysis(&analysis.preprocessed.analysis, &policy);
-            // A pager puts the page on a screen, so the style is chosen after
-            // it is known whether one is used.
             let paged = crate::pager::wanted(
                 options.pager,
                 rendered.lines.len(),
                 io::stdout().is_terminal(),
             );
-            let color =
-                crate::terminal::color_for(arguments.color, paged || io::stdout().is_terminal());
-            let output = finish_output(commands::view::serialize(&rendered, color))?;
+            let output = finish_output(commands::view::serialize(&rendered, decoration))?;
             if paged && crate::pager::write(&output).is_ok() {
                 return Ok(CliExitCode::Success);
             }

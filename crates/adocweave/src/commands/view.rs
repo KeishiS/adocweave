@@ -1,7 +1,8 @@
 //! Rendering a document for the terminal, and writing the style out as ANSI.
 
 use adocweave_core::output::terminal::{
-    TerminalDocument, TerminalPolicy, TerminalRole, TerminalSpan, TerminalStyle, TerminalWidth,
+    LinkPresentation, TerminalDocument, TerminalPolicy, TerminalRole, TerminalSpan, TerminalStyle,
+    TerminalWidth,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -9,11 +10,19 @@ pub(crate) struct Options {
     /// The width the reader asked for, if they asked.
     pub(crate) width: Option<u16>,
     pub(crate) pager: crate::arguments::PagerChoice,
+    pub(crate) hyperlinks: crate::arguments::HyperlinkChoice,
 }
 
-pub(crate) fn build_policy(width: u16) -> TerminalPolicy {
+pub(crate) fn build_policy(width: u16, hyperlinks: bool) -> TerminalPolicy {
     TerminalPolicy {
         width: TerminalWidth::Columns(width),
+        // A terminal that can make the text itself followable has no use for
+        // the address written after it.
+        links: if hyperlinks {
+            LinkPresentation::TextWhenFollowable
+        } else {
+            LinkPresentation::TextWithUrl
+        },
         ..TerminalPolicy::default()
     }
 }
@@ -25,27 +34,65 @@ pub(crate) fn render_analysis(
     adocweave_core::output::terminal::render(analysis.document(), policy).document
 }
 
+/// What the reader's terminal is given beyond the text itself.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Decoration {
+    pub(crate) color: bool,
+    /// Whether a link is written so the terminal can make it followable.
+    pub(crate) hyperlinks: bool,
+}
+
 /// Writes the laid-out document out, with or without style.
 ///
-/// Without color the text is the plain layout, which reads on its own. With
-/// color every span is wrapped in the sequence for its role. The two differ
-/// only in the escape sequences: the lines and the columns are the same.
-pub(crate) fn serialize(document: &TerminalDocument, color: bool) -> String {
-    if !color {
+/// Without either kind of decoration the text is the plain layout, which reads
+/// on its own. The decorated form differs only in its escape sequences: the
+/// lines and the columns are the same.
+pub(crate) fn serialize(document: &TerminalDocument, decoration: Decoration) -> String {
+    if !decoration.color && !decoration.hyperlinks {
         return document.to_plain_text();
     }
     let mut output = String::new();
     for line in &document.lines {
         for span in &line.spans {
-            write_span(&mut output, span);
+            write_span(&mut output, span, decoration);
         }
         output.push('\n');
     }
     output
 }
 
-fn write_span(output: &mut String, span: &TerminalSpan) {
-    let parameters = parameters(span.style);
+/// The start and end of a followable link, as OSC 8 writes them. A terminal
+/// that does not know the sequence shows nothing for it.
+fn write_hyperlink_start(output: &mut String, target: &str) {
+    output.push_str("\u{1b}]8;;");
+    output.push_str(target);
+    output.push_str("\u{1b}\\");
+}
+
+fn write_hyperlink_end(output: &mut String) {
+    output.push_str("\u{1b}]8;;\u{1b}\\");
+}
+
+fn write_span(output: &mut String, span: &TerminalSpan, decoration: Decoration) {
+    let target = decoration
+        .hyperlinks
+        .then(|| span.link.as_deref())
+        .flatten();
+    if let Some(target) = target {
+        write_hyperlink_start(output, target);
+    }
+    write_styled_text(output, span, decoration.color);
+    if target.is_some() {
+        write_hyperlink_end(output);
+    }
+}
+
+fn write_styled_text(output: &mut String, span: &TerminalSpan, color: bool) {
+    let parameters = if color {
+        parameters(span.style)
+    } else {
+        Vec::new()
+    };
     if parameters.is_empty() {
         output.push_str(&span.text);
         return;
@@ -139,19 +186,53 @@ mod tests {
         }
     }
 
+    fn plain() -> Decoration {
+        Decoration::default()
+    }
+
+    fn colored() -> Decoration {
+        Decoration {
+            color: true,
+            hyperlinks: false,
+        }
+    }
+
     #[test]
     fn plain_output_carries_no_escape_sequences() {
-        assert_eq!(serialize(&document(), false), "Title plain\n");
+        assert_eq!(serialize(&document(), plain()), "Title plain\n");
     }
 
     /// Removing the escape sequences from the colored output gives exactly the
     /// plain output, so nothing but style depends on the choice.
     #[test]
     fn color_adds_style_and_changes_nothing_else() {
-        let colored = serialize(&document(), true);
+        let output = serialize(&document(), colored());
 
-        assert!(colored.contains("\u{1b}[1;36mTitle\u{1b}[0m"));
-        assert_eq!(strip(&colored), serialize(&document(), false));
+        assert!(output.contains("\u{1b}[1;36mTitle\u{1b}[0m"));
+        assert_eq!(strip(&output), serialize(&document(), plain()));
+    }
+
+    /// A link is written around the text, whether or not the text has style.
+    #[test]
+    fn a_followable_link_surrounds_the_text_it_leads_from() {
+        let document = TerminalDocument {
+            lines: vec![TerminalLine {
+                spans: vec![TerminalSpan {
+                    text: "the site".to_owned(),
+                    style: TerminalStyle::of(TerminalRole::Link),
+                    link: Some("https://example.com".to_owned()),
+                }],
+            }],
+        };
+        let decoration = Decoration {
+            color: false,
+            hyperlinks: true,
+        };
+
+        assert_eq!(
+            serialize(&document, decoration),
+            "\u{1b}]8;;https://example.com\u{1b}\\the site\u{1b}]8;;\u{1b}\\\n"
+        );
     }
 
     fn strip(text: &str) -> String {

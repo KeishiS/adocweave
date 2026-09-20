@@ -7,7 +7,7 @@
 
 use std::io::{self, IsTerminal as _};
 
-use crate::arguments::ColorChoice;
+use crate::arguments::{ColorChoice, HyperlinkChoice};
 
 /// The width used when nothing says otherwise. It is the width a terminal has
 /// had by default for as long as terminals have had one.
@@ -80,6 +80,24 @@ pub(crate) fn color_for(choice: ColorChoice, reaches_a_screen: bool) -> bool {
     }
 }
 
+/// Whether a link is written so the terminal can make it followable.
+///
+/// A terminal that does not know the sequence shows nothing for it, so the
+/// only terminal asked about is the one that says it draws no sequences at
+/// all. Output that is not read on a screen keeps the address written after
+/// the text instead.
+pub(crate) fn hyperlinks_enabled(choice: HyperlinkChoice, reaches_a_screen: bool) -> bool {
+    match choice {
+        HyperlinkChoice::Always => true,
+        HyperlinkChoice::Never => false,
+        HyperlinkChoice::Auto => reaches_a_screen && !terminal_draws_nothing(),
+    }
+}
+
+fn terminal_draws_nothing() -> bool {
+    std::env::var("TERM").is_ok_and(|term| term == "dumb")
+}
+
 /// `NO_COLOR` asks for no color when it is set to anything but an empty value.
 fn no_color_requested() -> bool {
     std::env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty())
@@ -117,5 +135,18 @@ mod tests {
     fn output_a_pager_puts_on_a_screen_carries_color() {
         assert!(color_for(ColorChoice::Auto, true));
         assert!(!color_for(ColorChoice::Auto, false));
+    }
+
+    #[test]
+    fn links_are_followable_only_where_they_reach_a_screen() {
+        assert!(hyperlinks_enabled(HyperlinkChoice::Auto, true));
+        assert!(!hyperlinks_enabled(HyperlinkChoice::Auto, false));
+    }
+
+    /// Asking for followable links and asking for color are two questions.
+    #[test]
+    fn an_explicit_choice_about_links_stands_on_its_own() {
+        assert!(hyperlinks_enabled(HyperlinkChoice::Always, false));
+        assert!(!hyperlinks_enabled(HyperlinkChoice::Never, true));
     }
 }
