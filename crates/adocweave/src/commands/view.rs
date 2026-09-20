@@ -1,8 +1,7 @@
 //! Rendering a document for the terminal, and writing the style out as ANSI.
 
 use adocweave_core::output::terminal::{
-    LinkPresentation, TerminalDocument, TerminalPolicy, TerminalRole, TerminalSpan, TerminalStyle,
-    TerminalWidth,
+    LinkPresentation, TerminalDocument, TerminalPolicy, TerminalSpan, TerminalStyle, TerminalWidth,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -11,6 +10,7 @@ pub(crate) struct Options {
     pub(crate) width: Option<u16>,
     pub(crate) pager: crate::arguments::PagerChoice,
     pub(crate) hyperlinks: crate::arguments::HyperlinkChoice,
+    pub(crate) theme: Option<crate::arguments::ThemeChoice>,
 }
 
 pub(crate) fn build_policy(width: u16, hyperlinks: bool) -> TerminalPolicy {
@@ -35,9 +35,10 @@ pub(crate) fn render_analysis(
 }
 
 /// What the reader's terminal is given beyond the text itself.
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct Decoration {
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Decoration<'theme> {
     pub(crate) color: bool,
+    pub(crate) theme: &'theme crate::theme::Theme,
     /// Whether a link is written so the terminal can make it followable.
     pub(crate) hyperlinks: bool,
 }
@@ -47,7 +48,7 @@ pub(crate) struct Decoration {
 /// Without either kind of decoration the text is the plain layout, which reads
 /// on its own. The decorated form differs only in its escape sequences: the
 /// lines and the columns are the same.
-pub(crate) fn serialize(document: &TerminalDocument, decoration: Decoration) -> String {
+pub(crate) fn serialize(document: &TerminalDocument, decoration: Decoration<'_>) -> String {
     if !decoration.color && !decoration.hyperlinks {
         return document.to_plain_text();
     }
@@ -73,7 +74,7 @@ fn write_hyperlink_end(output: &mut String) {
     output.push_str("\u{1b}]8;;\u{1b}\\");
 }
 
-fn write_span(output: &mut String, span: &TerminalSpan, decoration: Decoration) {
+fn write_span(output: &mut String, span: &TerminalSpan, decoration: Decoration<'_>) {
     let target = decoration
         .hyperlinks
         .then_some(span.link.as_deref())
@@ -81,15 +82,15 @@ fn write_span(output: &mut String, span: &TerminalSpan, decoration: Decoration) 
     if let Some(target) = target {
         write_hyperlink_start(output, target);
     }
-    write_styled_text(output, span, decoration.color);
+    write_styled_text(output, span, decoration);
     if target.is_some() {
         write_hyperlink_end(output);
     }
 }
 
-fn write_styled_text(output: &mut String, span: &TerminalSpan, color: bool) {
-    let parameters = if color {
-        parameters(span.style)
+fn write_styled_text(output: &mut String, span: &TerminalSpan, decoration: Decoration<'_>) {
+    let parameters = if decoration.color {
+        parameters(span.style, decoration.theme)
     } else {
         Vec::new()
     };
@@ -114,7 +115,7 @@ fn write_styled_text(output: &mut String, span: &TerminalSpan, color: bool) {
 /// Only the eight original colors and the oldest attributes are used. A
 /// terminal that shows anything at all shows these, and a reader who set a
 /// palette sees the document in it.
-fn parameters(style: TerminalStyle) -> Vec<&'static str> {
+fn parameters(style: TerminalStyle, theme: &crate::theme::Theme) -> Vec<&'static str> {
     let mut parameters = Vec::new();
     if style.bold {
         parameters.push("1");
@@ -131,40 +132,15 @@ fn parameters(style: TerminalStyle) -> Vec<&'static str> {
     if style.inverse {
         parameters.push("7");
     }
-    if let Some(color) = color(style.role) {
+    if let Some(color) = theme.color(style.role) {
         parameters.push(color);
     }
     parameters
 }
 
-fn color(role: TerminalRole) -> Option<&'static str> {
-    use adocweave_core::semantic::AdmonitionKind;
-
-    Some(match role {
-        TerminalRole::Text | TerminalRole::FootnoteText => return None,
-        TerminalRole::DocumentTitle | TerminalRole::Heading { .. } => "36",
-        TerminalRole::Metadata | TerminalRole::Muted | TerminalRole::Rule => "90",
-        TerminalRole::Marker | TerminalRole::FootnoteMarker => "33",
-        TerminalRole::Caption | TerminalRole::TableHeader => "36",
-        TerminalRole::Monospace | TerminalRole::Code | TerminalRole::Math => "32",
-        TerminalRole::Link | TerminalRole::Reference => "34",
-        TerminalRole::UnresolvedReference | TerminalRole::Unsupported => "31",
-        TerminalRole::Admonition(kind) => match kind {
-            AdmonitionKind::Note => "36",
-            AdmonitionKind::Tip => "32",
-            AdmonitionKind::Important => "35",
-            AdmonitionKind::Warning => "33",
-            AdmonitionKind::Caution => "31",
-        },
-        TerminalRole::Quote | TerminalRole::Attribution => "35",
-        TerminalRole::TableBorder => "90",
-        TerminalRole::MediaPlaceholder => "90",
-    })
-}
-
 #[cfg(test)]
 mod tests {
-    use adocweave_core::output::terminal::TerminalLine;
+    use adocweave_core::output::terminal::{TerminalLine, TerminalRole};
 
     use super::*;
 
@@ -186,30 +162,38 @@ mod tests {
         }
     }
 
-    fn plain() -> Decoration {
-        Decoration::default()
+    fn plain(theme: &crate::theme::Theme) -> Decoration<'_> {
+        Decoration {
+            color: false,
+            theme,
+            hyperlinks: false,
+        }
     }
 
-    fn colored() -> Decoration {
+    fn colored(theme: &crate::theme::Theme) -> Decoration<'_> {
         Decoration {
             color: true,
+            theme,
             hyperlinks: false,
         }
     }
 
     #[test]
     fn plain_output_carries_no_escape_sequences() {
-        assert_eq!(serialize(&document(), plain()), "Title plain\n");
+        let theme = crate::theme::Theme::default();
+
+        assert_eq!(serialize(&document(), plain(&theme)), "Title plain\n");
     }
 
     /// Removing the escape sequences from the colored output gives exactly the
     /// plain output, so nothing but style depends on the choice.
     #[test]
     fn color_adds_style_and_changes_nothing_else() {
-        let output = serialize(&document(), colored());
+        let theme = crate::theme::Theme::default();
+        let output = serialize(&document(), colored(&theme));
 
         assert!(output.contains("\u{1b}[1;36mTitle\u{1b}[0m"));
-        assert_eq!(strip(&output), serialize(&document(), plain()));
+        assert_eq!(strip(&output), serialize(&document(), plain(&theme)));
     }
 
     /// A link is written around the text, whether or not the text has style.
@@ -224,8 +208,10 @@ mod tests {
                 }],
             }],
         };
+        let theme = crate::theme::Theme::default();
         let decoration = Decoration {
             color: false,
+            theme: &theme,
             hyperlinks: true,
         };
 

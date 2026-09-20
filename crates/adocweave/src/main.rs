@@ -17,6 +17,7 @@ mod pager;
 mod preview;
 mod project_command;
 mod terminal;
+mod theme;
 
 static PREVIEW_SHUTDOWN: AtomicBool = AtomicBool::new(false);
 const VERSION: &str = env!("CARGO_PKG_VERSION");

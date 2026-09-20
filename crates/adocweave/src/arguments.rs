@@ -27,6 +27,22 @@ pub(crate) enum PagerChoice {
     Never,
 }
 
+/// The palette the page is shown in.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum ThemeChoice {
+    Dark,
+    Light,
+}
+
+impl From<ThemeChoice> for crate::theme::Palette {
+    fn from(value: ThemeChoice) -> Self {
+        match value {
+            ThemeChoice::Dark => Self::Dark,
+            ThemeChoice::Light => Self::Light,
+        }
+    }
+}
+
 /// When a link is written in the form a terminal can make followable.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
 pub(crate) enum HyperlinkChoice {
@@ -269,6 +285,10 @@ struct ViewArgs {
     /// Write links in the form a terminal can make followable.
     #[arg(long, value_name = "WHEN", value_enum, default_value_t)]
     hyperlinks: HyperlinkChoice,
+
+    /// Show the page in the palette written for this background.
+    #[arg(long, value_name = "NAME", value_enum)]
+    theme: Option<ThemeChoice>,
 
     #[command(flatten)]
     include: IncludeArgs,
@@ -689,6 +709,7 @@ fn view_action(command: ViewArgs) -> Result<Action, CliError> {
             width: command.width,
             pager: command.pager,
             hyperlinks: command.hyperlinks,
+            theme: command.theme,
         }),
         input: single_input(command.file),
         additional_inputs: Vec::new(),

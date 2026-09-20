@@ -44,6 +44,8 @@ pub enum ConfigErrorCode {
     InvalidPath,
     /// Configured HTML role is not a class token.
     InvalidRole,
+    /// Configured terminal color names a role that does not exist.
+    InvalidTerminalRole,
 }
 
 impl ConfigErrorCode {
@@ -58,6 +60,7 @@ impl ConfigErrorCode {
             Self::InvalidLimit => "invalid-limit",
             Self::InvalidPath => "invalid-path",
             Self::InvalidRole => "invalid-role",
+            Self::InvalidTerminalRole => "invalid-terminal-role",
         }
     }
 }
@@ -184,6 +187,44 @@ pub(crate) struct HtmlSettings {
     pub(crate) stylesheet_urls: Vec<String>,
 }
 
+/// Terminal reading settings.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct TerminalSettings {
+    /// The palette a host starts from, when the configuration names one.
+    pub theme: Option<TerminalTheme>,
+    /// Colors chosen for named roles, which override the palette.
+    pub colors: BTreeMap<String, TerminalColor>,
+}
+
+/// A palette written for the background a terminal is read on.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TerminalTheme {
+    Dark,
+    Light,
+}
+
+/// One of the colors every terminal has, or the one it was already using.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TerminalColor {
+    Default,
+    Black,
+    Red,
+    Green,
+    Yellow,
+    Blue,
+    Magenta,
+    Cyan,
+    White,
+    BrightBlack,
+    BrightRed,
+    BrightGreen,
+    BrightYellow,
+    BrightBlue,
+    BrightMagenta,
+    BrightCyan,
+    BrightWhite,
+}
+
 /// Fully typed schema-version-2 project configuration.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProjectConfig {
@@ -205,6 +246,8 @@ pub struct ProjectConfig {
     pub(crate) format_final_newline_explicit: bool,
     /// HTML and stylesheet settings.
     pub(crate) html: HtmlSettings,
+    /// Terminal reading settings.
+    pub(crate) terminal: TerminalSettings,
 }
 
 impl Default for ProjectConfig {
@@ -224,6 +267,7 @@ impl Default for ProjectConfig {
             format_newline_explicit: false,
             format_final_newline_explicit: false,
             html: HtmlSettings::default(),
+            terminal: TerminalSettings::default(),
         }
     }
 }
@@ -258,6 +302,8 @@ struct ProjectConfigWire {
     format: FormatWire,
     #[serde(default)]
     html: HtmlWire,
+    #[serde(default)]
+    terminal: TerminalWire,
 }
 
 impl ProjectConfigWire {
@@ -300,6 +346,7 @@ impl ProjectConfigWire {
         resolved.format_final_newline_explicit = self.format.final_newline.is_some();
         resolved.format = self.format.resolve()?;
         resolved.html = self.html.resolve(directory)?;
+        resolved.terminal = self.terminal.resolve()?;
         Ok(resolved)
     }
 }
@@ -588,6 +635,102 @@ struct HtmlWire {
     stylesheet_urls: Vec<String>,
     #[serde(default)]
     roles: Vec<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+struct TerminalWire {
+    #[serde(default)]
+    theme: Option<TerminalThemeWire>,
+    #[serde(default)]
+    colors: BTreeMap<String, TerminalColorWire>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(rename_all = "kebab-case")]
+enum TerminalThemeWire {
+    Dark,
+    Light,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(rename_all = "kebab-case")]
+enum TerminalColorWire {
+    Default,
+    Black,
+    Red,
+    Green,
+    Yellow,
+    Blue,
+    Magenta,
+    Cyan,
+    White,
+    BrightBlack,
+    BrightRed,
+    BrightGreen,
+    BrightYellow,
+    BrightBlue,
+    BrightMagenta,
+    BrightCyan,
+    BrightWhite,
+}
+
+impl TerminalWire {
+    fn resolve(self) -> Result<TerminalSettings, ConfigError> {
+        let mut colors = BTreeMap::new();
+        for (name, color) in self.colors {
+            // A color chosen for a role that does not exist would silently
+            // do nothing, so it is reported instead.
+            if !adocweave_core::output::terminal::TerminalRole::is_name(&name) {
+                return Err(ConfigError::new(
+                    ConfigErrorCode::InvalidTerminalRole,
+                    "terminal.colors names a role that does not exist",
+                )
+                .at(format!("terminal.colors.{name}")));
+            }
+            colors.insert(name, color.into());
+        }
+        Ok(TerminalSettings {
+            theme: self.theme.map(Into::into),
+            colors,
+        })
+    }
+}
+
+impl From<TerminalThemeWire> for TerminalTheme {
+    fn from(value: TerminalThemeWire) -> Self {
+        match value {
+            TerminalThemeWire::Dark => Self::Dark,
+            TerminalThemeWire::Light => Self::Light,
+        }
+    }
+}
+
+impl From<TerminalColorWire> for TerminalColor {
+    fn from(value: TerminalColorWire) -> Self {
+        match value {
+            TerminalColorWire::Default => Self::Default,
+            TerminalColorWire::Black => Self::Black,
+            TerminalColorWire::Red => Self::Red,
+            TerminalColorWire::Green => Self::Green,
+            TerminalColorWire::Yellow => Self::Yellow,
+            TerminalColorWire::Blue => Self::Blue,
+            TerminalColorWire::Magenta => Self::Magenta,
+            TerminalColorWire::Cyan => Self::Cyan,
+            TerminalColorWire::White => Self::White,
+            TerminalColorWire::BrightBlack => Self::BrightBlack,
+            TerminalColorWire::BrightRed => Self::BrightRed,
+            TerminalColorWire::BrightGreen => Self::BrightGreen,
+            TerminalColorWire::BrightYellow => Self::BrightYellow,
+            TerminalColorWire::BrightBlue => Self::BrightBlue,
+            TerminalColorWire::BrightMagenta => Self::BrightMagenta,
+            TerminalColorWire::BrightCyan => Self::BrightCyan,
+            TerminalColorWire::BrightWhite => Self::BrightWhite,
+        }
+    }
 }
 
 impl HtmlWire {

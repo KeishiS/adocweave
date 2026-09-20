@@ -266,6 +266,76 @@
     "schema-version": {
       "const": 2,
       "type": "integer"
+    },
+    "terminal": {
+      "additionalProperties": false,
+      "properties": {
+        "colors": {
+          "additionalProperties": {
+            "enum": [
+              "default",
+              "black",
+              "red",
+              "green",
+              "yellow",
+              "blue",
+              "magenta",
+              "cyan",
+              "white",
+              "bright-black",
+              "bright-red",
+              "bright-green",
+              "bright-yellow",
+              "bright-blue",
+              "bright-magenta",
+              "bright-cyan",
+              "bright-white"
+            ],
+            "type": "string"
+          },
+          "default": {},
+          "propertyNames": {
+            "enum": [
+              "text",
+              "document-title",
+              "heading",
+              "metadata",
+              "marker",
+              "rule",
+              "caption",
+              "muted",
+              "monospace",
+              "code",
+              "math",
+              "link",
+              "reference",
+              "unresolved-reference",
+              "admonition-note",
+              "admonition-tip",
+              "admonition-important",
+              "admonition-warning",
+              "admonition-caution",
+              "quote",
+              "attribution",
+              "table-header",
+              "table-border",
+              "footnote-marker",
+              "footnote-text",
+              "media-placeholder",
+              "unsupported"
+            ]
+          },
+          "type": "object"
+        },
+        "theme": {
+          "enum": [
+            "dark",
+            "light"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
     }
   },
   "required": [

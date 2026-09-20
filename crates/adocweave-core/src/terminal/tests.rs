@@ -1044,3 +1044,61 @@ fn the_host_can_ask_for_no_addresses_at_all() {
         "See the site and a page.\n"
     );
 }
+
+/// Every role a page can carry has a name a host can be configured with, and
+/// no two roles share one.
+#[test]
+fn every_role_has_a_name_of_its_own() {
+    use crate::block_model::AdmonitionKind;
+
+    let roles = [
+        TerminalRole::Text,
+        TerminalRole::DocumentTitle,
+        TerminalRole::Heading { level: 1 },
+        TerminalRole::Metadata,
+        TerminalRole::Marker,
+        TerminalRole::Rule,
+        TerminalRole::Caption,
+        TerminalRole::Muted,
+        TerminalRole::Monospace,
+        TerminalRole::Code,
+        TerminalRole::Math,
+        TerminalRole::Link,
+        TerminalRole::Reference,
+        TerminalRole::UnresolvedReference,
+        TerminalRole::Admonition(AdmonitionKind::Note),
+        TerminalRole::Admonition(AdmonitionKind::Tip),
+        TerminalRole::Admonition(AdmonitionKind::Important),
+        TerminalRole::Admonition(AdmonitionKind::Warning),
+        TerminalRole::Admonition(AdmonitionKind::Caution),
+        TerminalRole::Quote,
+        TerminalRole::Attribution,
+        TerminalRole::TableHeader,
+        TerminalRole::TableBorder,
+        TerminalRole::FootnoteMarker,
+        TerminalRole::FootnoteText,
+        TerminalRole::MediaPlaceholder,
+        TerminalRole::Unsupported,
+    ];
+    let names: Vec<&str> = roles.iter().map(|role| role.name()).collect();
+
+    assert_eq!(names, TerminalRole::NAMES);
+    let unique: std::collections::BTreeSet<&str> = names.iter().copied().collect();
+    assert_eq!(unique.len(), names.len());
+    assert!(
+        TerminalRole::NAMES
+            .iter()
+            .all(|name| TerminalRole::is_name(name))
+    );
+    assert!(!TerminalRole::is_name("heading-1"));
+}
+
+/// The depth of a heading is not part of its name. A reader chooses how
+/// headings look, not how one level of them looks.
+#[test]
+fn every_heading_carries_the_same_name() {
+    assert_eq!(
+        TerminalRole::Heading { level: 1 }.name(),
+        TerminalRole::Heading { level: 4 }.name()
+    );
+}

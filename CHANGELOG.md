@@ -18,6 +18,7 @@ separate changelogs for the
 - Output whose reader closes early, as `adocweave view manual.adoc | head` does, now exits successfully instead of reporting a write failure.
 - `view` hands a page longer than the screen to a pager. The pager is the one named by `PAGER`, or `less` with the flags that pass style through and leave a short page where it is. `--pager always` and `--pager never` decide it outright, and a pager that cannot be started leaves the page on standard output.
 - `view` writes links a terminal can follow. The text itself leads to the address, so the address is no longer written beside it, except where it cannot be followed and would otherwise be lost. `--hyperlinks` decides it outright, and output that is not read on a terminal keeps the written address.
+- `view` shows the page in the palette written for the background it is read on. `--theme light` and `--theme dark` choose it, `[terminal] theme` says which one a project reads on, and `[terminal.colors]` chooses the color of a single role, such as `heading` or `link`.
 
 ### Rust API
 
