@@ -48,6 +48,7 @@ mod syntax;
 mod syntax_builder;
 mod syntax_diagnostics;
 mod table;
+mod terminal;
 mod text_role;
 mod url;
 mod walker;
@@ -151,6 +152,13 @@ pub mod output {
             ordered_lists, reference_edges, rendering_features, searchable_text, source_blocks,
         };
         pub use crate::text_role::{BlockTextRole, delimited_text_role};
+    }
+    pub mod terminal {
+        pub use crate::terminal::{
+            AmbiguousWidth, IndentPolicy, TerminalDocument, TerminalLine, TerminalOutput,
+            TerminalPolicy, TerminalRole, TerminalSpan, TerminalStyle, TerminalWidth,
+            display_width, render,
+        };
     }
 }
 
