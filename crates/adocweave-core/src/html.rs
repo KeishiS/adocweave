@@ -9,7 +9,10 @@ mod body;
 mod generated_bibliography;
 mod head;
 mod plan;
+mod regions;
 mod safe;
+
+pub use regions::{HtmlRegionError, HtmlRegionSelection, HtmlRegions, render_regions};
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -274,6 +277,7 @@ pub(crate) fn render_with_inputs_ast(
             structure: document.structure(),
             presentation: document.presentation(),
             generated_bibliography: generated_bibliography.as_ref(),
+            region: None,
         };
         let body_plan = body::plan_body_traversal(document, policy);
         serialize_body_traversal(

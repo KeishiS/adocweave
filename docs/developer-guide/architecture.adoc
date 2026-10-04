@@ -71,6 +71,12 @@ BrowserのWorker入口とNode.jsのdirect入口は、同じWebAssembly要求、�
 属性などを出力形式に依存しない値として表します。HTMLやエディタ固有の規則はParserへ持ち込みません。
 具体的な認識規則と回復結果はxref:grammar.adoc[文法の詳細]を基準とします。
 
+``adocweave``内の``slides``は、この解析結果を参照する``Deck``へスライドの配置をまとめます。見出し、本文、
+発表者ノートを``BlockId``で保持し、本文のescapeとURL検査は
+xref:html-contract.adoc#selected-body-regions[コアの本文領域描画]へ委ねます。スライドの区切りと縦方向のグループ、
+2列の配置、段階表示およびノートの公開範囲は``slides``が決めます。通常のHTML変換では``notes`` roleを含む本文を
+保持し、スライドの公開出力だけがノートを除外します。
+
 [#host-boundary]
 == 利用側アプリとの分担
 

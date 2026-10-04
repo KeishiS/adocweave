@@ -926,6 +926,16 @@ pub(super) fn classes(values: &[&'static str]) -> PlannedAttribute {
     classes_with_roles(values, Vec::new())
 }
 
+pub(super) fn fragment_attributes(index: u32) -> Vec<PlannedAttribute> {
+    vec![
+        PlannedAttribute::Classes {
+            names: vec![ClassName::fragment()],
+            roles: Vec::new(),
+        },
+        PlannedAttribute::Passive(PassiveAttributeName::fragment_index(), index.to_string()),
+    ]
+}
+
 /// One `class` attribute: the renderer's fixed classes, then the role classes
 /// the render policy admitted for this block.
 pub(super) fn classes_with_roles(
