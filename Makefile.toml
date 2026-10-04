@@ -60,6 +60,7 @@ args = [
 ]
 
 [tasks.test]
+dependencies = ["slides-helper-install"]
 private = true
 description = "Run all workspace tests and require generated declarations and schemas to stay unchanged"
 script_runner = "@shell"
