@@ -1,0 +1,89 @@
+name: slides helper package publication
+
+on:
+  push:
+    tags:
+      - 'slides-helper/v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: slides-helper-publish-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  candidate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      archive: ${{ steps.identity.outputs.archive }}
+      name: ${{ steps.identity.outputs.name }}
+      sha256: ${{ steps.candidate.outputs.sha256 }}
+      version: ${{ steps.identity.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - name: Package tag and source verification
+        id: identity
+        env:
+          PACKAGE_TAG: ${{ github.ref_name }}
+          PACKAGE_COMMIT: ${{ github.sha }}
+        run: |
+          [[ "$PACKAGE_TAG" =~ ^slides-helper/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          version="$(jq -er .version packages/slides-helper/package.json)"
+          name="$(jq -er .name packages/slides-helper/package.json)"
+          test "$name" = "@adocweave/slides-helper"
+          test "$PACKAGE_TAG" = "slides-helper/v$version"
+          test "$(git rev-parse "refs/tags/$PACKAGE_TAG^{commit}")" = "$PACKAGE_COMMIT"
+          test "$(git rev-parse HEAD)" = "$PACKAGE_COMMIT"
+          git merge-base --is-ancestor "$PACKAGE_COMMIT" refs/remotes/origin/main
+          echo "archive=adocweave-slides-helper-$version.tgz" >> "$GITHUB_OUTPUT"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: DeterminateSystems/determinate-nix-action@527f17dd63d2d60d3e5552934bc84b9a33a14d11 # v3.22.2
+      - name: Package build and verification
+        run: nix develop .#ci -c cargo make test-slides-helper-release-candidate
+      - name: Candidate identity
+        id: candidate
+        env:
+          PACKAGE_ARCHIVE: ${{ steps.identity.outputs.archive }}
+        run: |
+          archive="target/distrib/$PACKAGE_ARCHIVE"
+          test -f "$archive"
+          echo "sha256=$(sha256sum "$archive" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: slides-helper-package-${{ steps.identity.outputs.version }}
+          path: target/distrib/${{ steps.identity.outputs.archive }}
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    needs: candidate
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/npm-publish.yml
+    with:
+      artifact-name: slides-helper-package-${{ needs.candidate.outputs.version }}
+      archive-name: ${{ needs.candidate.outputs.archive }}
+      package-name: ${{ needs.candidate.outputs.name }}
+      package-version: ${{ needs.candidate.outputs.version }}
+      sha256: ${{ needs.candidate.outputs.sha256 }}
+
+  smoke:
+    needs: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: DeterminateSystems/determinate-nix-action@527f17dd63d2d60d3e5552934bc84b9a33a14d11 # v3.22.2
+      - name: Published package smoke from the npm Registry
+        run: nix develop .#ci -c node tools/slides-helper-release-smoke.mjs --published

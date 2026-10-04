@@ -365,12 +365,13 @@ xref:docs/developer-guide/release-distribution.adoc[GitHub Releases配布仕様]
 
 最初の自動公開より前に、``github-release``、``cachix-publish``、``marketplace-publish``、``npm-publish``および
 ``open-vsx-publish``の5つのenvironmentを作成します。各environmentのdeployment branch policyではSelected branches
-and tagsを選びます。``npm-publish``では``wasm/v*``と``textlint-plugin-asciidoc/v*``、
+and tagsを選びます。``npm-publish``では``wasm/v*``、``textlint-plugin-asciidoc/v*``と``slides-helper/v*``、
 ``marketplace-publish``と``open-vsx-publish``では
 ``vscode/v*``を許可します。``github-release``と``cachix-publish``では``main``だけを許可します。
 ネイティブ版は``main``から手動実行します。
 Open VSXとCachixのtokenは対応するenvironmentへ移します。
 textlint用Processorのnpm Trusted Publisherには``textlint-plugin-publish.yml``と``npm-publish`` environment、
+スライド用補助のnpm Trusted Publisherには``slides-helper-publish.yml``と同じenvironmentを登録します。
 Visual Studio Marketplace用の``marketplace-publish`` environmentには``AZURE_CLIENT_ID``と
 ``AZURE_TENANT_ID``を変数として登録します。
 
@@ -460,6 +461,35 @@ git push upstream wasm/vX.Y.Z
 environment``npm-publish``を登録します。失敗した場合は同じworkflow runの``Re-run failed jobs``を使用します。
 同じ版が公開済みであれば内容を確認して送信を省略します。公開後はnpmから導入し直し、署名とprovenance、
 Node.jsおよび実ブラウザーでの動作を確認します。修正が必要な場合は新しい版を使用します。
+
+[#slides-helper-npm-publication]
+=== スライド用補助パッケージの公開
+
+``@adocweave/slides-helper``の版は``packages/slides-helper/package.json``、変更内容は同じディレクトリの
+``CHANGELOG.md``を正本とします。native版とは独立して更新します。実行時の全推移依存は
+``package-lock.json``から導入し、npmの``bundledDependencies``でarchiveへ収録します。
+監査した依存と配布通知を保ち、導入時の依存版の再選択を避けます。
+
+公開候補は次のコマンドで作成します。``target/distrib``へ保存したarchiveを別の場所へ導入し、
+依存の版、実行入口、空要求、数式・引用および通知を検査します。
+
+[source,console]
+----
+cargo make test-slides-helper-release-candidate
+----
+
+変更を``main``へ統合し、そのcommitの検査が成功した後、manifestと一致するtagを作成します。
+
+[source,console]
+----
+git tag -a slides-helper/vX.Y.Z -m "@adocweave/slides-helper X.Y.Z"
+git push upstream slides-helper/vX.Y.Z
+----
+
+``slides-helper-publish.yml``は同じ候補を共通の``npm-publish.yml``へ渡します。Trusted Publisherには
+``slides-helper-publish.yml``と``npm-publish`` environmentを登録します。公開後はnpmから導入し直し、
+署名、provenance、固定依存および実行を確認します。失敗時は同じrunの失敗jobだけを再実行し、
+既に公開された同じ版の内容は置き換えません。
 
 [#cachix-publication]
 === Cachixへの公開

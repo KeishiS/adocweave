@@ -30,6 +30,10 @@ link:../../editors/vscode/CHANGELOG.md[拡張のChangelog]に記録します。
 |link:../../packages/textlint-plugin-asciidoc/package.json[``packages/textlint-plugin-asciidoc/package.json``]。
 変更内容はlink:../../packages/textlint-plugin-asciidoc/CHANGELOG.md[パッケージのChangelog]に記録します。
 
+|スライド用補助パッケージの版
+|link:../../packages/slides-helper/package.json[``packages/slides-helper/package.json``]。
+変更内容はlink:../../packages/slides-helper/CHANGELOG.md[パッケージのChangelog]に記録します。
+
 |native成果物、対象環境および公開方法
 |link:../../dist-workspace.toml[cargo-distのworkspace設定]と各配布packageの``dist.toml``
 
@@ -55,7 +59,8 @@ root workspaceとは別に管理します。
 実際のファイルを照合します。
 
 公開処理の正本は、native版が``release.yml``、WebAssemblyパッケージが
-``wasm-publish.yml``、textlint用Processorが``textlint-plugin-publish.yml``、VS Code拡張が
+``wasm-publish.yml``、textlint用Processorが``textlint-plugin-publish.yml``、スライド用補助が
+``slides-helper-publish.yml``、VS Code拡張が
 ``vscode-publish.yml``です。Zed拡張は公式レジストリへ``editors/zed``を提出します。native版は``main``から
 Release workflowを手動実行し、ほかの公開workflowは自身のtagから起動します。各workflowは自身のmanifest、
 候補の検査、公開および公開後確認だけを扱います。
@@ -64,10 +69,11 @@ Release workflowを手動実行し、ほかの公開workflowは自身のtagか�
 == 配布単位
 
 ネイティブ実行ファイルは、一つのcommit、一つの``vX.Y.Z``タグおよび一つのGitHub Releaseを公開単位とします。
-WebAssemblyパッケージ、textlint用Processor、VS Code拡張およびZed拡張は独立した版を持ちます。
+WebAssemblyパッケージ、textlint用Processor、スライド用補助、VS Code拡張およびZed拡張は独立した版を持ちます。
 WebAssemblyパッケージ、textlint用ProcessorおよびVS Code拡張は、それぞれ``wasm/vX.Y.Z``、
 ``textlint-plugin-asciidoc/vX.Y.Z``および``vscode/vX.Y.Z``タグから標準のレジストリへ直接公開します。
 Zed拡張は、公式Zed拡張レジストリが``editors/zed``のソースを構築して配布します。
+スライド用補助は``slides-helper/vX.Y.Z``タグからnpm Registryへ公開します。
 いずれの配布物も同じバージョン番号を別の内容へ再利用しません。
 
 cargo-distは、OSとCPU architectureごとの``adocweave-<target>.zip``を4件のnative成果物として構築します。
@@ -77,6 +83,11 @@ WebAssemblyパッケージとtextlint用Processorは、それぞれの専用work
 npm Registryへ送ります。VS Code拡張は専用workflowでVSIXを一度だけ構築して検査し、同じ成果物を
 Open VSX RegistryとVisual Studio Marketplaceへ送ります。registry向けに構築し直しません。
 Rust crateはcrates.ioへ公開しません。
+
+スライド用補助も専用workflowでnpm archiveを一度だけ構築し、共通の``npm-publish.yml``で公開します。
+候補archiveを別のディレクトリへ導入し、空要求、数式・引用、実行入口と通知を検査します。
+``package-lock.json``から導入した全推移依存をnpmの``bundledDependencies``でarchiveへ収録し、
+導入後の依存が監査対象と一致することを検査します。Nodeの依存をnative archiveやブラウザーへ同梱しません。
 
 Visual Studio Marketplaceは公開後のVSIXへ署名情報を追加するため、取得したVSIX archive全体のbyte列は送信元と
 異なる場合があります。公開後の検査では拡張ID、version、target、署名以外のfile一覧および各fileの内容を照合し、
@@ -175,6 +186,11 @@ WebAssemblyパッケージでは、``wasm-publish.yml``から同じnpm公開job�
 構築済みの成果物を共通workflowへ渡します。公開後は別のjobでnpmから導入し直し、
 ``npm audit signatures``で署名とprovenanceを検証して、Node.jsと実ブラウザーで同じパッケージを確認します。
 
+スライド用補助も``slides-helper-publish.yml``から共通npm公開jobを呼び出します。Trusted Publisherには
+この呼出元workflowと``npm-publish`` environmentを登録します。``slides-helper/vX.Y.Z``タグ、
+manifestの版、commitおよび``main``への統合を照合し、公開後はnpmから導入した入口で空要求と
+代表的な数式・引用を実行します。``npm audit signatures``でパッケージの署名付きprovenanceを確認します。
+
 stable Releaseの公開後に、``release.yml``の``publish-cachix`` jobだけが``CACHIX_AUTH_TOKEN``を使用します。公開jobは
 公開済みのtag、commitおよびworkspace版を照合し、同じcommitから``x86_64-linux``と``aarch64-linux``向けに
 構築したNix packageをCachixへ送信します。依存物は、``cache.nixos.org``に存在しないものだけを送信します。
@@ -188,11 +204,12 @@ Cachixと``cache.nixos.org``から必要な内容を取得します。Cachixの�
 最初の自動公開より前に、``github-release``、``cachix-publish``、``marketplace-publish``、``npm-publish``および
 ``open-vsx-publish``の各environmentを作成します。VS Code用の二つのenvironmentは``vscode/v*``タグだけを許可します。
 ``github-release``と``cachix-publish``は``main``だけ、``npm-publish``は``wasm/v*``と
-``textlint-plugin-asciidoc/v*``を許可します。
+``textlint-plugin-asciidoc/v*``と``slides-helper/v*``を許可します。
 Open VSXのtokenはrepository全体ではなく``open-vsx-publish`` environmentへ置きます。
 ``marketplace-publish`` environmentには``AZURE_CLIENT_ID``と``AZURE_TENANT_ID``を変数として登録します。
 textlint packageのTrusted Publisherには``textlint-plugin-publish.yml``、WebAssemblyパッケージのTrusted Publisherには
-``wasm-publish.yml``を登録し、それぞれ``npm-publish`` environmentと対応させます。
+``wasm-publish.yml``、スライド用補助には``slides-helper-publish.yml``を登録し、
+それぞれ``npm-publish`` environmentと対応させます。
 
 native版のtag pushはRelease workflowを起動しません。``main``からの手動実行とenvironmentの承認で公開を制限します。
 独自のtag rulesetを追加せず、公開前検査とenvironmentで権限を分ける理由は

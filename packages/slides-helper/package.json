@@ -22,6 +22,7 @@
     "notices.mjs",
     "protocol.d.mts",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE-MIT",
     "LICENSE-APACHE",
     "THIRD_PARTY_NOTICES.adoc",
@@ -32,6 +33,7 @@
     "citeproc": "2.4.63",
     "parse5": "8.0.1"
   },
+  "bundleDependencies": true,
   "license": "MIT OR Apache-2.0",
   "publishConfig": {
     "access": "public"
