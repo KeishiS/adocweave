@@ -66,6 +66,12 @@ impl Job {
         let mut present = unsafe { Thread32First(snapshot.as_raw_handle(), &mut entry) };
         let mut count = 0;
         while present != 0 {
+            if (entry.dwSize as usize)
+                < std::mem::offset_of!(THREADENTRY32, th32OwnerProcessID)
+                    + std::mem::size_of::<u32>()
+            {
+                return Err(io::Error::other("Windows thread entry is incomplete"));
+            }
             count += 1;
             if count > 16_384 {
                 return Err(io::Error::other("Windows thread inspection limit exceeded"));
