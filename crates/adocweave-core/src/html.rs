@@ -11,8 +11,11 @@ mod head;
 mod plan;
 mod regions;
 mod safe;
+mod slide_catalogs;
 
 pub use regions::{HtmlRegionError, HtmlRegionSelection, HtmlRegions, render_regions};
+pub use regions::{HtmlSlideRegions, render_slide_regions};
+pub use slide_catalogs::{HtmlSlideScope, HtmlSlideSelections};
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -279,6 +282,8 @@ pub(crate) fn render_with_inputs_ast(
             presentation: document.presentation(),
             generated_bibliography: generated_bibliography.as_ref(),
             region: None,
+            slides: None,
+            slide: 0,
         };
         let body_plan = body::plan_body_traversal(document, policy);
         serialize_body_traversal(

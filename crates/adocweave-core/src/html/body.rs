@@ -13,7 +13,7 @@ use super::safe::{
 };
 use super::{
     InlineRenderContext, RenderPolicy, UnresolvedReferencePresentation, append_plan_diagnostics,
-    bibliography_reference_id, render_diagnostic,
+    render_diagnostic,
 };
 
 pub(super) struct BodyTraversalPlan<'document> {
@@ -382,12 +382,41 @@ fn plan_reference(
     context: &mut InlineRenderContext<'_, '_>,
     output: &mut Vec<InlineNode>,
 ) {
-    let planned = plan::plan_reference(
+    if let Some(slides) = context.slides
+        && let Some(crate::reference::ReferenceKey::Local { anchor }) = &reference.target
+        && let Some(target) = context.identifiers.target_by_id(anchor)
+        && !slides.permits_target(target.target_range)
+    {
+        let mut diagnostic = render_diagnostic(
+            "slides-reference-outside-scope",
+            "local reference target is outside the permitted slide scope",
+            reference.target_range,
+        );
+        diagnostic.severity = crate::diagnostic::Severity::Error;
+        context.diagnostics.push(diagnostic);
+        output.extend(plan_label_or_text(
+            &reference.label,
+            &reference.target_source,
+            context,
+        ));
+        return;
+    }
+    let mut planned = plan::plan_reference(
         reference,
         context.identifiers,
         context.policy,
         context.input_usage,
     );
+    if context.slides.is_some()
+        && let Some(crate::reference::ReferenceKey::Local { anchor }) = &reference.target
+        && let Some(target) = context.identifiers.target_by_id(anchor)
+        && let Some(caption) = context
+            .slides
+            .and_then(|slides| slides.reference_caption(target.target_range))
+        && let Some(label) = caption.label()
+    {
+        planned.fallback = label;
+    }
     if let Some(href) = planned.href {
         let href = match href {
             PlannedReferenceHref::Local(anchor) => fragment_url("href", anchor.into_owned()),
@@ -400,7 +429,10 @@ fn plan_reference(
                 .iter()
                 .any(|candidate| candidate.range == reference.range)
         }) {
-            attributes.push(passive("id", bibliography_reference_id(reference.range)));
+            attributes.push(passive(
+                "id",
+                context.bibliography_reference_id(reference.range),
+            ));
         }
         output.push(element_with_children(
             "a",
@@ -473,6 +505,20 @@ fn plan_standard_macro(
             let number = footnote.number.to_string();
             let reference_id = format!("_footnoteref_{}_{}", footnote.number, occurrence + 1);
             let target = format!("_footnote_{}", footnote.number);
+            let (number, reference_id, target) = match context.slides {
+                Some(slides) => {
+                    let Some(link) = slides.footnote_link(context.slide, node.range) else {
+                        inline_text(output, first.unwrap_or(&node.target));
+                        return;
+                    };
+                    (
+                        link.number.to_string(),
+                        link.reference_id.clone(),
+                        link.target_id.clone(),
+                    )
+                }
+                None => (number, reference_id, target),
+            };
             let href = SafeFragmentUrl::new(&target)
                 .expect("generated footnote targets are nonempty and control-free")
                 .into_owned();
@@ -517,19 +563,22 @@ fn plan_standard_macro(
                 let mut children = keys
                     .iter()
                     .filter(|key| {
-                        context
-                            .catalogs
-                            .bibliography()
-                            .iter()
-                            .any(|entry| entry.id == key.value)
-                            || context
-                                .generated_bibliography
-                                .is_some_and(|bibliography| bibliography.defines(&key.value))
+                        context.catalogs.bibliography().iter().any(|entry| {
+                            entry.id == key.value
+                                && context.slides.is_none_or(|slides| {
+                                    slides.permits_target(entry.definition_range)
+                                })
+                        }) || context
+                            .generated_bibliography
+                            .is_some_and(|bibliography| bibliography.defines(&key.value))
                     })
                     .map(|key| {
                         element_with_children(
                             "span",
-                            vec![passive("id", bibliography_reference_id(key.value_range))],
+                            vec![passive(
+                                "id",
+                                context.bibliography_reference_id(key.value_range),
+                            )],
                             Vec::new(),
                         )
                     })
@@ -543,11 +592,12 @@ fn plan_standard_macro(
                 return;
             }
             for key in keys {
-                let document_entry = context
-                    .catalogs
-                    .bibliography()
-                    .iter()
-                    .find(|entry| entry.id == key.value);
+                let document_entry = context.catalogs.bibliography().iter().find(|entry| {
+                    entry.id == key.value
+                        && context
+                            .slides
+                            .is_none_or(|slides| slides.permits_target(entry.definition_range))
+                });
                 let generated_entry = context
                     .generated_bibliography
                     .and_then(|bibliography| bibliography.entry(&key.value));
@@ -565,7 +615,7 @@ fn plan_standard_macro(
                         "a",
                         vec![
                             classes(&["citation"]),
-                            passive("id", bibliography_reference_id(key.value_range)),
+                            passive("id", context.bibliography_reference_id(key.value_range)),
                             fragment_url("href", href),
                         ],
                         vec![inline_text_node(label)],

@@ -140,10 +140,11 @@ pub mod output {
         pub use crate::generated_bibliography::BibliographyNamespace;
         pub use crate::html::{
             ExternalLinkPresentation, HtmlDocumentMode, HtmlOutput, HtmlRegionError,
-            HtmlRegionSelection, HtmlRegions, MathLanguagePolicy, RenderPolicy,
-            ResourceCapabilities, RolePolicy, SourceLanguagePolicy, StylesheetPolicy,
-            StylesheetSource, UnknownRole, UnknownSourceLanguage, UnresolvedReferencePresentation,
-            is_role_name, render, render_regions, render_with_inputs,
+            HtmlRegionSelection, HtmlRegions, HtmlSlideRegions, HtmlSlideScope,
+            HtmlSlideSelections, MathLanguagePolicy, RenderPolicy, ResourceCapabilities,
+            RolePolicy, SourceLanguagePolicy, StylesheetPolicy, StylesheetSource, UnknownRole,
+            UnknownSourceLanguage, UnresolvedReferencePresentation, is_role_name, render,
+            render_regions, render_slide_regions, render_with_inputs,
         };
         pub use crate::rendered_content::{
             ContentValidationError, ResolvedMath, ResolvedRichCitation, RichInline, ValidatedMath,

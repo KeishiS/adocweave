@@ -747,7 +747,7 @@ pub(super) fn render_list(
             && list.kind == crate::block_model::ListKind::Unordered
             && let Some(entry) = bibliography_entry_for_item(&item.inlines, context.catalogs)
         {
-            render_bibliography_backrefs(output, entry);
+            render_bibliography_backrefs(output, entry, context);
         }
         for child in &item.children {
             BlockWriter::line_break(output);
@@ -799,10 +799,20 @@ pub(super) fn bibliography_reference_id(range: crate::source::TextRange) -> Stri
 pub(super) fn render_bibliography_backrefs(
     output: &mut String,
     entry: &crate::catalog::BibliographyEntry,
+    context: &InlineRenderContext<'_, '_>,
 ) {
-    for (index, reference) in entry.references.iter().enumerate() {
+    for (index, reference) in entry
+        .references
+        .iter()
+        .filter(|reference| {
+            context
+                .slides
+                .is_none_or(|slides| slides.selected.contains(&reference.range))
+        })
+        .enumerate()
+    {
         BlockWriter::text(output, " ");
-        let target = bibliography_reference_id(reference.range);
+        let target = context.bibliography_reference_id(reference.range);
         let href = safe::SafeFragmentUrl::new(&target)
             .expect("generated bibliography reference IDs are control-free")
             .into_owned();
@@ -963,7 +973,6 @@ fn caption_lead(
     context: &InlineRenderContext<'_, '_>,
 ) -> Option<String> {
     context
-        .presentation
         .caption_at(range)
         .and_then(crate::caption::BlockCaption::lead)
 }
@@ -1005,6 +1014,27 @@ pub(super) struct InlineRenderContext<'inputs, 'render> {
     pub(super) generated_bibliography:
         Option<&'render generated_bibliography::PreparedGeneratedBibliography<'inputs>>,
     pub(super) region: Option<regions::RegionPresentation>,
+    pub(super) slides: Option<&'render super::slide_catalogs::SlideCatalogs<'inputs>>,
+    pub(super) slide: usize,
+}
+
+impl InlineRenderContext<'_, '_> {
+    pub(super) fn caption_at(
+        &self,
+        range: crate::source::TextRange,
+    ) -> Option<&crate::caption::BlockCaption> {
+        match self.slides {
+            Some(slides) => slides.caption(range),
+            None => self.presentation.caption_at(range),
+        }
+    }
+
+    pub(super) fn bibliography_reference_id(&self, range: crate::source::TextRange) -> String {
+        self.slides.map_or_else(
+            || bibliography_reference_id(range),
+            |slides| slides.reference_id(range),
+        )
+    }
 }
 
 pub(super) fn render_toc(
