@@ -149,7 +149,8 @@ remote名、ブランチ名、mergeの方式および必須checkの構成は、M
 
 依存関係は各manifestとlockfileを基準とし、文書や別の目録へパッケージ一覧とバージョンを転記しません。
 Rustの許可licenseと取得元は``deny.toml``、VS Code拡張の配布runtimeに許可するlicenseとnpm registryは
-``tools/verify-vscode-dependencies.mjs``で定義します。
+``tools/verify-vscode-dependencies.mjs``で定義します。スライド用Node補助パッケージと同梱するブラウザー資産は
+``tools/verify-slides-dependencies.mjs``で別に検査し、VS Code拡張の許可範囲を広げません。
 
 依存関係を更新するときは次を確認します。
 
@@ -164,10 +165,22 @@ Rustの許可licenseと取得元は``deny.toml``、VS Code拡張の配布runtime
 WebAssembly本体の大きさを、``test-vscode-release-determinism``はVSIXの大きさを検査します。
 
 ``security-audit``は、``cargo-deny``が実行時に取得する最新のRustSec Advisory Databaseを使い、root workspaceと
-Zed拡張のadvisory、licenseおよび取得元を検査します。npmはVS Code拡張の配布runtime treeだけを標準の
-``npm audit --omit=dev``で検査します。そのruntime treeでは、推移依存を含めて取得元をnpm registryに限定し、
-利用者への通知が必要なlicenseを許可した集合へ限定します。Browserとtextlint用パッケージはruntime npm依存を
-持ちません。
+Zed拡張のadvisory、licenseおよび取得元を検査します。npmはVS Code拡張、スライド用Node補助パッケージ、
+同梱するReveal資産を``npm audit --omit=dev``で検査します。推移依存を含めて取得元をnpm registryに限定し、
+許可するlicenseを配布物ごとに検査します。``@adocweave/wasm``とtextlint用パッケージはruntime npm依存を持ちません。
+
+スライド用補助パッケージはSHA-512 integrityと、導入した依存物のlicense本文を検査します。citeprocのCPAL選択と
+NewcmフォントのGUST Font Licenseについては、確認したarchiveと本文・通知のdigestだけを
+``packages/slides-helper/licenses/evidence.json``へ記録します。依存の版やarchiveが変わった場合は、配布実物の
+本文と通知を確認し直します。CPALのGUI帰属表示条件について、CSLを使うpreviewの初期表示へExhibit Bの
+copyright、phrase、URLを見える形で設け、生成物にも帰属表示とlicense本文を同梱します。ブラウザーUIへの
+法的な適用範囲を確定済みとはせず、この保守的な対応を受入検査で確認します。
+
+Reveal資産の正本は``crates/adocweave/assets/revealjs/sources.json``です。上流manifestで``devDependencies``へ
+分類されていても、同梱してブラウザーで実行するライブラリはruntime監査へ含めます。この正本から一時的な
+npm audit入力を生成し、別の恒久的な依存一覧を作りません。``verify``では資産とlicenseのdigest、notesの
+popup scriptを検査します。資産の更新時には、取得archiveと保存した資産の対応も
+``node tools/verify-slides-assets.mjs ARCHIVE_DIRECTORY``で検査します。
 
 ビルド専用のnpm依存は配布runtimeの脆弱性・license検査へ含めません。lockfileに固定し、``npm ci --ignore-scripts``が
 取得時にintegrityを検証します。観測したビルド依存のlicense集合を別の目録として保守しません。

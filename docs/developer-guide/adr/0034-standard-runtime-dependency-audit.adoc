@@ -18,9 +18,22 @@ RustSecデータベースのrevision、空の例外一覧、ビルド専用npm�
 Zed拡張についてadvisory、license、取得元およびwildcard依存を検査します。advisory検査ではdatabase取得を無効にせず、
 実行時の最新RustSecデータベースを使用します。
 
-npmは、runtime依存を持つVS Code拡張に対して``npm audit --omit=dev``を実行します。lockfileから得る推移runtime依存の
-licenseと取得元は一つの小さな検査で確認し、同じ集合を第三者依存の通知とSBOMに使用します。Browserとtextlint用
-パッケージはruntime npm依存を持たないことを、それぞれのパッケージ検査で維持します。
+npmは、runtime依存を持つVS Code拡張とスライド用Node補助パッケージ、および同梱するReveal資産に対して
+``npm audit --omit=dev``を実行します。lockfileから得る推移runtime依存のlicenseと取得元を、配布物ごとの小さな
+検査で確認し、同じ集合を第三者依存の通知に使用します。``@adocweave/wasm``とtextlint用パッケージは
+runtime npm依存を持たないことを、それぞれのパッケージ検査で維持します。
+
+補助パッケージのciteprocは、実際に取得したarchiveのlicense本文に従ってCPALを選択します。npm metadataの
+誤った選択肢から包括的なcopyleft許可は導きません。MathJaxのフォントはmetadataだけで判断せず、配布実物の
+著作権表示とGUST Font Licenseの本文を保存し、生成SVGにも必要な通知を渡します。この二つの判断だけをarchiveの
+integrityと保存本文のdigestへ対応付け、更新時に実物の再確認を要求します。CPALのGUI帰属表示条件については、
+CSLを使うpreviewの初期表示へExhibit Bのcopyright、phrase、URLを見える形で設け、生成物にも帰属表示と
+license本文を同梱する保守的な対応を採用します。ブラウザーUIへの法的な適用範囲を確定済みとはせず、
+この表示と同梱を受入検査で確認します。
+
+同梱するブラウザーライブラリは、上流がbuild用依存へ分類していても配布runtimeです。Reveal資産の取得元と
+digestを記録した``sources.json``からnpm audit用の一時manifestとlockfileを生成します。取得archiveと同梱資産の
+対応、license本文、およびnotes popupのscriptを検査し、監査用の版一覧は恒久保存しません。
 
 ビルド専用npm依存はmanifestとlockfileへ固定し、``npm ci --ignore-scripts``による取得時のintegrity検証に委ねます。
 観測したlicense集合の別目録、lockfileを再掲する依存目録、空の例外一覧およびDependabot設定の完全一致検査は

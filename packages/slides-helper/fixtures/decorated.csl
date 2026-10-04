@@ -1,0 +1,12 @@
+<style xmlns="http://purl.org/net/xbiblio/csl" version="1.0" class="in-text" default-locale="en-US">
+  <info><title>AdocWeave test formatting</title><id>urn:adocweave:test:formatting</id></info>
+  <citation>
+    <layout>
+      <group font-style="italic" font-weight="bold" font-variant="small-caps" delimiter=" / ">
+        <text variable="title"/>
+        <text variable="container-title" font-style="normal" font-weight="normal" font-variant="normal"/>
+      </group>
+    </layout>
+  </citation>
+  <bibliography><layout><text variable="URL"/></layout></bibliography>
+</style>
