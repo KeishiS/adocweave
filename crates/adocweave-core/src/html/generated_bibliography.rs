@@ -22,7 +22,7 @@ pub(super) struct PreparedGeneratedBibliography<'input> {
 pub(super) struct PreparedGeneratedBibliographyEntry<'input> {
     pub(super) input: &'input GeneratedBibliographyEntry,
     pub(super) anchor_id: String,
-    references: Vec<crate::source::TextRange>,
+    references: Vec<String>,
 }
 
 impl PreparedGeneratedBibliography<'_> {
@@ -41,6 +41,15 @@ pub(super) fn prepare<'input>(
     bibliography: Option<&'input GeneratedBibliography>,
     document: &AstDocument,
     diagnostics: &mut Vec<Diagnostic>,
+) -> Option<PreparedGeneratedBibliography<'input>> {
+    prepare_selected(bibliography, document, diagnostics, None)
+}
+
+pub(super) fn prepare_selected<'input>(
+    bibliography: Option<&'input GeneratedBibliography>,
+    document: &AstDocument,
+    diagnostics: &mut Vec<Diagnostic>,
+    slides: Option<&super::slide_catalogs::SlideCatalogs<'_>>,
 ) -> Option<PreparedGeneratedBibliography<'input>> {
     let bibliography = bibliography?;
     let diagnostic_range =
@@ -106,9 +115,15 @@ pub(super) fn prepare<'input>(
         if node.kind != crate::inline_model::StandardMacroKind::Citation {
             return;
         }
+        if slides.is_some_and(|slides| !slides.selected.contains(&node.range)) {
+            return;
+        }
         for key in node.attributes.iter().filter(|key| key.name.is_none()) {
             if let Some(index) = entry_by_key.get(key.value.as_str()).copied() {
-                entries[index].references.push(key.value_range);
+                entries[index].references.push(slides.map_or_else(
+                    || bibliography_reference_id(key.value_range),
+                    |slides| slides.reference_id(key.value_range),
+                ));
             }
         }
     });
@@ -196,7 +211,31 @@ pub(super) fn render(
     bibliography: &PreparedGeneratedBibliography<'_>,
     policy: &super::RenderPolicy,
 ) {
-    BlockWriter::start(output, "div", &[]);
+    render_bounded(
+        output,
+        bibliography,
+        policy,
+        None,
+        0,
+        crate::OutputLimits {
+            max_output_bytes: u32::MAX,
+        },
+    )
+    .expect("ordinary HTML output is bounded by its outer caller");
+}
+
+pub(super) fn render_bounded(
+    output: &mut String,
+    bibliography: &PreparedGeneratedBibliography<'_>,
+    policy: &super::RenderPolicy,
+    container_id: Option<&str>,
+    prior_bytes: usize,
+    limits: crate::OutputLimits,
+) -> Result<(), super::HtmlRegionError> {
+    let attributes = container_id
+        .map(|id| vec![passive("id", id)])
+        .unwrap_or_default();
+    BlockWriter::start(output, "div", &attributes);
     BlockWriter::line_break(output);
     BlockWriter::start(output, "h2", &[]);
     BlockWriter::inline_text(output, bibliography.title);
@@ -225,8 +264,7 @@ pub(super) fn render(
         }
         for (index, reference) in entry.references.iter().enumerate() {
             BlockWriter::text(output, " ");
-            let target = bibliography_reference_id(*reference);
-            let href = safe::SafeFragmentUrl::new(&target)
+            let href = safe::SafeFragmentUrl::new(reference)
                 .expect("generated bibliography reference IDs are control-free")
                 .into_owned();
             BlockWriter::start(
@@ -239,12 +277,15 @@ pub(super) fn render(
             );
             BlockWriter::text(output, &format!("↩{}", index + 1));
             BlockWriter::end(output, "a");
+            super::regions::check_output_limit(prior_bytes, output.len(), limits)?;
         }
         BlockWriter::end(output, "li");
         BlockWriter::line_break(output);
+        super::regions::check_output_limit(prior_bytes, output.len(), limits)?;
     }
     BlockWriter::end(output, list);
     BlockWriter::line_break(output);
     BlockWriter::end(output, "div");
     BlockWriter::line_break(output);
+    super::regions::check_output_limit(prior_bytes, output.len(), limits)
 }

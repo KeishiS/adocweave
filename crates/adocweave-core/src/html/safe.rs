@@ -72,6 +72,7 @@ pub(super) const ALLOWED_ATTRIBUTES: &[&str] = &[
     "src",
     "target",
     "title",
+    "value",
     "width",
 ];
 pub(super) const ALLOWED_CLASSES: &[&str] = &[
