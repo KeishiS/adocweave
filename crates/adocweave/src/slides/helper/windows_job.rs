@@ -70,12 +70,10 @@ impl Job {
             if count > 16_384 {
                 return Err(io::Error::other("Windows thread inspection limit exceeded"));
             }
-            if entry.th32OwnerProcessID == pid {
-                if found.replace(entry.th32ThreadID).is_some() {
-                    return Err(io::Error::other(
-                        "suspended helper has multiple initial threads",
-                    ));
-                }
+            if entry.th32OwnerProcessID == pid && found.replace(entry.th32ThreadID).is_some() {
+                return Err(io::Error::other(
+                    "suspended helper has multiple initial threads",
+                ));
             }
             present = unsafe { Thread32Next(snapshot.as_raw_handle(), &mut entry) };
         }
