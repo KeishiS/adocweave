@@ -1,15 +1,16 @@
 //! Acquire selected slide resources and produce a fixed, offline HTML bundle.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use adocweave_core::output::diagnostics::{Diagnostic, Severity};
 use adocweave_core::preprocess::{ExpandedRange, PreprocessedAnalysis};
-use adocweave_core::resolution::{MediaType, RenderInputs, ResolvedResource, ResourcePurpose};
-use adocweave_core::semantic::{self, Block, Inline, ReferenceDestination, SemanticNode};
-use adocweave_core::{NeverCancel, OutputLimits};
+use adocweave_core::resolution::{MediaType, ResolvedResource, ResourcePurpose};
+use adocweave_core::semantic::{self, Inline, ReferenceDestination, SemanticNode};
+use adocweave_core::{CancellationCheck, OutputLimits};
 use adocweave_project::{
-    BundleFile, BundleMediaType, ProjectAuthority, ProjectResourceLimits, ProjectTargetResult,
+    BundleFile, BundleMediaType, ProjectAuthority, ProjectObservationCandidate,
+    ProjectResourceLimits, ProjectTargetResult,
 };
 
 use super::{Audience, Deck, problem, unsupported_fragment_name};
@@ -20,6 +21,46 @@ const SPEAKER_SCRIPT_HASH: &str = "sha256-GzCveToXhSIzS3M5eQeRm3McVRB7cYneYKwTkz
 pub(crate) struct GeneratedBundle {
     pub(crate) files: Vec<BundleFile>,
     pub(crate) diagnostics: Vec<Diagnostic>,
+    pub(crate) observations: Vec<ProjectObservationCandidate>,
+}
+
+pub(crate) struct Options<'a> {
+    pub(crate) audience: Audience,
+    pub(crate) helper: Option<&'a Path>,
+    pub(crate) data: &'a crate::arguments::SlidesData,
+}
+
+fn host_error(
+    error: super::helper::HostError,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<(), CliError> {
+    if let Some(range) = error.range {
+        problem(diagnostics, error.code, &error.message, range);
+        Ok(())
+    } else {
+        Err(CliError::Slides(error.to_string()))
+    }
+}
+
+fn helper_notices(notices: &super::helper::protocol::Notices, files: &mut Vec<BundleFile>) {
+    if let Some(math) = &notices.math {
+        for (path, text) in [
+            ("licenses/math-font-attribution.txt", &math.font_attribution),
+            ("licenses/math-font-license.txt", &math.font_license),
+            ("licenses/math-font-lppl.txt", &math.lppl_license),
+            ("licenses/mathjax-license.txt", &math.mathjax_license),
+        ] {
+            files.push(static_file(path, BundleMediaType::Text, text.as_bytes()));
+        }
+    }
+    if let Some(citations) = &notices.citations {
+        for (path, text) in [
+            ("licenses/citations-attribution.txt", &citations.attribution),
+            ("licenses/citations-license.txt", &citations.license),
+        ] {
+            files.push(static_file(path, BundleMediaType::Text, text.as_bytes()));
+        }
+    }
 }
 
 /// HTTP servers add frame-ancestors, which browsers ignore in a meta policy.
@@ -113,7 +154,15 @@ fn fixed_files(audience: Audience) -> Vec<BundleFile> {
     files
 }
 
-fn page(deck: &Deck<'_>, html: &str, audience: Audience) -> String {
+fn page(
+    deck: &Deck<'_>,
+    html: &str,
+    audience: Audience,
+    language: &str,
+    attribution: Option<&str>,
+    styles: &[String],
+) -> String {
+    let language = escape(language);
     let title = deck
         .groups
         .first()
@@ -129,8 +178,21 @@ fn page(deck: &Deck<'_>, html: &str, audience: Audience) -> String {
     } else {
         ""
     };
+    let citations = if attribution.is_some() {
+        " data-citations=\"true\""
+    } else {
+        ""
+    };
+    let attribution = attribution.map_or_else(String::new, |text| format!(
+        "<div class=\"slides-attribution\" aria-label=\"Citation processor attribution\">{} <a href=\"https://citationstyles.org/\">Citation Style Language</a> · <a href=\"licenses/citations-license.txt\">License</a></div>\n",
+        escape(text)
+    ));
+    let styles = styles
+        .iter()
+        .map(|path| format!("<link rel=\"stylesheet\" href=\"{}\">\n", escape(path)))
+        .collect::<String>();
     format!(
-        "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta http-equiv=\"Content-Security-Policy\" content=\"{}\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>{}</title>\n<link rel=\"stylesheet\" href=\"assets/reset.css\">\n<link rel=\"stylesheet\" href=\"assets/reveal.css\">\n<link rel=\"stylesheet\" href=\"assets/theme.css\">\n</head>\n<body data-audience=\"{audience_name}\">\n{html}<script src=\"assets/reveal.js\"></script>\n{notes}<script src=\"assets/bootstrap.js\"></script>\n</body>\n</html>\n",
+        "<!doctype html>\n<html lang=\"{language}\">\n<head>\n<meta charset=\"utf-8\">\n<meta http-equiv=\"Content-Security-Policy\" content=\"{}\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>{}</title>\n<link rel=\"stylesheet\" href=\"assets/reset.css\">\n<link rel=\"stylesheet\" href=\"assets/reveal.css\">\n<link rel=\"stylesheet\" href=\"assets/theme.css\">\n{styles}</head>\n<body data-audience=\"{audience_name}\"{citations}>\n{html}{attribution}<script src=\"assets/reveal.js\"></script>\n{notes}<script src=\"assets/bootstrap.js\"></script>\n</body>\n</html>\n",
         escape(&content_security_policy(audience)),
         escape(title)
     )
@@ -179,13 +241,24 @@ pub(crate) fn build(
     target: &ProjectTargetResult,
     authority: &ProjectAuthority,
     primary_base: &Path,
-    audience: Audience,
-    slides_helper: Option<&Path>,
+    options: Options<'_>,
     remaining_resources: ProjectResourceLimits,
+    cancellation: &dyn CancellationCheck,
 ) -> Result<GeneratedBundle, CliError> {
+    let Options {
+        audience,
+        helper: slides_helper,
+        data,
+    } = options;
     let analysis = &preprocessed.analysis;
+    let language = analysis
+        .attribute_environment()
+        .resolve_at("lang", analysis.document().header().end)
+        .and_then(|value| value.value.ok().flatten())
+        .unwrap_or("");
     let deck = Deck::compile(analysis.document());
     let mut diagnostics = analysis.diagnostics().to_vec();
+    let mut observations = Vec::new();
     diagnostics.extend(deck.diagnostics.clone());
     if let Some(name) = target
         .config
@@ -198,19 +271,6 @@ pub(crate) fn build(
         return Err(CliError::Usage(format!(
             "unsupported reveal.js configuration attribute: {name}"
         )));
-    }
-    if !target.config.config.stylesheet_files().is_empty()
-        || !target
-            .config
-            .config
-            .html_policy()
-            .stylesheets
-            .sources
-            .is_empty()
-    {
-        return Err(CliError::Usage(
-            "HTML stylesheets are not supported by revealjs output".to_owned(),
-        ));
     }
     let visible = |range| {
         deck.contains_body_range(range)
@@ -236,17 +296,6 @@ pub(crate) fn build(
         }
     }
     semantic::walk(analysis.document(), |node| {
-        if let SemanticNode::Inline(Inline::Macro(node)) = node
-            && node.kind == semantic::StandardMacroKind::Footnote
-            && visible(node.range)
-        {
-            problem(
-                &mut diagnostics,
-                "slides-footnote-unavailable",
-                "scoped slide footnotes are not connected in this build",
-                node.range,
-            );
-        }
         if let SemanticNode::Inline(Inline::Text(text)) = node
             && visible(text.range)
         {
@@ -275,33 +324,39 @@ pub(crate) fn build(
                 }
             }
         }
-        let math_range = match node {
-            SemanticNode::Block(Block::Math(math)) => Some(math.range),
-            SemanticNode::Inline(Inline::Formula(formula)) => Some(formula.range),
-            _ => None,
-        };
-        if let Some(range) = math_range.filter(|range| visible(*range)) {
+    });
+    let mut body_selection = super::helper::Selection::default();
+    let mut note_selection = super::helper::Selection::default();
+    for formula in adocweave_core::output::projection::formulas(analysis) {
+        if deck.contains_body_range(formula.source_range) {
+            body_selection.equations.push(formula.source_range);
+        } else if audience == Audience::Presenter && deck.contains_note_range(formula.source_range)
+        {
+            note_selection.equations.push(formula.source_range);
+        }
+    }
+    let citations = analysis.citations();
+    for citation in citations.iter().filter(|citation| visible(citation.range)) {
+        if deck.contains_body_range(citation.range) {
+            body_selection.citations.push(citation.range);
+        } else {
+            note_selection.citations.push(citation.range);
+        }
+        if citation.keys.iter().any(|key| {
+            analysis.macros().iter().any(|node| {
+                node.kind == semantic::StandardMacroKind::BibliographyAnchor
+                    && node.target == key.value
+                    && visible(node.range)
+            })
+        }) {
             problem(
                 &mut diagnostics,
-                "slides-math-unavailable",
-                "verified slide math rendering is not connected in this build",
-                range,
+                "slides-bibliography-key-conflict",
+                "an external citation key conflicts with a visible hand-written bibliography entry",
+                citation.range,
             );
         }
-    });
-    for citation in analysis
-        .citations()
-        .into_iter()
-        .filter(|citation| visible(citation.range))
-    {
-        problem(
-            &mut diagnostics,
-            "slides-citation-unavailable",
-            "verified slide citation rendering is not connected in this build",
-            citation.range,
-        );
     }
-    let _ = slides_helper; // Host integration consumes this path in the next integration step.
     if diagnostics
         .iter()
         .any(|diagnostic| diagnostic.severity == Severity::Error)
@@ -309,6 +364,157 @@ pub(crate) fn build(
         return Ok(GeneratedBundle {
             files: Vec::new(),
             diagnostics,
+            observations,
+        });
+    }
+    let configured_roots = target.config.config.resource_roots();
+    let default_data_roots = vec![authority.project_root().to_owned(), primary_base.to_owned()];
+    let data_roots = if configured_roots.is_empty() {
+        &default_data_roots
+    } else {
+        configured_roots
+    };
+    let styles = super::styles::load(
+        &target.config.config,
+        authority,
+        data_roots,
+        remaining_resources,
+        cancellation,
+    )?;
+    let remaining_resources = styles.remaining;
+    observations.extend(
+        styles
+            .resources
+            .iter()
+            .map(adocweave_project::ProjectBinaryResource::observation),
+    );
+    let data_inputs = super::data::load(
+        data,
+        !body_selection.equations.is_empty() || !note_selection.equations.is_empty(),
+        !body_selection.citations.is_empty() || !note_selection.citations.is_empty(),
+        authority,
+        data_roots,
+        remaining_resources,
+        cancellation,
+    )?;
+    let remaining_resources = data_inputs.remaining;
+    observations.extend(
+        data_inputs
+            .resources
+            .iter()
+            .map(adocweave_project::ProjectBinaryResource::observation),
+    );
+    if let Some(csl) = &data_inputs.csl {
+        let keys = csl
+            .items
+            .iter()
+            .filter_map(|item| item.get("id").and_then(serde_json::Value::as_str))
+            .collect::<BTreeSet<_>>();
+        for citation in citations.iter().filter(|citation| visible(citation.range)) {
+            if citation
+                .keys
+                .iter()
+                .any(|key| !keys.contains(key.value.as_str()))
+            {
+                problem(
+                    &mut diagnostics,
+                    "slides-citation-unknown",
+                    "citation key is absent from the supplied bibliography",
+                    citation.range,
+                );
+            }
+        }
+    }
+    let prepared = match super::helper::prepare(
+        analysis,
+        &body_selection,
+        &note_selection,
+        audience == Audience::Presenter,
+        data_inputs.macros,
+        data_inputs.csl,
+    ) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            host_error(error, &mut diagnostics)?;
+            return Ok(GeneratedBundle {
+                files: Vec::new(),
+                diagnostics,
+                observations,
+            });
+        }
+    };
+    for diagnostic in &prepared.diagnostics {
+        if let Some(range) = diagnostic.range {
+            problem(
+                &mut diagnostics,
+                &diagnostic.code,
+                &diagnostic.message,
+                range,
+            );
+        }
+    }
+    if diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.severity == Severity::Error)
+    {
+        return Ok(GeneratedBundle {
+            files: Vec::new(),
+            diagnostics,
+            observations,
+        });
+    }
+    let reserved_ids = deck.reserved_ids();
+    let helper = match super::helper::execute_sync(
+        &prepared,
+        slides_helper,
+        cancellation,
+        super::helper::ProcessLimits::default(),
+        &reserved_ids,
+    ) {
+        Ok(helper) => helper,
+        Err(error) => {
+            host_error(error, &mut diagnostics)?;
+            return Ok(GeneratedBundle {
+                files: Vec::new(),
+                diagnostics,
+                observations,
+            });
+        }
+    };
+    for diagnostic in &helper.diagnostics {
+        let range = diagnostic
+            .range
+            .or_else(|| {
+                diagnostic
+                    .scope
+                    .zip(diagnostic.key.as_ref())
+                    .and_then(|(scope, key)| prepared.sources.get(&(scope, key.clone())).copied())
+            })
+            .unwrap_or_else(|| {
+                adocweave_core::text::TextRange::new(
+                    adocweave_core::text::TextSize::ZERO,
+                    adocweave_core::text::TextSize::ZERO,
+                )
+                .expect("empty range")
+            });
+        problem(
+            &mut diagnostics,
+            &diagnostic.code,
+            &diagnostic.message,
+            range,
+        );
+        if diagnostic.severity == super::helper::protocol::Severity::Warning {
+            diagnostics.last_mut().expect("added diagnostic").severity = Severity::Warning;
+        }
+    }
+    if diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.severity == Severity::Error)
+    {
+        return Ok(GeneratedBundle {
+            files: Vec::new(),
+            diagnostics,
+            observations,
         });
     }
     let mut requested = Vec::new();
@@ -344,6 +550,7 @@ pub(crate) fn build(
         return Ok(GeneratedBundle {
             files: Vec::new(),
             diagnostics,
+            observations,
         });
     }
     let paths = requested
@@ -358,8 +565,13 @@ pub(crate) fn build(
         configured_roots
     };
     let acquired = authority
-        .read_binary_resources(roots, &paths, remaining_resources, &NeverCancel)
+        .read_binary_resources(roots, &paths, remaining_resources, cancellation)
         .map_err(CliError::Project)?;
+    observations.extend(
+        acquired
+            .iter()
+            .map(adocweave_project::ProjectBinaryResource::observation),
+    );
     let acquired = acquired
         .into_iter()
         .map(|resource| (resource.path.clone(), resource))
@@ -424,20 +636,62 @@ pub(crate) fn build(
         return Ok(GeneratedBundle {
             files: Vec::new(),
             diagnostics,
+            observations,
         });
     }
     let mut policy = target.config.config.html_policy().clone();
     // The only resource resolutions here are our verified, digest-named files.
     policy.active_urls.allow_resolved_relative = true;
-    let rendered = deck
-        .render(
-            audience,
-            &policy,
-            &RenderInputs::default().with_resources(body),
-            &RenderInputs::default().with_resources(notes),
-            OutputLimits::default(),
-        )
-        .map_err(|error| CliError::Slides(error.to_string()))?;
+    let rendered = match deck.render(
+        audience,
+        &policy,
+        &helper.inputs.body.clone().with_resources(body),
+        &helper.inputs.notes.clone().with_resources(notes),
+        OutputLimits::default(),
+    ) {
+        Ok(rendered) => rendered,
+        Err(error) => {
+            match &error {
+                adocweave_core::output::html::HtmlRegionError::OutputLimit { limit, actual } => {
+                    return Err(CliError::OutputLimit {
+                        limit: *limit,
+                        actual: *actual as u64,
+                    });
+                }
+                adocweave_core::output::html::HtmlRegionError::GeneratedIdCollision {
+                    range,
+                    ..
+                } => problem(
+                    &mut diagnostics,
+                    "slides-generated-id-collision",
+                    &error.to_string(),
+                    *range,
+                ),
+                adocweave_core::output::html::HtmlRegionError::FootnoteOutsideScope { range } => {
+                    problem(
+                        &mut diagnostics,
+                        "slides-footnote-outside-scope",
+                        &error.to_string(),
+                        *range,
+                    )
+                }
+                adocweave_core::output::html::HtmlRegionError::ReferenceOutsideScope { range } => {
+                    problem(
+                        &mut diagnostics,
+                        "slides-reference-outside-scope",
+                        &error.to_string(),
+                        *range,
+                    )
+                }
+                _ => return Err(CliError::Slides(error.to_string())),
+            }
+            return Ok(GeneratedBundle {
+                files: Vec::new(),
+                diagnostics,
+                observations,
+            });
+        }
+    };
     diagnostics.extend(
         rendered
             .diagnostics
@@ -450,19 +704,64 @@ pub(crate) fn build(
             .collect::<Vec<_>>(),
     );
     let mut files = fixed_files(audience);
+    files.extend(styles.files);
+    helper_notices(&helper.notices, &mut files);
     files.extend(assets.into_values());
+    let page = page(
+        &deck,
+        &rendered.html,
+        audience,
+        language,
+        helper
+            .notices
+            .citations
+            .as_ref()
+            .map(|notices| notices.attribution.as_str()),
+        &styles.links,
+    );
+    let limit = OutputLimits::default().max_output_bytes;
+    if page.len() > limit as usize {
+        return Err(CliError::OutputLimit {
+            limit,
+            actual: page.len() as u64,
+        });
+    }
     files.push(static_file(
         "index.html",
         BundleMediaType::Html,
-        page(&deck, &rendered.html, audience).as_bytes(),
+        page.as_bytes(),
     ));
     adocweave_core::output::diagnostics::sort_diagnostics(&mut diagnostics);
-    Ok(GeneratedBundle { files, diagnostics })
+    Ok(GeneratedBundle {
+        files,
+        diagnostics,
+        observations,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn citation_attribution_is_escaped_outside_the_author_slide_and_uses_fixed_links() {
+        let analysis = adocweave_core::Engine::new(Default::default())
+            .analyze("= Talk\n\n== Slide\n\nText.\n")
+            .unwrap();
+        let deck = Deck::compile(analysis.document());
+        let html = page(
+            &deck,
+            "<div class=\"reveal\"><div class=\"slides\"></div></div>",
+            Audience::Public,
+            "ja",
+            Some("<script>Copyright & citation</script>"),
+            &[],
+        );
+        assert!(html.contains("&lt;script&gt;Copyright &amp; citation&lt;/script&gt;"));
+        assert!(html.contains("href=\"https://citationstyles.org/\""));
+        assert!(html.contains("href=\"licenses/citations-license.txt\""));
+        assert!(html.find("slides-attribution").unwrap() > html.find("</div></div>").unwrap());
+        assert!(!html.contains("<script>Copyright"));
+    }
     #[test]
     fn fixed_pages_have_early_csp_and_no_inline_script_or_network_dependency() {
         let analysis = adocweave_core::Engine::new(Default::default())
@@ -479,7 +778,7 @@ mod tests {
             )
             .unwrap();
         for audience in [Audience::Public, Audience::Presenter] {
-            let html = page(&deck, &rendered.html, audience);
+            let html = page(&deck, &rendered.html, audience, "", None, &[]);
             assert!(
                 html.find("Content-Security-Policy").unwrap() < html.find("stylesheet").unwrap()
             );

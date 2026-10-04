@@ -13,6 +13,7 @@ pub(crate) struct Dependency {
 pub(crate) enum DependencyKind {
     Contents,
     ContentsNoSymlinks,
+    BinaryContentsNoSymlinks,
     Existence,
 }
 
@@ -28,6 +29,13 @@ impl Dependency {
         Self {
             path: path.into(),
             kind: DependencyKind::ContentsNoSymlinks,
+        }
+    }
+
+    pub(crate) fn binary_contents_no_symlinks(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            kind: DependencyKind::BinaryContentsNoSymlinks,
         }
     }
 

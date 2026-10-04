@@ -15,6 +15,7 @@ dependencies = [
  "roxmltree",
  "serde",
  "serde_json",
+ "sha2",
  "similar",
  "tempfile",
  "terminal_size",

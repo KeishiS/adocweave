@@ -146,6 +146,14 @@ impl ProjectBinaryResource {
     pub fn sha256(&self) -> String {
         bundle::digest(&self.bytes)
     }
+    /// Captures the exact acquired binary bytes for live preview observation.
+    pub fn observation(&self) -> ProjectObservationCandidate {
+        ProjectObservationCandidate {
+            path: self.path.clone(),
+            kind: ProjectObservationKind::BinaryContentsNoSymlinks,
+            observation: ProjectResourceObservation::from_bytes(&self.bytes),
+        }
+    }
 }
 
 impl ProjectAuthority {
@@ -299,6 +307,7 @@ impl ProjectObservationAccess {
 pub enum ProjectObservationKind {
     Contents,
     ContentsNoSymlinks,
+    BinaryContentsNoSymlinks,
     Existence,
 }
 
@@ -322,6 +331,24 @@ impl ProjectObserver {
         }
         self.remaining_files -= 1;
         match kind {
+            ProjectObservationKind::BinaryContentsNoSymlinks => {
+                let max_bytes = self.max_resource_bytes.min(self.remaining_bytes);
+                self.policy.authority_for_path(path).map_or_else(
+                    ProjectResourceObservation::unavailable,
+                    |policy| match policy.read_binary(path, max_bytes) {
+                        Ok(bytes) => {
+                            self.remaining_bytes =
+                                self.remaining_bytes.saturating_sub(bytes.len() as u64);
+                            ProjectResourceObservation::from_bytes(&bytes)
+                        }
+                        Err(FilesystemError::Missing(_)) => ProjectResourceObservation::missing(),
+                        Err(_) => {
+                            self.remaining_bytes = self.remaining_bytes.saturating_sub(max_bytes);
+                            ProjectResourceObservation::unavailable()
+                        }
+                    },
+                )
+            }
             ProjectObservationKind::Existence => self.policy.authority_for_path(path).map_or(
                 ProjectResourceObservation::unavailable(),
                 |policy| match policy.inspect_candidate_no_symlinks(path) {

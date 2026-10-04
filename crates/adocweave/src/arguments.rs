@@ -70,6 +70,7 @@ pub(crate) enum CommandOptions {
         output: Option<PathBuf>,
         audience: crate::slides::Audience,
         slides_helper: Option<PathBuf>,
+        data: SlidesData,
     },
     Preview {
         css: Vec<StylesheetArgument>,
@@ -89,6 +90,31 @@ pub(crate) enum ConvertTarget {
     #[default]
     Html,
     Revealjs,
+}
+
+#[derive(Clone, Debug, Default, Args)]
+pub(crate) struct SlidesData {
+    /// CSL JSON bibliography array; used only when slides include citations.
+    #[arg(long, value_name = "FILE", value_hint = ValueHint::FilePath)]
+    pub(crate) bibliography: Option<PathBuf>,
+    /// Local CSL citation style; used only when slides include citations.
+    #[arg(long, value_name = "FILE", value_hint = ValueHint::FilePath)]
+    pub(crate) csl_style: Option<PathBuf>,
+    /// Local CSL locale XML; used only when slides include citations.
+    #[arg(long, value_name = "FILE", value_hint = ValueHint::FilePath)]
+    pub(crate) csl_locale: Option<PathBuf>,
+    /// JSON array of common LaTeX macros; used only when slides include equations.
+    #[arg(long, value_name = "FILE", value_hint = ValueHint::FilePath)]
+    pub(crate) math_macros: Option<PathBuf>,
+}
+
+impl SlidesData {
+    fn specified(&self) -> bool {
+        self.bibliography.is_some()
+            || self.csl_style.is_some()
+            || self.csl_locale.is_some()
+            || self.math_macros.is_some()
+    }
 }
 
 pub(crate) struct Arguments {
@@ -251,6 +277,8 @@ struct ColorArgs {
 
 #[derive(Debug, Args)]
 struct ConvertArgs {
+    #[command(flatten)]
+    data: SlidesData,
     /// Input file; omit or use - for standard input.
     #[arg(value_name = "FILE", value_hint = ValueHint::FilePath)]
     file: Option<PathBuf>,
@@ -622,9 +650,13 @@ fn run_action(arguments: Arguments) -> Result<Action, CliError> {
 fn convert_action(command: ConvertArgs, matches: &clap::ArgMatches) -> Result<Action, CliError> {
     let css = stylesheet_arguments(matches);
     if command.target == ConvertTarget::Revealjs {
-        if command.complete || !css.is_empty() {
+        if command.complete
+            || css
+                .iter()
+                .any(|value| matches!(value, StylesheetArgument::Url(_)))
+        {
             return Err(CliError::Usage(
-                "--complete, --css and --css-url apply only to ordinary HTML".to_owned(),
+                "--complete and --css-url apply only to ordinary HTML".to_owned(),
             ));
         }
         if command
@@ -639,9 +671,10 @@ fn convert_action(command: ConvertArgs, matches: &clap::ArgMatches) -> Result<Ac
     } else if command.output.is_some()
         || command.audience.is_some()
         || command.slides_helper.is_some()
+        || command.data.specified()
     {
         return Err(CliError::Usage(
-            "--output, --audience and --slides-helper require --to revealjs".to_owned(),
+            "slide output, audience, helper and data options require --to revealjs".to_owned(),
         ));
     }
     run_action(Arguments {
@@ -652,6 +685,7 @@ fn convert_action(command: ConvertArgs, matches: &clap::ArgMatches) -> Result<Ac
             output: command.output,
             audience: command.audience.unwrap_or_default(),
             slides_helper: command.slides_helper,
+            data: command.data,
         },
         input: single_input(command.file),
         additional_inputs: Vec::new(),

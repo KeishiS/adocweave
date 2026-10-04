@@ -59,6 +59,7 @@ pub(crate) fn run(arguments: &Arguments) -> Result<CliExitCode, CliError> {
             output,
             audience,
             slides_helper,
+            data,
             ..
         } => {
             let target = only_target(&result.targets)?;
@@ -94,9 +95,13 @@ pub(crate) fn run(arguments: &Arguments) -> Result<CliExitCode, CliError> {
                 target,
                 &authority,
                 &primary_base,
-                *audience,
-                slides_helper.as_deref(),
+                crate::slides::bundle::Options {
+                    audience: *audience,
+                    helper: slides_helper.as_deref(),
+                    data,
+                },
                 remaining_resources,
+                &NeverCancel,
             )?;
             let sources = diagnostic_sources(target, &current)?;
             let diagnostics = commands::convert::render_diagnostics(
@@ -108,6 +113,15 @@ pub(crate) fn run(arguments: &Arguments) -> Result<CliExitCode, CliError> {
             print_convert_diagnostics(arguments, &diagnostics.output)?;
             if diagnostics.counts.fails(FailOn::Error) {
                 return Ok(CliExitCode::Diagnostics);
+            }
+            let mut observer = authority.observation_access().observer();
+            for acquired in &bundle.observations {
+                if observer.observe(&acquired.path, acquired.kind) != acquired.observation {
+                    return Err(CliError::Slides(format!(
+                        "slide resource changed during generation: {}",
+                        acquired.path.display()
+                    )));
+                }
             }
             let directory = absolute_path(
                 &current,
