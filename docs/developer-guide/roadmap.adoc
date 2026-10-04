@@ -7,17 +7,3 @@ GitHub Issueを参照してください。
 完了した作業の経緯はIssue、バージョンごとの変更は
 https://github.com/KeishiS/adocweave/releases[GitHub Releases]のRelease Notesに記録します。
 このページには完了したmilestoneの履歴を残しません。
-
-== 研究用HTMLスライド
-
-AsciiDocからreveal.js用のHTMLスライドを生成し、数式・引用、発表者ノート、編集時のプレビューと
-オフライン共有を利用できるようにする作業です。親Issueは
-https://github.com/KeishiS/adocweave/issues/981[Issue 981]です。
-
-* https://github.com/KeishiS/adocweave/issues/982[Issue 982]: 数式認識の修正と、試作に必要な意味情報・読取りAPI
-* https://github.com/KeishiS/adocweave/issues/983[Issue 983]: 共通本文描画と、掲載範囲ごとの番号・引用・参照
-* https://github.com/KeishiS/adocweave/issues/984[Issue 984]: 既存文書モデルによる最小スライド試作と、スライド構成
-* https://github.com/KeishiS/adocweave/issues/985[Issue 985]: 数式・書誌の補助処理、生成・プレビュー・配信と資産管理
-
-同じリポジトリのRust CLIとプロジェクト処理を使い、Node.jsには数式と書誌の処理だけを任せます。
-最初に最小スライドを試作し、不足したAPIを確認してから統合します。PDFはこの作業の対象外です。

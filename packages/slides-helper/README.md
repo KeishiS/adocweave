@@ -25,7 +25,7 @@ adocweave convert talk.adoc --to revealjs --output dist/talk \
 
 通常の本文と手書きの書誌定義だけの生成には、この補助パッケージは必要ありません。
 数式やCSL引用を含むスライドの記法とデータ指定は
-[CLI利用手順](../../docs/user-guide/command-line.adoc#revealjs-slides)を参照してください。
+[CLI利用手順](https://github.com/KeishiS/adocweave/blob/main/docs/user-guide/command-line.adoc#revealjs-slides)を参照してください。
 
 ## 実行
 
@@ -77,7 +77,7 @@ MathJaxのlicense、引用の通知にはciteprocの帰属表示とCPAL本文を
 
 各式は`{ key, tex, display }`で指定します。`eqnums`は要求全体に共通で、`none`、`ams`、`all`を受け付けます。
 番号を自動付与するかどうかはMathJaxの規則に従います。両掲載範囲の番号は別々に1から始まります。
-成功時には、ブラウザーでMathJaxを実行する必要のない静的`svg`と、読み上げ支援用の`mathml`を返します。
+成功時には、ブラウザーでMathJaxを実行する必要のない静的`svg`を返します。
 SVGのglyph pathを各式に含め、IDと内部リンクに掲載範囲・keyを反映します。
 
 MathJaxの`base`、`ams`、`newcommand`、`configmacros`を使用します。

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { parseFragment } from "parse5";
 
 import { processRequest } from "./index.mjs";
 import { fixture, researchRequest } from "./fixtures.mjs";
@@ -8,18 +9,32 @@ function mathRequest(equations, eqnums = "ams") {
   return { schemaVersion: 1, eqnums, scopes: { body: { equations, citations: [] }, notes: { equations: [], citations: [] } } };
 }
 
+function svgNodes(svg, predicate) {
+  const found = [];
+  const visit = (node) => {
+    if (predicate(node)) found.push(node);
+    for (const child of node.childNodes ?? []) visit(child);
+  };
+  visit(typeof svg === "string" ? parseFragment(svg) : svg);
+  return found;
+}
+const attribute = (node, name) => node.attrs?.find((entry) => entry.name === name)?.value;
+const svgKind = (svg, kind) => svgNodes(svg, (node) => attribute(node, "data-mml-node") === kind);
+const labelText = (svg) => svgKind(svg, "mtext").map((node) => svgNodes(node,
+  (child) => attribute(child, "data-c") || child.nodeName === "#text")
+  .map((child) => child.value ?? String.fromCodePoint(Number.parseInt(attribute(child, "data-c"), 16))).join("")).join("");
+
 test("the complete scope resolves forward references and emits independent local SVG IDs", async () => {
   const result = await processRequest(researchRequest());
   assert.deepEqual(result.diagnostics, []);
-  assert.match(result.scopes.body.equations[0].mathml, /<mtext>\(1\)<\/mtext>/);
+  assert.equal(labelText(result.scopes.body.equations[0].svg), "(1)");
   const ids = new Set();
   const all = Object.entries(result.scopes).flatMap(([scope, output]) => output.equations.map((equation) => [scope, equation]));
   for (const [scope, equation] of all) {
     assert.equal(equation.status, "ok");
     assert.match(equation.svg, /<defs>/);
     assert.match(equation.svg, /aria-hidden="true"/);
-    assert.match(equation.mathml, /^<math xmlns="http:\/\/www.w3.org\/1998\/Math\/MathML"/);
-    assert.doesNotMatch(equation.mathml, / id="/);
+    assert.deepEqual(Object.keys(equation).sort(), ["key", "status", "svg"]);
     for (const [, id] of equation.svg.matchAll(/ id="([^"]+)"/g)) {
       assert.ok(id.startsWith(`${scope}-${equation.key}-`), id);
       assert.ok(!ids.has(id), id);
@@ -30,31 +45,32 @@ test("the complete scope resolves forward references and emits independent local
     for (const [, id] of equation.svg.matchAll(/ href="#([^"]+)"/g)) assert.ok(ids.has(id), id);
     assert.doesNotMatch(equation.svg, /<script|<foreignObject|url\(|https:\/\//);
   }
-  assert.match(result.scopes.body.equations[2].mathml, /<mtext>2<\/mtext>/);
-  assert.equal((result.scopes.body.equations[2].mathml.match(/<mlabeledtr>/g) ?? []).length, 1);
-  assert.match(result.scopes.body.equations[3].mathml, /<mtext>A<\/mtext>/);
-  assert.match(result.scopes.notes.equations[0].mathml, /<mtext>1<\/mtext>/);
+  assert.equal(labelText(result.scopes.body.equations[2].svg), "(2)");
+  assert.equal(svgKind(result.scopes.body.equations[2].svg, "mlabeledtr").length, 1);
+  assert.equal(labelText(result.scopes.body.equations[3].svg), "(A)");
+  assert.equal(labelText(result.scopes.notes.equations[0].svg), "(1)");
 });
 
 test("none, AMS, and all use MathJax numbering rules", async () => {
   const equations = [{ key: "bare", tex: "x=1", display: true }, { key: "env", tex: "\\begin{equation}y=2\\end{equation}", display: true }];
   const outputs = {};
   for (const mode of ["none", "ams", "all"]) outputs[mode] = (await processRequest(mathRequest(equations, mode))).scopes.body.equations;
-  assert.doesNotMatch(outputs.none[0].mathml, /mlabeledtr/);
-  assert.doesNotMatch(outputs.none[1].mathml, /mlabeledtr/);
-  assert.doesNotMatch(outputs.ams[0].mathml, /mlabeledtr/);
-  assert.match(outputs.ams[1].mathml, /<mtext>1<\/mtext>/);
-  assert.match(outputs.all[0].mathml, /<mtext>1<\/mtext>/);
-  assert.match(outputs.all[1].mathml, /<mtext>2<\/mtext>/);
+  assert.equal(labelText(outputs.none[0].svg), "");
+  assert.equal(labelText(outputs.none[1].svg), "");
+  assert.equal(labelText(outputs.ams[0].svg), "");
+  assert.equal(labelText(outputs.ams[1].svg), "(1)");
+  assert.equal(labelText(outputs.all[0].svg), "(1)");
+  assert.equal(labelText(outputs.all[1].svg), "(2)");
 });
 
 test("fractions, roots, operators, matrices, and AMS decorations produce static scientific notation", async () => {
   const response = await processRequest(JSON.parse(fixture("shapes.json")));
   assert.deepEqual(response.diagnostics, []);
   assert.ok(response.scopes.body.equations.every(({ status }) => status === "ok"));
-  assert.match(response.scopes.body.equations[0].mathml, /<msqrt>[\s\S]*<mfrac>/);
-  assert.match(response.scopes.body.equations[2].mathml, /<mtable/);
-  assert.match(response.scopes.body.equations[4].mathml, /<menclose/);
+  assert.equal(svgKind(response.scopes.body.equations[0].svg, "msqrt").length, 1);
+  assert.equal(svgKind(response.scopes.body.equations[0].svg, "mfrac").length, 1);
+  assert.equal(svgKind(response.scopes.body.equations[2].svg, "mtable").length, 1);
+  assert.equal(svgKind(response.scopes.body.equations[4].svg, "menclose").length, 1);
 });
 
 test("unknown macros, duplicate labels, and unresolved refs produce keyed errors", async () => {
@@ -108,5 +124,5 @@ test("TeX input is not reparsed as HTML or closing delimiters", async () => {
   const result = await processRequest(mathRequest([{ key: "text", tex: "\\text{<script> & 漢字 😀 \\)}", display: false }]));
   assert.equal(result.scopes.body.equations[0].status, "ok");
   assert.doesNotMatch(result.scopes.body.equations[0].svg, /<script>/);
-  assert.match(result.scopes.body.equations[0].mathml, /&lt;script&gt;/);
+  assert.ok(result.scopes.body.equations[0].svg.includes("漢字"));
 });

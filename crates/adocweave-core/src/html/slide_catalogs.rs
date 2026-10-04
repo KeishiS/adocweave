@@ -465,12 +465,8 @@ impl<'document> SlideCatalogs<'document> {
             }
             let value = math.value().remap_ids(&canonical_ids);
             if self.selected.contains(&math.source_range) {
-                super::regions::check_output_limit(
-                    math_bytes,
-                    value.svg().len() + value.mathml().len(),
-                    limits,
-                )?;
-                math_bytes += value.svg().len() + value.mathml().len();
+                super::regions::check_output_limit(math_bytes, value.svg().len(), limits)?;
+                math_bytes += value.svg().len();
             }
             for id in value.ids() {
                 self.insert_id(occupied, id, math.source_range)?;
@@ -501,12 +497,8 @@ impl<'document> SlideCatalogs<'document> {
                     .filter(|math| ranges.contains(&math.source_range))
                 {
                     let value = math.value().remap_ids(&mapping);
-                    super::regions::check_output_limit(
-                        math_bytes,
-                        value.svg().len() + value.mathml().len(),
-                        limits,
-                    )?;
-                    math_bytes += value.svg().len() + value.mathml().len();
+                    super::regions::check_output_limit(math_bytes, value.svg().len(), limits)?;
+                    math_bytes += value.svg().len();
                     for id in value.ids() {
                         self.insert_id(occupied, id, math.source_range)?;
                     }

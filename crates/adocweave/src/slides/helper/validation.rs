@@ -146,12 +146,11 @@ pub fn validate_response(
                 "unknown or duplicate equation result key",
             )?;
             validate_status(scope, result.key(), result.failed(), &response)?;
-            if let EquationResult::Ok { key, svg, mathml } = result {
-                let value =
-                    ValidatedMath::validate(scope.as_str(), key, svg, mathml).map_err(|e| {
-                        HostError::protocol(e.to_string())
-                            .at(prepared.sources.get(&(scope, key.clone())).copied())
-                    })?;
+            if let EquationResult::Ok { key, svg } = result {
+                let value = ValidatedMath::validate(scope.as_str(), key, svg).map_err(|e| {
+                    HostError::protocol(e.to_string())
+                        .at(prepared.sources.get(&(scope, key.clone())).copied())
+                })?;
                 for id in value.ids() {
                     protocol::check(
                         all_ids.insert(id.clone()),

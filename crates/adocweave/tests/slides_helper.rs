@@ -67,6 +67,26 @@ fn actual_mathjax_and_citeproc_fixture_is_accepted() {
 }
 
 #[test]
+fn unsafe_math_svg_is_rejected_at_the_original_equation_range() {
+    for svg in [
+        r#"<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"></svg>"#,
+        r#"<svg xmlns="http://www.w3.org/2000/svg"><a href="https://example.org/">x</a></svg>"#,
+    ] {
+        let mut json = response();
+        json["scopes"]["body"]["equations"][0]["svg"] = svg.into();
+        let error = validate(json).unwrap_err();
+        assert_eq!(error.code, "slides-helper-protocol");
+        assert_eq!(
+            error.range,
+            fixture()
+                .sources
+                .get(&(Scope::Body, "math1".into()))
+                .copied()
+        );
+    }
+}
+
+#[test]
 fn every_result_key_is_accounted_for() {
     let mut missing = response();
     missing["scopes"]["body"]["equations"]

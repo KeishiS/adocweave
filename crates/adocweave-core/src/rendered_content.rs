@@ -6,9 +6,9 @@ use std::fmt;
 use crate::source::TextRange;
 use crate::url::{ActiveUrlPolicy, UrlProvenance};
 
-const XML_BYTES: usize = 512 * 1024;
-const XML_NODES: u32 = 16_384;
-const XML_DEPTH: usize = 64;
+const SVG_BYTES: usize = 512 * 1024;
+const SVG_NODES: u32 = 16_384;
+const SVG_DEPTH: usize = 64;
 const RICH_NODES: usize = 4096;
 const RICH_BYTES: usize = 256 * 1024;
 const RICH_DEPTH: usize = 32;
@@ -26,33 +26,25 @@ fn invalid(message: impl Into<String>) -> ContentValidationError {
     ContentValidationError(message.into())
 }
 
-/// Normalized SVG and assistive MathML. Markup is never caller-writable.
+/// Normalized SVG. Markup is never caller-writable.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ValidatedMath {
     svg: String,
-    mathml: String,
     ids: BTreeSet<String>,
     references: BTreeSet<String>,
 }
 impl ValidatedMath {
-    /// Validates the MathJax SVG/MathML profile with fixed byte, node and depth limits.
+    /// Validates the MathJax SVG profile with fixed byte, node and depth limits.
     /// IDs belong to this equation; links may address another equation in the same scope.
-    pub fn validate(
-        scope: &str,
-        key: &str,
-        svg: &str,
-        mathml: &str,
-    ) -> Result<Self, ContentValidationError> {
+    pub fn validate(scope: &str, key: &str, svg: &str) -> Result<Self, ContentValidationError> {
         if !matches!(scope, "body" | "notes") || !is_key(key) {
             return Err(invalid("invalid math scope or key"));
         }
         let mut ids = BTreeSet::new();
         let mut references = BTreeSet::new();
-        let svg = normalize_xml(svg, "svg", scope, key, &mut ids, &mut references)?;
-        let mathml = normalize_xml(mathml, "math", scope, key, &mut ids, &mut references)?;
+        let svg = normalize_svg(svg, scope, key, &mut ids, &mut references)?;
         Ok(Self {
             svg,
-            mathml,
             ids,
             references,
         })
@@ -68,10 +60,6 @@ impl ValidatedMath {
     pub(crate) fn svg(&self) -> &str {
         &self.svg
     }
-    pub(crate) fn mathml(&self) -> &str {
-        &self.mathml
-    }
-
     /// Only slide footnote placement planning may rename already validated IDs.
     /// The XML tree is serialized again; source markup is never copied verbatim.
     pub(crate) fn remap_ids(&self, mapping: &BTreeMap<String, String>) -> Self {
@@ -145,7 +133,6 @@ impl ValidatedMath {
         };
         Self {
             svg: rewrite(&self.svg, mapping),
-            mathml: rewrite(&self.mathml, mapping),
             ids: remap(&self.ids),
             references: remap(&self.references),
         }
@@ -359,91 +346,82 @@ fn is_id(value: &str, scope: &str, key: Option<&str>) -> bool {
         && number.bytes().all(|b| b.is_ascii_digit())
 }
 
-fn normalize_xml(
+fn normalize_svg(
     source: &str,
-    root: &str,
     scope: &str,
     key: &str,
     ids: &mut BTreeSet<String>,
     refs: &mut BTreeSet<String>,
 ) -> Result<String, ContentValidationError> {
-    if source.len() > XML_BYTES {
-        return Err(invalid("math XML byte limit exceeded"));
+    if source.len() > SVG_BYTES {
+        return Err(invalid("math SVG byte limit exceeded"));
     }
     // Reject declarations, DTDs (including an empty DTD), comments, CDATA and PIs.
     // Standard escaped/numeric characters are decoded by the XML parser and re-escaped below.
     if source.contains("<!") || source.contains("<?") {
-        return Err(invalid("math XML declarations and DTDs are forbidden"));
+        return Err(invalid("math SVG declarations and DTDs are forbidden"));
     }
     let document = roxmltree::Document::parse_with_options(
         source,
         roxmltree::ParsingOptions {
             allow_dtd: false,
-            nodes_limit: XML_NODES,
+            nodes_limit: SVG_NODES,
             ..Default::default()
         },
     )
-    .map_err(|error| invalid(format!("invalid math XML: {error}")))?;
+    .map_err(|error| invalid(format!("invalid math SVG: {error}")))?;
     let element = document.root_element();
-    if element.tag_name().name() != root {
-        return Err(invalid("unexpected math XML root"));
+    if element.tag_name().name() != "svg" {
+        return Err(invalid("unexpected math SVG root"));
     }
-    let namespace = if root == "svg" {
-        "http://www.w3.org/2000/svg"
-    } else {
-        "http://www.w3.org/1998/Math/MathML"
-    };
     let mut output = String::new();
-    XmlNormalizer {
-        namespace,
+    SvgNormalizer {
         scope,
         key,
         ids,
         references: refs,
     }
     .node(element, 0, &mut output)?;
-    if output.len() > XML_BYTES * 6 {
-        return Err(invalid("normalized math XML byte limit exceeded"));
+    if output.len() > SVG_BYTES * 6 {
+        return Err(invalid("normalized math SVG byte limit exceeded"));
     }
     Ok(output)
 }
-struct XmlNormalizer<'a> {
-    namespace: &'a str,
+struct SvgNormalizer<'a> {
     scope: &'a str,
     key: &'a str,
     ids: &'a mut BTreeSet<String>,
     references: &'a mut BTreeSet<String>,
 }
-impl XmlNormalizer<'_> {
+impl SvgNormalizer<'_> {
     fn node(
         &mut self,
         node: roxmltree::Node<'_, '_>,
         depth: usize,
         output: &mut String,
     ) -> Result<(), ContentValidationError> {
-        let namespace = self.namespace;
+        let namespace = "http://www.w3.org/2000/svg";
         let scope = self.scope;
         let key = self.key;
-        if depth > XML_DEPTH {
-            return Err(invalid("math XML depth limit exceeded"));
+        if depth > SVG_DEPTH {
+            return Err(invalid("math SVG depth limit exceeded"));
         }
         if node.is_text() {
             escape(output, node.text().unwrap_or_default());
             return Ok(());
         }
         if !node.is_element() {
-            return Err(invalid("unsupported math XML node"));
+            return Err(invalid("unsupported math SVG node"));
         }
-        let svg = namespace == "http://www.w3.org/2000/svg";
         let tag = node.tag_name();
-        if tag.namespace() != Some(namespace) || !allowed_element(svg, tag.name()) {
-            return Err(invalid("unsupported math XML element or namespace"));
+        if tag.namespace() != Some(namespace) || !allowed_element(tag.name()) {
+            return Err(invalid("unsupported math SVG element or namespace"));
         }
         if node
             .namespaces()
             .any(|ns| ns.name().is_some() || ns.uri() != namespace)
         {
-            return Err(invalid("unsupported math XML namespace declaration"));
+            return Err(invalid("unsupported math SVG namespace declaration"));
         }
         output.push('<');
         output.push_str(tag.name());
@@ -456,10 +434,10 @@ impl XmlNormalizer<'_> {
             let name = attr.name();
             let value = attr.value();
             if attr.namespace().is_some() {
-                return Err(invalid("namespaced math XML attributes are forbidden"));
+                return Err(invalid("namespaced math SVG attributes are forbidden"));
             }
             match name {
-                "id" if svg && is_id(value, scope, Some(key)) => {
+                "id" if is_id(value, scope, Some(key)) => {
                     if !self.ids.insert(value.to_owned()) {
                         return Err(invalid("duplicate math SVG ID"));
                     }
@@ -471,13 +449,13 @@ impl XmlNormalizer<'_> {
                     if !is_id(target, scope, (tag.name() == "use").then_some(key)) {
                         return Err(invalid("math link is outside its scope"));
                     }
-                    if svg && !matches!(tag.name(), "a" | "use") {
+                    if !matches!(tag.name(), "a" | "use") {
                         return Err(invalid("unexpected SVG link"));
                     }
                     self.references.insert(target.to_owned());
                 }
-                _ if allowed_attribute(svg, name, value) => {}
-                _ => return Err(invalid(format!("unsupported math XML attribute `{name}`"))),
+                _ if allowed_attribute(name, value) => {}
+                _ => return Err(invalid(format!("unsupported math SVG attribute `{name}`"))),
             }
             output.push(' ');
             output.push_str(name);
@@ -496,57 +474,21 @@ impl XmlNormalizer<'_> {
     }
 }
 
-fn allowed_element(svg: bool, name: &str) -> bool {
-    if svg {
-        matches!(
-            name,
-            "svg"
-                | "defs"
-                | "path"
-                | "g"
-                | "a"
-                | "rect"
-                | "use"
-                | "text"
-                | "line"
-                | "polygon"
-                | "polyline"
-        )
-    } else {
-        matches!(
-            name,
-            "math"
-                | "mrow"
-                | "mi"
-                | "mn"
-                | "mo"
-                | "mtext"
-                | "mspace"
-                | "ms"
-                | "mfrac"
-                | "msqrt"
-                | "mroot"
-                | "mstyle"
-                | "merror"
-                | "mpadded"
-                | "mphantom"
-                | "mfenced"
-                | "menclose"
-                | "msub"
-                | "msup"
-                | "msubsup"
-                | "munder"
-                | "mover"
-                | "munderover"
-                | "mmultiscripts"
-                | "mprescripts"
-                | "none"
-                | "mtable"
-                | "mtr"
-                | "mlabeledtr"
-                | "mtd"
-        )
-    }
+fn allowed_element(name: &str) -> bool {
+    matches!(
+        name,
+        "svg"
+            | "defs"
+            | "path"
+            | "g"
+            | "a"
+            | "rect"
+            | "use"
+            | "text"
+            | "line"
+            | "polygon"
+            | "polyline"
+    )
 }
 fn numeric(value: &str) -> bool {
     !value.is_empty() && value.parse::<f64>().is_ok_and(f64::is_finite)
@@ -607,66 +549,38 @@ fn style(value: &str) -> bool {
             }
         })
 }
-fn allowed_attribute(svg: bool, name: &str, value: &str) -> bool {
-    if svg {
-        match name {
-            "style" => style(value),
-            "width" | "height" | "x" | "y" | "x1" | "x2" | "y1" | "y2" | "rx" | "ry"
-            | "font-size" => length(value),
-            "viewBox" | "data-mjx-viewBox" | "points" | "stroke-dasharray" => numbers(value),
-            "transform" => transform(value),
-            "d" => value.bytes().all(|b| {
-                b.is_ascii_digit()
-                    || b.is_ascii_whitespace()
-                    || b"MmZzLlHhVvCcSsQqTtAaEe.,+-".contains(&b)
-            }),
-            "stroke" | "fill" => matches!(value, "currentColor" | "none"),
-            "stroke-width" | "opacity" => numeric(value),
-            "stroke-linecap" => matches!(value, "round" | "butt" | "square"),
-            "role" => value == "img",
-            "focusable" | "aria-hidden" => matches!(value, "true" | "false"),
-            "preserveAspectRatio" => matches!(value, "xMidYMid" | "xMaxYMid" | "xMinYMid" | "none"),
-            "pointer-events" => value == "all",
-            "font-family" => matches!(value, "serif" | "sans-serif" | "monospace"),
-            "class" => value
-                .split_ascii_whitespace()
-                .all(|s| matches!(s, "MathJax_ref" | "mjx-dashed" | "mjx-dotted" | "mjx-solid")),
-            "data-hitbox" | "data-id-align" | "data-idbox" | "data-table" | "data-labels"
-            | "data-line" | "data-frame" => matches!(value, "true" | "h" | "v"),
-            "data-c" => {
-                !value.is_empty() && value.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')
-            }
-            "data-mml-node" => {
-                allowed_element(false, value) || matches!(value, "TeXAtom" | "inferredMrow")
-            }
-            "data-variant" | "data-mjx-texclass" | "data-frame-styles" => tokens(value),
-            "data-padding" => numeric(value),
-            _ => false,
+fn allowed_attribute(name: &str, value: &str) -> bool {
+    match name {
+        "style" => style(value),
+        "width" | "height" | "x" | "y" | "x1" | "x2" | "y1" | "y2" | "rx" | "ry" | "font-size" => {
+            length(value)
         }
-    } else {
-        match name {
-            "display" => matches!(value, "block" | "inline"),
-            "class" => value == "MathJax_ref",
-            "mathvariant" | "form" | "columnalign" | "rowalign" | "groupalign" | "align"
-            | "notation" | "columnlines" | "rowlines" | "frame" | "data-break-align"
-            | "data-mjx-texclass" | "data-frame-styles" => tokens(value),
-            "displaystyle" | "stretchy" | "symmetric" | "largeop" | "movablelimits" | "accent"
-            | "accentunder" | "fence" | "separator" | "equalrows" | "equalcolumns" | "bevelled" => {
-                matches!(value, "true" | "false")
-            }
-            "scriptlevel" | "rowspan" | "columnspan" | "data-padding" => numeric(value),
-            "width" | "height" | "depth" | "lspace" | "rspace" | "voffset" | "linethickness"
-            | "minsize" | "maxsize" | "indentshift" | "mathsize" => {
-                length(value) || matches!(value, "infinity" | "thin" | "medium" | "thick")
-            }
-            "columnspacing" | "rowspacing" | "framespacing" => {
-                value.split_ascii_whitespace().all(length)
-            }
-            "open" | "close" | "separators" => {
-                value.len() <= 64 && !value.chars().any(char::is_control)
-            }
-            _ => false,
+        "viewBox" | "data-mjx-viewBox" | "points" | "stroke-dasharray" => numbers(value),
+        "transform" => transform(value),
+        "d" => value.bytes().all(|b| {
+            b.is_ascii_digit()
+                || b.is_ascii_whitespace()
+                || b"MmZzLlHhVvCcSsQqTtAaEe.,+-".contains(&b)
+        }),
+        "stroke" | "fill" => matches!(value, "currentColor" | "none"),
+        "stroke-width" | "opacity" => numeric(value),
+        "stroke-linecap" => matches!(value, "round" | "butt" | "square"),
+        "role" => value == "img",
+        "focusable" | "aria-hidden" => matches!(value, "true" | "false"),
+        "preserveAspectRatio" => matches!(value, "xMidYMid" | "xMaxYMid" | "xMinYMid" | "none"),
+        "pointer-events" => value == "all",
+        "font-family" => matches!(value, "serif" | "sans-serif" | "monospace"),
+        "class" => value
+            .split_ascii_whitespace()
+            .all(|s| matches!(s, "MathJax_ref" | "mjx-dashed" | "mjx-dotted" | "mjx-solid")),
+        "data-hitbox" | "data-id-align" | "data-idbox" | "data-table" | "data-labels"
+        | "data-line" | "data-frame" => matches!(value, "true" | "h" | "v"),
+        "data-c" => !value.is_empty() && value.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-'),
+        "data-mml-node" | "data-variant" | "data-mjx-texclass" | "data-frame-styles" => {
+            tokens(value)
         }
+        "data-padding" => numeric(value),
+        _ => false,
     }
 }
 pub(crate) fn escape(output: &mut String, value: &str) {
@@ -686,12 +600,11 @@ pub(crate) fn escape(output: &mut String, value: &str) {
 mod tests {
     use super::*;
     const SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="1ex" height="2ex" viewBox="0 0 1 2" aria-hidden="true"><defs><path id="body-m0-i0" d="M0 0L1 2Z"/></defs><g transform="scale(1,-1)"><use href="#body-m0-i0"/></g></svg>"##;
-    const MATHML: &str = r#"<math xmlns="http://www.w3.org/1998/Math/MathML"><mi>&#x3B1;</mi><mo>&lt;</mo><mn>2</mn></math>"#;
     #[test]
     fn math_is_reconstructed_from_decoded_xml_and_has_private_markup() {
-        let value = ValidatedMath::validate("body", "m0", SVG, MATHML).unwrap();
-        assert!(value.mathml().contains("<mi>α</mi>"));
-        assert!(value.mathml().contains("<mo>&lt;</mo>"));
+        let svg = SVG.replace("</svg>", "<text>&#x3B1;&lt;2</text></svg>");
+        let value = ValidatedMath::validate("body", "m0", &svg).unwrap();
+        assert!(value.svg().contains("<text>α&lt;2</text>"));
         assert_eq!(value.ids(), &BTreeSet::from(["body-m0-i0".into()]));
         assert_eq!(value.references(), value.ids());
         assert!(!value.svg().contains("/>"));
@@ -716,34 +629,25 @@ mod tests {
             SVG.replace("<defs>", "<defs><![CDATA[raw]]>"),
         ] {
             assert!(
-                ValidatedMath::validate("body", "m0", &svg, MATHML).is_err(),
+                ValidatedMath::validate("body", "m0", &svg).is_err(),
                 "accepted {svg}"
             );
-        }
-        for mathml in [
-            MATHML.replace("<mi>", "<mi id=\"body-m0-i1\">"),
-            MATHML
-                .replace("<mi>", "<annotation-xml encoding=\"text/html\"><mi>")
-                .replace("</mi>", "</mi></annotation-xml>"),
-            MATHML.replace("<mi>", "<mi href=\"javascript:alert(1)\">"),
-        ] {
-            assert!(ValidatedMath::validate("body", "m0", SVG, &mathml).is_err());
         }
     }
     #[test]
     fn math_depth_bytes_and_node_limits_are_enforced() {
         let deep = format!(
-            "<math xmlns=\"http://www.w3.org/1998/Math/MathML\">{}x{}</math>",
-            "<mrow>".repeat(65),
-            "</mrow>".repeat(65)
+            "<svg xmlns=\"http://www.w3.org/2000/svg\">{}x{}</svg>",
+            "<g>".repeat(65),
+            "</g>".repeat(65)
         );
-        assert!(ValidatedMath::validate("body", "m0", SVG, &deep).is_err());
-        assert!(ValidatedMath::validate("body", "m0", &" ".repeat(XML_BYTES + 1), MATHML).is_err());
+        assert!(ValidatedMath::validate("body", "m0", &deep).is_err());
+        assert!(ValidatedMath::validate("body", "m0", &" ".repeat(SVG_BYTES + 1)).is_err());
         let wide = format!(
-            "<math xmlns=\"http://www.w3.org/1998/Math/MathML\">{}</math>",
-            "<mi>x</mi>".repeat(XML_NODES as usize)
+            "<svg xmlns=\"http://www.w3.org/2000/svg\">{}</svg>",
+            "<text>x</text>".repeat(SVG_NODES as usize)
         );
-        assert!(ValidatedMath::validate("body", "m0", SVG, &wide).is_err());
+        assert!(ValidatedMath::validate("body", "m0", &wide).is_err());
     }
     #[test]
     fn rich_text_escapes_text_and_rejects_active_links_and_deep_trees() {

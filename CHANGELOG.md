@@ -4,6 +4,7 @@ This changelog covers the native `adocweave` executable and the public Rust APIs
 separate changelogs for the
 [WebAssembly package](https://github.com/KeishiS/adocweave/blob/main/packages/wasm/CHANGELOG.md),
 [textlint plugin](https://github.com/KeishiS/adocweave/blob/main/packages/textlint-plugin-asciidoc/CHANGELOG.md),
+[slides helper](https://github.com/KeishiS/adocweave/blob/main/packages/slides-helper/CHANGELOG.md),
 [VS Code extension](https://github.com/KeishiS/adocweave/blob/main/editors/vscode/CHANGELOG.md), and
 [Zed extension](https://github.com/KeishiS/adocweave/blob/main/editors/zed/CHANGELOG.md).
 
@@ -13,7 +14,7 @@ separate changelogs for the
 
 - `convert --to revealjs` produces a local reveal.js slide directory. The existing CLI also provides slide preview and serves generated directories; no separate build command or executable is required.
 - Slides reuse the AsciiDoc analysis for headings, vertical groups, two columns, fragments, images, cross-references, and presenter notes. Public output excludes presenter notes before collecting their resources and processing their formulas or citations.
-- LaTeX equations are rendered to static SVG with assistive MathML, and CSL citations and bibliographies are rendered as finite inline content by the independently versioned `@adocweave/slides-helper` package. The CLI validates helper results and preserves original source positions for diagnostics. Documents without equations or citations do not start the helper.
+- LaTeX equations are rendered to static SVG, and CSL citations and bibliographies are rendered as finite inline content by the independently versioned `@adocweave/slides-helper` package. The CLI validates helper results and preserves original source positions for diagnostics. Documents without LaTeX equations or CSL-formatted citations do not start the helper.
 - The slide body and all presenter notes use two independent numbering and citation scopes. Generated body references occupy one final slide; note references appear once in the final slide's presenter notes.
 - Slide outputs use managed directories and a manifest shared by saving and serving. Updates reject unknown or modified files, remove obsolete managed assets, and remove presenter-only content when switching to public output.
 - Generated slides use bundled reveal.js assets and system fonts. Dependency attribution and license texts accompany the output; browser pages do not load MathJax or a citation processor.
@@ -27,7 +28,7 @@ separate changelogs for the
 ### Rust API
 
 - `MathLanguage` adds `AsciiMath`. `InlineFormula` adds `uses_stem_attribute`, and math block `range` includes preceding metadata while `content_range` identifies the formula text.
-- Validated SVG, MathML, and finite citation content can be passed through output inputs. Validation rejects unsupported XML, external references, missing or duplicated helper results, and processing-limit violations before rendering.
+- Validated SVG and finite citation content can be passed through output inputs. Validation rejects unsupported XML, external references, missing or duplicated helper results, and processing-limit violations before rendering.
 - Selected body-region rendering preserves the existing HTML escaping and URL policy while slide numbering separates body and presenter-note references.
 
 ### Migration

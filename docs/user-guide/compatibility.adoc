@@ -79,6 +79,16 @@ roleをそのままclassにせず、利用側が許可した名前だけを``rol
 文書入力から利用側ページのstylesheetへ任意のclassが届かないようにするためです。
 open blockは``div.open``、example blockは``div.example``、sidebar blockは``div.sidebar``で囲み、
 他実装の``openblock, content``構造は再現しません。
+通常のHTML出力では``notes`` roleの本文も保持し、共有用の公開指定としては扱いません。
+発表者ノートを除外して共有する場合は、``convert --to revealjs``の``public``出力を使用してください。
+
+=== reveal.jsスライド
+
+スライドの出力は、見出し、発表者ノート、2列および段階表示の限定した記法に対応します。
+Asciidoctor reveal.jsのすべての属性や拡張を再現するものではなく、``revealjs_*``属性や
+原稿内の任意のJavaScriptによる機能追加には対応しません。数式の描画はLaTeXに対応し、AsciiMathは診断します。
+記法、補助プログラムの導入および公開用／発表者用の指定は、
+xref:command-line.adoc#revealjs-slides[reveal.jsスライド]を参照してください。
 
 === 図表のcaption番号
 
