@@ -108,6 +108,11 @@ enum InlineNode {
         collapse_line_breaks: bool,
     },
     Element(PlannedElement),
+    Math {
+        value: crate::rendered_content::ValidatedMath,
+        tex: String,
+    },
+    Rich(crate::rendered_content::ValidatedRichText),
 }
 
 struct PlannedElement {
@@ -283,6 +288,24 @@ fn plan_sequence(
             Inline::HardBreak { .. } => output.push(void_element("br", Vec::new(), true)),
             Inline::Passthrough { value, .. } => inline_text(output, value),
             Inline::Formula(formula) => {
+                if let crate::render::ResolutionMatch::Unique(resolution) =
+                    context.input_usage.math_at(formula.range)
+                    && context
+                        .policy
+                        .math_languages
+                        .allowed
+                        .contains(&formula.language)
+                {
+                    output.push(element_with_children(
+                        "span",
+                        math_attributes(formula.language, "inline"),
+                        vec![InlineNode::Math {
+                            value: resolution.value.clone(),
+                            tex: formula.value.clone(),
+                        }],
+                    ));
+                    continue;
+                }
                 let mut attributes = Vec::new();
                 if context
                     .policy
@@ -530,7 +553,7 @@ fn plan_standard_macro(
                     .and_then(|bibliography| bibliography.entry(&key.value));
                 let href = document_entry
                     .map(|entry| entry.id.as_str())
-                    .or_else(|| generated_entry.map(|entry| entry.input.citation_key()))
+                    .or_else(|| generated_entry.map(|entry| entry.anchor_id.as_str()))
                     .and_then(SafeFragmentUrl::new)
                     .map(SafeFragmentUrl::into_owned);
                 if let Some(href) = href {
@@ -823,6 +846,8 @@ fn serialize_nodes(output: &mut String, nodes: &[InlineNode]) {
                     writer.text(TextValue::new(value));
                 }
             }
+            InlineNode::Math { value, tex } => HtmlWriter::new(output).validated_math(value, tex),
+            InlineNode::Rich(value) => HtmlWriter::new(output).validated_rich(value),
             InlineNode::Element(element) => {
                 let mut writer = HtmlWriter::new(output);
                 writer.start(element.name);
@@ -968,7 +993,30 @@ fn plan_resolved_citation(
     range: crate::source::TextRange,
     context: &mut InlineRenderContext<'_, '_>,
 ) -> Option<Vec<InlineNode>> {
-    let outcome = match context.input_usage.citation_at(range) {
+    let plain = context.input_usage.citation_at(range);
+    let rich = context.input_usage.rich_citation_at(range);
+    if !matches!(plain, crate::render::ResolutionMatch::Missing)
+        && !matches!(rich, crate::render::ResolutionMatch::Missing)
+    {
+        context.diagnostics.push(render_diagnostic(
+            "duplicate-render-input",
+            "citation has both plain and rich resolutions",
+            range,
+        ));
+        return None;
+    }
+    if let crate::render::ResolutionMatch::Unique(resolution) = rich {
+        if resolution.value.allowed_by(&context.policy.active_urls) {
+            return Some(vec![InlineNode::Rich(resolution.value.clone())]);
+        }
+        context.diagnostics.push(render_diagnostic(
+            "url-not-allowed",
+            "citation link is rejected by the render policy",
+            range,
+        ));
+        return Some(vec![inline_text_node(resolution.value.plain_text())]);
+    }
+    let outcome = match plain {
         crate::render::ResolutionMatch::Unique(resolution) => &resolution.outcome,
         // A duplicate is already reported as a render input problem, and a
         // missing resolution simply leaves the keys to the unresolved policy.

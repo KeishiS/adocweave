@@ -285,7 +285,7 @@ pub(crate) fn render_with_inputs_ast(
             &mut inline_context,
         );
         if let Some(bibliography) = &generated_bibliography {
-            generated_bibliography::render(&mut fragment, bibliography);
+            generated_bibliography::render(&mut fragment, bibliography, policy);
         }
     }
     for problem in input_usage.finish() {

@@ -198,7 +198,23 @@ pub(super) fn render_block(
         },
         AstBlock::List(list) => render_list(output, list, explicit_id, policy, context, scope),
         AstBlock::Math(block) => {
-            if policy.math_languages.allowed.contains(&block.language) {
+            if let crate::render::ResolutionMatch::Unique(resolution) =
+                context.input_usage.math_at(block.range)
+                && policy.math_languages.allowed.contains(&block.language)
+            {
+                let mut attributes = block_attributes(
+                    explicit_id,
+                    &block.metadata,
+                    &[body::math_class(block.language)],
+                    context,
+                );
+                attributes.extend(body::math_data_attributes(block.language, "block"));
+                BlockWriter::start(output, "div", &attributes);
+                super::safe::HtmlWriter::new(output)
+                    .validated_math(&resolution.value, &block.value);
+                BlockWriter::end(output, "div");
+                BlockWriter::line_break(output);
+            } else if policy.math_languages.allowed.contains(&block.language) {
                 let mut attributes = block_attributes(
                     explicit_id,
                     &block.metadata,

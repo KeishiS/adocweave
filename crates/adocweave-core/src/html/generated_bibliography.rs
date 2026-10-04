@@ -21,6 +21,7 @@ pub(super) struct PreparedGeneratedBibliography<'input> {
 #[derive(Clone, Debug)]
 pub(super) struct PreparedGeneratedBibliographyEntry<'input> {
     pub(super) input: &'input GeneratedBibliographyEntry,
+    pub(super) anchor_id: String,
     references: Vec<crate::source::TextRange>,
 }
 
@@ -78,7 +79,8 @@ pub(super) fn prepare<'input>(
             ));
             continue;
         }
-        if document.identifiers().target_by_id(key).is_some() {
+        let anchor_id = bibliography.namespace().anchor_id(key);
+        if document.identifiers().target_by_id(&anchor_id).is_some() {
             diagnostics.push(render_input_diagnostic(
                 "shadowed-generated-bibliography-entry",
                 &diagnostic_domain,
@@ -92,6 +94,7 @@ pub(super) fn prepare<'input>(
         entry_by_key.insert(key, entries.len());
         entries.push(PreparedGeneratedBibliographyEntry {
             input: entry,
+            anchor_id,
             references: Vec::new(),
         });
     }
@@ -188,7 +191,11 @@ fn numbering(entries: &[PreparedGeneratedBibliographyEntry<'_>]) -> Result<bool,
     Ok(true)
 }
 
-pub(super) fn render(output: &mut String, bibliography: &PreparedGeneratedBibliography<'_>) {
+pub(super) fn render(
+    output: &mut String,
+    bibliography: &PreparedGeneratedBibliography<'_>,
+    policy: &super::RenderPolicy,
+) {
     BlockWriter::start(output, "div", &[]);
     BlockWriter::line_break(output);
     BlockWriter::start(output, "h2", &[]);
@@ -204,12 +211,18 @@ pub(super) fn render(output: &mut String, bibliography: &PreparedGeneratedBiblio
             output,
             "span",
             &[
-                passive("id", entry.input.citation_key()),
+                passive("id", &entry.anchor_id),
                 classes(&["bibliography-anchor"]),
             ],
         );
         BlockWriter::end(output, "span");
-        BlockWriter::inline_text(output, entry.input.text());
+        if let Some(rich) = entry.input.rich_text()
+            && rich.allowed_by(&policy.active_urls)
+        {
+            safe::HtmlWriter::new(output).validated_rich(rich);
+        } else {
+            BlockWriter::inline_text(output, entry.input.text());
+        }
         for (index, reference) in entry.references.iter().enumerate() {
             BlockWriter::text(output, " ");
             let target = bibliography_reference_id(*reference);

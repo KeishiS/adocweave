@@ -392,6 +392,25 @@ impl<'a> HtmlWriter<'a> {
         escape_into(self.output, value.0);
     }
 
+    /// Markup reconstructed from a finite XML tree, never copied from raw input.
+    pub(super) fn validated_math(
+        &mut self,
+        value: &crate::rendered_content::ValidatedMath,
+        tex: &str,
+    ) {
+        self.output.push_str("<span class=\"math-rendered\">");
+        self.output.push_str(value.svg());
+        self.output.push_str("<span class=\"math-assistive\">");
+        self.output.push_str(value.mathml());
+        self.output
+            .push_str("</span><code class=\"math-source\" aria-hidden=\"true\">");
+        escape_into(self.output, tex);
+        self.output.push_str("</code></span>");
+    }
+    pub(super) fn validated_rich(&mut self, value: &crate::rendered_content::ValidatedRichText) {
+        self.output.push_str(value.html());
+    }
+
     pub(super) fn safe_style_body(&mut self, value: SafeStyleBody<'_>) {
         self.output.push_str(value.0);
     }
