@@ -520,6 +520,243 @@ fn body_cannot_link_to_note_only_targets_and_unsafe_svg_cannot_be_saved() {
 }
 
 #[test]
+fn leading_notes_do_not_create_public_slides_and_page_titles_use_display_text() {
+    let root = tempfile::tempdir().unwrap();
+    let body = "== First *bold*\n\nBody.\n";
+    write(root.path(), "talk.adoc", body);
+    success(&convert(
+        root.path(),
+        &[
+            "--no-config",
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--output",
+            "plain",
+        ],
+    ));
+    let plain = fs::read_to_string(root.path().join("plain/index.html")).unwrap();
+    write(
+        root.path(),
+        "talk.adoc",
+        &format!("[.notes]\n--\nPRIVATE\n--\n\n{body}"),
+    );
+    for audience in ["public", "presenter"] {
+        success(&convert(
+            root.path(),
+            &[
+                "--no-config",
+                "talk.adoc",
+                "--to",
+                "revealjs",
+                "--output",
+                audience,
+                "--audience",
+                audience,
+            ],
+        ));
+        let html = fs::read_to_string(root.path().join(audience).join("index.html")).unwrap();
+        assert!(html.contains("<title>First bold</title>"), "{html}");
+        assert!(!html.contains("id=\"_preamble\""), "{html}");
+        assert_eq!(html.contains("PRIVATE"), audience == "presenter");
+        if audience == "public" {
+            assert_eq!(html, plain);
+        }
+    }
+    write(
+        root.path(),
+        "talk.adoc",
+        "= Talk *bold* footnote:[title note]\n:topic: resolved\n\n== {topic} _group_\n\n=== Child\n\nBody.\n",
+    );
+    success(&convert(
+        root.path(),
+        &[
+            "--no-config",
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--output",
+            "display",
+        ],
+    ));
+    let html = fs::read_to_string(root.path().join("display/index.html")).unwrap();
+    assert!(
+        html.contains("<title>Talk bold title note</title>"),
+        "{html}"
+    );
+    assert!(
+        html.contains("role=\"group\" aria-label=\"resolved group\""),
+        "{html}"
+    );
+    write(root.path(), "talk.adoc", "[.notes]\n--\nPRIVATE\n--\n");
+    let output = convert(
+        root.path(),
+        &[
+            "--no-config",
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--output",
+            "empty",
+        ],
+    );
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("slides-empty-deck"));
+    assert!(!root.path().join("empty").exists());
+    write(root.path(), "talk.adoc", "Visible paragraph.\n");
+    success(&convert(
+        root.path(),
+        &[
+            "--no-config",
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--output",
+            "fallback",
+        ],
+    ));
+    assert!(
+        fs::read_to_string(root.path().join("fallback/index.html"))
+            .unwrap()
+            .contains("<title>Slides</title>")
+    );
+}
+
+#[test]
+fn hidden_heading_inline_anchors_have_a_specific_source_diagnostic() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "talk.adoc",
+        "= Talk\n\ninclude::part.adoc[]\n\n== Last\n\n<<foo>>\n",
+    );
+    write(
+        root.path(),
+        "part.adoc",
+        "[%notitle]\n== [[foo]]Hidden\n\nBody.\n",
+    );
+    let output = convert(
+        root.path(),
+        &[
+            "--no-config",
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--output",
+            "dist",
+        ],
+    );
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("part.adoc:2:4: error[slides-hidden-heading-anchor-unsupported]"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("[#id%notitle]"), "{stderr}");
+    assert!(!root.path().join("dist").exists());
+    success(&convert(root.path(), &["--no-config", "talk.adoc"]));
+    write(
+        root.path(),
+        "part.adoc",
+        "[#foo%notitle]\n== Hidden\n\nBody.\n",
+    );
+    success(&convert(
+        root.path(),
+        &[
+            "--no-config",
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--output",
+            "dist",
+        ],
+    ));
+    let html = fs::read_to_string(root.path().join("dist/index.html")).unwrap();
+    assert!(html.contains("href=\"#foo\""));
+    check_fragment_targets(&html);
+}
+
+#[test]
+fn private_manual_citations_are_diagnosed_without_preventing_explicit_csl_keys() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "talk.adoc",
+        "= Talk\n\n== Slide\n\ncite:[shared].\n\n[.notes]\n--\n[bibliography]\n* [[[shared]]] PRIVATE manual entry.\n--\n",
+    );
+    for audience in ["public", "presenter"] {
+        let output = convert(
+            root.path(),
+            &[
+                "--no-config",
+                "talk.adoc",
+                "--to",
+                "revealjs",
+                "--output",
+                "manual",
+                "--audience",
+                audience,
+            ],
+        );
+        assert!(!output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("talk.adoc:5:1: error[slides-note-only-reference]"),
+            "{stderr}"
+        );
+        assert!(
+            !stderr.contains("slides-citation-data-required"),
+            "{stderr}"
+        );
+        assert!(!root.path().join("manual").exists());
+    }
+    write(
+        root.path(),
+        "references.json",
+        r#"[{"id":"shared","type":"book","title":"Public external work"}]"#,
+    );
+    write(
+        root.path(),
+        "style.csl",
+        include_str!("../../../packages/slides-helper/fixtures/numeric.csl"),
+    );
+    write(
+        root.path(),
+        "locale.xml",
+        include_str!("../../../packages/slides-helper/fixtures/locale-en-US.xml"),
+    );
+    let helper = helper_bin();
+    for audience in ["public", "presenter"] {
+        success(&convert(
+            root.path(),
+            &[
+                "--no-config",
+                "talk.adoc",
+                "--to",
+                "revealjs",
+                "--output",
+                audience,
+                "--audience",
+                audience,
+                "--slides-helper",
+                &helper,
+                "--bibliography",
+                "references.json",
+                "--csl-style",
+                "style.csl",
+                "--csl-locale",
+                "locale.xml",
+            ],
+        ));
+        let html = fs::read_to_string(root.path().join(audience).join("index.html")).unwrap();
+        assert!(html.contains("Public external work"), "{html}");
+        assert_eq!(html.matches("<h2>References</h2>").count(), 1, "{html}");
+        assert_eq!(html.contains("PRIVATE"), audience == "presenter");
+        check_fragment_targets(&html);
+    }
+}
+
+#[test]
 fn included_stem_positional_language_overrides_the_document_setting() {
     let root = tempfile::tempdir().unwrap();
     write(
