@@ -22,6 +22,12 @@ mod terminal;
 mod theme;
 
 static PREVIEW_SHUTDOWN: AtomicBool = AtomicBool::new(false);
+struct ShutdownCheck;
+impl adocweave_core::CancellationCheck for ShutdownCheck {
+    fn is_cancelled(&self) -> bool {
+        PREVIEW_SHUTDOWN.load(std::sync::atomic::Ordering::Acquire)
+    }
+}
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[cfg(unix)]
@@ -130,6 +136,58 @@ async fn run() -> Result<CliExitCode, CliError> {
             }
             Ok(CliExitCode::Success)
         }
+        Action::Serve {
+            directory,
+            bind,
+            port,
+        } => {
+            PREVIEW_SHUTDOWN.store(false, std::sync::atomic::Ordering::Release);
+            install_preview_signal_handlers();
+            let directory = if directory.is_absolute() {
+                directory
+            } else {
+                env::current_dir().map_err(CliError::Write)?.join(directory)
+            };
+            let cancellation = ShutdownCheck;
+            let reader = adocweave_project::open_managed_bundle(
+                &directory,
+                adocweave_project::ProjectLimits::default(),
+                &cancellation,
+            )
+            .map_err(CliError::Bundle)?;
+            let bundle = adocweave_project::BundleSnapshot::from_reader(&reader, &cancellation)
+                .map_err(CliError::Bundle)?;
+            if bundle.file("index.html").is_none_or(|file| {
+                file.media_type != adocweave_project::BundleMediaType::Html
+                    || std::str::from_utf8(&file.bytes).is_err()
+            }) {
+                return Err(CliError::Slides(
+                    "managed slide bundle must contain a UTF-8 index.html page".to_owned(),
+                ));
+            }
+            let audience = if bundle.file("assets/notes.js").is_some() {
+                slides::Audience::Presenter
+            } else {
+                slides::Audience::Public
+            };
+            if !bind.is_loopback() {
+                eprintln!(
+                    "warning: slide server is exposed on non-loopback address {bind}; rendered content may be visible to other hosts"
+                );
+            }
+            preview::serve(
+                preview::Options {
+                    bind,
+                    port,
+                    debounce: std::time::Duration::ZERO,
+                },
+                bundle,
+                audience,
+                &PREVIEW_SHUTDOWN,
+            )
+            .map_err(CliError::Preview)?;
+            Ok(CliExitCode::Success)
+        }
         Action::Run(arguments) => {
             if !matches!(arguments.command, CommandOptions::Preview { .. }) {
                 return project_command::run(&arguments);
@@ -151,6 +209,10 @@ async fn run() -> Result<CliExitCode, CliError> {
             let project = project_command::request_with_authority(&arguments, &current, authority)?;
             if let CommandOptions::Preview {
                 css,
+                target,
+                audience,
+                slides_helper,
+                data,
                 bind,
                 port,
                 debounce_ms,
@@ -163,6 +225,13 @@ async fn run() -> Result<CliExitCode, CliError> {
                         project,
                         watch,
                         css,
+                        slides: (*target == arguments::ConvertTarget::Revealjs).then_some(
+                            commands::preview::SlideOptions {
+                                audience: *audience,
+                                helper: slides_helper.as_deref(),
+                                data,
+                            },
+                        ),
                         server: commands::preview::ServerOptions {
                             bind: *bind,
                             port: *port,
@@ -403,6 +472,44 @@ mod tests {
                 ..
             } if bind == "0.0.0.0".parse::<std::net::IpAddr>().expect("address")
         ));
+    }
+
+    #[test]
+    fn slide_preview_defaults_to_presenter_and_requires_no_output_directory() {
+        let Action::Run(parsed) =
+            parse_arguments(arguments(&["preview", "talk.adoc", "--to", "revealjs"])).unwrap()
+        else {
+            panic!("preview action");
+        };
+        assert!(matches!(
+            parsed.command,
+            CommandOptions::Preview {
+                target: super::arguments::ConvertTarget::Revealjs,
+                audience: super::slides::Audience::Presenter,
+                ..
+            }
+        ));
+        for options in [
+            vec!["preview", "talk.adoc", "--audience", "public"],
+            vec![
+                "preview",
+                "talk.adoc",
+                "--to",
+                "revealjs",
+                "--css-url",
+                "https://example.com/theme.css",
+            ],
+        ] {
+            assert!(parse_arguments(arguments(&options)).is_err());
+        }
+        assert!(parse_arguments(arguments(&["serve", "bundle", "--bind", "0.0.0.0"])).is_err());
+        assert!(matches!(
+            parse_arguments(arguments(&["serve", "bundle", "--port", "4001"])).unwrap(),
+            Action::Serve { port: 4001, .. }
+        ));
+        assert!(
+            parse_arguments(arguments(&["serve", "bundle", "--slides-helper", "helper"])).is_err()
+        );
     }
 
     #[test]

@@ -17,32 +17,45 @@ pub(super) struct DataInputs {
     pub(super) remaining: ProjectResourceLimits,
 }
 
+fn resource_error(resource: &ProjectBinaryResource, message: String) -> CliError {
+    CliError::SlidesResources {
+        message,
+        observations: vec![resource.observation()],
+    }
+}
+
 fn json<T: serde::de::DeserializeOwned>(
     resource: &ProjectBinaryResource,
     purpose: &str,
 ) -> Result<T, CliError> {
     serde_json::from_slice(&resource.bytes).map_err(|error| {
-        CliError::Slides(format!(
-            "{}:{}:{}: invalid {purpose} JSON: {error}",
-            resource.path.display(),
-            error.line(),
-            error.column()
-        ))
+        resource_error(
+            resource,
+            format!(
+                "{}:{}:{}: invalid {purpose} JSON: {error}",
+                resource.path.display(),
+                error.line(),
+                error.column()
+            ),
+        )
     })
 }
 
 fn xml(resource: &ProjectBinaryResource, element: &str) -> Result<String, CliError> {
     let text = std::str::from_utf8(&resource.bytes).map_err(|_| {
-        CliError::Slides(format!(
-            "{}: {element} XML must be UTF-8",
-            resource.path.display()
-        ))
+        resource_error(
+            resource,
+            format!("{}: {element} XML must be UTF-8", resource.path.display()),
+        )
     })?;
     if text.len() > 512 * 1024 || text.contains("<!DOCTYPE") || text.contains("<!ENTITY") {
-        return Err(CliError::Slides(format!(
-            "{}: {element} XML exceeds limits or contains an unsupported document type",
-            resource.path.display()
-        )));
+        return Err(resource_error(
+            resource,
+            format!(
+                "{}: {element} XML exceeds limits or contains an unsupported document type",
+                resource.path.display()
+            ),
+        ));
     }
     let document = roxmltree::Document::parse_with_options(
         text,
@@ -53,22 +66,28 @@ fn xml(resource: &ProjectBinaryResource, element: &str) -> Result<String, CliErr
         },
     )
     .map_err(|error| {
-        CliError::Slides(format!(
-            "{}:{}:{}: invalid {element} XML: {error}",
-            resource.path.display(),
-            error.pos().row,
-            error.pos().col
-        ))
+        resource_error(
+            resource,
+            format!(
+                "{}:{}:{}: invalid {element} XML: {error}",
+                resource.path.display(),
+                error.pos().row,
+                error.pos().col
+            ),
+        )
     })?;
     let root = document.root_element();
     if root.tag_name().name() != element
         || root.tag_name().namespace() != Some("http://purl.org/net/xbiblio/csl")
         || root.descendants().any(|node| node.ancestors().count() > 64)
     {
-        return Err(CliError::Slides(format!(
-            "{}: expected a bounded CSL {element} XML document",
-            resource.path.display()
-        )));
+        return Err(resource_error(
+            resource,
+            format!(
+                "{}: expected a bounded CSL {element} XML document",
+                resource.path.display()
+            ),
+        ));
     }
     Ok(text.to_owned())
 }
