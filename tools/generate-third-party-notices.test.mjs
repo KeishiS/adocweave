@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   cargoRuntimePackages,
+  generateNativeThirdPartyNotices,
   renderCargoThirdPartyNotices,
   renderVscodeThirdPartyNotices,
   selectedThirdPartyPackages,
@@ -30,6 +34,26 @@ test("Cargo noticeには選択した配布runtime依存だけを含めます", (
   const rendered = renderCargoThirdPartyNotices(packages, "textlint用ProcessorのNode.js向けWebAssembly");
   assert.match(rendered, /alpha 1\.0\.0/);
   assert.doesNotMatch(rendered, /beta 2\.0\.0/);
+});
+
+test("native noticeは埋め込むブラウザー資産の出典とlicense全文も含めます", () => {
+  const temporary = mkdtempSync(join(tmpdir(), "adocweave-native-notices-"));
+  try {
+    const output = join(temporary, "THIRD_PARTY_NOTICES.adoc");
+    generateNativeThirdPartyNotices("x86_64-unknown-linux-musl", output);
+    const notice = readFileSync(output, "utf8");
+    const directory = new URL("../crates/adocweave/assets/revealjs/", import.meta.url);
+    const metadata = JSON.parse(readFileSync(new URL("sources.json", directory), "utf8"));
+    for (const source of metadata.archives) {
+      assert.ok(notice.includes(`${source.name} ${source.version}`));
+      assert.ok(notice.includes(source.tarball));
+      const asset = metadata.assets.find(asset => asset.archive === source.name && asset.path.startsWith("LICENSE."));
+      assert.ok(notice.includes(readFileSync(new URL(asset.path, directory), "utf8").trimEnd()));
+    }
+    assert.doesNotMatch(notice, /@mathjax\/src|citeproc/);
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
 });
 
 test("選択した依存にSPDX license metadataがなければ拒否します", () => {

@@ -25,6 +25,9 @@ rustPlatform.buildRustPackage {
     runHook preInstall
     releaseDir="target/${pkgs.stdenv.hostPlatform.rust.rustcTarget}/release"
     install -Dm755 "$releaseDir/adocweave" "$out/bin/adocweave"
+    noticeDir="$out/share/doc/adocweave/browser-assets"
+    mkdir -p "$noticeDir"
+    install -m644 crates/adocweave/assets/revealjs/LICENSE.* crates/adocweave/assets/revealjs/NOTICE.txt "$noticeDir/"
     runHook postInstall
   '';
   meta = {
