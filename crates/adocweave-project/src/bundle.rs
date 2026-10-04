@@ -476,6 +476,10 @@ fn reject_directory_path(directory: &Path, protected: &[PathBuf]) -> Result<(), 
     let mut path = PathBuf::new();
     for component in directory.components() {
         path.push(component);
+        // A Windows prefix alone is not a directory; inspect its following root.
+        if matches!(component, Component::Prefix(_)) {
+            continue;
+        }
         match fs::symlink_metadata(&path) {
             Ok(metadata) if metadata.file_type().is_symlink() => {
                 return Err(BundleError::Invalid(
@@ -869,6 +873,29 @@ mod tests {
             .is_err()
         );
         assert!(save(Path::new("/"), &[file("index.html", b"body")]).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_prefixes_keep_roots_and_drive_relative_outputs_forbidden() {
+        for directory in [
+            r"C:\",
+            r"\\?\C:\",
+            r"\\server\share\",
+            r"\\?\UNC\server\share\",
+            r"C:talk",
+            r"\talk",
+        ] {
+            assert!(
+                matches!(
+                    reject_directory_path(Path::new(directory), &[]),
+                    Err(BundleError::Invalid(_))
+                ),
+                "{directory}"
+            );
+        }
+        let (_root, path) = root();
+        reject_directory_path(&path.join("talk"), &[]).unwrap();
     }
 
     #[test]
