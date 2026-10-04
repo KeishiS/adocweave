@@ -284,6 +284,7 @@ pub(crate) fn render_with_inputs_ast(
             region: None,
             slides: None,
             slide: 0,
+            footnote: None,
         };
         let body_plan = body::plan_body_traversal(document, policy);
         serialize_body_traversal(

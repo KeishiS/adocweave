@@ -93,6 +93,8 @@ pub(super) struct SlideCatalogs<'document> {
     body_container_headings: BTreeSet<TextRange>,
     footnote_links: BTreeMap<(usize, TextRange), FootnoteLink>,
     footnotes: Vec<Vec<FootnotePlacement<'document>>>,
+    math: BTreeMap<(Option<(usize, TextRange)>, TextRange), crate::rendered_content::ValidatedMath>,
+    citation_references: BTreeMap<String, Vec<String>>,
     pub(super) selected: BTreeSet<TextRange>,
     pub(super) generated_ids: BTreeSet<String>,
 }
@@ -161,6 +163,7 @@ impl<'document> SlideCatalogs<'document> {
         selections: &HtmlSlideSelections,
         scope: HtmlSlideScope,
         reserved_ids: &BTreeSet<String>,
+        limits: crate::OutputLimits,
     ) -> Result<Self, HtmlRegionError> {
         let groups = selections.groups(scope);
         let mut selected = BTreeSet::new();
@@ -202,6 +205,8 @@ impl<'document> SlideCatalogs<'document> {
             body_container_headings: BTreeSet::new(),
             footnote_links: BTreeMap::new(),
             footnotes: Vec::with_capacity(groups.len()),
+            math: BTreeMap::new(),
+            citation_references: BTreeMap::new(),
             selected,
             generated_ids: BTreeSet::new(),
         };
@@ -233,17 +238,6 @@ impl<'document> SlideCatalogs<'document> {
                 .iter()
                 .map(|target| target.id.clone()),
         );
-        for math in inputs.math() {
-            for id in math.value().ids() {
-                if !occupied.insert(id.clone()) {
-                    return Err(HtmlRegionError::GeneratedIdCollision {
-                        id: id.clone(),
-                        range: math.source_range,
-                    });
-                }
-                plan.generated_ids.insert(id.clone());
-            }
-        }
         let mut caption_numbers = [0u32; 4];
         let mut body_caption_numbers = [0u32; 4];
         for caption in document.presentation().captions() {
@@ -319,6 +313,35 @@ impl<'document> SlideCatalogs<'document> {
             placements.sort_unstable_by_key(|placement| placement.number);
             plan.footnotes.push(placements);
         }
+        let mut footnote_equations = BTreeMap::<TextRange, BTreeSet<TextRange>>::new();
+        let mut footnote_citations = Vec::new();
+        for (slide, placements) in plan.footnotes.iter().enumerate() {
+            for placement in placements {
+                let definition = placement.footnote.definition_range;
+                if let Some(inlines) = document.footnote_body(definition) {
+                    walker::walk_inlines(inlines, |node| {
+                        if let Some(range) = node_range(node) {
+                            plan.selected.insert(range);
+                        }
+                        match node {
+                            SemanticNode::Inline(Inline::Formula(formula)) => {
+                                footnote_equations
+                                    .entry(definition)
+                                    .or_default()
+                                    .insert(formula.range);
+                            }
+                            SemanticNode::Inline(Inline::Macro(node))
+                                if node.kind == StandardMacroKind::Citation =>
+                            {
+                                footnote_citations.push((slide, definition, node));
+                            }
+                            _ => {}
+                        }
+                    });
+                }
+            }
+        }
+        plan.prepare_math(inputs, &footnote_equations, &mut occupied, limits)?;
         if let Some(bibliography) = inputs.generated_bibliography() {
             if bibliography.namespace() != scope.namespace() {
                 return Err(HtmlRegionError::InvalidBibliographyScope { scope });
@@ -334,10 +357,22 @@ impl<'document> SlideCatalogs<'document> {
                 }
             }
         }
-        for node in document.inner().facts().macros() {
-            if node.kind != StandardMacroKind::Citation || !plan.selected.contains(&node.range) {
-                continue;
-            }
+        let main_citations = document
+            .inner()
+            .facts()
+            .macros()
+            .iter()
+            .filter(|node| {
+                node.kind == StandardMacroKind::Citation && plan.selected.contains(&node.range)
+            })
+            .map(|node| (None, node))
+            .collect::<Vec<_>>();
+        let citations = main_citations.into_iter().chain(
+            footnote_citations
+                .into_iter()
+                .map(|(slide, definition, node)| (Some((slide, definition)), node)),
+        );
+        for (placement, node) in citations {
             for key in node.attributes.iter().filter(|key| key.name.is_none()) {
                 let generated = inputs.generated_bibliography().is_some_and(|bibliography| {
                     bibliography
@@ -359,11 +394,17 @@ impl<'document> SlideCatalogs<'document> {
                 }
                 let defined = generated || authored.is_some();
                 if defined {
-                    plan.insert_id(
-                        &mut occupied,
-                        &reference_id(scope, key.value_range),
-                        key.value_range,
-                    )?;
+                    let id = placement.map_or_else(
+                        || reference_id(scope, key.value_range),
+                        |(slide, definition)| {
+                            plan.placement_reference_id(slide, Some(definition), key.value_range)
+                        },
+                    );
+                    plan.insert_id(&mut occupied, &id, key.value_range)?;
+                    plan.citation_references
+                        .entry(key.value.clone())
+                        .or_default()
+                        .push(id);
                 }
             }
         }
@@ -374,11 +415,107 @@ impl<'document> SlideCatalogs<'document> {
                     let id = reference_id(scope, reference.range);
                     if !plan.generated_ids.contains(&id) {
                         plan.insert_id(&mut occupied, &id, reference.range)?;
+                        plan.citation_references
+                            .entry(entry.id.clone())
+                            .or_default()
+                            .push(id);
                     }
                 }
             }
         }
         Ok(plan)
+    }
+
+    fn prepare_math(
+        &mut self,
+        inputs: &RenderInputs,
+        footnote_equations: &BTreeMap<TextRange, BTreeSet<TextRange>>,
+        occupied: &mut BTreeSet<String>,
+        limits: crate::OutputLimits,
+    ) -> Result<(), HtmlRegionError> {
+        // First placements are canonical targets for equation references in ordinary prose.
+        let mut canonical_ids = BTreeMap::new();
+        let mut seen_definitions = BTreeSet::new();
+        for placements in &self.footnotes {
+            for placement in placements {
+                if !seen_definitions.insert(placement.footnote.definition_range) {
+                    continue;
+                }
+                if let Some(ranges) = footnote_equations.get(&placement.footnote.definition_range) {
+                    for math in inputs
+                        .math()
+                        .iter()
+                        .filter(|math| ranges.contains(&math.source_range))
+                    {
+                        for id in math.value().ids() {
+                            canonical_ids
+                                .insert(id.clone(), format!("{}-{id}", placement.target_id));
+                        }
+                    }
+                }
+            }
+        }
+        let mut math_bytes = 0usize;
+        for math in inputs.math() {
+            if footnote_equations
+                .values()
+                .any(|ranges| ranges.contains(&math.source_range))
+            {
+                continue;
+            }
+            let value = math.value().remap_ids(&canonical_ids);
+            if self.selected.contains(&math.source_range) {
+                super::regions::check_output_limit(
+                    math_bytes,
+                    value.svg().len() + value.mathml().len(),
+                    limits,
+                )?;
+                math_bytes += value.svg().len() + value.mathml().len();
+            }
+            for id in value.ids() {
+                self.insert_id(occupied, id, math.source_range)?;
+            }
+            self.math.insert((None, math.source_range), value);
+        }
+        for slide in 0..self.footnotes.len() {
+            for index in 0..self.footnotes[slide].len() {
+                let placement = &self.footnotes[slide][index];
+                let definition = placement.footnote.definition_range;
+                let target = placement.target_id.clone();
+                let Some(ranges) = footnote_equations.get(&definition) else {
+                    continue;
+                };
+                let mut mapping = canonical_ids.clone();
+                for math in inputs
+                    .math()
+                    .iter()
+                    .filter(|math| ranges.contains(&math.source_range))
+                {
+                    for id in math.value().ids() {
+                        mapping.insert(id.clone(), format!("{target}-{id}"));
+                    }
+                }
+                for math in inputs
+                    .math()
+                    .iter()
+                    .filter(|math| ranges.contains(&math.source_range))
+                {
+                    let value = math.value().remap_ids(&mapping);
+                    super::regions::check_output_limit(
+                        math_bytes,
+                        value.svg().len() + value.mathml().len(),
+                        limits,
+                    )?;
+                    math_bytes += value.svg().len() + value.mathml().len();
+                    for id in value.ids() {
+                        self.insert_id(occupied, id, math.source_range)?;
+                    }
+                    self.math
+                        .insert((Some((slide, definition)), math.source_range), value);
+                }
+            }
+        }
+        Ok(())
     }
 
     fn insert_id(
@@ -421,6 +558,37 @@ impl<'document> SlideCatalogs<'document> {
         reference_id(self.scope, range)
     }
 
+    pub(super) fn placement_reference_id(
+        &self,
+        slide: usize,
+        footnote: Option<TextRange>,
+        range: TextRange,
+    ) -> String {
+        if let Some(definition) = footnote {
+            let placement = self.footnotes[slide]
+                .iter()
+                .find(|p| p.footnote.definition_range == definition)
+                .expect("selected footnote placement");
+            format!("{}-bib-ref-{}", placement.target_id, range.start().to_u32())
+        } else {
+            self.reference_id(range)
+        }
+    }
+
+    pub(super) fn bibliography_references(&self, key: &str) -> &[String] {
+        self.citation_references.get(key).map_or(&[], Vec::as_slice)
+    }
+
+    pub(super) fn math_value(
+        &self,
+        slide: usize,
+        footnote: Option<TextRange>,
+        range: TextRange,
+    ) -> Option<&crate::rendered_content::ValidatedMath> {
+        self.math
+            .get(&(footnote.map(|definition| (slide, definition)), range))
+    }
+
     pub(super) fn bibliography_id(&self) -> &'static str {
         self.scope.bibliography_id()
     }
@@ -450,16 +618,14 @@ impl<'document> SlideCatalogs<'document> {
                     passive("value", placement.number.to_string()),
                 ],
             );
-            if let Some(inlines) = document
-                .inner()
-                .facts()
-                .footnote_body(placement.footnote.definition_range)
-            {
+            context.footnote = Some(placement.footnote.definition_range);
+            if let Some(inlines) = document.footnote_body(placement.footnote.definition_range) {
                 let inlines = body::plan_inlines(inlines, context);
                 body::serialize_inlines(&mut output, &inlines);
             } else {
                 BlockWriter::inline_text(&mut output, &placement.footnote.text);
             }
+            context.footnote = None;
             for reference_id in &placement.reference_ids {
                 let href = safe::SafeFragmentUrl::new(reference_id)
                     .expect("generated footnote ID is safe")

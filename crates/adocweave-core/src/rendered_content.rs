@@ -1,6 +1,6 @@
 //! Finite, normalized host-rendered math and citation content.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::source::TextRange;
@@ -70,6 +70,85 @@ impl ValidatedMath {
     }
     pub(crate) fn mathml(&self) -> &str {
         &self.mathml
+    }
+
+    /// Only slide footnote placement planning may rename already validated IDs.
+    /// The XML tree is serialized again; source markup is never copied verbatim.
+    pub(crate) fn remap_ids(&self, mapping: &BTreeMap<String, String>) -> Self {
+        if !self
+            .ids
+            .iter()
+            .chain(&self.references)
+            .any(|id| mapping.contains_key(id))
+        {
+            return self.clone();
+        }
+        fn rewrite(source: &str, mapping: &BTreeMap<String, String>) -> String {
+            fn write_node(
+                node: roxmltree::Node<'_, '_>,
+                mapping: &BTreeMap<String, String>,
+                output: &mut String,
+                root: bool,
+            ) {
+                if node.is_text() {
+                    escape(output, node.text().unwrap_or_default());
+                    return;
+                }
+                output.push('<');
+                output.push_str(node.tag_name().name());
+                if root {
+                    output.push_str(" xmlns=\"");
+                    escape(
+                        output,
+                        node.tag_name().namespace().expect("validated namespace"),
+                    );
+                    output.push('"');
+                }
+                for attr in node.attributes() {
+                    output.push(' ');
+                    output.push_str(attr.name());
+                    output.push_str("=\"");
+                    match attr.name() {
+                        "id" => escape(
+                            output,
+                            mapping
+                                .get(attr.value())
+                                .map_or(attr.value(), String::as_str),
+                        ),
+                        "href" => {
+                            output.push('#');
+                            let target = &attr.value()[1..];
+                            escape(output, mapping.get(target).map_or(target, String::as_str));
+                        }
+                        _ => escape(output, attr.value()),
+                    }
+                    output.push('"');
+                }
+                output.push('>');
+                for child in node.children() {
+                    write_node(child, mapping, output, false);
+                }
+                output.push_str("</");
+                output.push_str(node.tag_name().name());
+                output.push('>');
+            }
+            let document = roxmltree::Document::parse(source).expect("private normalized XML");
+            let mut output = String::new();
+            write_node(document.root_element(), mapping, &mut output, true);
+            output
+        }
+        let remap = |values: &BTreeSet<String>| {
+            values
+                .iter()
+                .map(|id| mapping.get(id).unwrap_or(id).clone())
+                .collect()
+        };
+        Self {
+            svg: rewrite(&self.svg, mapping),
+            mathml: rewrite(&self.mathml, mapping),
+            ids: remap(&self.ids),
+            references: remap(&self.references),
+        }
     }
 }
 

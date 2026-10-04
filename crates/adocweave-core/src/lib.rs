@@ -108,7 +108,7 @@ pub mod semantic {
         TableFormat, TableFrame, TableGrid, TablePresentation, TableProblem, TableProblemKind,
         TableRow, TableSection, TableStripes, VerticalAlignment,
     };
-    pub use crate::walker::{SemanticNode, walk};
+    pub use crate::walker::{SemanticNode, walk, walk_inlines};
 }
 
 /// Deterministic document output and serialization backends.

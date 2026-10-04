@@ -300,7 +300,7 @@ fn plan_sequence(
                         "span",
                         math_attributes(formula.language, "inline"),
                         vec![InlineNode::Math {
-                            value: resolution.value.clone(),
+                            value: context.math_value(formula.range, &resolution.value),
                             tex: formula.value.clone(),
                         }],
                     ));

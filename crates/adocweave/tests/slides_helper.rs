@@ -150,10 +150,12 @@ fn public_preparation_drops_notes_and_note_only_library_items() {
     let body = Selection {
         equations: vec![equations[0].source_range],
         citations: vec![citations[0].range],
+        footnotes: Vec::new(),
     };
     let notes = Selection {
         equations: vec![equations[1].source_range],
         citations: vec![citations[1].range],
+        footnotes: Vec::new(),
     };
     let csl = protocol::Csl {
         items: vec![
@@ -189,6 +191,7 @@ fn unsupported_notation_is_diagnosed_at_the_source_and_explicit_latex_still_runs
     let selection = Selection {
         equations: equations.iter().rev().map(|e| e.source_range).collect(),
         citations: Vec::new(),
+        footnotes: Vec::new(),
     };
     let prepared = helper::prepare(
         &analysis,
@@ -496,6 +499,7 @@ fn helper_sources_remain_projectable_to_included_files() {
             .iter()
             .map(|c| c.range)
             .collect(),
+        footnotes: Vec::new(),
     };
     let csl = protocol::Csl {
         items: vec![serde_json::json!({"id":"paper"})],
@@ -589,4 +593,198 @@ fn notices_are_required_bounded_text_and_match_the_included_dependencies() {
         total["notices"]["math"][name] = "x".repeat(64 * 1024).into();
     }
     assert!(validate(total).is_err());
+}
+
+#[test]
+fn footnote_stem_uses_the_definition_attribute_position_and_explicit_notation_wins() {
+    use adocweave_core::semantic::{MathLanguage, StandardMacroKind};
+    for (attribute, language) in [
+        ("", MathLanguage::AsciiMath),
+        (":stem:\n", MathLanguage::AsciiMath),
+        (":stem: latex\n", MathLanguage::Latex),
+        (":stem: tex\n", MathLanguage::Latex),
+        (":stem: latexmath\n", MathLanguage::Latex),
+        (":stem: asciimath\n", MathLanguage::AsciiMath),
+        (":stem: unknown\n", MathLanguage::AsciiMath),
+    ] {
+        let analysis = Engine::new(AnalysisOptions::default()).analyze(&format!("= Deck\n{attribute}\nFirst footnote:shared[stem:[x] latexmath:[y]].\n\n:stem: asciimath\n\nAgain footnote:shared[].\n")).unwrap();
+        let selection = Selection {
+            footnotes: analysis
+                .macros()
+                .iter()
+                .filter(|node| node.kind == StandardMacroKind::Footnote)
+                .map(|node| node.range)
+                .collect(),
+            ..Default::default()
+        };
+        let selected =
+            helper::selected_content(&analysis, &selection, &Selection::default(), false).unwrap();
+        assert_eq!(selected.body.equations.len(), 2);
+        assert_eq!(selected.body.equations[0].language, language, "{attribute}");
+        assert_eq!(selected.body.equations[1].language, MathLanguage::Latex);
+        let prepared = helper::prepare(
+            &analysis,
+            &selection,
+            &Selection::default(),
+            false,
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            prepared.diagnostics.len(),
+            usize::from(language != MathLanguage::Latex)
+        );
+        if attribute.contains("unknown") {
+            assert!(prepared.diagnostics[0].message.contains("stem=unknown"));
+        }
+        assert_eq!(
+            prepared.request.scopes.body.equations.last().unwrap().tex,
+            "y"
+        );
+    }
+}
+
+#[test]
+fn footnote_helper_sources_keep_include_origins_and_shared_scopes_are_the_only_reuse() {
+    use adocweave_core::{
+        SourceId,
+        preprocess::{
+            EffectiveProcessingOptions, ExpandedRange, PreprocessInputs, PreprocessOptions,
+            ResourceDocument, ResourceSnapshot,
+        },
+        semantic::StandardMacroKind,
+    };
+    let mut snapshot = ResourceSnapshot::default();
+    snapshot.insert(
+        "part.adoc",
+        ResourceDocument {
+            source_id: SourceId::new("part"),
+            source: ":stem: tex\n\nDefinition footnote:shared[stem:[x] cite:[paper]].\n".into(),
+        },
+    );
+    let processed =
+        EffectiveProcessingOptions::new(AnalysisOptions::default(), PreprocessOptions::default())
+            .unwrap()
+            .preprocess_and_analyze(
+                "= Deck\n\ninclude::part.adoc[]\n\n:stem!:\n\nNotes footnote:shared[].\n",
+                &snapshot,
+                PreprocessInputs::default(),
+            )
+            .unwrap();
+    let occurrences = processed
+        .analysis
+        .macros()
+        .iter()
+        .filter(|node| node.kind == StandardMacroKind::Footnote)
+        .map(|node| node.range)
+        .collect::<Vec<_>>();
+    let body = Selection {
+        footnotes: vec![occurrences[0]],
+        ..Default::default()
+    };
+    let notes = Selection {
+        footnotes: vec![occurrences[1]],
+        ..Default::default()
+    };
+    let csl = protocol::Csl {
+        items: vec![serde_json::json!({"id":"paper"})],
+        style: "style".into(),
+        locale: "locale".into(),
+    };
+    let prepared =
+        helper::prepare(&processed.analysis, &body, &notes, true, None, Some(csl)).unwrap();
+    assert_eq!(prepared.request.scopes.body.equations.len(), 1);
+    assert_eq!(prepared.request.scopes.notes.equations.len(), 1);
+    assert_eq!(
+        prepared.sources[&(Scope::Body, "m0".into())],
+        prepared.sources[&(Scope::Notes, "m0".into())]
+    );
+    for source in prepared.sources.values() {
+        let origins = processed
+            .document
+            .origins_for_range(ExpandedRange::new(*source));
+        assert_eq!(origins[0].source_id, Some(SourceId::new("part")));
+    }
+    assert!(helper::selected_content(&processed.analysis, &body, &body, true).is_err());
+    let public = helper::prepare(&processed.analysis, &body, &notes, false, None, None).unwrap();
+    assert!(public.request.scopes.notes.equations.is_empty());
+    assert!(public.request.scopes.notes.citations.is_empty());
+}
+
+#[test]
+fn footnote_stem_unsetting_does_not_change_an_earlier_shared_definition() {
+    use adocweave_core::semantic::{MathLanguage, StandardMacroKind};
+    let analysis = Engine::new(AnalysisOptions::default()).analyze("= Deck\n:stem: tex\n\nFirst footnote:shared[stem:[x]].\n\n:stem!:\n\nSecond footnote:[stem:[y]].\n\n:stem: unknown\n\nThird footnote:[stem:[z]].\n\nAgain footnote:shared[].\n").unwrap();
+    let selection = Selection {
+        footnotes: analysis
+            .macros()
+            .iter()
+            .filter(|node| node.kind == StandardMacroKind::Footnote)
+            .map(|node| node.range)
+            .collect(),
+        ..Default::default()
+    };
+    let selected =
+        helper::selected_content(&analysis, &selection, &Selection::default(), false).unwrap();
+    assert_eq!(
+        selected
+            .body
+            .equations
+            .iter()
+            .map(|formula| formula.language)
+            .collect::<Vec<_>>(),
+        [
+            MathLanguage::Latex,
+            MathLanguage::AsciiMath,
+            MathLanguage::AsciiMath
+        ]
+    );
+    let prepared = helper::prepare(
+        &analysis,
+        &selection,
+        &Selection::default(),
+        false,
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(prepared.request.scopes.body.equations.len(), 1);
+    assert_eq!(prepared.diagnostics.len(), 2);
+    assert!(!prepared.diagnostics[0].message.contains("stem="));
+    assert!(prepared.diagnostics[1].message.contains("stem=unknown"));
+}
+
+#[test]
+fn absence_of_external_csl_never_sends_manual_citations_to_the_helper() {
+    let analysis = Engine::new(AnalysisOptions::default())
+        .analyze("cite:[manual].\n\n[bibliography]\n== References\n\n* [[[manual]]] Entry.\n")
+        .unwrap();
+    let selection = Selection {
+        citations: analysis
+            .citations()
+            .iter()
+            .map(|citation| citation.range)
+            .collect(),
+        ..Default::default()
+    };
+    let prepared = helper::prepare(
+        &analysis,
+        &selection,
+        &Selection::default(),
+        false,
+        None,
+        None,
+    )
+    .unwrap();
+    assert!(prepared.request.scopes.body.citations.is_empty());
+    let output = helper::execute_sync(
+        &prepared,
+        Some(std::path::Path::new("/missing/helper")),
+        &NeverCancel,
+        Default::default(),
+        &BTreeSet::new(),
+    )
+    .unwrap();
+    assert!(output.inputs.body.rich_citations().is_empty());
 }

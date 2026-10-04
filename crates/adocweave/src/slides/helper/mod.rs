@@ -3,6 +3,7 @@
 mod prepare;
 mod process;
 pub mod protocol;
+mod selected;
 mod validation;
 
 use adocweave_core::text::TextRange;
@@ -16,6 +17,7 @@ pub use prepare::{Prepared, Selection, prepare};
 pub use process::execute;
 pub use process::{ProcessLimits, execute_sync};
 pub use protocol::{Csl, Macro, Scope};
+pub use selected::selected_content;
 pub use validation::{ValidatedResults, validate_response};
 
 pub type HostResult<T> = Result<T, HostError>;

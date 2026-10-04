@@ -690,3 +690,131 @@ fn rich_citation_links_have_fixed_accessible_targets_without_nested_anchors() {
         assert!(!ordinary.html.contains("citation-link"));
     }
 }
+
+#[test]
+fn repeated_footnote_math_uses_local_copy_targets_and_prose_uses_the_first_placement() {
+    use crate::rendered_content::{ResolvedMath, ValidatedMath};
+    let analysis = Engine::new(AnalysisOptions::default()).analyze("First footnote:shared[latexmath:[x] latexmath:[y]].\n\nAgain footnote:shared[].\n\nExternal latexmath:[z].\n").unwrap();
+    let document = analysis.document();
+    let definition = document.catalogs().footnotes()[0].definition_range;
+    let mut ranges = Vec::new();
+    walker::walk_inlines(document.footnote_body(definition).unwrap(), |node| {
+        if let SemanticNode::Inline(Inline::Formula(formula)) = node {
+            ranges.push(formula.range);
+        }
+    });
+    ranges.push(crate::projection::formulas(&analysis)[0].source_range);
+    let math = ranges
+        .iter()
+        .enumerate()
+        .map(|(index, range)| {
+            let key = format!("m{index}");
+            let link = if index == 1 {
+                String::new()
+            } else {
+                "<a href=\"#body-m1-i0\"><text>reference</text></a>".into()
+            };
+            let svg = format!(
+                "<svg xmlns=\"http://www.w3.org/2000/svg\"><g id=\"body-{key}-i0\">{link}</g></svg>"
+            );
+            ResolvedMath::new(
+                *range,
+                ValidatedMath::validate(
+                    "body",
+                    &key,
+                    &svg,
+                    "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><mi>x</mi></math>",
+                )
+                .unwrap(),
+            )
+        })
+        .collect();
+    let inputs = RenderInputs::default().with_math(math);
+    let selections = HtmlSlideSelections {
+        body: vec![
+            vec![region(document, &[0])],
+            vec![region(document, &[1])],
+            vec![region(document, &[2])],
+        ],
+        notes: vec![],
+    };
+    let ordinary = html::render(document, &RenderPolicy::default());
+    let terminal = crate::terminal::render(document, &crate::terminal::TerminalPolicy::default());
+    let catalogs = document.catalogs().footnotes().to_vec();
+    let output = render(document, &inputs, &selections, HtmlSlideScope::Body);
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    assert!(output.footnotes[0].contains("href=\"#slides-body-s1-footnote-1-body-m1-i0\""));
+    assert!(output.footnotes[1].contains("href=\"#slides-body-s2-footnote-1-body-m1-i0\""));
+    assert!(output.regions[2].contains("href=\"#slides-body-s1-footnote-1-body-m1-i0\""));
+    assert_eq!(
+        output
+            .generated_ids
+            .iter()
+            .filter(|id| id.ends_with("-body-m1-i0"))
+            .count(),
+        2
+    );
+    assert!(!output.generated_ids.contains("body-m1-i0"));
+    assert_eq!(html::render(document, &RenderPolicy::default()), ordinary);
+    assert_eq!(
+        crate::terminal::render(document, &crate::terminal::TerminalPolicy::default()),
+        terminal
+    );
+    assert_eq!(document.catalogs().footnotes(), catalogs);
+    let collision = render_slide_regions(
+        document,
+        &RenderPolicy::default(),
+        &inputs,
+        &selections,
+        HtmlSlideScope::Body,
+        &BTreeSet::from(["slides-body-s2-footnote-1-body-m1-i0".into()]),
+        OutputLimits::default(),
+    );
+    assert!(
+        matches!(collision, Err(HtmlRegionError::GeneratedIdCollision {range, ..}) if range == ranges[1])
+    );
+    let bounded = render_slide_regions(
+        document,
+        &RenderPolicy::default(),
+        &inputs,
+        &selections,
+        HtmlSlideScope::Body,
+        &BTreeSet::new(),
+        OutputLimits {
+            max_output_bytes: 300,
+        },
+    );
+    assert!(matches!(bounded, Err(HtmlRegionError::OutputLimit { .. })));
+}
+
+#[test]
+fn manual_bibliography_keeps_local_xref_backrefs_and_all_footnote_citation_placements() {
+    let analysis = Engine::new(AnalysisOptions::default()).analyze("First footnote:shared[cite:[manual]].\n\nAgain footnote:shared[].\n\nSee xref:#manual[].\n\n[bibliography]\n== References\n\n* [[[manual]]] Entry.\n").unwrap();
+    let document = analysis.document();
+    let selections = HtmlSlideSelections {
+        body: vec![
+            vec![region(document, &[0])],
+            vec![region(document, &[1])],
+            vec![region(document, &[2, 3, 4])],
+        ],
+        notes: vec![],
+    };
+    let output = render(
+        document,
+        &RenderInputs::default(),
+        &selections,
+        HtmlSlideScope::Body,
+    );
+    let bibliography = &output.regions[2];
+    assert_eq!(
+        bibliography
+            .matches("class=\"bibliography-backref\"")
+            .count(),
+        3,
+        "{bibliography}"
+    );
+    assert!(bibliography.contains("href=\"#slides-body-s1-footnote-1-bib-ref-"));
+    assert!(bibliography.contains("href=\"#slides-body-s2-footnote-1-bib-ref-"));
+    assert!(bibliography.contains("href=\"#slides-body-bib-ref-"));
+    assert!(output.diagnostics.is_empty());
+}
