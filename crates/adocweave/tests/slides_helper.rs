@@ -364,6 +364,68 @@ process.stdout.write(readFileSync(new URL('./response.json', import.meta.url)));
     assert_eq!(result.inputs.notes.math().len(), 2);
 }
 
+#[tokio::test]
+async fn early_helper_exit_retains_stderr_and_status_even_when_stdin_breaks() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("bin.mjs");
+    let mut prepared = fixture();
+    for equation in &mut prepared.request.scopes.body.equations {
+        equation.tex = "x".repeat(16 * 1024);
+    }
+    for exit in [0, 1, 9] {
+        std::fs::write(&path, format!(
+            "import {{ closeSync }} from 'node:fs';\ncloseSync(0);\nprocess.stderr.write('helper exploded\\n\\u001b[31munsafe terminal sequence\\n');\nsetTimeout(() => process.exit({exit}), 20);\n"
+        )).unwrap();
+        let error = helper::execute(
+            &prepared,
+            Some(&path),
+            &NeverCancel,
+            helper::ProcessLimits::default(),
+            &BTreeSet::new(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            error.code,
+            if exit == 0 {
+                "slides-helper-protocol"
+            } else {
+                "slides-helper-exit"
+            }
+        );
+        assert!(error.message.contains(&format!("status {exit}")));
+        assert!(error.message.contains("helper exploded"));
+        assert!(error.message.contains("helper stderr (last lines)"));
+        assert!(error.message.contains("\\u{1b}[31m"));
+        assert!(!error.message.contains('\u{1b}'));
+    }
+}
+
+#[tokio::test]
+async fn stderr_limit_is_distinguished_from_stdout_limit() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("bin.mjs");
+    std::fs::write(
+        &path,
+        "process.stderr.write('x'.repeat(100)); setInterval(() => {}, 1000);",
+    )
+    .unwrap();
+    let error = helper::execute(
+        &fixture(),
+        Some(&path),
+        &NeverCancel,
+        helper::ProcessLimits {
+            stderr_bytes: 16,
+            ..Default::default()
+        },
+        &BTreeSet::new(),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, "slides-helper-stderr-limit");
+    assert!(error.message.contains("stderr exceeded its 16-byte limit"));
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn stdout_logs_extra_json_and_stream_limits_are_rejected() {
