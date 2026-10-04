@@ -220,9 +220,13 @@ pub async fn execute(
     let result = {
         let operation = async {
             let (_, stdout, stderr, status) = tokio::try_join!(
-                async {
+                async move {
                     stdin.write_all(&input.bytes).await?;
-                    stdin.shutdown().await
+                    stdin.shutdown().await?;
+                    // ChildStdin::shutdown does not close the pipe handle.
+                    // The helper reads one JSON document until stdin EOF.
+                    drop(stdin);
+                    Ok::<(), io::Error>(())
                 },
                 read_bounded(stdout, limits.output_bytes.min(protocol::OUTPUT_BYTES)),
                 read_bounded(stderr, limits.stderr_bytes.min(64 * 1024)),
