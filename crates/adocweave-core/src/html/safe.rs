@@ -104,6 +104,7 @@ pub(super) const ALLOWED_CLASSES: &[&str] = &[
     "listing-block",
     "literal-block",
     "math-latex",
+    "math-asciimath",
     "math-typst",
     "menu",
     "open",
@@ -161,6 +162,10 @@ impl<'a> PassiveAttributeName<'a> {
             && value != CLASS_ATTRIBUTE)
             .then_some(Self(value))
     }
+
+    pub(super) const fn fragment_index() -> Self {
+        Self("data-fragment-index")
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -190,6 +195,10 @@ impl<'a> ClassName<'a> {
     pub(super) fn new(value: &'a str) -> Option<Self> {
         (value != "language-*" && value != "role-*" && ALLOWED_CLASSES.contains(&value))
             .then_some(Self(value))
+    }
+
+    pub(super) const fn fragment() -> Self {
+        Self("fragment")
     }
 }
 

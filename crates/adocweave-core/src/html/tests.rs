@@ -67,6 +67,42 @@ fn html_renderer_renders_paragraphs_and_folds_source_lines() {
     );
 }
 
+#[test]
+fn combined_and_separate_math_ids_are_shared_with_local_references() {
+    for metadata in [
+        "[latexmath#energy]",
+        "[#energy]\n[latexmath]",
+        "[latexmath]\n[#energy]",
+    ] {
+        let source = format!("{metadata}\n++++\nE = mc^2\n++++\n\nSee xref:#energy[].\n");
+        let parsed = parse(&source).expect("math ID");
+        let output = render(&parsed.ast, &RenderPolicy::default());
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert!(
+            output
+                .html
+                .contains("<pre id=\"energy\" class=\"math-latex\""),
+            "{}",
+            output.html
+        );
+        assert!(output.html.contains("href=\"#energy\""), "{}", output.html);
+    }
+}
+
+#[test]
+fn asciimath_is_escaped_raw_math_under_the_default_html_policy() {
+    let parsed =
+        parse("asciimath:[x < y] latexmath:[x < y]\n\n[asciimath#energy]\n++++\nx < y\n++++\n")
+            .expect("math");
+    let output = render(&parsed.ast, &RenderPolicy::default());
+    assert!(output.diagnostics.is_empty());
+    assert!(output.html.contains(
+        "class=\"math-asciimath\" data-math-language=\"asciimath\" data-math-display=\"inline\""
+    ));
+    assert!(output.html.contains("<pre id=\"energy\" class=\"math-asciimath\" data-math-language=\"asciimath\" data-math-display=\"block\"><code>x &lt; y\n</code></pre>"), "{}", output.html);
+    assert!(!output.html.contains("<script"));
+}
+
 /// The specification turns a line break inside a paragraph into a space.
 /// Between two characters of a script written without word spaces, that
 /// space is one the sentence never asked for, so it is not written.
@@ -1292,6 +1328,7 @@ fn html_contract_has_explicit_allowlists() {
             "listing-block",
             "literal-block",
             "math-latex",
+            "math-asciimath",
             "math-typst",
             "menu",
             "open",

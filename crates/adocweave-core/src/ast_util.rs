@@ -65,9 +65,28 @@ impl AstDocument {
         self.resolved.structure()
     }
 
-    #[cfg(test)]
     pub(crate) const fn index(&self) -> &crate::presentation::DocumentIndex {
         self.resolved.index()
+    }
+
+    pub(crate) fn block(&self, id: crate::presentation::BlockId) -> Option<&AstBlock> {
+        if let Some(block) = self.top_level_block(id) {
+            return Some(block);
+        }
+        let mut ordinal = 0;
+        let found = crate::walker::try_walk_block_slice(self.blocks(), |node| {
+            if let crate::walker::SemanticNode::Block(block) = node {
+                if ordinal == id.get() {
+                    return std::ops::ControlFlow::Break(block);
+                }
+                ordinal += 1;
+            }
+            std::ops::ControlFlow::Continue(())
+        });
+        match found {
+            std::ops::ControlFlow::Break(block) => Some(block),
+            std::ops::ControlFlow::Continue(()) => None,
+        }
     }
 
     pub const fn presentation(&self) -> &crate::presentation::DocumentPresentation {
