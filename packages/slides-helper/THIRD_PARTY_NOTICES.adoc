@@ -2,7 +2,8 @@
 
 This package processes equations and citations in a Node.js process.
 It does not bundle dependency implementations into generated browser pages.
-The runtime dependencies are installed by npm, with versions and archive integrity recorded in package-lock.json.
+The npm archive includes the runtime dependencies installed from package-lock.json,
+which records their versions and archive integrity.
 License texts and copyright notices are included in the licenses directory.
 
 == citeproc
