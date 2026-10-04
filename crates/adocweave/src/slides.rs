@@ -102,6 +102,13 @@ fn unsupported_fragment_name(name: &str) -> bool {
     )
 }
 
+fn unsupported_slide_option(name: &str) -> bool {
+    matches!(
+        name,
+        "auto-animate" | "auto-animate-restart" | "auto-animate-unmatched"
+    )
+}
+
 fn problem(diagnostics: &mut Vec<Diagnostic>, code: &str, message: &str, range: TextRange) {
     diagnostics.push(Diagnostic {
         id: DiagnosticId::new(format!(
@@ -234,7 +241,7 @@ impl<'document> Deck<'document> {
                         .get(&heading.text_range)
                         .expect("semantic headings have IDs")
                         .clone(),
-                    title: heading.text.clone(),
+                    title: adocweave_core::output::projection::heading_text(heading),
                     heading: Some(id),
                     body: Vec::new(),
                     notes: Vec::new(),
@@ -303,13 +310,110 @@ impl<'document> Deck<'document> {
                 current.body.push(id);
             }
         }
+        // A leading notes block belongs to the first real slide. It must not
+        // introduce a public slide or change body placement identities.
+        if deck.groups.len() > 1 {
+            let first = &deck.groups[0].slides[0];
+            if first.heading.is_none() && first.body.is_empty() {
+                let mut preamble = deck.groups.remove(0);
+                let notes = &mut deck.groups[0].slides[0].notes;
+                let mut leading = std::mem::take(&mut preamble.slides[0].notes);
+                leading.append(notes);
+                *notes = leading;
+            }
+        }
+        if deck.groups.is_empty()
+            || deck
+                .groups
+                .iter()
+                .flat_map(|group| &group.slides)
+                .all(|slide| slide.heading.is_none() && slide.body.is_empty())
+        {
+            problem(
+                &mut deck.diagnostics,
+                "slides-empty-deck",
+                "a slide deck requires visible body content or a heading",
+                document.blocks().first().map_or_else(
+                    || TextRange::new(Default::default(), Default::default()).expect("zero range"),
+                    Block::range,
+                ),
+            );
+        }
         let content = content_by_root(document);
         deck.classify_nested_content(&content);
         deck.validate_layout(&content);
         semantic::walk(document, |node| {
+            if let SemanticNode::Block(Block::Heading(heading)) = node {
+                for attribute in &heading.metadata.attributes {
+                    if let Some(name) = attribute.name.as_deref() {
+                        if matches!(name, "transition" | "transition-speed" | "state")
+                            || name.starts_with("background-")
+                            || (name.starts_with("data-") && name != "data-fragment-index")
+                        {
+                            problem(
+                                &mut deck.diagnostics,
+                                "slides-unsupported-option",
+                                &format!("reveal.js slide attribute `{name}` is not supported"),
+                                attribute.range,
+                            );
+                        }
+                        if name == "options" {
+                            for option in attribute
+                                .value
+                                .split(',')
+                                .map(str::trim)
+                                .filter(|name| unsupported_slide_option(name))
+                            {
+                                problem(
+                                    &mut deck.diagnostics,
+                                    "slides-unsupported-option",
+                                    &format!("reveal.js slide option `{option}` is not supported"),
+                                    attribute.range,
+                                );
+                            }
+                        }
+                    }
+                }
+                for option in heading
+                    .metadata
+                    .options
+                    .iter()
+                    .filter(|option| unsupported_slide_option(&option.value))
+                {
+                    problem(
+                        &mut deck.diagnostics,
+                        "slides-unsupported-option",
+                        &format!("reveal.js slide option `{}` is not supported", option.value),
+                        option.range,
+                    );
+                }
+            }
             let SemanticNode::Metadata(metadata) = node else {
                 return;
             };
+            for (name, range) in metadata.role_names().filter(|(name, _)| {
+                matches!(*name, "stretch" | "r-fit-text" | "r-stretch" | "r-stack")
+            }) {
+                problem(
+                    &mut deck.diagnostics,
+                    "slides-unsupported-option",
+                    &format!("reveal.js display role `{name}` is not supported"),
+                    range,
+                );
+            }
+            for (name, range) in metadata
+                .role_names()
+                .filter(|(name, _)| matches!(*name, "speaker" | "aside"))
+            {
+                problem(
+                    &mut deck.diagnostics,
+                    "slides-invalid-notes",
+                    &format!(
+                        "speaker note role `{name}` is not supported; use the notes role on a plain open block"
+                    ),
+                    range,
+                );
+            }
             for (name, range) in metadata
                 .role_names()
                 .filter(|(name, _)| unsupported_fragment_name(name))
@@ -536,6 +640,24 @@ impl<'document> Deck<'document> {
                             "use the notitle option to hide a slide heading",
                             heading.range,
                         );
+                    }
+                    if slide.hide_title {
+                        semantic::walk_inlines(&heading.inlines, |node| {
+                            if let SemanticNode::Inline(semantic::Inline::Macro(node)) = node
+                                && matches!(
+                                    node.kind,
+                                    semantic::StandardMacroKind::Anchor
+                                        | semantic::StandardMacroKind::BibliographyAnchor
+                                )
+                            {
+                                problem(
+                                    &mut self.diagnostics,
+                                    "slides-hidden-heading-anchor-unsupported",
+                                    "inline anchors in hidden slide headings are not supported; use [#id%notitle] on the heading",
+                                    node.range,
+                                );
+                            }
+                        });
                     }
                     if has_option(&heading.metadata, "step") {
                         problem(
@@ -822,7 +944,7 @@ impl<'document> Deck<'document> {
             }
         }
         if let Some(bibliography) = &body.bibliography {
-            output.push_str("<section id=\"slides-body-references\">\n<h2>References</h2>\n");
+            output.push_str("<section id=\"slides-body-references\">\n");
             output.push_str(bibliography);
             output.push_str("</section>\n");
         }

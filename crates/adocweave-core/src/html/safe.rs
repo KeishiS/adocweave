@@ -417,8 +417,7 @@ impl<'a> HtmlWriter<'a> {
         escape_into(self.output, tex);
         self.output.push_str("\">");
         self.output.push_str(value.svg());
-        self.output
-            .push_str("<code class=\"math-source\" aria-hidden=\"true\">");
+        self.output.push_str("<code class=\"math-source\" hidden>");
         escape_into(self.output, tex);
         self.output.push_str("</code></span>");
     }

@@ -1493,6 +1493,54 @@ fn stem_defaults_and_explicit_notations_are_resolved_for_inline_and_block_math()
 }
 
 #[test]
+fn stem_block_positional_language_overrides_document_attributes() {
+    for (notation, expected) in [
+        ("latexmath", MathLanguage::Latex),
+        ("latex", MathLanguage::Latex),
+        ("tex", MathLanguage::Latex),
+        ("asciimath", MathLanguage::AsciiMath),
+        ("unknown", MathLanguage::AsciiMath),
+        ("\"\"", MathLanguage::AsciiMath),
+    ] {
+        for setting in ["", ":stem: latexmath\n", ":stem: asciimath\n"] {
+            for metadata in [
+                format!("[stem,{notation}]"),
+                format!("[#energy]\n[stem,{notation}]"),
+                format!("[stem#energy,{notation}]\n[.equation]"),
+            ] {
+                let source = format!("{setting}\n{metadata}\n++++\nx < y\n++++\n");
+                let parsed = parse(&source).expect("positional math language");
+                assert_eq!(parsed.syntax.reconstruct(), source);
+                let AstBlock::Math(math) = &parsed.ast.blocks()[0] else {
+                    panic!("math block: {source}");
+                };
+                assert_eq!(math.language, expected, "{source}");
+                assert_eq!(math.value, "x < y\n");
+            }
+        }
+    }
+}
+
+#[test]
+fn title_stem_uses_attributes_at_its_position_and_explicit_notation_wins() {
+    let source = "= Talk stem:[x] latexmath:[y]\n:stem: latexmath\n\n[stem]\n++++\nz\n++++\n";
+    let analysis = crate::Engine::new(crate::AnalysisOptions::default())
+        .analyze(source)
+        .expect("analysis");
+    assert_eq!(
+        crate::projection::formulas(&analysis)
+            .iter()
+            .map(|formula| formula.language)
+            .collect::<Vec<_>>(),
+        [
+            MathLanguage::AsciiMath,
+            MathLanguage::Latex,
+            MathLanguage::Latex
+        ]
+    );
+}
+
+#[test]
 fn stem_language_uses_source_order_redefinitions_and_unsets() {
     let source = ":stem: latex\n\nstem:[first]\n\n:stem: asciimath\n\n[stem]\n++++\nsecond\n++++\n\n:stem: tex\n\n* stem:[third]\n\n:stem!:\n\n[stem]\n++++\nfourth\n++++\n";
     let analysis = crate::Engine::new(crate::AnalysisOptions::default())

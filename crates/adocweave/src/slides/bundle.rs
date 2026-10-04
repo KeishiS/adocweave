@@ -202,8 +202,9 @@ fn page(
     let language = escape(language);
     let title = deck
         .groups
-        .first()
-        .and_then(|group| group.slides.first())
+        .iter()
+        .flat_map(|group| &group.slides)
+        .find(|slide| !slide.title.trim().is_empty())
         .map_or("Slides", |slide| slide.title.as_str());
     let audience_name = if audience == Audience::Presenter {
         "presenter"
@@ -442,6 +443,22 @@ pub(crate) fn build(
                     &mut diagnostics,
                     "slides-bibliography-key-conflict",
                     "an external citation key conflicts with a visible hand-written bibliography entry",
+                    citation.range,
+                );
+            } else if !external_csl
+                && citation.keys.iter().any(|key| {
+                    !manual(&key.value)
+                        && analysis.macros().iter().any(|node| {
+                            node.kind == semantic::StandardMacroKind::BibliographyAnchor
+                                && node.target == key.value
+                                && deck.contains_note_range(node.range)
+                        })
+                })
+            {
+                problem(
+                    &mut diagnostics,
+                    "slides-note-only-reference",
+                    "slide body cannot reference a bibliography entry defined only in presenter notes",
                     citation.range,
                 );
             } else if !external_csl && citation.keys.iter().any(|key| !manual(&key.value)) {

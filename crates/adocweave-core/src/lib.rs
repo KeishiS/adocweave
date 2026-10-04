@@ -157,7 +157,8 @@ pub mod output {
             FormulaProjection, OrderedListProjection, ProjectedText, ReferenceEdge,
             RenderingFeatures, SearchTextKind, SearchTextSegment, SearchableText,
             SourceBlockProjection, block_presentations, document_title, external_links, formulas,
-            ordered_lists, reference_edges, rendering_features, searchable_text, source_blocks,
+            heading_text, ordered_lists, reference_edges, rendering_features, searchable_text,
+            source_blocks,
         };
         pub use crate::text_role::{BlockTextRole, delimited_text_role};
     }

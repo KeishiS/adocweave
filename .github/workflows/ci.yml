@@ -43,6 +43,9 @@ jobs:
           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       - name: Complete source gate
         run: nix develop .#ci -c cargo make verify
+      - name: Verify research slides in the pinned browser
+        if: github.event_name == 'pull_request'
+        run: nix develop .#ci-browser -c node tools/slides-browser-smoke.mjs target/debug/adocweave chromium packages/slides-helper/bin.mjs
 
   portable-project:
     name: portable-project (${{ matrix.os }})
