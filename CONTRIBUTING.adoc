@@ -486,12 +486,33 @@ Node.jsおよび実ブラウザーでの動作を確認します。修正が必�
 監査した依存と配布通知を保ち、導入時の依存版の再選択を避けます。
 
 公開候補は次のコマンドで作成します。``target/distrib``へ保存したarchiveを別の場所へ導入し、
-依存の版、実行入口、空要求、数式・引用および通知を検査します。
+空のnpm cacheを使ったoffline導入、依存の版、実行入口、空要求、数式・引用および通知を検査します。
 
 [source,console]
 ----
 cargo make test-slides-helper-release-candidate
 ----
+
+初回は、``@adocweave``への公開権限と2FAを持つ管理者が``npm login``で認証し、検査済みのarchiveを
+``npm stage publish``へ渡します。以下の``X.Y.Z``を候補の版へ置き換えてください。
+https://docs.npmjs.com/staged-publishing/[npmのstaged publishing]は、新規パッケージに公開用のplaceholder版
+``0.0.0-stage``を作り、候補の内容は承認されるまで公開しません。
+
+[source,console]
+----
+npm stage publish target/distrib/adocweave-slides-helper-X.Y.Z.tgz --access public
+npm stage list @adocweave/slides-helper
+----
+
+パッケージが作成されたら、npmのSettingsでTrusted Publisherを登録します。
+ownerは``KeishiS``、repositoryは``adocweave``、workflow fileは``slides-helper-publish.yml``、
+environmentは``npm-publish``とし、直接の``npm publish``を許可します。
+https://docs.npmjs.com/cli/v11/commands/npm-trust/[登録には既存のパッケージが必要]です。
+設定の項目と直接公開の許可はhttps://docs.npmjs.com/trusted-publishers/[npmのTrusted Publishing手順]で確認してください。
+
+初回候補を手元から承認せず、``npm stage list``で取得したstage IDを``npm stage reject STAGE_ID``で取り消します。
+実際の版は、以下のtagとGitHub Actionsからprovenance付きで公開します。初回登録、設定および実公開の結果は
+Issueへ記録し、候補の導入検査だけでnpmへの公開済みとは扱いません。
 
 変更を``main``へ統合し、そのcommitの検査が成功した後、manifestと一致するtagを作成します。
 
@@ -505,6 +526,13 @@ git push upstream slides-helper/vX.Y.Z
 ``slides-helper-publish.yml``と``npm-publish`` environmentを登録します。公開後はnpmから導入し直し、
 署名、provenance、固定依存および実行を確認します。失敗時は同じrunの失敗jobだけを再実行し、
 既に公開された同じ版の内容は置き換えません。
+
+補助を必要とするnative版は、対応する補助パッケージを先に公開し、その公開版の導入検査が成功してから
+リリースします。公開候補の検査だけを通した状態で、npmから導入できる版として案内しません。
+
+補助の依存更新は``/packages/slides-helper``を対象とするDependabotのPull Requestで確認します。
+manifestとlockfile、推移依存の版、配布実物のlicenseと通知を確認し、``security-audit``と公開候補の
+検査を実行します。通常のxref:dependabot-updates[手動merge]と同じ手順を使います。
 
 [#cachix-publication]
 === Cachixへの公開

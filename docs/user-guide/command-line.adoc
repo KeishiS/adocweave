@@ -417,14 +417,19 @@ SVGは図形、文字、ローカルIDへの参照および限定したCSSを検
 foreignObject、外部参照およびCSSによる外部資産の取得には対応しません。
 
 LaTeX数式と外部の書誌データを使う引用には、別途Node.js 24.19.0以降と補助プログラムが必要です。
-これらを含まない原稿では、補助プログラムを起動しません。
+これらを含まない原稿では、補助プログラムを起動しません。npmから導入する場合は、以下の``X.Y.Z``を
+公開済みの版へ置き換えてください。
 
 [source,console]
 ----
-npm install --global --ignore-scripts @adocweave/slides-helper@0.1.0
+npm install --global --ignore-scripts @adocweave/slides-helper@X.Y.Z
 adocweave convert talk.adoc --to revealjs --output dist/talk \
   --bibliography references.json --csl-style style.csl --csl-locale locale.xml
 ----
+
+公開前の補助を使う場合は、リポジトリの``packages/slides-helper``へ``npm ci --ignore-scripts``で依存を導入し、
+その``bin.mjs``を``--slides-helper``へ指定してください。詳しい導入方法は
+xref:release-installation.adoc#slides-helper-installation[スライド用補助パッケージの導入]を参照してください。
 
 ``--bibliography``にはCSL JSONの配列、``--csl-style``と``--csl-locale``にはCSLのXMLファイルを指定します。
 CSLで整形する引用がある場合にだけ、3つのファイルを読み込みます。3つの指定をすべて省略すると、
