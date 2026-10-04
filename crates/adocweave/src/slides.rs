@@ -806,6 +806,9 @@ impl<'document> Deck<'document> {
                     .unwrap_or("");
                 if !note.is_empty() || !footnotes.is_empty() || !bibliography.is_empty() {
                     output.push_str("<aside class=\"notes\">\n");
+                    // The stock notes plugin copies this finite content into
+                    // its independent popup, which does not load our theme.
+                    output.push_str("<link rel=\"stylesheet\" href=\"assets/content.css\">\n");
                     output.push_str(note);
                     output.push_str(footnotes);
                     output.push_str(bibliography);
@@ -876,6 +879,9 @@ mod tests {
         assert!(!public.html.contains("PRIVATE_NOTE"));
         assert!(!public.html.contains("private.png"));
         assert!(presenter.html.contains("<aside class=\"notes\">"));
+        assert!(presenter.html.contains(
+            "<aside class=\"notes\">\n<link rel=\"stylesheet\" href=\"assets/content.css\">"
+        ));
         assert!(presenter.html.contains("PRIVATE_NOTE"));
         assert!(
             public

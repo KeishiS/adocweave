@@ -19,14 +19,6 @@ html, body { background: #fff; color: #202124; }
 .reveal .column { min-width: 0; }
 .reveal .controls { color: #1558b0; }
 .reveal .progress { color: #1558b0; }
-.reveal .math-assistive { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.reveal .math-source { display: none; }
-.reveal .math-rendered svg { max-width: 100%; vertical-align: middle; }
-.reveal .csl-smallcaps { font-variant: small-caps; }
-.reveal .csl-normal-emphasis { font-style: normal; }
-.reveal .csl-normal-strong { font-weight: normal; }
-.reveal .csl-normal-smallcaps { font-variant: normal; }
-.reveal .citation-link { margin-left: .15em; font-size: .7em; vertical-align: super; }
 body[data-citations] { display: grid; grid-template-rows: minmax(0, 1fr) auto; height: 100vh; }
 body[data-citations] > .reveal { min-height: 0; height: 100%; }
 .slides-attribution { box-sizing: border-box; max-height: 15vh; overflow: auto; padding: 6px 16px; border-top: 1px solid #dadce0; background: #f1f3f4; font: 12px/1.4 system-ui, sans-serif; }
