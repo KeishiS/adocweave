@@ -11,6 +11,7 @@ use crate::presentation::BlockId;
 use crate::render::{RenderInputProblemKind, RenderInputs};
 use crate::source::TextRange;
 
+use super::slide_catalogs::{HtmlSlideScope, HtmlSlideSelections, SlideCatalogs};
 use super::{
     InlineRenderContext, RenderPolicy, body, generated_bibliography, render_input_diagnostic,
 };
@@ -38,6 +39,20 @@ pub struct HtmlRegions {
     pub diagnostics: Vec<Diagnostic>,
 }
 
+/// Slide output fragments. The host appends each footnote fragment once after
+/// that slide's regions and places the bibliography once at the scope's end.
+/// `regions` retains the flattened selection order; `footnotes` has one entry
+/// per real source slide, including empty entries. IDs include validated math
+/// and the bibliography container ID the host must emit for `Body`.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct HtmlSlideRegions {
+    pub regions: Vec<String>,
+    pub footnotes: Vec<String>,
+    pub bibliography: Option<String>,
+    pub generated_ids: BTreeSet<String>,
+    pub diagnostics: Vec<Diagnostic>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum HtmlRegionError {
     InvalidSelection {
@@ -47,6 +62,19 @@ pub enum HtmlRegionError {
     OutputLimit {
         limit: u32,
         actual: usize,
+    },
+    GeneratedIdCollision {
+        id: String,
+        range: TextRange,
+    },
+    FootnoteOutsideScope {
+        range: TextRange,
+    },
+    ReferenceOutsideScope {
+        range: TextRange,
+    },
+    InvalidBibliographyScope {
+        scope: HtmlSlideScope,
     },
 }
 
@@ -66,6 +94,23 @@ impl fmt::Display for HtmlRegionError {
                     "HTML regions exceed the output limit of {limit} bytes ({actual} bytes)"
                 )
             }
+            Self::GeneratedIdCollision { id, .. } => write!(
+                formatter,
+                "generated slide ID `{id}` conflicts with another ID"
+            ),
+            Self::FootnoteOutsideScope { .. } => write!(
+                formatter,
+                "footnote definition is outside the permitted slide scope"
+            ),
+            Self::ReferenceOutsideScope { .. } => write!(
+                formatter,
+                "local reference target is outside the permitted slide scope"
+            ),
+            Self::InvalidBibliographyScope { scope } => write!(
+                formatter,
+                "generated bibliography does not use the {} slide namespace",
+                scope.name()
+            ),
         }
     }
 }
@@ -80,7 +125,7 @@ pub(super) struct RegionPresentation {
 }
 
 impl RegionPresentation {
-    fn prepare(
+    pub(super) fn prepare(
         document: &Document,
         selection: &HtmlRegionSelection,
     ) -> Result<Self, HtmlRegionError> {
@@ -167,6 +212,80 @@ pub fn render_regions(
     selections: &[HtmlRegionSelection],
     limits: OutputLimits,
 ) -> Result<HtmlRegions, HtmlRegionError> {
+    let output = render_selected(document, policy, inputs, selections, limits, None)?;
+    Ok(HtmlRegions {
+        regions: output.regions,
+        diagnostics: output.diagnostics,
+    })
+}
+
+/// Renders one fixed slide scope without changing the semantic document.
+///
+/// Caption and footnote numbers count only selected content in this scope.
+/// Repeated named footnotes receive a distinct placement and local backrefs on
+/// each slide. Only selected citations contribute bibliography backrefs.
+/// Reserved IDs should contain host containers and earlier scope results;
+/// authored IDs and this input set's math IDs are checked by this function.
+/// The byte limit includes regions, footnotes, and bibliography together.
+pub fn render_slide_regions(
+    document: &Document,
+    policy: &RenderPolicy,
+    inputs: &RenderInputs,
+    selections: &HtmlSlideSelections,
+    scope: HtmlSlideScope,
+    reserved_ids: &BTreeSet<String>,
+    limits: OutputLimits,
+) -> Result<HtmlSlideRegions, HtmlRegionError> {
+    let regions = selections
+        .groups(scope)
+        .iter()
+        .flatten()
+        .cloned()
+        .collect::<Vec<_>>();
+    render_selected(
+        document,
+        policy,
+        inputs,
+        &regions,
+        limits,
+        Some(SlideRequest {
+            selections,
+            scope,
+            reserved_ids,
+        }),
+    )
+}
+
+struct SlideRequest<'request> {
+    selections: &'request HtmlSlideSelections,
+    scope: HtmlSlideScope,
+    reserved_ids: &'request BTreeSet<String>,
+}
+
+pub(super) fn check_output_limit(
+    prior: usize,
+    added: usize,
+    limits: OutputLimits,
+) -> Result<(), HtmlRegionError> {
+    let actual = prior.saturating_add(added);
+    if actual > limits.max_output_bytes as usize {
+        Err(HtmlRegionError::OutputLimit {
+            limit: limits.max_output_bytes,
+            actual,
+        })
+    } else {
+        Ok(())
+    }
+}
+
+fn render_selected(
+    document: &Document,
+    policy: &RenderPolicy,
+    inputs: &RenderInputs,
+    selections: &[HtmlRegionSelection],
+    limits: OutputLimits,
+    slides: Option<SlideRequest<'_>>,
+) -> Result<HtmlSlideRegions, HtmlRegionError> {
     let presentations = selections
         .iter()
         .map(|selection| RegionPresentation::prepare(document, selection))
@@ -244,6 +363,30 @@ pub fn render_regions(
         }
     }
     let inner = document.inner();
+    let slide_catalogs = slides
+        .as_ref()
+        .map(|request| {
+            SlideCatalogs::prepare(
+                document,
+                inputs,
+                request.selections,
+                request.scope,
+                request.reserved_ids,
+            )
+        })
+        .transpose()?;
+    let region_slides = slides
+        .as_ref()
+        .map(|request| {
+            request
+                .selections
+                .groups(request.scope)
+                .iter()
+                .enumerate()
+                .flat_map(|(slide, group)| std::iter::repeat_n(slide, group.len()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     let body_plan = body::plan_body_traversal(inner, policy);
     let mut scopes = BTreeMap::new();
     for step in body_plan.steps {
@@ -252,11 +395,17 @@ pub fn render_regions(
         }
     }
     let mut diagnostics = Vec::new();
-    let bibliography =
-        generated_bibliography::prepare(inputs.generated_bibliography(), inner, &mut diagnostics);
+    let bibliography = generated_bibliography::prepare_selected(
+        inputs.generated_bibliography(),
+        inner,
+        &mut diagnostics,
+        slide_catalogs.as_ref(),
+    );
     let mut usage = inputs.track_usage();
     let mut regions = Vec::with_capacity(selections.len());
     let mut total = 0usize;
+    let mut footnotes = Vec::new();
+    let mut bibliography_html = None;
     {
         let mut context = InlineRenderContext {
             policy,
@@ -268,9 +417,13 @@ pub fn render_regions(
             presentation: inner.presentation(),
             generated_bibliography: bibliography.as_ref(),
             region: None,
+            slides: slide_catalogs.as_ref(),
+            slide: 0,
         };
-        for (selection, presentation) in selections.iter().zip(presentations) {
+        for (region, (selection, presentation)) in selections.iter().zip(presentations).enumerate()
+        {
             context.region = Some(presentation);
+            context.slide = region_slides.get(region).copied().unwrap_or_default();
             let mut html = String::new();
             for &id in &selection.blocks {
                 let block = document.block(id).expect("region roots were validated");
@@ -299,16 +452,35 @@ pub fn render_regions(
                 {
                     super::render_header_metadata(&mut html, inner.header());
                 }
-                let actual = total.saturating_add(html.len());
-                if actual > limits.max_output_bytes as usize {
-                    return Err(HtmlRegionError::OutputLimit {
-                        limit: limits.max_output_bytes,
-                        actual,
-                    });
-                }
+                check_output_limit(total, html.len(), limits)?;
             }
             total += html.len();
             regions.push(html);
+        }
+        if let (Some(catalogs), Some(request)) = (&slide_catalogs, &slides) {
+            context.region = None;
+            for slide in 0..request.selections.groups(request.scope).len() {
+                context.slide = slide;
+                let html =
+                    catalogs.render_footnotes(slide, document, &mut context, total, limits)?;
+                total += html.len();
+                footnotes.push(html);
+            }
+            if let Some(bibliography) = &bibliography {
+                let mut html = String::new();
+                let scope = request.scope;
+                let container_id =
+                    (scope == HtmlSlideScope::Notes).then_some(scope.bibliography_id());
+                generated_bibliography::render_bounded(
+                    &mut html,
+                    bibliography,
+                    policy,
+                    container_id,
+                    total,
+                    limits,
+                )?;
+                bibliography_html = Some(html);
+            }
         }
     }
     for problem in usage.finish() {
@@ -331,8 +503,13 @@ pub fn render_regions(
         ));
     }
     crate::diagnostic::sort_diagnostics(&mut diagnostics);
-    Ok(HtmlRegions {
+    Ok(HtmlSlideRegions {
         regions,
+        footnotes,
+        bibliography: bibliography_html,
+        generated_ids: slide_catalogs
+            .map(|catalogs| catalogs.generated_ids)
+            .unwrap_or_default(),
         diagnostics,
     })
 }

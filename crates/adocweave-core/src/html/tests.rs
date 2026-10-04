@@ -1293,6 +1293,7 @@ fn html_contract_has_explicit_allowlists() {
             "src",
             "target",
             "title",
+            "value",
             "width"
         ]
     );

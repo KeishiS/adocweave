@@ -1,0 +1,507 @@
+use super::*;
+use crate::generated_bibliography::{GeneratedBibliography, GeneratedBibliographyEntry};
+use crate::html::{self, HtmlSlideRegions, RenderPolicy, render_slide_regions};
+use crate::{AnalysisOptions, Engine, OutputLimits};
+
+fn region(document: &Document, roots: &[usize]) -> HtmlRegionSelection {
+    HtmlRegionSelection {
+        blocks: roots
+            .iter()
+            .map(|index| document.index().top_level_blocks()[*index])
+            .collect(),
+        ..Default::default()
+    }
+}
+
+fn render(
+    document: &Document,
+    inputs: &RenderInputs,
+    selections: &HtmlSlideSelections,
+    scope: HtmlSlideScope,
+) -> HtmlSlideRegions {
+    render_slide_regions(
+        document,
+        &RenderPolicy::default(),
+        inputs,
+        selections,
+        scope,
+        &BTreeSet::new(),
+        OutputLimits::default(),
+    )
+    .unwrap()
+}
+
+fn bibliography(scope: HtmlSlideScope, keys: &[&str]) -> RenderInputs {
+    RenderInputs::default().with_generated_bibliography(
+        GeneratedBibliography::new(
+            "References",
+            keys.iter()
+                .map(|key| {
+                    GeneratedBibliographyEntry::new(*key, format!("Work {key}"))
+                        .with_label(format!("[{key}]"))
+                })
+                .collect(),
+        )
+        .with_namespace(scope.namespace()),
+    )
+}
+
+#[test]
+fn selected_captions_and_automatic_xrefs_are_numbered_per_scope_without_mutation() {
+    let analysis = Engine::new(AnalysisOptions::default()).analyze(concat!(
+        "[#body-first]\n.First\nimage::first.png[]\n\n",
+        "[.notes]\n--\n[#notes-first]\n.Private figure\nimage::private.png[]\n\nSee xref:#notes-first[] and xref:#body-last[].\n--\n\n",
+        "[#body-last]\n.Last\nimage::last.png[]\n\n",
+        "See xref:#body-last[] and xref:#body-last[chosen label].\n"
+    )).unwrap();
+    let doc = analysis.document();
+    let before_targets = doc.reference_targets().to_vec();
+    let before_captions = doc.presentation().captions().to_vec();
+    let before_html = html::render(doc, &RenderPolicy::default());
+    let before_terminal = crate::terminal::render(doc, &crate::terminal::TerminalPolicy::default());
+    let before_projection = crate::projection::block_presentations(&analysis);
+    let selections = HtmlSlideSelections {
+        body: vec![vec![region(doc, &[0])], vec![region(doc, &[2, 3])]],
+        notes: vec![vec![region(doc, &[1])], vec![]],
+    };
+    let body = render(
+        doc,
+        &RenderInputs::default(),
+        &selections,
+        HtmlSlideScope::Body,
+    );
+    let notes = render(
+        doc,
+        &RenderInputs::default(),
+        &selections,
+        HtmlSlideScope::Notes,
+    );
+    let body_html = body.regions.concat();
+    assert!(body_html.contains("Figure 1. First"), "{body_html}");
+    assert!(body_html.contains("Figure 2. Last"), "{body_html}");
+    assert!(
+        body_html.contains("href=\"#body-last\">Figure 2</a>"),
+        "{body_html}"
+    );
+    assert!(body_html.contains("href=\"#body-last\">chosen label</a>"));
+    assert!(notes.regions.concat().contains("Figure 1. Private figure"));
+    assert!(
+        notes
+            .regions
+            .concat()
+            .contains("href=\"#notes-first\">Figure 1</a>")
+    );
+    assert!(
+        notes
+            .regions
+            .concat()
+            .contains("href=\"#body-last\">Figure 2</a>")
+    );
+    assert!(!body_html.contains("private.png"));
+    assert!(before_html.html.contains("Figure 3. Last"));
+    assert_eq!(doc.reference_targets(), before_targets);
+    assert_eq!(doc.presentation().captions(), before_captions);
+    assert_eq!(html::render(doc, &RenderPolicy::default()), before_html);
+    assert_eq!(
+        crate::terminal::render(doc, &crate::terminal::TerminalPolicy::default()),
+        before_terminal
+    );
+    assert_eq!(
+        crate::projection::block_presentations(&analysis),
+        before_projection
+    );
+}
+
+#[test]
+fn captions_keep_family_prefix_and_disabled_numbering_at_the_source_position() {
+    let analysis = Engine::new(AnalysisOptions::default())
+        .analyze(concat!(
+            ":figure-caption: Fig.\n:listing-caption: Code\n\n",
+            ".First\nimage::a.png[]\n\n",
+            ".Table\n|===\n|A\n|===\n\n",
+            ".Code\n[source,rust]\n----\nlet n = 1;\n----\n\n",
+            ":figure-caption!:\n\n.Unnumbered\nimage::b.png[]\n"
+        ))
+        .unwrap();
+    let doc = analysis.document();
+    let selections = HtmlSlideSelections {
+        body: vec![vec![region(doc, &[0, 1, 2, 3])]],
+        notes: vec![],
+    };
+    let output = render(
+        doc,
+        &RenderInputs::default(),
+        &selections,
+        HtmlSlideScope::Body,
+    )
+    .regions
+    .concat();
+    assert!(output.contains("Fig. 1. First"), "{output}");
+    assert!(output.contains("Table 1. Table"));
+    assert!(output.contains("Code 1. Code"));
+    assert!(output.contains("<figcaption>Unnumbered</figcaption>"));
+}
+
+#[test]
+fn footnotes_are_once_per_slide_across_columns_and_shared_content_is_copied_to_notes() {
+    let analysis = Engine::new(AnalysisOptions::default())
+        .analyze(concat!(
+            "First footnote:shared[Public *detail*].\n\n",
+            "Another footnote:[Other content].\n\n",
+            "Again footnote:shared[].\n\n",
+            "[.notes]\n--\nNotes footnote:shared[] and footnote:[Private detail].\n--\n"
+        ))
+        .unwrap();
+    let doc = analysis.document();
+    let selections = HtmlSlideSelections {
+        body: vec![
+            vec![region(doc, &[0]), region(doc, &[1])],
+            vec![region(doc, &[2])],
+        ],
+        notes: vec![vec![], vec![region(doc, &[3])]],
+    };
+    let body = render(
+        doc,
+        &RenderInputs::default(),
+        &selections,
+        HtmlSlideScope::Body,
+    );
+    let notes = render(
+        doc,
+        &RenderInputs::default(),
+        &selections,
+        HtmlSlideScope::Notes,
+    );
+    assert_eq!(body.regions.len(), 3);
+    assert_eq!(body.footnotes.len(), 2);
+    assert_eq!(
+        body.footnotes[0]
+            .matches("Public <strong>detail</strong>")
+            .count(),
+        1
+    );
+    assert_eq!(
+        body.footnotes[1]
+            .matches("Public <strong>detail</strong>")
+            .count(),
+        1
+    );
+    assert!(body.footnotes[0].contains("id=\"slides-body-s1-footnote-1\" value=\"1\""));
+    assert!(body.footnotes[0].contains("id=\"slides-body-s1-footnote-2\" value=\"2\""));
+    assert!(body.footnotes[1].contains("id=\"slides-body-s2-footnote-1\" value=\"1\""));
+    assert!(body.regions[2].contains("href=\"#slides-body-s2-footnote-1\">1</a>"));
+    assert!(!body.footnotes.concat().contains("Private detail"));
+    assert!(notes.footnotes[0].is_empty());
+    assert!(notes.footnotes[1].contains("id=\"slides-notes-s2-footnote-1\" value=\"1\""));
+    assert!(notes.footnotes[1].contains("Public <strong>detail</strong>"));
+    assert!(notes.footnotes[1].contains("id=\"slides-notes-s2-footnote-2\" value=\"2\""));
+    assert!(notes.footnotes[1].contains("Private detail"));
+    // Local backrefs never jump to another slide's placement of the same note.
+    assert!(!body.footnotes[0].contains("#slides-body-s2-"));
+    assert!(!body.footnotes[1].contains("#slides-body-s1-"));
+    let normal = html::render(doc, &RenderPolicy::default()).html;
+    assert_eq!(normal.matches("id=\"_footnote_1\"").count(), 1);
+    assert!(normal.contains("id=\"_footnote_3\""));
+}
+
+#[test]
+fn body_cannot_pull_a_definition_from_notes_in_either_audience() {
+    let analysis = Engine::new(AnalysisOptions::default())
+        .analyze(
+            "Public footnote:secret[].\n\n[.notes]\n--\nfootnote:secret[PRIVATE_CONTENT]\n--\n",
+        )
+        .unwrap();
+    let doc = analysis.document();
+    let reference = doc.catalogs().footnotes()[0]
+        .occurrences
+        .iter()
+        .find(|occurrence| occurrence.range != doc.catalogs().footnotes()[0].definition_range)
+        .unwrap()
+        .range;
+    for notes in [vec![], vec![vec![region(doc, &[1])]]] {
+        let selections = HtmlSlideSelections {
+            body: vec![vec![region(doc, &[0])]],
+            notes,
+        };
+        assert_eq!(
+            render_slide_regions(
+                doc,
+                &RenderPolicy::default(),
+                &RenderInputs::default(),
+                &selections,
+                HtmlSlideScope::Body,
+                &BTreeSet::new(),
+                OutputLimits::default()
+            )
+            .unwrap_err(),
+            HtmlRegionError::FootnoteOutsideScope { range: reference }
+        );
+    }
+}
+
+#[test]
+fn generated_bibliographies_keep_same_keys_and_only_selected_scope_backrefs() {
+    let analysis = Engine::new(AnalysisOptions::default()).analyze("First cite:[shared].\n\n[.notes]\n--\nPrivate cite:[shared] and cite:[private].\n--\n\nLast cite:[shared].\n").unwrap();
+    let doc = analysis.document();
+    let selections = HtmlSlideSelections {
+        body: vec![vec![region(doc, &[0])], vec![region(doc, &[2])]],
+        notes: vec![vec![region(doc, &[1])], vec![]],
+    };
+    let body = render(
+        doc,
+        &bibliography(HtmlSlideScope::Body, &["shared"]),
+        &selections,
+        HtmlSlideScope::Body,
+    );
+    let notes = render(
+        doc,
+        &bibliography(HtmlSlideScope::Notes, &["shared", "private"]),
+        &selections,
+        HtmlSlideScope::Notes,
+    );
+    assert!(body.diagnostics.is_empty(), "{:?}", body.diagnostics);
+    assert!(notes.diagnostics.is_empty(), "{:?}", notes.diagnostics);
+    let body_bib = body.bibliography.as_ref().unwrap();
+    let note_bib = notes.bibliography.as_ref().unwrap();
+    assert!(body_bib.contains("id=\"slides-body-bib-shared\""));
+    assert!(note_bib.contains("id=\"slides-notes-bib-shared\""));
+    assert_eq!(
+        body_bib.matches("class=\"bibliography-backref\"").count(),
+        2
+    );
+    assert_eq!(
+        note_bib.matches("class=\"bibliography-backref\"").count(),
+        2
+    );
+    assert!(body_bib.contains("#slides-body-bib-ref-"));
+    assert!(!body_bib.contains("slides-notes"));
+    assert!(note_bib.contains("#slides-notes-bib-ref-"));
+    assert!(!note_bib.contains("slides-body"));
+    assert!(
+        notes
+            .bibliography
+            .unwrap()
+            .contains("id=\"slides-notes-references\"")
+    );
+    assert!(body.generated_ids.contains("slides-body-references"));
+    assert!(
+        body.regions
+            .concat()
+            .contains("href=\"#slides-body-bib-shared\"")
+    );
+    assert!(!body.regions.concat().contains("private"));
+}
+
+#[test]
+fn collisions_cover_bibliography_containers_anchors_landings_and_footnote_placements() {
+    for (id, content, with_bib) in [
+        ("slides-body-references", "cite:[item]", true),
+        ("slides-body-bib-item", "cite:[item]", true),
+        ("slides-body-s1-footnote-1", "footnote:[Text]", false),
+    ] {
+        let analysis = Engine::new(AnalysisOptions::default())
+            .analyze(&format!("[#{}]\n{}\n", id, content))
+            .unwrap();
+        let doc = analysis.document();
+        let selections = HtmlSlideSelections {
+            body: vec![vec![region(doc, &[0])]],
+            notes: vec![],
+        };
+        let inputs = if with_bib {
+            bibliography(HtmlSlideScope::Body, &["item"])
+        } else {
+            RenderInputs::default()
+        };
+        assert!(
+            matches!(render_slide_regions(doc, &RenderPolicy::default(), &inputs, &selections, HtmlSlideScope::Body, &BTreeSet::new(), OutputLimits::default()), Err(HtmlRegionError::GeneratedIdCollision {id: collided,..}) if collided == id)
+        );
+    }
+    let analysis = Engine::new(AnalysisOptions::default())
+        .analyze("cite:[item]\n")
+        .unwrap();
+    let doc = analysis.document();
+    let selections = HtmlSlideSelections {
+        body: vec![vec![region(doc, &[0])]],
+        notes: vec![],
+    };
+    let output = render(
+        doc,
+        &bibliography(HtmlSlideScope::Body, &["item"]),
+        &selections,
+        HtmlSlideScope::Body,
+    );
+    let landing = output
+        .generated_ids
+        .iter()
+        .find(|id| id.contains("-bib-ref-"))
+        .unwrap();
+    assert!(
+        matches!(render_slide_regions(doc,&RenderPolicy::default(),&bibliography(HtmlSlideScope::Body,&["item"]),&selections,HtmlSlideScope::Body,&BTreeSet::from([landing.clone()]),OutputLimits::default()),Err(HtmlRegionError::GeneratedIdCollision {id,..}) if id == *landing)
+    );
+}
+
+#[test]
+fn output_limit_counts_footer_and_bibliography_with_regions() {
+    let analysis = Engine::new(AnalysisOptions::default())
+        .analyze("Text footnote:[Footer] cite:[item].\n")
+        .unwrap();
+    let doc = analysis.document();
+    let selections = HtmlSlideSelections {
+        body: vec![vec![region(doc, &[0])]],
+        notes: vec![],
+    };
+    let inputs = bibliography(HtmlSlideScope::Body, &["item"]);
+    let output = render(doc, &inputs, &selections, HtmlSlideScope::Body);
+    let bytes = output
+        .regions
+        .iter()
+        .chain(&output.footnotes)
+        .map(String::len)
+        .sum::<usize>()
+        + output.bibliography.as_ref().unwrap().len();
+    assert!(
+        render_slide_regions(
+            doc,
+            &RenderPolicy::default(),
+            &inputs,
+            &selections,
+            HtmlSlideScope::Body,
+            &BTreeSet::new(),
+            OutputLimits {
+                max_output_bytes: bytes as u32
+            }
+        )
+        .is_ok()
+    );
+    assert!(
+        matches!(render_slide_regions(doc,&RenderPolicy::default(),&inputs,&selections,HtmlSlideScope::Body,&BTreeSet::new(),OutputLimits{max_output_bytes:bytes as u32-1}),Err(HtmlRegionError::OutputLimit {actual,..}) if actual == bytes)
+    );
+}
+
+#[test]
+fn nested_omission_excludes_footnotes_and_caption_titles_are_selected_content() {
+    let analysis = Engine::new(AnalysisOptions::default()).analyze(concat!(
+        "====\nPublic footnote:[Visible].\n\n[.notes]\n--\nPrivate footnote:[SECRET].\n--\n====\n\n",
+        ".Caption footnote:[Caption detail]\nimage::a.png[]\n"
+    )).unwrap();
+    let doc = analysis.document();
+    let note = doc.catalogs().footnotes()[1].definition_range;
+    let mut note_block = None;
+    walker::walk(doc, |node| {
+        if let SemanticNode::Block(crate::block_model::AstBlock::Delimited(block)) = node
+            && block.kind == crate::block_model::DelimitedBlockKind::Open
+        {
+            note_block = doc.index().block_id_at(block.range);
+        }
+    });
+    let note_block = note_block.unwrap();
+    let mut selected = region(doc, &[0, 1]);
+    selected.omitted_blocks.insert(note_block);
+    let selections = HtmlSlideSelections {
+        body: vec![vec![selected]],
+        notes: vec![],
+    };
+    let result = render(
+        doc,
+        &RenderInputs::default(),
+        &selections,
+        HtmlSlideScope::Body,
+    );
+    assert!(result.footnotes[0].contains("Visible"));
+    assert!(result.footnotes[0].contains("Caption detail"));
+    assert!(!result.footnotes[0].contains("SECRET"));
+    assert!(result.regions[0].contains("Figure 1. Caption"));
+    assert!(
+        !result
+            .generated_ids
+            .iter()
+            .any(|id| id.ends_with(&format!("ref-{}", note.start().to_u32())))
+    );
+}
+
+#[test]
+fn body_to_notes_local_reference_fails_without_disclosing_its_automatic_label() {
+    let analysis = Engine::new(AnalysisOptions::default()).analyze("See xref:#secret[].\n\n[.notes]\n--\n[#secret]\n.PRIVATE_LABEL\nimage::secret.png[]\n--\n").unwrap();
+    let doc = analysis.document();
+    let selections = HtmlSlideSelections {
+        body: vec![vec![region(doc, &[0])]],
+        notes: vec![vec![region(doc, &[1])]],
+    };
+    assert!(matches!(
+        render_slide_regions(
+            doc,
+            &RenderPolicy::default(),
+            &RenderInputs::default(),
+            &selections,
+            HtmlSlideScope::Body,
+            &BTreeSet::new(),
+            OutputLimits::default()
+        ),
+        Err(HtmlRegionError::ReferenceOutsideScope { .. })
+    ));
+}
+
+#[test]
+fn a_private_target_in_footnote_prose_is_diagnosed_without_its_resolved_label() {
+    let analysis = Engine::new(AnalysisOptions::default()).analyze("Public footnote:[<<secret>>].\n\n[.notes]\n--\n[#secret]\n.PRIVATE_LABEL\nSecret text.\n--\n").unwrap();
+    let doc = analysis.document();
+    let selections = HtmlSlideSelections {
+        body: vec![vec![region(doc, &[0])]],
+        notes: vec![vec![region(doc, &[1])]],
+    };
+    let output = render(
+        doc,
+        &RenderInputs::default(),
+        &selections,
+        HtmlSlideScope::Body,
+    );
+    assert!(!output.footnotes.concat().contains("PRIVATE_LABEL"));
+    assert!(!output.footnotes.concat().contains("href=\"#secret\""));
+    let diagnostic = output
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code.as_str() == "slides-reference-outside-scope")
+        .unwrap();
+    assert_eq!(diagnostic.severity, crate::diagnostic::Severity::Error);
+    assert!(diagnostic.range.start() >= doc.catalogs().footnotes()[0].content_range.start());
+    assert!(diagnostic.range.end() <= doc.catalogs().footnotes()[0].content_range.end());
+}
+
+#[test]
+fn rich_citations_keep_selected_backref_landings_and_scope_ids() {
+    use crate::rendered_content::{ResolvedRichCitation, RichInline, ValidatedRichText};
+    let analysis = Engine::new(AnalysisOptions::default())
+        .analyze("cite:[item]\n")
+        .unwrap();
+    let doc = analysis.document();
+    let citation_range = analysis.citations()[0].range;
+    let inputs = bibliography(HtmlSlideScope::Body, &["item"]).with_rich_citations(vec![
+        ResolvedRichCitation::new(
+            citation_range,
+            ValidatedRichText::validate(vec![RichInline::Strong {
+                children: vec![RichInline::Text { text: "[1]".into() }],
+            }])
+            .unwrap(),
+        ),
+    ]);
+    let selections = HtmlSlideSelections {
+        body: vec![vec![region(doc, &[0])]],
+        notes: vec![],
+    };
+    let result = render(doc, &inputs, &selections, HtmlSlideScope::Body);
+    assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+    let landing = result
+        .generated_ids
+        .iter()
+        .find(|id| id.contains("-bib-ref-"))
+        .unwrap();
+    assert!(result.regions[0].contains(&format!(
+        "<span id=\"{landing}\"></span><strong>[1]</strong>"
+    )));
+    assert!(
+        result
+            .bibliography
+            .unwrap()
+            .contains(&format!("href=\"#{landing}\""))
+    );
+}
