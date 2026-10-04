@@ -335,26 +335,75 @@ pub(crate) fn build(
             note_selection.equations.push(formula.source_range);
         }
     }
-    let citations = analysis.citations();
-    for citation in citations.iter().filter(|citation| visible(citation.range)) {
+    for node in analysis
+        .macros()
+        .iter()
+        .filter(|node| node.kind == semantic::StandardMacroKind::Footnote && visible(node.range))
+    {
+        if deck.contains_body_range(node.range) {
+            body_selection.footnotes.push(node.range);
+        } else {
+            note_selection.footnotes.push(node.range);
+        }
+    }
+    for citation in analysis
+        .citations()
+        .iter()
+        .filter(|citation| visible(citation.range))
+    {
         if deck.contains_body_range(citation.range) {
             body_selection.citations.push(citation.range);
         } else {
             note_selection.citations.push(citation.range);
         }
-        if citation.keys.iter().any(|key| {
-            analysis.macros().iter().any(|node| {
-                node.kind == semantic::StandardMacroKind::BibliographyAnchor
-                    && node.target == key.value
-                    && visible(node.range)
-            })
-        }) {
-            problem(
-                &mut diagnostics,
-                "slides-bibliography-key-conflict",
-                "an external citation key conflicts with a visible hand-written bibliography entry",
-                citation.range,
-            );
+    }
+    let selected = match super::helper::selected_content(
+        analysis,
+        &body_selection,
+        &note_selection,
+        audience == Audience::Presenter,
+    ) {
+        Ok(selected) => selected,
+        Err(error) => {
+            host_error(error, &mut diagnostics)?;
+            return Ok(GeneratedBundle {
+                files: Vec::new(),
+                diagnostics,
+                observations,
+            });
+        }
+    };
+    let external_csl =
+        data.bibliography.is_some() || data.csl_style.is_some() || data.csl_locale.is_some();
+    for (scope, content) in [
+        (super::helper::Scope::Body, &selected.body),
+        (super::helper::Scope::Notes, &selected.notes),
+    ] {
+        for citation in &content.citations {
+            let manual = |key: &str| {
+                analysis.macros().iter().any(|node| {
+                    node.kind == semantic::StandardMacroKind::BibliographyAnchor
+                        && node.target == key
+                        && (deck.contains_body_range(node.range)
+                            || (scope == super::helper::Scope::Notes
+                                && deck.contains_note_range(node.range)))
+                })
+            };
+            if external_csl && citation.keys.iter().any(|key| manual(&key.value)) {
+                problem(
+                    &mut diagnostics,
+                    "slides-bibliography-key-conflict",
+                    "an external citation key conflicts with a visible hand-written bibliography entry",
+                    citation.range,
+                );
+            } else if !external_csl && citation.keys.iter().any(|key| !manual(&key.value)) {
+                problem(
+                    &mut diagnostics,
+                    "slides-citation-data-required",
+                    "unresolved citation key: supply --bibliography, --csl-style, and --csl-locale to use CSL citations",
+                    citation.range,
+                );
+            }
         }
     }
     if diagnostics
@@ -390,8 +439,9 @@ pub(crate) fn build(
     );
     let data_inputs = super::data::load(
         data,
-        !body_selection.equations.is_empty() || !note_selection.equations.is_empty(),
-        !body_selection.citations.is_empty() || !note_selection.citations.is_empty(),
+        !selected.body.equations.is_empty() || !selected.notes.equations.is_empty(),
+        external_csl
+            && (!selected.body.citations.is_empty() || !selected.notes.citations.is_empty()),
         authority,
         data_roots,
         remaining_resources,
@@ -410,7 +460,12 @@ pub(crate) fn build(
             .iter()
             .filter_map(|item| item.get("id").and_then(serde_json::Value::as_str))
             .collect::<BTreeSet<_>>();
-        for citation in citations.iter().filter(|citation| visible(citation.range)) {
+        for citation in selected
+            .body
+            .citations
+            .iter()
+            .chain(&selected.notes.citations)
+        {
             if citation
                 .keys
                 .iter()

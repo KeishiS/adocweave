@@ -231,8 +231,10 @@ pub(super) fn render_block(
                 );
                 attributes.extend(body::math_data_attributes(block.language, "block"));
                 BlockWriter::start(output, "div", &attributes);
-                super::safe::HtmlWriter::new(output)
-                    .validated_math(&resolution.value, &block.value);
+                super::safe::HtmlWriter::new(output).validated_math(
+                    &context.math_value(block.range, &resolution.value),
+                    &block.value,
+                );
                 BlockWriter::end(output, "div");
                 BlockWriter::line_break(output);
             } else if policy.math_languages.allowed.contains(&block.language) {
@@ -801,19 +803,19 @@ pub(super) fn render_bibliography_backrefs(
     entry: &crate::catalog::BibliographyEntry,
     context: &InlineRenderContext<'_, '_>,
 ) {
-    for (index, reference) in entry
-        .references
-        .iter()
-        .filter(|reference| {
-            context
-                .slides
-                .is_none_or(|slides| slides.selected.contains(&reference.range))
-        })
-        .enumerate()
-    {
+    let targets: Vec<String> = context.slides.map_or_else(
+        || {
+            entry
+                .references
+                .iter()
+                .map(|reference| bibliography_reference_id(reference.range))
+                .collect()
+        },
+        |slides| slides.bibliography_references(&entry.id).to_vec(),
+    );
+    for (index, target) in targets.iter().enumerate() {
         BlockWriter::text(output, " ");
-        let target = context.bibliography_reference_id(reference.range);
-        let href = safe::SafeFragmentUrl::new(&target)
+        let href = safe::SafeFragmentUrl::new(target)
             .expect("generated bibliography reference IDs are control-free")
             .into_owned();
         BlockWriter::start(
@@ -1016,9 +1018,21 @@ pub(super) struct InlineRenderContext<'inputs, 'render> {
     pub(super) region: Option<regions::RegionPresentation>,
     pub(super) slides: Option<&'render super::slide_catalogs::SlideCatalogs<'inputs>>,
     pub(super) slide: usize,
+    pub(super) footnote: Option<crate::source::TextRange>,
 }
 
 impl InlineRenderContext<'_, '_> {
+    pub(super) fn math_value(
+        &self,
+        range: crate::source::TextRange,
+        value: &crate::rendered_content::ValidatedMath,
+    ) -> crate::rendered_content::ValidatedMath {
+        self.slides
+            .and_then(|slides| slides.math_value(self.slide, self.footnote, range))
+            .unwrap_or(value)
+            .clone()
+    }
+
     pub(super) fn caption_at(
         &self,
         range: crate::source::TextRange,
@@ -1032,7 +1046,7 @@ impl InlineRenderContext<'_, '_> {
     pub(super) fn bibliography_reference_id(&self, range: crate::source::TextRange) -> String {
         self.slides.map_or_else(
             || bibliography_reference_id(range),
-            |slides| slides.reference_id(range),
+            |slides| slides.placement_reference_id(self.slide, self.footnote, range),
         )
     }
 }

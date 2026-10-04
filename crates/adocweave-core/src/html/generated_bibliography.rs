@@ -108,25 +108,29 @@ pub(super) fn prepare_selected<'input>(
         });
     }
 
-    crate::walker::walk_ast(document, |node| {
-        let crate::walker::SemanticNode::Inline(Inline::Macro(node)) = node else {
-            return;
-        };
-        if node.kind != crate::inline_model::StandardMacroKind::Citation {
-            return;
+    if let Some(slides) = slides {
+        for entry in &mut entries {
+            entry
+                .references
+                .extend_from_slice(slides.bibliography_references(entry.input.citation_key()));
         }
-        if slides.is_some_and(|slides| !slides.selected.contains(&node.range)) {
-            return;
-        }
-        for key in node.attributes.iter().filter(|key| key.name.is_none()) {
-            if let Some(index) = entry_by_key.get(key.value.as_str()).copied() {
-                entries[index].references.push(slides.map_or_else(
-                    || bibliography_reference_id(key.value_range),
-                    |slides| slides.reference_id(key.value_range),
-                ));
+    } else {
+        crate::walker::walk_ast(document, |node| {
+            let crate::walker::SemanticNode::Inline(Inline::Macro(node)) = node else {
+                return;
+            };
+            if node.kind != crate::inline_model::StandardMacroKind::Citation {
+                return;
             }
-        }
-    });
+            for key in node.attributes.iter().filter(|key| key.name.is_none()) {
+                if let Some(index) = entry_by_key.get(key.value.as_str()).copied() {
+                    entries[index]
+                        .references
+                        .push(bibliography_reference_id(key.value_range));
+                }
+            }
+        });
+    }
 
     for (entry_index, entry) in entries.iter().enumerate() {
         if entry.references.is_empty() {

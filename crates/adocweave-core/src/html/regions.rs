@@ -380,6 +380,7 @@ fn render_selected(
                 request.selections,
                 request.scope,
                 request.reserved_ids,
+                limits,
             )
         })
         .transpose()?;
@@ -427,6 +428,7 @@ fn render_selected(
             region: None,
             slides: slide_catalogs.as_ref(),
             slide: 0,
+            footnote: None,
         };
         for (region, (selection, presentation)) in selections.iter().zip(presentations).enumerate()
         {

@@ -91,6 +91,16 @@ impl Document {
         self.inner.catalogs()
     }
 
+    /// Resolved inline prose of an existing footnote definition.
+    /// Ranges keep the original definition's source positions, including when
+    /// a renderer places the same footnote on more than one slide.
+    pub fn footnote_body(
+        &self,
+        definition_range: TextRange,
+    ) -> Option<&[crate::inline_model::Inline]> {
+        self.inner.facts().footnote_body(definition_range)
+    }
+
     pub const fn presentation(&self) -> &crate::presentation::DocumentPresentation {
         self.inner.presentation()
     }

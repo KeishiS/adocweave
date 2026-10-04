@@ -174,12 +174,7 @@ impl<'document> Deck<'document> {
                         .filter(|_| !slide.hide_title)
                         .into_iter()
                         .chain(slide.body.iter().copied())
-                        .any(|id| {
-                            contains(
-                                self.document.index().block_range(id).expect("body exists"),
-                                range,
-                            )
-                        })
+                        .any(|id| self.block_owns_range(id, range))
                 })
     }
 
@@ -188,13 +183,17 @@ impl<'document> Deck<'document> {
             .iter()
             .flat_map(|group| &group.slides)
             .flat_map(|slide| &slide.notes)
-            .any(|id| {
-                contains(
-                    self.document.index().block_range(*id).expect("note exists"),
-                    range,
-                )
-            })
+            .any(|id| self.block_owns_range(*id, range))
     }
+    fn block_owns_range(&self, id: BlockId, range: TextRange) -> bool {
+        let block = self.document.block(id).expect("selected block exists");
+        contains(block.range(), range)
+            || block
+                .metadata()
+                .range
+                .is_some_and(|metadata| contains(metadata, range))
+    }
+
     pub(crate) fn compile(document: &'document Document) -> Self {
         let mut deck = Self {
             document,
