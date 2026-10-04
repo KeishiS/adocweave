@@ -4,6 +4,37 @@ use adocweave_core::{CancellationToken, NeverCancel};
 use adocweave_project::{ProjectAuthority, ProjectObservationKind, ProjectResourceLimits};
 
 #[test]
+fn missing_binary_resource_retains_a_confined_creation_repair_candidate() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("missing.svg");
+    let authority = ProjectAuthority::open(root.path(), [root.path().to_owned()]).unwrap();
+    let error = authority
+        .read_binary_resources(
+            &[root.path().to_owned()],
+            std::slice::from_ref(&path),
+            ProjectResourceLimits::default(),
+            &NeverCancel,
+        )
+        .unwrap_err();
+    let candidate = error.repair_candidate().unwrap();
+    assert_eq!(candidate.path, path);
+    assert_eq!(
+        candidate.kind,
+        ProjectObservationKind::BinaryContentsNoSymlinks
+    );
+    let access = authority.observation_access();
+    assert_eq!(
+        access.observer().observe(&path, candidate.kind),
+        candidate.observation
+    );
+    fs::write(&path, "<svg/>").unwrap();
+    assert_ne!(
+        access.observer().observe(&path, candidate.kind),
+        candidate.observation
+    );
+}
+
+#[test]
 fn binary_observation_detects_same_size_changes_without_decoding_utf8() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("figure.png");

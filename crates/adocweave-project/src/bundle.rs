@@ -69,7 +69,7 @@ impl BundleMediaType {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BundleFile {
     pub path: String,
     pub media_type: BundleMediaType,
@@ -91,6 +91,66 @@ pub struct BundleManifest {
     pub schema_version: u32,
     pub generator: String,
     pub files: Vec<BundleManifestFile>,
+}
+
+/// A complete immutable bundle, validated before live output is adopted.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BundleSnapshot {
+    manifest: BundleManifest,
+    files: BTreeMap<String, BundleFile>,
+}
+
+impl BundleSnapshot {
+    pub fn from_files(
+        files: Vec<BundleFile>,
+        limits: ProjectLimits,
+        cancellation: &dyn CancellationCheck,
+    ) -> Result<Self, BundleError> {
+        cancelled(cancellation)?;
+        let (manifest, _) = prepare_manifest(&files, limits, cancellation)?;
+        Ok(Self {
+            manifest,
+            files: files
+                .into_iter()
+                .map(|file| (file.path.clone(), file))
+                .collect(),
+        })
+    }
+
+    /// Copies only verified manifest files; later filesystem edits cannot
+    /// partially change an already adopted HTTP generation.
+    pub fn from_reader(
+        reader: &ManagedBundleReader,
+        cancellation: &dyn CancellationCheck,
+    ) -> Result<Self, BundleError> {
+        let mut files = BTreeMap::new();
+        for entry in &reader.manifest.files {
+            cancelled(cancellation)?;
+            let (media_type, bytes) = reader.read_file(&entry.path)?;
+            files.insert(
+                entry.path.clone(),
+                BundleFile {
+                    path: entry.path.clone(),
+                    media_type,
+                    bytes,
+                },
+            );
+        }
+        Ok(Self {
+            manifest: reader.manifest.clone(),
+            files,
+        })
+    }
+
+    pub fn manifest(&self) -> &BundleManifest {
+        &self.manifest
+    }
+
+    /// Exact allowlist lookup; unlisted, encoded or traversing paths never
+    /// select files from the ambient filesystem.
+    pub fn file(&self, path: &str) -> Option<&BundleFile> {
+        self.files.get(path)
+    }
 }
 
 #[derive(Debug)]
@@ -479,43 +539,30 @@ fn write_file(
     Ok(())
 }
 
-/// Saves only into a new, empty, or fully verified generated directory.
-///
-/// Existing unknown or edited files are never overwritten. A failed update can
-/// leave a partial bundle, but is never reported as successful or served as valid.
-pub fn save_managed_bundle(
-    directory: &Path,
-    protected_source_directories: &[PathBuf],
+// Validate the same finite file contract before saving or adopting a snapshot.
+fn prepare_manifest(
     files: &[BundleFile],
     limits: ProjectLimits,
     cancellation: &dyn CancellationCheck,
-) -> Result<BundleManifest, BundleError> {
-    reject_directory_path(directory, protected_source_directories)?;
+) -> Result<(BundleManifest, Vec<u8>), BundleError> {
     let mut manifest = BundleManifest {
         schema_version: 1,
         generator: "adocweave-slides".to_owned(),
         files: files
             .iter()
-            .map(|file| BundleManifestFile {
-                path: file.path.clone(),
-                media_type: file.media_type,
-                size_bytes: file.bytes.len() as u64,
-                sha256: digest(&file.bytes),
+            .map(|file| {
+                cancelled(cancellation)?;
+                Ok(BundleManifestFile {
+                    path: file.path.clone(),
+                    media_type: file.media_type,
+                    size_bytes: file.bytes.len() as u64,
+                    sha256: digest(&file.bytes),
+                })
             })
-            .collect(),
+            .collect::<Result<Vec<_>, BundleError>>()?,
     };
     manifest.files.sort_by(|a, b| a.path.cmp(&b.path));
     validate_manifest(&manifest, limits)?;
-    cancelled(cancellation)?;
-    let authority = open_directory(directory, true)?;
-    let (existing, directories) = entries(&authority, limits, cancellation)?;
-    let (old, old_manifest, old_bytes) = if existing.is_empty() && directories.is_empty() {
-        (None, None, BTreeMap::new())
-    } else {
-        let (old, raw) = read_manifest(&authority, limits)?;
-        let contents = verified_files(&authority, &old, limits, cancellation)?;
-        (Some(old), Some(raw), contents)
-    };
     let mut manifest_bytes = serde_json::to_vec_pretty(&manifest)
         .map_err(|_| BundleError::Invalid("cannot serialize manifest".to_owned()))?;
     manifest_bytes.push(b'\n');
@@ -531,6 +578,32 @@ pub fn save_managed_bundle(
             "bundle including its manifest exceeds output limits".to_owned(),
         ));
     }
+    Ok((manifest, manifest_bytes))
+}
+
+/// Saves only into a new, empty, or fully verified generated directory.
+///
+/// Existing unknown or edited files are never overwritten. A failed update can
+/// leave a partial bundle, but is never reported as successful or served as valid.
+pub fn save_managed_bundle(
+    directory: &Path,
+    protected_source_directories: &[PathBuf],
+    files: &[BundleFile],
+    limits: ProjectLimits,
+    cancellation: &dyn CancellationCheck,
+) -> Result<BundleManifest, BundleError> {
+    reject_directory_path(directory, protected_source_directories)?;
+    let (manifest, manifest_bytes) = prepare_manifest(files, limits, cancellation)?;
+    cancelled(cancellation)?;
+    let authority = open_directory(directory, true)?;
+    let (existing, directories) = entries(&authority, limits, cancellation)?;
+    let (old, old_manifest, old_bytes) = if existing.is_empty() && directories.is_empty() {
+        (None, None, BTreeMap::new())
+    } else {
+        let (old, raw) = read_manifest(&authority, limits)?;
+        let contents = verified_files(&authority, &old, limits, cancellation)?;
+        (Some(old), Some(raw), contents)
+    };
     // Repeat the complete check immediately before the first mutation.
     reject_directory_path(directory, protected_source_directories)?;
     authority.verify_directory_namespace()?;
@@ -668,6 +741,66 @@ mod tests {
                 .unwrap()
                 .contains("private")
         );
+    }
+
+    #[test]
+    fn adopted_snapshot_keeps_all_bytes_after_the_managed_directory_changes() {
+        let (_root, path) = root();
+        let output = path.join("talk");
+        save(
+            &output,
+            &[
+                file("index.html", b"Presenter"),
+                file("notes/private.png", b"private"),
+            ],
+        )
+        .unwrap();
+        let reader = open_managed_bundle(&output, ProjectLimits::default(), &NeverCancel).unwrap();
+        let snapshot = BundleSnapshot::from_reader(&reader, &NeverCancel).unwrap();
+        save(&output, &[file("index.html", b"Public")]).unwrap();
+        assert_eq!(snapshot.file("index.html").unwrap().bytes, b"Presenter");
+        assert_eq!(
+            snapshot.file("notes/private.png").unwrap().bytes,
+            b"private"
+        );
+        assert!(reader.read_file("index.html").is_err());
+        for path in ["../index.html", "/index.html", MANIFEST, "missing.png"] {
+            assert!(snapshot.file(path).is_none());
+        }
+        let reader = open_managed_bundle(&output, ProjectLimits::default(), &NeverCancel).unwrap();
+        let public = BundleSnapshot::from_reader(&reader, &NeverCancel).unwrap();
+        assert_eq!(public.file("index.html").unwrap().bytes, b"Public");
+        assert!(public.file("notes/private.png").is_none());
+    }
+
+    #[test]
+    fn snapshots_reject_duplicate_paths_output_limits_and_cancellation() {
+        assert!(
+            BundleSnapshot::from_files(
+                vec![file("index.html", b"a"), file("index.html", b"b")],
+                ProjectLimits::default(),
+                &NeverCancel
+            )
+            .is_err()
+        );
+        let limits = ProjectLimits {
+            max_output_bytes: 20,
+            ..Default::default()
+        };
+        assert!(
+            BundleSnapshot::from_files(vec![file("index.html", b"a")], limits, &NeverCancel)
+                .is_err()
+        );
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+        assert!(matches!(
+            BundleSnapshot::from_files(
+                vec![file("index.html", b"a")],
+                ProjectLimits::default(),
+                &cancellation
+            ),
+            Err(BundleError::Cancelled)
+        ));
     }
 
     #[test]
