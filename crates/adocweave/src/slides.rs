@@ -17,7 +17,10 @@ use adocweave_core::semantic::{
 };
 use adocweave_core::text::TextRange;
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) mod bundle;
+mod svg;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, clap::ValueEnum)]
 pub(crate) enum Audience {
     #[default]
     Public,
@@ -69,6 +72,29 @@ fn has_option(metadata: &BlockMetadata, option: &str) -> bool {
                     .split(',')
                     .any(|value| value.trim() == option)
         })
+}
+
+fn unsupported_fragment_name(name: &str) -> bool {
+    matches!(
+        name,
+        "fragment"
+            | "step"
+            | "fade-in"
+            | "fade-out"
+            | "fade-up"
+            | "fade-down"
+            | "fade-left"
+            | "fade-right"
+            | "grow"
+            | "shrink"
+            | "highlight-red"
+            | "highlight-green"
+            | "highlight-blue"
+            | "fade-in-then-out"
+            | "fade-in-then-semi-out"
+            | "current-visible"
+            | "semi-fade-out"
+    )
 }
 
 fn problem(diagnostics: &mut Vec<Diagnostic>, code: &str, message: &str, range: TextRange) {
@@ -131,6 +157,39 @@ fn content_by_root(document: &Document) -> BTreeMap<BlockId, Vec<SemanticNode<'_
 }
 
 impl<'document> Deck<'document> {
+    pub(crate) fn contains_body_range(&self, range: TextRange) -> bool {
+        !self.contains_note_range(range)
+            && self
+                .groups
+                .iter()
+                .flat_map(|group| &group.slides)
+                .any(|slide| {
+                    slide
+                        .heading
+                        .filter(|_| !slide.hide_title)
+                        .into_iter()
+                        .chain(slide.body.iter().copied())
+                        .any(|id| {
+                            contains(
+                                self.document.index().block_range(id).expect("body exists"),
+                                range,
+                            )
+                        })
+                })
+    }
+
+    pub(crate) fn contains_note_range(&self, range: TextRange) -> bool {
+        self.groups
+            .iter()
+            .flat_map(|group| &group.slides)
+            .flat_map(|slide| &slide.notes)
+            .any(|id| {
+                contains(
+                    self.document.index().block_range(*id).expect("note exists"),
+                    range,
+                )
+            })
+    }
     pub(crate) fn compile(document: &'document Document) -> Self {
         let mut deck = Self {
             document,
@@ -243,6 +302,55 @@ impl<'document> Deck<'document> {
         let content = content_by_root(document);
         deck.classify_nested_content(&content);
         deck.validate_layout(&content);
+        semantic::walk(document, |node| {
+            let SemanticNode::Metadata(metadata) = node else {
+                return;
+            };
+            for (name, range) in metadata
+                .role_names()
+                .filter(|(name, _)| unsupported_fragment_name(name))
+            {
+                let _ = name;
+                problem(
+                    &mut deck.diagnostics,
+                    "slides-unsupported-fragment",
+                    "fragment roles and effects are not supported; use the step option on a plain list or open block",
+                    range,
+                );
+            }
+            for option in metadata
+                .options
+                .iter()
+                .filter(|option| option.value != "step" && unsupported_fragment_name(&option.value))
+            {
+                problem(
+                    &mut deck.diagnostics,
+                    "slides-unsupported-fragment",
+                    "fragment effects are not supported",
+                    option.range,
+                );
+            }
+            for attribute in metadata.attributes.iter().filter(|attribute| {
+                attribute.name.as_deref().is_some_and(|name| {
+                    matches!(
+                        name,
+                        "fragment-index"
+                            | "data-fragment-index"
+                            | "fragment"
+                            | "step"
+                            | "effect"
+                            | "widths"
+                    ) || name.starts_with("revealjs_")
+                })
+            }) {
+                problem(
+                    &mut deck.diagnostics,
+                    "slides-unsupported-fragment",
+                    "explicit fragment ordering, effects and column widths are not supported",
+                    attribute.range,
+                );
+            }
+        });
         for attribute in document.attribute_occurrences() {
             if attribute.name.starts_with("revealjs_") || attribute.name == "notitle" {
                 problem(
@@ -338,14 +446,21 @@ impl<'document> Deck<'document> {
                         SemanticNode::List(list) => (&list.metadata, list.range),
                         _ => unreachable!("content contains only blocks and child lists"),
                     };
-                    if !has_option(metadata, "step")
-                        || slide.notes.iter().any(|id| {
-                            contains(
-                                self.document.index().block_range(*id).expect("note exists"),
-                                range,
-                            )
-                        })
-                    {
+                    if !has_option(metadata, "step") {
+                        continue;
+                    }
+                    if slide.notes.iter().any(|id| {
+                        contains(
+                            self.document.index().block_range(*id).expect("note exists"),
+                            range,
+                        )
+                    }) {
+                        problem(
+                            &mut self.diagnostics,
+                            "slides-invalid-step",
+                            "step presentation is not supported inside speaker notes",
+                            range,
+                        );
                         continue;
                     }
                     let SemanticNode::Block(block) = node else {

@@ -66,6 +66,10 @@ pub(crate) enum CommandOptions {
     Convert {
         complete: bool,
         css: Vec<StylesheetArgument>,
+        target: ConvertTarget,
+        output: Option<PathBuf>,
+        audience: crate::slides::Audience,
+        slides_helper: Option<PathBuf>,
     },
     Preview {
         css: Vec<StylesheetArgument>,
@@ -78,6 +82,13 @@ pub(crate) enum CommandOptions {
     Symbols,
     View(crate::commands::view::Options),
     ConfigShow,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
+pub(crate) enum ConvertTarget {
+    #[default]
+    Html,
+    Revealjs,
 }
 
 pub(crate) struct Arguments {
@@ -148,7 +159,7 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum CliCommand {
-    /// Convert an AsciiDoc document to HTML.
+    /// Convert an AsciiDoc document to HTML or a reveal.js slide bundle.
     #[command(after_help = "Example:\n  adocweave convert --complete manual.adoc")]
     Convert(ConvertArgs),
 
@@ -243,6 +254,22 @@ struct ConvertArgs {
     /// Input file; omit or use - for standard input.
     #[arg(value_name = "FILE", value_hint = ValueHint::FilePath)]
     file: Option<PathBuf>,
+
+    /// Output format.
+    #[arg(long = "to", value_name = "FORMAT", value_enum, default_value_t)]
+    target: ConvertTarget,
+
+    /// Dedicated output directory; required for revealjs.
+    #[arg(long, value_name = "DIR", value_hint = ValueHint::DirPath, required_if_eq("target", "revealjs"))]
+    output: Option<PathBuf>,
+
+    /// Content to publish with revealjs; defaults to public.
+    #[arg(long, value_name = "AUDIENCE", value_enum)]
+    audience: Option<crate::slides::Audience>,
+
+    /// Slides helper executable or .mjs entrypoint; overrides ADOCWEAVE_SLIDES_HELPER.
+    #[arg(long, value_name = "FILE", value_hint = ValueHint::FilePath)]
+    slides_helper: Option<PathBuf>,
 
     /// Output a complete HTML document.
     #[arg(long)]
@@ -593,10 +620,38 @@ fn run_action(arguments: Arguments) -> Result<Action, CliError> {
 }
 
 fn convert_action(command: ConvertArgs, matches: &clap::ArgMatches) -> Result<Action, CliError> {
+    let css = stylesheet_arguments(matches);
+    if command.target == ConvertTarget::Revealjs {
+        if command.complete || !css.is_empty() {
+            return Err(CliError::Usage(
+                "--complete, --css and --css-url apply only to ordinary HTML".to_owned(),
+            ));
+        }
+        if command
+            .output
+            .as_deref()
+            .is_some_and(|path| path == std::path::Path::new("."))
+        {
+            return Err(CliError::Usage(
+                "--output must name a dedicated generated directory".to_owned(),
+            ));
+        }
+    } else if command.output.is_some()
+        || command.audience.is_some()
+        || command.slides_helper.is_some()
+    {
+        return Err(CliError::Usage(
+            "--output, --audience and --slides-helper require --to revealjs".to_owned(),
+        ));
+    }
     run_action(Arguments {
         command: CommandOptions::Convert {
             complete: command.complete,
-            css: stylesheet_arguments(matches),
+            css,
+            target: command.target,
+            output: command.output,
+            audience: command.audience.unwrap_or_default(),
+            slides_helper: command.slides_helper,
         },
         input: single_input(command.file),
         additional_inputs: Vec::new(),

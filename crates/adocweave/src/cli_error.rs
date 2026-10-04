@@ -32,6 +32,8 @@ pub(crate) enum CliError {
     },
     FormattingRequired,
     Stylesheet(String),
+    Slides(String),
+    Bundle(adocweave_project::BundleError),
     Path(String),
     PartialWrite {
         files: usize,
@@ -73,6 +75,8 @@ impl fmt::Display for CliError {
             }
             Self::FormattingRequired => formatter.write_str("document is not formatted"),
             Self::Stylesheet(message) => formatter.write_str(message),
+            Self::Slides(message) => formatter.write_str(message),
+            Self::Bundle(source) => source.fmt(formatter),
             Self::Path(message) => formatter.write_str(message),
             Self::PartialWrite {
                 files,
@@ -191,6 +195,7 @@ impl Error for CliError {
             Self::Preview(source) => Some(source),
             Self::LanguageServer(source) => Some(source),
             Self::Project(source) => Some(source),
+            Self::Bundle(source) => Some(source),
             Self::ProjectLimit(source) => Some(source),
             Self::ProjectPrimary(source) => Some(source),
             Self::ProjectTarget(source) => Some(source),
@@ -201,6 +206,7 @@ impl Error for CliError {
             | Self::OutputLimit { .. }
             | Self::FormattingRequired
             | Self::Stylesheet(_)
+            | Self::Slides(_)
             | Self::Path(_)
             | Self::PartialWrite { .. } => None,
         }
@@ -217,9 +223,11 @@ impl CliError {
             }
             // A file, stream or resource could not be read or written. The input
             // may be fine; the surroundings were not.
-            Self::Read { .. } | Self::Write(_) | Self::PartialWrite { .. } | Self::Preview(_) => {
-                CliExitCode::InputOutput
-            }
+            Self::Read { .. }
+            | Self::Write(_)
+            | Self::PartialWrite { .. }
+            | Self::Preview(_)
+            | Self::Bundle(_) => CliExitCode::InputOutput,
             Self::LanguageServer(source) => language_server_exit_code(source.kind()),
             Self::Project(adocweave_project::ProjectError::Config(_))
             | Self::Project(adocweave_project::ProjectError::Authority(_))
@@ -260,6 +268,7 @@ impl CliError {
             | Self::Position(_)
             | Self::FormattingRequired
             | Self::Serialize(_)
+            | Self::Slides(_)
             | Self::Project(adocweave_project::ProjectError::Cancelled)
             | Self::ProjectPrimary(adocweave_project::ProjectTargetError::Parse(_))
             | Self::ProjectPrimary(adocweave_project::ProjectTargetError::EditConflict(_))
