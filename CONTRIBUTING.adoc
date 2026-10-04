@@ -249,13 +249,14 @@ CLIが端末へ表示するhelp、診断、進捗、要約およびerrorは英�
 pull requestを作成するときは、link:.github/pull_request_template.md[Pull Request template]を使用します。
 変更の目的、主な変更点、実行した検証を簡潔に記載し、未実施の検証がある場合は理由を記載してください。
 
-CIの必須checkは``verify``の一つだけです。すべてのPull Requestで、``cargo make verify``によるsource検査、
+CIの必須checkは``verify``の一つだけです。すべてのPull Requestで、``cargo make verify``によるsource検査と
+固定Chromiumによる研究スライドのブラウザー検査、
 macOSとWindowsのProjectおよびLanguage Server試験、Zed公式レジストリが使用するRust 1.90での
 ``wasm32-wasip2``向け構築を別のjobとして実行し、``verify``へ結果をまとめます。
 
 手元の``cargo make verify``で再現できるのはsource検査です。OS別の試験はCI workflow、Zedの構築は
 xref:docs/developer-guide/zed-development.adoc[Zed拡張の開発]に記載したRust版とtargetで確認してください。
-そのほかのcross target、実際のOSやBrowserを使う統合検査、fuzz、Nixパッケージ検査、配布成果物の構築および
+そのほかのcross target、エディタの統合検査、fuzz、Nixパッケージ検査、配布成果物の構築および
 成果物を使うruntime受入検査は、Pull Requestを``main``へ統合した後に実行します。``main``の検査に失敗したcommitは
 公開candidateとして使用しません。手元で成果物を含む追加の受入検査を行う場合は、次を実行します。
 

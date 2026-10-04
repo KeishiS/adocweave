@@ -2439,9 +2439,11 @@ fn validated_math_and_finite_citations_share_safe_rendering_and_usage_checks() {
         "{}",
         output.html
     );
-    assert!(output.html.contains(
-        "class=\"math-source\" aria-hidden=\"true\">x &lt; y &amp; &#34;quoted&#34;</code>"
-    ));
+    assert!(
+        output
+            .html
+            .contains("class=\"math-source\" hidden>x &lt; y &amp; &#34;quoted&#34;</code>")
+    );
     assert!(output.html.contains("<em>&lt;Paper&gt;</em>"));
     assert!(output.diagnostics.is_empty());
     let raw = super::render(analysis.document(), &RenderPolicy::default());
