@@ -136,7 +136,7 @@ Return to <<method>>, <<first-step>>, or <<second-step>>;
   if (helper) {
     for (const file of ["research.adoc", "references.json", "result.svg", "research.css", "research.csl"]) {
       await writeFile(join(root, file === "research.adoc" ? "talk.adoc" : file),
-        await readFile(new URL(`./slides-browser-fixtures/${file}`, import.meta.url)));
+        await readFile(new URL(`../fixtures/slides-browser/${file}`, import.meta.url)));
     }
     for (const [source, destination] of [["locale-en-US.xml", "locale.xml"]]) {
       await writeFile(join(root, destination), await readFile(new URL(`../packages/slides-helper/fixtures/${source}`, import.meta.url)));

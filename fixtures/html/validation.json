@@ -13,25 +13,25 @@
     {
       "name": "research-slides-public",
       "kind": "cli-slides",
-      "source": "tools/slides-browser-fixtures/research.adoc",
+      "source": "fixtures/slides-browser/research.adoc",
       "args": [
         "--audience", "public",
-        "--bibliography", "tools/slides-browser-fixtures/references.json",
-        "--csl-style", "tools/slides-browser-fixtures/research.csl",
+        "--bibliography", "fixtures/slides-browser/references.json",
+        "--csl-style", "fixtures/slides-browser/research.csl",
         "--csl-locale", "packages/slides-helper/fixtures/locale-en-US.xml",
-        "--css", "tools/slides-browser-fixtures/research.css"
+        "--css", "fixtures/slides-browser/research.css"
       ]
     },
     {
       "name": "research-slides-presenter",
       "kind": "cli-slides",
-      "source": "tools/slides-browser-fixtures/research.adoc",
+      "source": "fixtures/slides-browser/research.adoc",
       "args": [
         "--audience", "presenter",
-        "--bibliography", "tools/slides-browser-fixtures/references.json",
-        "--csl-style", "tools/slides-browser-fixtures/research.csl",
+        "--bibliography", "fixtures/slides-browser/references.json",
+        "--csl-style", "fixtures/slides-browser/research.csl",
         "--csl-locale", "packages/slides-helper/fixtures/locale-en-US.xml",
-        "--css", "tools/slides-browser-fixtures/research.css"
+        "--css", "fixtures/slides-browser/research.css"
       ]
     },
     {
