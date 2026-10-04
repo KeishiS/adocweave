@@ -37,6 +37,9 @@ test("cross-slide references expose only the target's own fragment and preserve 
   target.fragment = null;
   go();
   assert.deepEqual(calls.splice(0), [["slide", 1, 0, 3], ["fragment", 3]]);
+  slide.indices.v = undefined;
+  go();
+  assert.deepEqual(calls.splice(0), [["slide", 1, 0, 3], ["fragment", 3]]);
   await Promise.resolve();
 });
 
