@@ -758,7 +758,7 @@ fn plain_footnotes_and_public_note_only_dependencies_are_never_acquired() {
     write(
         root.path(),
         "talk.adoc",
-        "= Talk\n\n== First\n\nPlain footnote:[Shared *detail*].\n\n.Private latexmath:[x] cite:[secret]\n[.notes]\n--\nNotes footnote:[latexmath:[y] cite:[secret].].\n--\n",
+        "= Talk\n\n== First\n\nPlain footnote:[Shared *detail*].\n\n.Private latexmath:[x] cite:[secret]\n[.notes]\n--\nNotes footnote:[anchor:private[] latexmath:[y] cite:[secret].].\n--\n",
     );
     success(&convert(
         root.path(),
@@ -978,4 +978,37 @@ fn copied_footnote_math_ids_are_checked_against_authored_ids_before_save() {
     assert!(stderr.contains("slides-generated-id-collision"), "{stderr}");
     assert!(stderr.contains(math_id), "{stderr}");
     assert!(!root.path().join("failed").exists());
+}
+
+#[test]
+fn authored_anchor_definitions_inside_footnotes_fail_before_helper_or_data_acquisition() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "talk.adoc",
+        "= Talk\n\n== Slide\n\nFirst footnote:shared[anchor:inside[] latexmath:[x]].\n\n== Again\n\nAgain footnote:shared[].\n",
+    );
+    let output = convert(
+        root.path(),
+        &[
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--output",
+            "dist",
+            "--slides-helper",
+            "/missing/helper",
+            "--math-macros",
+            "missing.json",
+        ],
+    );
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("slides-footnote-anchor-unsupported"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("talk.adoc:5:"), "{stderr}");
+    assert!(!stderr.contains("missing.json"), "{stderr}");
+    assert!(!root.path().join("dist").exists());
 }

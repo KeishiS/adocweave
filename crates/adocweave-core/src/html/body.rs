@@ -537,6 +537,16 @@ fn plan_standard_macro(
             ));
         }
         Kind::Anchor | Kind::BibliographyAnchor => {
+            if context.slides.is_some() && context.footnote.is_some() {
+                let mut diagnostic = render_diagnostic(
+                    "slides-footnote-anchor-unsupported",
+                    "anchor and bibliography definitions inside slide footnotes are unsupported",
+                    node.range,
+                );
+                diagnostic.severity = crate::diagnostic::Severity::Error;
+                context.diagnostics.push(diagnostic);
+                return;
+            }
             let mut attributes = vec![passive("id", &node.target)];
             if node.kind == Kind::BibliographyAnchor {
                 attributes.push(classes(&["bibliography-anchor"]));
