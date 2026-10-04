@@ -15,6 +15,7 @@
 //! consumes one request, fixes each observed file result for that call and
 //! returns all owned results before it finishes.
 
+mod bundle;
 mod config;
 mod filesystem;
 mod process;
@@ -38,6 +39,10 @@ use adocweave_core::{Analysis, AnalysisOptions, ParseError, SourceId};
 use config::{ConfigError, ConfigErrorCode, LoadedProjectConfig};
 use filesystem::{FilesystemAuthority, FilesystemError, RootAuthority};
 
+pub use bundle::{
+    BundleError, BundleFile, BundleManifest, BundleManifestFile, BundleMediaType,
+    ManagedBundleReader, open_managed_bundle, save_managed_bundle,
+};
 pub use config::{ProjectConfig, TerminalColor, TerminalSettings, TerminalTheme};
 pub use process::{process, resolve_config};
 
@@ -129,7 +134,89 @@ pub struct ProjectAuthority {
     policy: FilesystemAuthority,
 }
 
+/// One regular binary resource acquired after the caller selected visible content.
+#[derive(Clone, Debug)]
+pub struct ProjectBinaryResource {
+    pub path: PathBuf,
+    pub bytes: Vec<u8>,
+}
+
+impl ProjectBinaryResource {
+    /// Content identity suitable for a generated filename without source metadata.
+    pub fn sha256(&self) -> String {
+        bundle::digest(&self.bytes)
+    }
+}
+
 impl ProjectAuthority {
+    /// Reads only explicitly selected resources inside the effective configured roots.
+    /// Each path is fixed once, symbolic links are rejected, and the supplied
+    /// remaining request budgets apply to both individual and combined bytes.
+    pub fn read_binary_resources(
+        &self,
+        resource_roots: &[PathBuf],
+        paths: &[PathBuf],
+        limits: ProjectResourceLimits,
+        cancellation: &dyn adocweave_core::CancellationCheck,
+    ) -> Result<Vec<ProjectBinaryResource>, ProjectError> {
+        let paths = paths.iter().collect::<std::collections::BTreeSet<_>>();
+        if paths.len() > limits.max_files {
+            return Err(ProjectError::Limit(ProjectLimit::Files {
+                limit: limits.max_files,
+            }));
+        }
+        let selected_roots = paths
+            .iter()
+            .map(|path| {
+                resource_roots
+                    .iter()
+                    .filter(|root| path.starts_with(root))
+                    .max_by_key(|root| root.components().count())
+                    .ok_or_else(|| {
+                        project_authority_error(FilesystemError::OutsideRoot((*path).clone()))
+                    })
+            })
+            .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
+        let mut roots = Vec::new();
+        for root in selected_roots {
+            let authority = self.policy.authority_for_path(root).ok_or_else(|| {
+                project_authority_error(FilesystemError::OutsideRoot(root.clone()))
+            })?;
+            roots.push(
+                authority
+                    .derive_confined_directory(root)
+                    .map_err(project_authority_error)?,
+            );
+        }
+        let mut total = 0u64;
+        let mut result = Vec::new();
+        for path in paths {
+            if cancellation.is_cancelled() {
+                return Err(ProjectError::Cancelled);
+            }
+            let authority = roots
+                .iter()
+                .filter(|root| path.starts_with(root.root()))
+                .max_by_key(|root| root.root().components().count())
+                .ok_or_else(|| {
+                    project_authority_error(FilesystemError::OutsideRoot(path.clone()))
+                })?;
+            let bytes = authority
+                .read_binary(
+                    path,
+                    limits
+                        .max_resource_bytes
+                        .min(limits.max_total_bytes.saturating_sub(total)),
+                )
+                .map_err(project_authority_error)?;
+            total += bytes.len() as u64;
+            result.push(ProjectBinaryResource {
+                path: path.clone(),
+                bytes,
+            });
+        }
+        Ok(result)
+    }
     /// Opens `roots` and verifies that `project_root` is inside one of them.
     pub fn open(
         project_root: impl Into<PathBuf>,

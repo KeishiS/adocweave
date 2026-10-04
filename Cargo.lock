@@ -12,6 +12,7 @@ dependencies = [
  "clap",
  "clap_complete",
  "libc",
+ "roxmltree",
  "serde",
  "serde_json",
  "similar",

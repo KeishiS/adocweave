@@ -17,8 +17,6 @@ mod local_target;
 mod pager;
 mod preview;
 mod project_command;
-// Issue #985 wires this renderer into the CLI; remove this integration allowance then.
-#[cfg_attr(not(test), allow(dead_code))]
 mod slides;
 mod terminal;
 mod theme;

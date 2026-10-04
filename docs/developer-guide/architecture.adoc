@@ -77,6 +77,11 @@ xref:html-contract.adoc#selected-body-regions[コアの本文領域描画]へ委
 2列の配置、段階表示およびノートの公開範囲は``slides``が決めます。通常のHTML変換では``notes`` roleを含む本文を
 保持し、スライドの公開出力だけがノートを除外します。
 
+スライドは``Deck``の確定後に表示する図だけを``ProjectAuthority``で取得し、CLIが固定資産とHTMLをまとめます。
+``adocweave-project``の管理出力APIは相対path、SHA-256、``sizeBytes``および固定Content-Typeのmanifestを基準として、
+保存前の全ファイル検査、更新、不要資産の削除および配信用の読込を行います。未知ファイルや手修正を検出した出力は更新しません。
+更新中のI/O失敗では部分的な変更が残る場合がありますが、成功は返しません。配信用の読込でもmanifestと内容を検証します。
+
 [#host-boundary]
 == 利用側アプリとの分担
 

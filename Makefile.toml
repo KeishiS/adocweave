@@ -191,7 +191,8 @@ args = [
 
 [tasks.npm-package-contracts]
 private = true
-description = "Verify WebAssembly and textlint package installation contracts"
+description = "Verify WebAssembly, textlint, and slides helper package installation contracts"
+dependencies = ["slides-helper-package"]
 command = "node"
 args = [
   "--test",
@@ -201,6 +202,36 @@ args = [
   "tools/textlint-plugin-consumer-e2e.test.mjs",
   "tools/verify-textlint-plugin-reproducibility.test.mjs",
 ]
+
+[tasks.slides-helper-install]
+private = true
+description = "Install the locked Node slides helper without dependency scripts"
+command = "npm"
+args = ["ci", "--ignore-scripts", "--no-audit", "--no-fund", "--prefix", "packages/slides-helper"]
+
+[tasks.slides-helper-test]
+private = true
+description = "Check static math, scoped citations, and the one-request JSON executable"
+dependencies = ["slides-helper-install"]
+command = "node"
+args = ["--test", "packages/slides-helper/math.test.mjs", "packages/slides-helper/citations.test.mjs", "packages/slides-helper/protocol.test.mjs"]
+
+[tasks.slides-helper-package]
+private = true
+description = "Verify the npm helper executable, archive contents, and distribution notices"
+dependencies = ["slides-helper-install"]
+command = "node"
+args = ["--test", "packages/slides-helper/package.test.mjs"]
+
+[tasks.slides-runtime-contracts]
+private = true
+description = "Verify bundled Reveal assets and reviewed Node runtime source and license evidence"
+dependencies = ["slides-helper-install"]
+script_runner = "@shell"
+script = '''
+node --test tools/verify-slides-assets.test.mjs tools/verify-slides-dependencies.test.mjs
+node tools/verify-slides-dependencies.mjs
+'''
 
 [tasks.check-windows-target]
 private = true
@@ -692,6 +723,8 @@ dependencies = [
   "native-release-ci",
   "native-platform-contract",
   "npm-package-contracts",
+  "slides-helper-test",
+  "slides-runtime-contracts",
   "third-party-notice-contracts",
   "doc-check",
   "docs-check",

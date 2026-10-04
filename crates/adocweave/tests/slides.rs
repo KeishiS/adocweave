@@ -1,0 +1,367 @@
+use std::fs;
+use std::path::Path;
+use std::process::{Command, Output};
+
+fn convert(root: &Path, arguments: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_adocweave"))
+        .current_dir(root)
+        .arg("convert")
+        .args(arguments)
+        .output()
+        .expect("adocweave command")
+}
+
+fn success(output: &Output) {
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn write(root: &Path, path: &str, content: &str) {
+    fs::write(root.join(path), content).unwrap();
+}
+
+const SVG: &str = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\"><rect width=\"80\" height=\"80\" fill=\"#123\"/><text x=\"2\" y=\"20\">結果</text></svg>";
+
+#[test]
+fn public_is_offline_and_private_resources_are_not_even_acquired() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "talk.adoc",
+        "= Research\n\n[#method]\n== Method\n\n[%step]\n* One\n* Two\n\nimage::first.svg[Result]\n\n[.notes]\n--\nPRIVATE_NOTE\nimage::private.svg[PRIVATE_IMAGE]\nstem:[x^2]\ncite:[private]\n--\n\n=== Vertical\n\n== Last\n\n<<method>>\n",
+    );
+    write(root.path(), "first.svg", SVG);
+    // There is deliberately no private.svg and no helper executable.
+    let output = convert(
+        root.path(),
+        &[
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--output",
+            "dist/talk",
+            "--slides-helper",
+            "/missing/helper",
+        ],
+    );
+    success(&output);
+    assert!(output.stdout.is_empty());
+    let html = fs::read_to_string(root.path().join("dist/talk/index.html")).unwrap();
+    assert!(html.contains("data-fragment-index=\"0\""));
+    assert!(html.contains("data-fragment-index=\"1\""));
+    assert!(html.contains("id=\"method\""));
+    assert!(html.contains("href=\"#method\""));
+    assert!(html.contains("<img src=\"assets/"));
+    assert!(!html.contains("PRIVATE"));
+    assert!(!html.contains("private.svg"));
+    assert!(!html.contains("notes.js"));
+    let manifest =
+        fs::read_to_string(root.path().join("dist/talk/.adocweave-manifest.json")).unwrap();
+    assert!(!manifest.contains("private"));
+    assert!(!manifest.contains("first.svg"));
+    assert!(manifest.contains("sizeBytes"));
+    let reader = adocweave_project::open_managed_bundle(
+        &root.path().join("dist/talk"),
+        Default::default(),
+        &adocweave_core::NeverCancel,
+    )
+    .unwrap();
+    let image = reader
+        .manifest()
+        .files
+        .iter()
+        .find(|file| file.media_type == adocweave_project::BundleMediaType::Svg)
+        .unwrap();
+    assert!(
+        String::from_utf8(reader.read_file(&image.path).unwrap().1)
+            .unwrap()
+            .contains("結果")
+    );
+}
+
+#[test]
+fn presenter_to_public_removes_private_images_plugin_and_manifest_entries() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "talk.adoc",
+        "= Talk\n\n== Slide\n\nPublic.\n\n[.notes]\n--\nPRIVATE_NOTE\nimage::private.svg[PRIVATE_ALT]\n--\n",
+    );
+    write(root.path(), "private.svg", SVG);
+    success(&convert(
+        root.path(),
+        &[
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--output",
+            "dist",
+            "--audience",
+            "presenter",
+        ],
+    ));
+    let old = adocweave_project::open_managed_bundle(
+        &root.path().join("dist"),
+        Default::default(),
+        &adocweave_core::NeverCancel,
+    )
+    .unwrap();
+    let private_image = old
+        .manifest()
+        .files
+        .iter()
+        .find(|file| file.media_type == adocweave_project::BundleMediaType::Svg)
+        .unwrap()
+        .path
+        .clone();
+    assert!(
+        fs::read_to_string(root.path().join("dist/index.html"))
+            .unwrap()
+            .contains("PRIVATE_NOTE")
+    );
+    assert!(
+        fs::read_to_string(root.path().join("dist/index.html"))
+            .unwrap()
+            .contains("<img src=\"assets/")
+    );
+    success(&convert(
+        root.path(),
+        &["talk.adoc", "--to", "revealjs", "--output", "dist"],
+    ));
+    assert!(!root.path().join("dist").join(private_image).exists());
+    assert!(!root.path().join("dist/assets/notes.js").exists());
+    assert!(!root.path().join("dist/licenses/marked.txt").exists());
+    for file in ["index.html", ".adocweave-manifest.json"] {
+        assert!(
+            !fs::read_to_string(root.path().join("dist").join(file))
+                .unwrap()
+                .contains("PRIVATE")
+        );
+    }
+}
+
+#[test]
+fn ordinary_convert_still_keeps_notes_and_writes_html_to_stdout() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "talk.adoc",
+        "= Talk\n\n[.notes]\n--\nPRIVATE_NOTE\n--\n",
+    );
+    let output = convert(root.path(), &["talk.adoc"]);
+    success(&output);
+    assert!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .contains("PRIVATE_NOTE")
+    );
+    assert!(!root.path().join(".adocweave-manifest.json").exists());
+}
+
+#[test]
+fn output_requires_a_dedicated_directory_and_ordinary_options_are_rejected() {
+    let root = tempfile::tempdir().unwrap();
+    write(root.path(), "talk.adoc", "= Talk\n\n== Slide\n\nText.\n");
+    for args in [
+        vec!["talk.adoc", "--to", "revealjs"],
+        vec!["talk.adoc", "--to", "revealjs", "--output", "."],
+        vec![
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--output",
+            "dist",
+            "--complete",
+        ],
+        vec![
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--output",
+            "dist",
+            "--css",
+            "missing.css",
+        ],
+        vec!["talk.adoc", "--output", "dist"],
+        vec!["talk.adoc", "--audience", "presenter"],
+    ] {
+        assert!(!convert(root.path(), &args).status.success(), "{args:?}");
+    }
+    let path = root.path().to_str().unwrap();
+    assert!(
+        !convert(
+            root.path(),
+            &["talk.adoc", "--to", "revealjs", "--output", path]
+        )
+        .status
+        .success()
+    );
+    assert!(!root.path().join("dist").exists());
+}
+
+#[test]
+fn source_and_include_directories_and_unknown_or_edited_files_are_preserved() {
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir(root.path().join("chapters")).unwrap();
+    write(
+        root.path(),
+        "talk.adoc",
+        "= Talk\n\ninclude::chapters/part.adoc[]\n",
+    );
+    write(root.path(), "chapters/part.adoc", "== Slide\n\nText.\n");
+    let output = convert(
+        root.path(),
+        &[
+            "talk.adoc",
+            "--include",
+            "--to",
+            "revealjs",
+            "--output",
+            "chapters",
+        ],
+    );
+    assert!(!output.status.success());
+    assert!(!root.path().join("chapters/index.html").exists());
+    success(&convert(
+        root.path(),
+        &["talk.adoc", "--to", "revealjs", "--output", "dist"],
+    ));
+    write(root.path(), "dist/manual.txt", "MANUAL");
+    assert!(
+        !convert(
+            root.path(),
+            &["talk.adoc", "--to", "revealjs", "--output", "dist"]
+        )
+        .status
+        .success()
+    );
+    assert_eq!(
+        fs::read_to_string(root.path().join("dist/manual.txt")).unwrap(),
+        "MANUAL"
+    );
+    fs::remove_file(root.path().join("dist/manual.txt")).unwrap();
+    write(root.path(), "dist/index.html", "HAND_EDITED");
+    assert!(
+        !convert(
+            root.path(),
+            &["talk.adoc", "--to", "revealjs", "--output", "dist"]
+        )
+        .status
+        .success()
+    );
+    assert_eq!(
+        fs::read_to_string(root.path().join("dist/index.html")).unwrap(),
+        "HAND_EDITED"
+    );
+}
+
+#[test]
+fn body_cannot_link_to_note_only_targets_and_unsafe_svg_cannot_be_saved() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "talk.adoc",
+        "= Talk\n\n== Slide\n\n<<secret>>\n\n[.notes]\n--\n[#secret]\nPrivate target.\n--\n",
+    );
+    let output = convert(
+        root.path(),
+        &["talk.adoc", "--to", "revealjs", "--output", "dist"],
+    );
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("slides-note-only-reference"));
+    assert!(!root.path().join("dist").exists());
+    write(
+        root.path(),
+        "talk.adoc",
+        "= Talk\n\n== Slide\n\nimage::unsafe.svg[Figure]\n",
+    );
+    write(
+        root.path(),
+        "unsafe.svg",
+        "<svg xmlns=\"http://www.w3.org/2000/svg\"><script>alert(1)</script></svg>",
+    );
+    let output = convert(
+        root.path(),
+        &["talk.adoc", "--to", "revealjs", "--output", "dist"],
+    );
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("slides-unsafe-svg"));
+    assert!(!root.path().join("dist").exists());
+}
+
+#[test]
+fn finite_fragment_syntax_rejects_effect_ordering_inline_and_note_steps() {
+    let root = tempfile::tempdir().unwrap();
+    for (source, expected) in [
+        ("[.fragment]\nParagraph.\n", "slides-unsupported-fragment"),
+        (
+            "[%step,fragment-index=8]\n* Item\n",
+            "slides-unsupported-fragment",
+        ),
+        ("An [.fragment]#inline# effect.\n", "slides-inline-step"),
+        ("An [%step]#inline# effect.\n", "slides-inline-step"),
+        (
+            "[.notes]\n--\n[%step]\n* Note item\n--\n",
+            "slides-invalid-step",
+        ),
+    ] {
+        write(
+            root.path(),
+            "talk.adoc",
+            &format!("= Talk\n\n== Slide\n\n{source}"),
+        );
+        let output = convert(
+            root.path(),
+            &["talk.adoc", "--to", "revealjs", "--output", "dist"],
+        );
+        assert!(!output.status.success(), "{source}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!root.path().join("dist").exists());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn symbolic_links_in_output_ancestors_and_images_are_rejected() {
+    use std::os::unix::fs::symlink;
+    let root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    write(root.path(), "talk.adoc", "= Talk\n\n== Slide\n\nText.\n");
+    symlink(outside.path(), root.path().join("linked")).unwrap();
+    assert!(
+        !convert(
+            root.path(),
+            &["talk.adoc", "--to", "revealjs", "--output", "linked/dist"]
+        )
+        .status
+        .success()
+    );
+    assert!(!outside.path().join("dist").exists());
+    write(outside.path(), "plot.svg", SVG);
+    symlink(
+        outside.path().join("plot.svg"),
+        root.path().join("plot.svg"),
+    )
+    .unwrap();
+    write(
+        root.path(),
+        "talk.adoc",
+        "= Talk\n\n== Slide\n\nimage::plot.svg[Plot]\n",
+    );
+    assert!(
+        !convert(
+            root.path(),
+            &["talk.adoc", "--to", "revealjs", "--output", "dist"]
+        )
+        .status
+        .success()
+    );
+    assert!(!root.path().join("dist").exists());
+}
