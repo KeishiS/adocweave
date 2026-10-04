@@ -65,6 +65,12 @@ adocweave convert talk.adoc --to revealjs --output dist/talk \
 
 CLIは``--slides-helper``、環境変数``ADOCWEAVE_SLIDES_HELPER``、``PATH``上の既知の実行名の順で選びます。
 原稿のディレクトリや``node_modules/.bin``を自動探索せず、暗黙にnpmから取得しません。
+補助へ渡す``PATH``は絶対pathの要素だけとし、``NODE_OPTIONS``や``NODE_PATH``など``NODE_``で始まる環境変数は渡しません。
+作業ディレクトリは選択した入口が置かれたディレクトリです。Unixのnpm入口が``bin.mjs``へのリンクならリンク先を
+確定し、絶対pathの``PATH``から選んだNode.jsで直接起動します。
+明示的に指定したnative実行ファイルやscriptは、利用者が信頼した入口として直接起動します。
+補助は自身の``engines.node``を起動時に検査し、必要なバージョンを満たさない場合は、
+検出したバージョンと導入案内を返します。
 数式・引用・CSSと公開用／発表者用の指定はxref:command-line.adoc#revealjs-slides[スライドの利用手順]を参照してください。
 
 [#nix-installation]

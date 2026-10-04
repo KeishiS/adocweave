@@ -6,6 +6,7 @@
 
 - `MathLanguage` adds `"asciimath"`, and generic STEM formulas select their notation from the `stem` attribute at their source position. Unset or empty `stem` now selects AsciiMath; use `:stem: latexmath` or explicit `latexmath` notation for LaTeX.
 - The public protocol schema version increases from 16 to 17. Use JavaScript and WebAssembly artifacts from the same package release so the compatibility check succeeds.
+- Math blocks' `formulas[].sourceRange` now includes preceding block metadata. Use `contentRange` when selecting only the formula text.
 
 ### Fixed
 

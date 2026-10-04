@@ -95,6 +95,7 @@ pub(super) struct SlideCatalogs<'document> {
     footnotes: Vec<Vec<FootnotePlacement<'document>>>,
     math: BTreeMap<(Option<(usize, TextRange)>, TextRange), crate::rendered_content::ValidatedMath>,
     citation_references: BTreeMap<String, Vec<String>>,
+    reference_ordinals: BTreeMap<TextRange, usize>,
     pub(super) selected: BTreeSet<TextRange>,
     pub(super) generated_ids: BTreeSet<String>,
 }
@@ -152,10 +153,6 @@ fn node_range(node: SemanticNode<'_>) -> Option<TextRange> {
     }
 }
 
-pub(super) fn reference_id(scope: HtmlSlideScope, range: TextRange) -> String {
-    format!("slides-{}-bib-ref-{}", scope.name(), range.start().to_u32())
-}
-
 impl<'document> SlideCatalogs<'document> {
     pub(super) fn prepare(
         document: &'document Document,
@@ -207,6 +204,7 @@ impl<'document> SlideCatalogs<'document> {
             footnotes: Vec::with_capacity(groups.len()),
             math: BTreeMap::new(),
             citation_references: BTreeMap::new(),
+            reference_ordinals: BTreeMap::new(),
             selected,
             generated_ids: BTreeSet::new(),
         };
@@ -266,7 +264,7 @@ impl<'document> SlideCatalogs<'document> {
         for (slide, occurrences) in group_footnotes.into_iter().enumerate() {
             let mut placements = Vec::<FootnotePlacement<'document>>::new();
             let mut placement_by_number = BTreeMap::new();
-            for (range, footnote) in occurrences {
+            for (ordinal, (range, footnote)) in occurrences.into_iter().enumerate() {
                 let definition_selected = plan.selected.contains(&footnote.definition_range)
                     || plan.shared_body_ranges.contains(&footnote.definition_range);
                 if !definition_selected {
@@ -280,7 +278,7 @@ impl<'document> SlideCatalogs<'document> {
                     "slides-{}-s{}-footnote-ref-{}",
                     scope.name(),
                     slide + 1,
-                    range.start().to_u32()
+                    ordinal + 1
                 );
                 let placement = match placement_by_number.entry(number) {
                     std::collections::btree_map::Entry::Occupied(entry) => *entry.get(),
@@ -367,6 +365,47 @@ impl<'document> SlideCatalogs<'document> {
             })
             .map(|node| (None, node))
             .collect::<Vec<_>>();
+        // Only actual bibliography references affect these identities. Source
+        // byte positions and omitted notes never enter a public landing ID.
+        let reference_ranges = main_citations
+            .iter()
+            .flat_map(|(_, node)| {
+                node.attributes
+                    .iter()
+                    .filter(|key| key.name.is_none())
+                    .map(|key| key.value_range)
+            })
+            .chain(document.catalogs().bibliography().iter().flat_map(|entry| {
+                entry
+                    .references
+                    .iter()
+                    .filter(|reference| plan.selected.contains(&reference.range))
+                    .map(|reference| reference.range)
+            }))
+            .collect::<BTreeSet<_>>();
+        plan.reference_ordinals.extend(
+            reference_ranges
+                .into_iter()
+                .enumerate()
+                .map(|(ordinal, range)| (range, ordinal + 1)),
+        );
+        let mut footnote_ranges = BTreeMap::<TextRange, BTreeSet<TextRange>>::new();
+        for (_, definition, node) in &footnote_citations {
+            footnote_ranges.entry(*definition).or_default().extend(
+                node.attributes
+                    .iter()
+                    .filter(|key| key.name.is_none())
+                    .map(|key| key.value_range),
+            );
+        }
+        for ranges in footnote_ranges.into_values() {
+            plan.reference_ordinals.extend(
+                ranges
+                    .into_iter()
+                    .enumerate()
+                    .map(|(ordinal, range)| (range, ordinal + 1)),
+            );
+        }
         let citations = main_citations.into_iter().chain(
             footnote_citations
                 .into_iter()
@@ -395,7 +434,7 @@ impl<'document> SlideCatalogs<'document> {
                 let defined = generated || authored.is_some();
                 if defined {
                     let id = placement.map_or_else(
-                        || reference_id(scope, key.value_range),
+                        || plan.reference_id(key.value_range),
                         |(slide, definition)| {
                             plan.placement_reference_id(slide, Some(definition), key.value_range)
                         },
@@ -412,7 +451,7 @@ impl<'document> SlideCatalogs<'document> {
             for reference in &entry.references {
                 if plan.selected.contains(&reference.range) {
                     // Citation keys have already registered their landing point.
-                    let id = reference_id(scope, reference.range);
+                    let id = plan.reference_id(reference.range);
                     if !plan.generated_ids.contains(&id) {
                         plan.insert_id(&mut occupied, &id, reference.range)?;
                         plan.citation_references
@@ -547,7 +586,11 @@ impl<'document> SlideCatalogs<'document> {
     }
 
     pub(super) fn reference_id(&self, range: TextRange) -> String {
-        reference_id(self.scope, range)
+        format!(
+            "slides-{}-bib-ref-{}",
+            self.scope.name(),
+            self.reference_ordinals[&range]
+        )
     }
 
     pub(super) fn placement_reference_id(
@@ -561,7 +604,10 @@ impl<'document> SlideCatalogs<'document> {
                 .iter()
                 .find(|p| p.footnote.definition_range == definition)
                 .expect("selected footnote placement");
-            format!("{}-bib-ref-{}", placement.target_id, range.start().to_u32())
+            format!(
+                "{}-bib-ref-{}",
+                placement.target_id, self.reference_ordinals[&range]
+            )
         } else {
             self.reference_id(range)
         }

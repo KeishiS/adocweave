@@ -54,11 +54,14 @@ UTF-8 encodingと非空タイトルを持つ``head``および``body``を常に�
 
 属性は``lang``、`charset`、`id`、`class`、`href`、`src`、`alt`、`width`、`height`、`title`、`controls`、`open`、
 `poster`、`target`、`rel`、``colspan``、``rowspan``、``data-language``、``data-line-numbers``および
-``data-line-start``、``data-math-language``および``data-math-display``に限定します。
+``data-line-start``、``data-math-language``、``data-math-display``、``role``、``aria-label``、``aria-hidden``および
+``hidden``に限定します。
 classには実装が列挙する固定値、source blockの``language-*``、およびhostの``RolePolicy``が許可したblock roleを表す
 ``role-*``だけを使用します。文書に書いたroleは、hostが名前を列挙した場合に限り``role-<name>``として出力し、
 それ以外は出力しません（xref:adr/0020-host-allowed-role-classes.adoc[ADR 0020]）。
 入力由来の任意属性、event handler、`script`、SVGおよびraw HTMLは生成しません。
+``role``と``aria-*``は検証済みの数式の固定表示に、``hidden``は保持した原TeXを隠すために使用します。
+原稿へ書かれた同名属性をそのまま出力するものではありません。
 
 この一覧は通常のHTML変換に適用します。利用側アプリが選択した本文領域を描画する入口では、
 <<selected-body-regions>>に記載する固定の段階表示属性も使用できます。スライドの脚注一覧では、
@@ -234,7 +237,8 @@ inline装飾を除いた解決済みplain textとして安全に出力します�
 生成しません。Titleも行番号指定もない従来のsource blockは既存の``pre > code.language-*``構造を維持します。
 
 数式engineは内蔵しません。許可した数式言語だけに固定class、``data-math-language``および
-``data-math-display``を付け、内容は常にescapeします。LaTeXは``latexmath``、表示形式は``inline``または
+``data-math-display``を付け、内容は常にescapeします。LaTeXは``math-latex``と``data-math-language="latexmath"``、
+AsciiMathは``math-asciimath``と``data-math-language="asciimath"``を使用します。表示形式は``inline``または
 ``block``です。Inline数式は``code``、block数式は``pre``内の``code``として出力します。利用側は要素名や
 親子関係を推測せず、この二つの属性とescape済みのtext contentを数式描画adapterへ渡せます。
 JSON/WASM protocolでは既存の言語enum値``latex``を維持し、``latexmath``はAsciiDoc構文とHTML属性の名前に
@@ -242,6 +246,8 @@ JSON/WASM protocolでは既存の言語enum値``latex``を維持し、``latexmat
 
 利用側が検証済みの数式結果を``RenderInputs``へ指定した場合は、その数式だけを静的SVGで
 表示します。原TeXは解析結果の値をescapeして保持し、数式を囲む要素の``aria-label``にも設定します。
+原TeXを保持する``code.math-source``には``hidden``を付け、stylesheetの読込み前にも隠します。
+原TeXによる基本的な補助情報を提供しますが、数式を自然言語で読み上げる動作は保証しません。
 外部のXMLは要素、属性、名前空間、数値CSS、IDと
 参照先を有限の許可集合で検査し、XMLの木から再構成します。DOCTYPE、独自entity、処理命令、script、event属性、
 外部URL、HTML要素および未知の名前空間は受理しません。バイト数、要素数および深さを検査してから描画へ渡します。

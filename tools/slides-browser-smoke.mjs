@@ -213,6 +213,7 @@ Return to <<method>>, <<first-step>>, or <<second-step>>;
         return {
           bodyMath: bodyMath.length, notesMath: notesMath.length,
           svg: math.filter(node => node.querySelector('svg path, svg text')).length,
+          sourcesHidden: math.every(node => node.querySelector('.math-source')?.hidden),
           matrix: document.querySelectorAll('#vertical svg [data-mml-node="mtable"] [data-mml-node="mtr"]').length,
           tableMath: document.querySelectorAll('#detail td .math-rendered').length,
           tableCitation: document.querySelectorAll('#detail td .citation').length,
@@ -238,6 +239,7 @@ Return to <<method>>, <<first-step>>, or <<second-step>>;
       assert.equal(content.bodyMath, 10);
       assert.equal(content.notesMath, presenter ? 6 : 0);
       assert.equal(content.svg, presenter ? 16 : 10);
+      assert.equal(content.sourcesHidden, true);
       assert.equal(content.matrix, 2);
       assert.equal(content.tableMath, 1);
       assert.equal(content.tableCitation, 1);
@@ -308,7 +310,7 @@ Return to <<method>>, <<first-step>>, or <<second-step>>;
       const rectangle = root.querySelector('svg').getBoundingClientRect();
       const citation = document.querySelector('.speaker-controls-notes .citation');
       const declaration = selector => getComputedStyle(citation.querySelector(selector));
-      return { source: getComputedStyle(source).display, tex: source.textContent,
+      return { source: getComputedStyle(source).display, sourceHidden: source.hidden, tex: source.textContent,
         svgVisible: rectangle.width > 0 && rectangle.height > 0,
         smallcaps: declaration('.csl-smallcaps').fontVariant,
         normalEmphasis: declaration('.csl-normal-emphasis').fontStyle,
@@ -318,6 +320,7 @@ Return to <<method>>, <<first-step>>, or <<second-step>>;
         citationSize: getComputedStyle(citation).fontSize };
     })()`);
     assert.equal(notesMath.source, "none");
+    assert.equal(notesMath.sourceHidden, true);
     assert.equal(notesMath.tex, "\\begin{equation}n=4\\label{result}\\end{equation}");
     assert.equal(notesMath.svgVisible, true);
     assert.equal(notesMath.smallcaps, "small-caps");

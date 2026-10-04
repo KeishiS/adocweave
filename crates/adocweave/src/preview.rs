@@ -573,7 +573,8 @@ mod tests {
     }
 
     fn raw_request(address: SocketAddr, request: &str) -> String {
-        for _ in 0..100 {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
             if let Ok(mut stream) = TcpStream::connect(address) {
                 stream.write_all(request.as_bytes()).expect("request");
                 let mut response = String::new();

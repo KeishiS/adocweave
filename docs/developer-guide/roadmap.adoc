@@ -7,3 +7,9 @@ GitHub Issueを参照してください。
 完了した作業の経緯はIssue、バージョンごとの変更は
 https://github.com/KeishiS/adocweave/releases[GitHub Releases]のRelease Notesに記録します。
 このページには完了したmilestoneの履歴を残しません。
+
+== 研究スライドのレビュー対応と初回公開
+
+https://github.com/KeishiS/adocweave/issues/1000[研究スライドの追加レビュー]で、公開内容の分離、補助プログラムの
+起動と配布、文書および受入検査を確認します。補助パッケージの初回公開は、監査済み候補の検査と
+https://github.com/KeishiS/adocweave/issues/998[npmへの実公開]を分けて扱います。

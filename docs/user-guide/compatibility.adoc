@@ -69,6 +69,9 @@ passthroughは置換を抑止する内容として保持しますが、生のHTM
 ``stem``の値が``latexmath``、``latex``または``tex``ならLaTeX、それ以外、空および未設定ならAsciiMathです。
 各数式の位置で有効な属性値を使い、明示記法を優先します。LaTeXを使う文書では``:stem: latexmath``を設定するか、
 ``latexmath:[...]``および``[latexmath]``を指定してください。
+数式blockの``[stem,latexmath]``、``[stem,latex]``および``[stem,tex]``は位置ごとの``stem``属性より優先します。
+第2位置の``asciimath``、未知の値および明示的な空文字列``""``はAsciiMathです。
+文書タイトル内の``stem:[]``は、後続のヘッダ属性を先読みしません。
 
 通常のHTML出力では数式をHTMLエスケープした原文として表示し、数式エンジンを読み込みません。
 AsciidoctorのHTML出力における、文書属性``stem``の存在によるMathJaxの有効化は再現しません。
@@ -87,6 +90,15 @@ open blockは``div.open``、example blockは``div.example``、sidebar blockは``
 スライドの出力は、見出し、発表者ノート、2列および段階表示の限定した記法に対応します。
 Asciidoctor reveal.jsのすべての属性や拡張を再現するものではなく、``revealjs_*``属性や
 原稿内の任意のJavaScriptによる機能追加には対応しません。数式の描画はLaTeXに対応し、AsciiMathは診断します。
+発表者ノートは``[.notes]``を付けた通常のopenブロックだけに対応します。``[NOTE.notes]``、``[NOTE.speaker]``、
+``[NOTE.aside]``および``speaker``・``aside`` roleはエラーにし、通常HTMLでは従来どおり本文を保持します。
+
+見出しの``background-*``、``transition``、``transition-speed``、``state``、``data-*``属性と、
+``auto-animate``、``auto-animate-restart``、``auto-animate-unmatched`` optionはエラーにします。
+表示用roleの``stretch``、``r-fit-text``、``r-stretch``および``r-stack``もエラーにします。
+通常のroleや属性、見出しの``%unnumbered``はこの制限へ含めません。
+ノートだけの原稿は生成せず、本文からノート専用の手書き書誌を参照する場合もエラーにします。
+本文の脚注・引用の生成IDと表示番号は非公開ノートの量に依存せず、通常HTMLのID生成方法は維持します。
 記法、補助プログラムの導入および公開用／発表者用の指定は、
 xref:command-line.adoc#revealjs-slides[reveal.jsスライド]を参照してください。
 

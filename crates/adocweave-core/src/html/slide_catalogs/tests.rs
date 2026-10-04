@@ -298,6 +298,8 @@ fn collisions_cover_bibliography_containers_anchors_landings_and_footnote_placem
         ("slides-body-references", "cite:[item]", true),
         ("slides-body-bib-item", "cite:[item]", true),
         ("slides-body-s1-footnote-1", "footnote:[Text]", false),
+        ("slides-body-s1-footnote-ref-1", "footnote:[Text]", false),
+        ("slides-body-bib-ref-1", "cite:[item]", true),
     ] {
         let analysis = Engine::new(AnalysisOptions::default())
             .analyze(&format!("[#{}]\n{}\n", id, content))

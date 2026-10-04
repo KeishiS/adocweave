@@ -312,12 +312,16 @@ fn unquote(value: &str) -> &str {
 
 pub(crate) fn parse_math_attribute(text: &str) -> Option<MathLanguage> {
     let metadata = parse_block_attributes(text, 0)?;
-    let style = metadata
+    let mut positional = metadata
         .attributes
         .iter()
-        .find(|attribute| attribute.name.is_none())?;
+        .filter(|attribute| attribute.name.is_none());
+    let style = positional.next()?;
     match style.value.as_str() {
-        "stem" | "asciimath" => Some(MathLanguage::AsciiMath),
+        "stem" => Some(crate::inline_model::stem_language(
+            positional.next().map(|attribute| attribute.value.as_str()),
+        )),
+        "asciimath" => Some(MathLanguage::AsciiMath),
         "latexmath" => Some(MathLanguage::Latex),
         _ => None,
     }

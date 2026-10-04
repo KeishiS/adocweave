@@ -12,6 +12,10 @@ use std::{
 };
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 
+#[cfg(windows)]
+#[path = "windows_job.rs"]
+mod windows_job;
+
 #[derive(Clone, Copy, Debug)]
 pub struct ProcessLimits {
     pub input_bytes: usize,
@@ -35,6 +39,7 @@ impl Default for ProcessLimits {
 pub struct HelperCommand {
     pub executable: PathBuf,
     pub arguments: Vec<std::ffi::OsString>,
+    pub working_directory: PathBuf,
 }
 
 /// Only explicit configuration or installed known PATH commands are considered.
@@ -101,6 +106,10 @@ fn resolve_from_paths(
             ));
         }
         return Ok(HelperCommand {
+            working_directory: path
+                .parent()
+                .expect("absolute executable has a parent")
+                .to_owned(),
             executable: path,
             arguments: Vec::new(),
         });
@@ -112,7 +121,23 @@ fn resolve_from_paths(
             "adocweave-slides-helper"
         });
         if executable(&native) {
+            // npm's Unix entry is a symlink to bin.mjs. Resolve it before
+            // choosing Node so its env shebang cannot search PATH again.
+            let resolved = native
+                .canonicalize()
+                .map_err(|e| HostError::new("slides-helper-io", e.to_string()))?;
+            if !windows
+                && resolved
+                    .extension()
+                    .is_some_and(|extension| extension == "mjs")
+            {
+                return node_command(resolved, paths, false);
+            }
             return Ok(HelperCommand {
+                working_directory: native
+                    .parent()
+                    .expect("absolute executable has a parent")
+                    .to_owned(),
                 executable: native,
                 arguments: Vec::new(),
             });
@@ -142,10 +167,14 @@ fn node_command(module: PathBuf, paths: &[PathBuf], windows: bool) -> HostResult
         .ok_or_else(|| {
             HostError::new(
                 "slides-helper-node-not-found",
-                "Node.js executable is not available on PATH",
+                "Node.js executable is not available on the absolute PATH; install Node.js >=24.19.0 and @adocweave/slides-helper. See https://github.com/KeishiS/adocweave/blob/main/docs/user-guide/release-installation.adoc",
             )
         })?;
     Ok(HelperCommand {
+        working_directory: module
+            .parent()
+            .expect("absolute module has a parent")
+            .to_owned(),
         executable: node,
         arguments: vec![module.into_os_string()],
     })
@@ -206,86 +235,181 @@ pub async fn execute(
     serde_json::to_writer(&mut input, &prepared.request)
         .map_err(|e| HostError::new("slides-helper-input-limit", e.to_string()))?;
     let executable = resolve_executable(explicit)?;
-    let mut child = tokio::process::Command::new(executable.executable)
+    let path = std::env::join_paths(
+        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+            .filter(|path| path.is_absolute()),
+    )
+    .map_err(|e| HostError::new("slides-helper-spawn", e.to_string()))?;
+    let mut command = tokio::process::Command::new(executable.executable);
+    command
         .args(executable.arguments)
+        .current_dir(executable.working_directory)
+        .env("PATH", path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .kill_on_drop(true)
+        .kill_on_drop(true);
+    // Node loader/preload settings are not part of the finite helper request.
+    for (name, _) in std::env::vars_os() {
+        if name
+            .to_string_lossy()
+            .to_ascii_uppercase()
+            .starts_with("NODE_")
+        {
+            command.env_remove(name);
+        }
+    }
+    #[cfg(unix)]
+    command.process_group(0);
+    #[cfg(windows)]
+    command.creation_flags(windows_sys::Win32::System::Threading::CREATE_SUSPENDED);
+    #[cfg(windows)]
+    let job = windows_job::Job::new().map_err(|e| {
+        HostError::new(
+            "slides-helper-spawn",
+            format!("cannot create helper process job: {e}"),
+        )
+    })?;
+    let mut child = command
         .spawn()
         .map_err(|e| HostError::new("slides-helper-spawn", e.to_string()))?;
+    #[cfg(unix)]
+    let group = child.id().expect("new child has a process ID") as i32;
+    #[cfg(windows)]
+    if let Err(error) = job.assign_and_resume(&child) {
+        // Assignment/resume failure must never leave a suspended child behind.
+        let _ = child.kill().await;
+        let _ = child.wait().await;
+        return Err(HostError::new(
+            "slides-helper-spawn",
+            format!("cannot start helper in its process job: {error}"),
+        ));
+    }
     let mut stdin = child.stdin.take().expect("piped stdin");
     let stdout = child.stdout.take().expect("piped stdout");
     let stderr = child.stderr.take().expect("piped stderr");
+    let timeout = limits.timeout.min(Duration::from_secs(30));
     let result = {
         let operation = async {
-            let (_, stdout, stderr, status) = tokio::try_join!(
+            let (input_result, stdout, stderr, status) = tokio::try_join!(
                 async move {
-                    stdin.write_all(&input.bytes).await?;
-                    stdin.shutdown().await?;
+                    let result = async {
+                        stdin.write_all(&input.bytes).await?;
+                        stdin.shutdown().await
+                    }
+                    .await;
                     // ChildStdin::shutdown does not close the pipe handle.
                     // The helper reads one JSON document until stdin EOF.
                     drop(stdin);
-                    Ok::<(), io::Error>(())
+                    // Early exits can close stdin before reading the request.
+                    // Keep reading stderr and waiting for the exit status.
+                    Ok::<_, HostError>(result)
                 },
-                read_bounded(stdout, limits.output_bytes.min(protocol::OUTPUT_BYTES)),
-                read_bounded(stderr, limits.stderr_bytes.min(64 * 1024)),
-                child.wait()
-            )
-            .map_err(|e| {
-                HostError::new(
-                    if e.kind() == io::ErrorKind::FileTooLarge {
-                        "slides-helper-output-limit"
-                    } else {
-                        "slides-helper-io"
-                    },
-                    e.to_string(),
-                )
-            })?;
-            Ok((stdout, stderr, status))
+                read_bounded(
+                    stdout,
+                    limits.output_bytes.min(protocol::OUTPUT_BYTES),
+                    "stdout"
+                ),
+                read_bounded(stderr, limits.stderr_bytes.min(64 * 1024), "stderr"),
+                async {
+                    child
+                        .wait()
+                        .await
+                        .map_err(|e| HostError::new("slides-helper-io", e.to_string()))
+                }
+            )?;
+            Ok((input_result, stdout, stderr, status))
         };
         tokio::pin!(operation);
         tokio::select! {
             result=&mut operation=>result,
-            _=tokio::time::sleep(limits.timeout.min(Duration::from_secs(30)))=>Err(HostError::new("slides-helper-timeout","slide helper exceeded its time limit")),
+            _=tokio::time::sleep(timeout)=>Err(HostError::new("slides-helper-timeout",format!("slide helper exceeded its {timeout:?} time limit; reduce the document's math or citation workload and retry"))),
             _=wait_cancelled(cancellation)=>Err(HostError::new("slides-helper-cancelled","slide generation was cancelled")),
         }
     };
-    let (stdout, stderr, status) = match result {
+    let (input_result, stdout, stderr, status) = match result {
         Ok(result) => result,
         Err(error) => {
+            #[cfg(unix)]
+            // The helper started in its own group; inherited descendants share
+            // it unless a trusted helper deliberately detaches itself.
+            let cleanup = if unsafe { libc::kill(-group, libc::SIGKILL) } == -1 {
+                let error = io::Error::last_os_error();
+                if error.raw_os_error() == Some(libc::ESRCH) {
+                    Ok(())
+                } else {
+                    Err(error)
+                }
+            } else {
+                Ok(())
+            };
+            #[cfg(windows)]
+            let cleanup = job.terminate();
             // Reap even after an I/O/limit/cancellation failure, including a child that just exited.
             let _ = child.kill().await;
             let _ = child.wait().await;
-            return Err(error);
+            return Err(match cleanup {
+                Ok(()) => error,
+                Err(cleanup) => HostError::new(
+                    error.code,
+                    format!(
+                        "{}; helper process cleanup failed: {cleanup}",
+                        error.message
+                    ),
+                ),
+            });
         }
     };
     let exit = status.code().ok_or_else(|| {
         HostError::new(
             "slides-helper-exit",
-            "slide helper terminated without an exit code",
+            with_stderr("slide helper terminated without an exit code", &stderr),
         )
     })?;
     if !matches!(exit, 0 | 1) {
         return Err(HostError::new(
             "slides-helper-exit",
-            format!(
-                "slide helper exited with status {exit}: {}",
-                String::from_utf8_lossy(&stderr)
-            ),
+            with_stderr(&format!("slide helper exited with status {exit}"), &stderr),
         ));
     }
     let mut parser = serde_json::Deserializer::from_slice(&stdout);
     use serde::Deserialize;
     let response = Response::deserialize(&mut parser).map_err(|e| {
-        HostError::protocol(format!(
-            "helper stdout must contain one protocol JSON object: {e}"
-        ))
+        HostError::new(
+            if exit == 1 { "slides-helper-exit" } else { "slides-helper-protocol" },
+            with_stderr(&format!(
+                "slide helper exited with status {exit} without a protocol response; helper stdout must contain one protocol JSON object: {e}"
+            ), &stderr),
+        )
     })?;
     parser.end().map_err(|e| {
-        HostError::protocol(format!("helper stdout has logging or additional JSON: {e}"))
+        HostError::protocol(with_stderr(&format!("slide helper exited with status {exit}; helper stdout has logging or additional JSON: {e}"), &stderr))
     })?;
+    input_result.map_err(|error| HostError::new(
+        "slides-helper-io",
+        with_stderr(&format!("could not send the complete request to the slide helper (exit status {exit}): {error}"), &stderr),
+    ))?;
     validate_response(prepared, response, exit, reserved_ids)
+}
+
+fn with_stderr(message: &str, stderr: &[u8]) -> String {
+    if stderr.is_empty() {
+        return message.to_owned();
+    }
+    let tail = String::from_utf8_lossy(&stderr[stderr.len().saturating_sub(8192)..]);
+    let lines = tail.lines().rev().take(12).collect::<Vec<_>>();
+    let mut result = format!("{message}\nhelper stderr (last lines):");
+    for line in lines.into_iter().rev() {
+        result.push_str("\n  ");
+        for character in line.chars() {
+            if character.is_control() && character != '\t' {
+                result.extend(character.escape_default());
+            } else {
+                result.push(character);
+            }
+        }
+    }
+    result
 }
 
 /// A worker may call this without maintaining a runtime or process registry.
@@ -324,18 +448,33 @@ async fn wait_cancelled(cancellation: &dyn CancellationCheck) {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
 }
-async fn read_bounded(mut reader: impl AsyncRead + Unpin, limit: usize) -> io::Result<Vec<u8>> {
+async fn read_bounded(
+    mut reader: impl AsyncRead + Unpin,
+    limit: usize,
+    stream: &str,
+) -> HostResult<Vec<u8>> {
     let mut bytes = Vec::new();
     let mut chunk = [0u8; 8192];
     loop {
-        let count = reader.read(&mut chunk).await?;
+        let count = reader.read(&mut chunk).await.map_err(|e| {
+            HostError::new(
+                "slides-helper-io",
+                format!("cannot read helper {stream}: {e}"),
+            )
+        })?;
         if count == 0 {
             return Ok(bytes);
         }
         if count > limit.saturating_sub(bytes.len()) {
-            return Err(io::Error::new(
-                io::ErrorKind::FileTooLarge,
-                "helper stream byte limit exceeded",
+            return Err(HostError::new(
+                if stream == "stderr" {
+                    "slides-helper-stderr-limit"
+                } else {
+                    "slides-helper-output-limit"
+                },
+                format!(
+                    "helper {stream} exceeded its {limit}-byte limit; check the helper installation"
+                ),
             ));
         }
         bytes.extend_from_slice(&chunk[..count]);
