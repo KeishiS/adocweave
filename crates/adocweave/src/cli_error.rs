@@ -295,6 +295,8 @@ fn is_preprocess_limit(kind: PreprocessErrorKind) -> bool {
 pub(crate) fn convert_error(error: commands::convert::Error) -> CliError {
     match error {
         commands::convert::Error::Html(source) => html_policy_error(source),
+        commands::convert::Error::Position(source) => CliError::Position(source),
+        commands::convert::Error::Serialize(message) => CliError::Serialize(message),
     }
 }
 

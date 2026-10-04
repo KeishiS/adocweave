@@ -41,6 +41,19 @@ help、診断、要約およびエラーは英語で表示します。
 adocweave check -- -manual.adoc
 ----
 
+== HTML変換
+
+``convert``はHTMLを標準出力へ書き、描画時の診断を標準エラー出力へ書きます。
+診断には元ファイル、行番号、UTF-8のバイト数による列番号、重要度およびcodeを表示します。
+include先の診断も、その元ファイルの位置を示します。HTMLには診断を混在させません。
+
+描画時のerrorがある場合は終了コード1、warning、informationおよびhintだけの場合は0を返します。
+読み書き、引数、stylesheetおよび上限の失敗は、それぞれの終了コードを返します。
+安全に描画できたHTMLは、描画時の診断がある場合も標準出力へ書きます。
+
+``.notes``は通常HTMLでは汎用roleです。本文は保持し、``html.roles``で許可した場合だけ
+CSS用の``role-notes`` classを付けます。``.notes``を非公開の指定として扱いません。
+
 [#diagnostics]
 == 診断
 

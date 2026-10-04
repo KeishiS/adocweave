@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
-use std::io::{self, IsTerminal as _, Read as _};
+use std::io::{self, IsTerminal as _, Read as _, Write as _};
 use std::path::{Path, PathBuf};
 
 use adocweave_core::NeverCancel;
@@ -12,8 +12,10 @@ use adocweave_project::{
     resolve_config,
 };
 
-use crate::arguments::{Arguments, CommandOptions};
-use crate::check_output::{DiagnosticCounts, DiagnosticFormat, sarif_log, sarif_results};
+use crate::arguments::{Arguments, ColorChoice, CommandOptions};
+use crate::check_output::{
+    DiagnosticCounts, DiagnosticFormat, FailOn, ProjectSourceView, sarif_log, sarif_results,
+};
 use crate::cli_error::{CliError, check_error, convert_error, format_error};
 use crate::commands;
 use crate::exit_code::CliExitCode;
@@ -53,6 +55,7 @@ pub(crate) fn run(arguments: &Arguments) -> Result<CliExitCode, CliError> {
         CommandOptions::Convert { complete, css } => {
             let target = only_target(&result.targets)?;
             let analysis = expanded_analysis(target)?;
+            let sources = diagnostic_sources(target, &current)?;
             let policy = commands::html_policy::build_project(
                 &target.config.config,
                 &target.resources,
@@ -63,8 +66,30 @@ pub(crate) fn run(arguments: &Arguments) -> Result<CliExitCode, CliError> {
             let output =
                 commands::convert::render_analysis(&analysis.preprocessed.analysis, &policy)
                     .map_err(convert_error)?;
-            print_output(finish_output(output)?)?;
-            Ok(CliExitCode::Success)
+            let diagnostics = commands::convert::render_diagnostics(
+                &analysis.preprocessed,
+                &output.diagnostics,
+                &sources,
+            )
+            .map_err(convert_error)?;
+            let html = finish_output(output.html)?;
+            let diagnostics_color =
+                if crate::terminal::color_for(arguments.color, io::stderr().is_terminal()) {
+                    ColorChoice::Always
+                } else {
+                    ColorChoice::Never
+                };
+            let diagnostics_text =
+                finish_output(colorize_lines(&diagnostics.output, diagnostics_color))?;
+            io::stderr()
+                .write_all(diagnostics_text.as_bytes())
+                .map_err(CliError::Write)?;
+            print_output(html)?;
+            Ok(if diagnostics.counts.fails(FailOn::Error) {
+                CliExitCode::Diagnostics
+            } else {
+                CliExitCode::Success
+            })
         }
         CommandOptions::View(options) => {
             let target = only_target(&result.targets)?;
@@ -432,7 +457,7 @@ fn run_check(
                 )?);
             }
         }
-        let sources = check_sources(target, current)?;
+        let sources = diagnostic_sources(target, current)?;
         let analysis = expanded_analysis(target)?;
         let checked =
             commands::check::process_project(analysis, options, &sources).map_err(check_error)?;
@@ -492,11 +517,10 @@ fn run_check(
     })
 }
 
-fn check_sources<'target>(
+fn diagnostic_sources<'target>(
     target: &'target ProjectTargetResult,
     current: &Path,
-) -> Result<BTreeMap<adocweave_core::SourceId, commands::check::ProjectSourceView<'target>>, CliError>
-{
+) -> Result<BTreeMap<adocweave_core::SourceId, ProjectSourceView<'target>>, CliError> {
     let analysis = expanded_analysis(target)?;
     let mut displays = BTreeMap::new();
     displays.insert(
@@ -525,7 +549,7 @@ fn check_sources<'target>(
         .ok_or_else(|| target_error(target))?;
     sources.insert(
         target.source_id.clone(),
-        commands::check::ProjectSourceView {
+        ProjectSourceView {
             display_id: displays
                 .get(&target.source_id)
                 .cloned()
@@ -542,7 +566,7 @@ fn check_sources<'target>(
         };
         sources.insert(
             resource.source_id.clone(),
-            commands::check::ProjectSourceView {
+            ProjectSourceView {
                 display_id: displays
                     .get(&resource.source_id)
                     .cloned()
