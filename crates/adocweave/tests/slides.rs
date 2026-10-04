@@ -520,6 +520,82 @@ fn body_cannot_link_to_note_only_targets_and_unsafe_svg_cannot_be_saved() {
 }
 
 #[test]
+fn public_reference_ids_are_independent_of_private_notes_and_unrelated_prose_edits() {
+    let root = tempfile::tempdir().unwrap();
+    let ids = |html: &str| {
+        html.split("id=\"")
+            .skip(1)
+            .map(|part| part.split('"').next().unwrap().to_owned())
+            .filter(|id| !id.starts_with("slides-notes-"))
+            .collect::<Vec<_>>()
+    };
+    let mut previous_public = None;
+    let mut previous_ids = None;
+    for (padding, prose) in [
+        ("PRIVATE", "Visible."),
+        ("PRIVATE ".repeat(200).as_str(), "Visible."),
+        ("PRIVATE", "Unrelated public prose was edited here."),
+    ] {
+        write(
+            root.path(),
+            "talk.adoc",
+            &format!(
+                "= Talk\n\n== First\n\n{prose} cite:[manual] footnote:shared[cite:[manual]].\n\n[.notes]\n--\n{padding} footnote:[Private note]. cite:[manual].\n--\n\n== Last\n\nAgain footnote:shared[] and footnote:[Second]. See xref:#manual[].\n\n[bibliography]\n==== References\n\n* [[[manual]]] Entry.\n"
+            ),
+        );
+        for audience in ["public", "presenter"] {
+            success(&convert(
+                root.path(),
+                &[
+                    "--no-config",
+                    "talk.adoc",
+                    "--to",
+                    "revealjs",
+                    "--output",
+                    audience,
+                    "--audience",
+                    audience,
+                    "--slides-helper",
+                    "/missing/helper",
+                ],
+            ));
+            let html = fs::read_to_string(root.path().join(audience).join("index.html")).unwrap();
+            check_fragment_targets(&html);
+            if let Some(expected) = &previous_ids {
+                assert_eq!(&ids(&html), expected);
+            } else {
+                previous_ids = Some(ids(&html));
+            }
+            if audience == "public" && prose == "Visible." {
+                if let Some(expected) = &previous_public {
+                    assert_eq!(&html, expected);
+                } else {
+                    previous_public = Some(html.clone());
+                }
+            }
+            assert!(
+                html.contains("id=\"slides-body-s3-footnote-ref-1\""),
+                "{html}"
+            );
+            assert!(
+                html.contains("id=\"slides-body-s3-footnote-ref-2\""),
+                "{html}"
+            );
+            assert!(html.contains("id=\"slides-body-bib-ref-1\""), "{html}");
+            assert!(html.contains("id=\"slides-body-bib-ref-2\""), "{html}");
+            assert!(
+                html.contains("slides-body-s2-footnote-1-bib-ref-1"),
+                "{html}"
+            );
+            assert!(
+                html.contains("slides-body-s3-footnote-1-bib-ref-1"),
+                "{html}"
+            );
+        }
+    }
+}
+
+#[test]
 fn leading_notes_do_not_create_public_slides_and_page_titles_use_display_text() {
     let root = tempfile::tempdir().unwrap();
     let body = "== First *bold*\n\nBody.\n";
