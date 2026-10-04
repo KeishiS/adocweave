@@ -584,6 +584,10 @@ fn plan_standard_macro(
                     })
                     .collect::<Vec<_>>();
                 children.extend(segments);
+                if let Some(link) = plan_slide_citation_link(&keys, context) {
+                    children.push(text_node(" "));
+                    children.push(link);
+                }
                 output.push(element_with_children(
                     "span",
                     vec![classes(&["citation"])],
@@ -681,6 +685,36 @@ fn plan_standard_macro(
         Kind::Image | Kind::Icon => plan_image_macro(node, context, output),
         Kind::Audio | Kind::Video => plan_media_macro(node, context, output),
     }
+}
+
+fn plan_slide_citation_link(
+    keys: &[&crate::inline_model::MacroAttribute],
+    context: &InlineRenderContext<'_, '_>,
+) -> Option<InlineNode> {
+    let slides = context.slides?;
+    let bibliography = context.generated_bibliography?;
+    let (target, label) = if keys.len() == 1 {
+        (
+            bibliography.entry(&keys[0].value)?.anchor_id.as_str(),
+            "Open cited reference",
+        )
+    } else {
+        if !keys.iter().any(|key| bibliography.defines(&key.value)) {
+            return None;
+        }
+        (slides.bibliography_id(), "Open references")
+    };
+    let href = SafeFragmentUrl::new(target)?.into_owned();
+    Some(element_with_children(
+        "a",
+        vec![
+            classes(&["citation-link"]),
+            fragment_url("href", href),
+            PlannedAttribute::Passive(PassiveAttributeName::aria_label(), label.to_owned()),
+            passive("title", label),
+        ],
+        vec![text_node("↗")],
+    ))
 }
 
 fn plan_image_macro(

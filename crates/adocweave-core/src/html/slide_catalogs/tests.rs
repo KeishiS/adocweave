@@ -468,6 +468,91 @@ fn a_private_target_in_footnote_prose_is_diagnosed_without_its_resolved_label() 
 }
 
 #[test]
+fn hidden_host_heading_is_a_local_target_only_when_explicitly_declared() {
+    let analysis = Engine::new(AnalysisOptions::default())
+        .analyze("[#hidden]\n[%notitle]\n== Hidden heading\n\nSee xref:#hidden[].\n")
+        .unwrap();
+    let doc = analysis.document();
+    let mut selection = region(doc, &[1]);
+    selection
+        .container_headings
+        .insert(doc.index().top_level_blocks()[0]);
+    let selections = HtmlSlideSelections {
+        body: vec![vec![selection.clone()]],
+        notes: vec![],
+    };
+    let output = render(
+        doc,
+        &RenderInputs::default(),
+        &selections,
+        HtmlSlideScope::Body,
+    );
+    assert!(output.regions[0].contains("href=\"#hidden\">Hidden heading</a>"));
+    assert!(!output.regions[0].contains("<h2"));
+    assert!(matches!(
+        html::render_regions(
+            doc,
+            &RenderPolicy::default(),
+            &RenderInputs::default(),
+            &[selection],
+            OutputLimits::default()
+        ),
+        Err(HtmlRegionError::InvalidSelection { .. })
+    ));
+    let selections = HtmlSlideSelections {
+        body: vec![vec![region(doc, &[1])]],
+        notes: vec![],
+    };
+    assert!(matches!(
+        render_slide_regions(
+            doc,
+            &RenderPolicy::default(),
+            &RenderInputs::default(),
+            &selections,
+            HtmlSlideScope::Body,
+            &BTreeSet::from(["hidden".into()]),
+            OutputLimits::default()
+        ),
+        Err(HtmlRegionError::ReferenceOutsideScope { .. })
+    ));
+}
+
+#[test]
+fn reserved_private_section_or_document_title_is_not_a_host_container_declaration() {
+    for heading in ["== PRIVATE_SECTION", "= PRIVATE_DOCUMENT_TITLE"] {
+        let analysis = Engine::new(AnalysisOptions::default()).analyze(&format!("[#public]\n[%notitle]\n== Public heading\n\nSee xref:#secret[].\n\n[.notes]\n--\n[#secret]\n{heading}\n--\n")).unwrap();
+        let doc = analysis.document();
+        let reserved = doc
+            .reference_targets()
+            .iter()
+            .map(|target| target.id.clone())
+            .collect();
+        let mut body = region(doc, &[1]);
+        body.container_headings
+            .insert(doc.index().top_level_blocks()[0]);
+        let selections = HtmlSlideSelections {
+            body: vec![vec![body]],
+            notes: vec![vec![region(doc, &[2])]],
+        };
+        assert!(
+            matches!(
+                render_slide_regions(
+                    doc,
+                    &RenderPolicy::default(),
+                    &RenderInputs::default(),
+                    &selections,
+                    HtmlSlideScope::Body,
+                    &reserved,
+                    OutputLimits::default()
+                ),
+                Err(HtmlRegionError::ReferenceOutsideScope { .. })
+            ),
+            "{heading}"
+        );
+    }
+}
+
+#[test]
 fn rich_citations_keep_selected_backref_landings_and_scope_ids() {
     use crate::rendered_content::{ResolvedRichCitation, RichInline, ValidatedRichText};
     let analysis = Engine::new(AnalysisOptions::default())
@@ -504,4 +589,104 @@ fn rich_citations_keep_selected_backref_landings_and_scope_ids() {
             .unwrap()
             .contains(&format!("href=\"#{landing}\""))
     );
+}
+
+#[test]
+fn rich_citation_links_have_fixed_accessible_targets_without_nested_anchors() {
+    use crate::rendered_content::{ResolvedRichCitation, RichInline, ValidatedRichText};
+    let analysis = Engine::new(AnalysisOptions::default())
+        .analyze("cite:[one, two]\n\n[.notes]\n--\ncite:[one]\n--\n")
+        .unwrap();
+    let doc = analysis.document();
+    let selections = HtmlSlideSelections {
+        body: vec![vec![region(doc, &[0])]],
+        notes: vec![vec![region(doc, &[1])]],
+    };
+    let citations = analysis.citations();
+    for (scope, citation, keys, target, label) in [
+        (
+            HtmlSlideScope::Body,
+            &citations[0],
+            vec!["one", "two"],
+            "slides-body-references",
+            "Open references",
+        ),
+        (
+            HtmlSlideScope::Notes,
+            &citations[1],
+            vec!["one"],
+            "slides-notes-bib-one",
+            "Open cited reference",
+        ),
+    ] {
+        let rich = ValidatedRichText::validate(vec![RichInline::Link {
+            href: "https://example.org/work".into(),
+            children: vec![RichInline::Text {
+                text: "Details".into(),
+            }],
+        }])
+        .unwrap();
+        let inputs = bibliography(scope, &keys)
+            .with_rich_citations(vec![ResolvedRichCitation::new(citation.range, rich)]);
+        let output = render(doc, &inputs, &selections, scope);
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        let html = output.regions.concat();
+        assert!(html.contains(&format!("class=\"citation-link\" href=\"#{target}\" aria-label=\"{label}\" title=\"{label}\">↗</a>")), "{html}");
+        let wrapped = format!("<root>{html}</root>");
+        let parsed = roxmltree::Document::parse(&wrapped).unwrap();
+        for anchor in parsed.descendants().filter(|node| node.has_tag_name("a")) {
+            assert!(
+                !anchor
+                    .ancestors()
+                    .skip(1)
+                    .any(|node| node.has_tag_name("a"))
+            );
+        }
+        let landing = output
+            .generated_ids
+            .iter()
+            .find(|id| id.contains("-bib-ref-"))
+            .unwrap();
+        assert!(html.contains(&format!("id=\"{landing}\"")));
+        assert!(
+            output
+                .bibliography
+                .as_ref()
+                .unwrap()
+                .contains(&format!("href=\"#{landing}\""))
+        );
+        let total = html.len()
+            + output.footnotes.iter().map(String::len).sum::<usize>()
+            + output.bibliography.unwrap().len();
+        assert!(
+            render_slide_regions(
+                doc,
+                &RenderPolicy::default(),
+                &inputs,
+                &selections,
+                scope,
+                &BTreeSet::new(),
+                OutputLimits {
+                    max_output_bytes: total as u32
+                }
+            )
+            .is_ok()
+        );
+        assert!(matches!(
+            render_slide_regions(
+                doc,
+                &RenderPolicy::default(),
+                &inputs,
+                &selections,
+                scope,
+                &BTreeSet::new(),
+                OutputLimits {
+                    max_output_bytes: total as u32 - 1
+                }
+            ),
+            Err(HtmlRegionError::OutputLimit { .. })
+        ));
+        let ordinary = html::render_with_inputs(doc, &RenderPolicy::default(), &inputs);
+        assert!(!ordinary.html.contains("citation-link"));
+    }
 }

@@ -92,6 +92,7 @@ pub(super) const ALLOWED_CLASSES: &[&str] = &[
     "callout-number",
     "checklist-marker",
     "citation",
+    "citation-link",
     "document-title",
     "example",
     "footnote",
@@ -166,6 +167,10 @@ impl<'a> PassiveAttributeName<'a> {
 
     pub(super) const fn fragment_index() -> Self {
         Self("data-fragment-index")
+    }
+
+    pub(super) const fn aria_label() -> Self {
+        Self("aria-label")
     }
 }
 
