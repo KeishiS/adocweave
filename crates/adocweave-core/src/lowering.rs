@@ -597,17 +597,23 @@ fn math_language(
     attributes: &crate::attributes::AttributeEnvironment,
     offset: crate::source::TextSize,
 ) -> Option<crate::inline_model::MathLanguage> {
-    let style = metadata
+    let mut positional = metadata
         .attributes
         .iter()
-        .find(|attribute| attribute.name.is_none())?;
+        .filter(|attribute| attribute.name.is_none());
+    let style = positional.next()?;
     match style.value.as_str() {
         "latexmath" => Some(crate::inline_model::MathLanguage::Latex),
         "asciimath" => Some(crate::inline_model::MathLanguage::AsciiMath),
         "stem" => Some(crate::inline_model::stem_language(
-            attributes
-                .resolve_at("stem", offset)
-                .and_then(|resolved| resolved.value.ok().flatten()),
+            positional
+                .next()
+                .map(|attribute| attribute.value.as_str())
+                .or_else(|| {
+                    attributes
+                        .resolve_at("stem", offset)
+                        .and_then(|resolved| resolved.value.ok().flatten())
+                }),
         )),
         _ => None,
     }

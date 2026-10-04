@@ -265,6 +265,14 @@ pub fn document_title(analysis: &Analysis) -> Option<ProjectedText> {
         })
 }
 
+/// Returns a heading's plain display text, including resolved attributes.
+///
+/// This uses the same inline projection as block presentation titles; it does
+/// not render HTML or resolve equation and citation results supplied by a host.
+pub fn heading_text(heading: &crate::block_model::Heading) -> String {
+    resolved_inline_text(&heading.inlines)
+}
+
 /// Returns authored external links in source order.
 ///
 /// An empty label falls back to the authored target text.

@@ -364,6 +364,168 @@ process.stdout.write(readFileSync(new URL('./response.json', import.meta.url)));
     assert_eq!(result.inputs.notes.math().len(), 2);
 }
 
+#[tokio::test]
+async fn early_helper_exit_retains_stderr_and_status_even_when_stdin_breaks() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("bin.mjs");
+    let mut prepared = fixture();
+    for equation in &mut prepared.request.scopes.body.equations {
+        equation.tex = "x".repeat(16 * 1024);
+    }
+    for exit in [0, 1, 9] {
+        std::fs::write(&path, format!(
+            "import {{ closeSync }} from 'node:fs';\ncloseSync(0);\nprocess.stderr.write('helper exploded\\n\\u001b[31munsafe terminal sequence\\n');\nsetTimeout(() => process.exit({exit}), 20);\n"
+        )).unwrap();
+        let error = helper::execute(
+            &prepared,
+            Some(&path),
+            &NeverCancel,
+            helper::ProcessLimits::default(),
+            &BTreeSet::new(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            error.code,
+            if exit == 0 {
+                "slides-helper-protocol"
+            } else {
+                "slides-helper-exit"
+            }
+        );
+        assert!(error.message.contains(&format!("status {exit}")));
+        assert!(error.message.contains("helper exploded"));
+        assert!(error.message.contains("helper stderr (last lines)"));
+        assert!(error.message.contains("\\u{1b}[31m"));
+        assert!(!error.message.contains('\u{1b}'));
+    }
+}
+
+#[tokio::test]
+async fn stderr_limit_is_distinguished_from_stdout_limit() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("bin.mjs");
+    std::fs::write(
+        &path,
+        "process.stderr.write('x'.repeat(100)); setInterval(() => {}, 1000);",
+    )
+    .unwrap();
+    let error = helper::execute(
+        &fixture(),
+        Some(&path),
+        &NeverCancel,
+        helper::ProcessLimits {
+            stderr_bytes: 16,
+            ..Default::default()
+        },
+        &BTreeSet::new(),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, "slides-helper-stderr-limit");
+    assert!(error.message.contains("stderr exceeded its 16-byte limit"));
+}
+
+fn process_has_terminated(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        if unsafe { libc::kill(pid as i32, 0) } == -1 {
+            return std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+        }
+        // A descendant can briefly remain an exited zombie until the OS reaps
+        // it; that is not a running process and cannot perform further work.
+        #[cfg(target_os = "linux")]
+        if std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|text| {
+            text.rsplit_once(") ")
+                .is_some_and(|(_, fields)| fields.starts_with("Z "))
+        }) {
+            return true;
+        }
+        false
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+        use windows_sys::Win32::{
+            Foundation::{ERROR_INVALID_PARAMETER, WAIT_OBJECT_0},
+            System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject},
+        };
+        let raw = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+        if raw.is_null() {
+            return std::io::Error::last_os_error().raw_os_error()
+                == Some(ERROR_INVALID_PARAMETER as i32);
+        }
+        let process = unsafe { OwnedHandle::from_raw_handle(raw) };
+        unsafe { WaitForSingleObject(process.as_raw_handle(), 0) == WAIT_OBJECT_0 }
+    }
+}
+
+#[tokio::test]
+async fn cancellation_and_timeout_terminate_helper_descendants() {
+    for cancelled in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("bin.mjs");
+        std::fs::write(&path, r#"import { writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+writeFileSync('helper.pid', String(process.pid));
+spawn(process.execPath, ['--input-type=module', '--eval', "import {writeFileSync} from 'node:fs'; writeFileSync('descendant.pid', String(process.pid)); setInterval(() => {}, 1000);"], {stdio: 'ignore'});
+setInterval(() => {}, 1000);
+"#).unwrap();
+        let token = CancellationToken::default();
+        let prepared = fixture();
+        let reserved = BTreeSet::new();
+        let wait_for_start = async {
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+            while !directory.path().join("descendant.pid").exists() {
+                assert!(
+                    tokio::time::Instant::now() < deadline,
+                    "helper descendant did not start"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            if cancelled {
+                token.cancel();
+            }
+        };
+        let (result, ()) = tokio::join!(
+            helper::execute(
+                &prepared,
+                Some(&path),
+                &token,
+                helper::ProcessLimits {
+                    timeout: std::time::Duration::from_secs(2),
+                    ..Default::default()
+                },
+                &reserved,
+            ),
+            wait_for_start
+        );
+        let error = result.unwrap_err();
+        assert_eq!(
+            error.code,
+            if cancelled {
+                "slides-helper-cancelled"
+            } else {
+                "slides-helper-timeout"
+            }
+        );
+        for file in ["helper.pid", "descendant.pid"] {
+            let pid = std::fs::read_to_string(directory.path().join(file))
+                .unwrap()
+                .parse()
+                .unwrap();
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+            while !process_has_terminated(pid) {
+                assert!(
+                    tokio::time::Instant::now() < deadline,
+                    "{file} process {pid} remains alive"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        }
+    }
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn stdout_logs_extra_json_and_stream_limits_are_rejected() {

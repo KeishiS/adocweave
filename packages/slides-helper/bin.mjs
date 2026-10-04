@@ -1,9 +1,27 @@
 #!/usr/bin/env node
 
 import { format } from "node:util";
+import { readFileSync } from "node:fs";
 
-import { processRequest } from "./index.mjs";
 import { LIMITS, RequestError, diagnostic, emptyResponse, encodeResponse } from "./protocol.mjs";
+
+// Check before loading MathJax/citeproc so an unsupported runtime gets a useful error.
+const required = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")).engines.node;
+// This package declares exactly one minimum version, not a general semver range.
+const minimumMatch = /^>=(\d+)\.(\d+)\.(\d+)$/.exec(required);
+if (!minimumMatch) {
+  process.stderr.write("adocweave-slides-helper has an unsupported engines.node requirement; reinstall @adocweave/slides-helper.\n");
+  process.exit(1);
+}
+const minimum = minimumMatch.slice(1).map(Number);
+const actual = process.versions.node.split(".").map(Number);
+const older = actual[0] < minimum[0] || (actual[0] === minimum[0]
+  && (actual[1] < minimum[1] || (actual[1] === minimum[1] && actual[2] < minimum[2])));
+if (older) {
+  process.stderr.write(`adocweave-slides-helper requires Node.js ${required}; found ${process.versions.node}. Install a supported Node.js version before retrying. See https://github.com/KeishiS/adocweave/blob/main/docs/user-guide/release-installation.adoc\n`);
+  process.exit(1);
+}
+const { processRequest } = await import("./index.mjs");
 
 async function readRequest() {
   const chunks = [];

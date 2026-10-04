@@ -168,8 +168,8 @@ impl fmt::Display for BundleError {
             Self::Resource(error) => error.fmt(f),
             Self::Io { path, message } => write!(
                 f,
-                "cannot update managed bundle {}: {message}",
-                path.display()
+                "cannot update managed bundle {}: {message}; keep this directory and regenerate into a new or empty output directory",
+                path.to_string_lossy().escape_debug()
             ),
             Self::Cancelled => f.write_str("managed bundle operation was cancelled"),
         }
@@ -187,6 +187,11 @@ fn io(path: &Path, error: std::io::Error) -> BundleError {
         path: path.to_owned(),
         message: error.to_string(),
     }
+}
+fn retained_error(cause: impl fmt::Display) -> BundleError {
+    BundleError::Invalid(format!(
+        "{cause}; keep this directory and regenerate into a new or empty output directory"
+    ))
 }
 fn cancelled(cancellation: &dyn CancellationCheck) -> Result<(), BundleError> {
     if cancellation.is_cancelled() {
@@ -325,9 +330,10 @@ fn entries(
             let path = relative.join(name);
             let kind = entry.file_type().map_err(|error| io(&logical, error))?;
             if kind.is_symlink() {
-                return Err(BundleError::Invalid(
-                    "symbolic links are forbidden in managed bundles".to_owned(),
-                ));
+                return Err(retained_error(format!(
+                    "symbolic link in managed bundle: {}",
+                    path.to_string_lossy().escape_debug()
+                )));
             }
             if kind.is_dir() {
                 directories.insert(path.clone());
@@ -362,19 +368,54 @@ fn verified_files(
         .map(|file| file.path.clone())
         .chain([MANIFEST.to_owned()])
         .collect::<BTreeSet<_>>();
-    if files != expected || directories != expected_directories(manifest) {
-        return Err(BundleError::Invalid(
-            "unknown or missing files or directories; existing contents are retained".to_owned(),
-        ));
+    let expected_directories = expected_directories(manifest);
+    for (kind, path) in [
+        (
+            "unknown file",
+            files.difference(&expected).next().map(PathBuf::from),
+        ),
+        (
+            "missing managed file",
+            expected.difference(&files).next().map(PathBuf::from),
+        ),
+        (
+            "unknown directory",
+            directories
+                .difference(&expected_directories)
+                .next()
+                .cloned(),
+        ),
+        (
+            "missing managed directory",
+            expected_directories
+                .difference(&directories)
+                .next()
+                .cloned(),
+        ),
+    ] {
+        if let Some(path) = path {
+            return Err(retained_error(format!(
+                "{kind}: {}",
+                path.to_string_lossy().escape_debug()
+            )));
+        }
     }
     let mut contents = BTreeMap::new();
     for file in &manifest.files {
         cancelled(cancellation)?;
-        let bytes = authority.read_binary(&authority.root().join(&file.path), file.size_bytes)?;
+        let bytes = authority
+            .read_binary(&authority.root().join(&file.path), file.size_bytes)
+            .map_err(|error| match error {
+                crate::filesystem::FilesystemError::ResourceTooLarge(_) => {
+                    retained_error(format!("managed file was edited: {}", file.path))
+                }
+                error => error.into(),
+            })?;
         if bytes.len() as u64 != file.size_bytes || digest(&bytes) != file.sha256 {
-            return Err(BundleError::Invalid(
-                "a managed file was edited; existing contents are retained".to_owned(),
-            ));
+            return Err(retained_error(format!(
+                "managed file was edited: {}",
+                file.path
+            )));
         }
         contents.insert(file.path.clone(), bytes);
     }
@@ -410,9 +451,10 @@ impl ManagedBundleReader {
                 .min(self.limits.resources.max_resource_bytes),
         )?;
         if bytes.len() as u64 != file.size_bytes || digest(&bytes) != file.sha256 {
-            return Err(BundleError::Invalid(
-                "a managed file changed after validation".to_owned(),
-            ));
+            return Err(retained_error(format!(
+                "managed file changed after validation: {}",
+                file.path
+            )));
         }
         Ok((file.media_type, bytes))
     }
@@ -422,15 +464,22 @@ fn read_manifest(
     authority: &RootAuthority,
     limits: ProjectLimits,
 ) -> Result<(BundleManifest, Vec<u8>), BundleError> {
-    let bytes = authority.read_binary(
-        &authority.root().join(MANIFEST),
-        limits
-            .resources
-            .max_resource_bytes
-            .min(u64::from(limits.max_output_bytes)),
-    )?;
+    let bytes = authority
+        .read_binary(
+            &authority.root().join(MANIFEST),
+            limits
+                .resources
+                .max_resource_bytes
+                .min(u64::from(limits.max_output_bytes)),
+        )
+        .map_err(|error| match error {
+            crate::filesystem::FilesystemError::Missing(_) => retained_error(format!(
+                "output is not a managed bundle: missing {MANIFEST}"
+            )),
+            error => error.into(),
+        })?;
     let manifest = serde_json::from_slice(&bytes)
-        .map_err(|_| BundleError::Invalid("malformed manifest".to_owned()))?;
+        .map_err(|_| retained_error(format!("malformed manifest: {MANIFEST}")))?;
     validate_manifest(&manifest, limits)?;
     let contents: u64 = manifest.files.iter().map(|file| file.size_bytes).sum();
     if contents + bytes.len() as u64
@@ -482,14 +531,16 @@ fn reject_directory_path(directory: &Path, protected: &[PathBuf]) -> Result<(), 
         }
         match fs::symlink_metadata(&path) {
             Ok(metadata) if metadata.file_type().is_symlink() => {
-                return Err(BundleError::Invalid(
-                    "symbolic links are forbidden in the output path".to_owned(),
-                ));
+                return Err(BundleError::Invalid(format!(
+                    "symbolic link in output path: {}; choose a path without symbolic links",
+                    path.to_string_lossy().escape_debug()
+                )));
             }
             Ok(metadata) if !metadata.is_dir() => {
-                return Err(BundleError::Invalid(
-                    "output path component is not a directory".to_owned(),
-                ));
+                return Err(BundleError::Invalid(format!(
+                    "output path component is not a directory: {}",
+                    path.to_string_lossy().escape_debug()
+                )));
             }
             Ok(_) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
@@ -523,9 +574,9 @@ fn write_file(
     let path = authority.root().join(relative_path(relative)?);
     if let Some(original) = original {
         if !authority.replace_candidate_after_recheck(&path, original, replacement)? {
-            return Err(BundleError::Invalid(
-                "a managed file changed during generation".to_owned(),
-            ));
+            return Err(retained_error(format!(
+                "managed file changed during generation: {relative}"
+            )));
         }
     } else {
         let parent = path.parent().expect("relative file has a parent");
@@ -643,9 +694,10 @@ pub fn save_managed_bundle(
             cancelled(cancellation)?;
             let path = directory.join(&file.path);
             if !authority.candidate_contents_match(&path, &old_bytes[&file.path])? {
-                return Err(BundleError::Invalid(
-                    "a stale managed file changed before removal".to_owned(),
-                ));
+                return Err(retained_error(format!(
+                    "stale managed file changed before removal: {}",
+                    file.path
+                )));
             }
             let (_parent, operational) =
                 authority.operation_directory(path.parent().expect("managed file has a parent"))?;
@@ -813,14 +865,54 @@ mod tests {
         let output = path.join("talk");
         save(&output, &[file("index.html", b"original")]).unwrap();
         fs::write(output.join("manual.txt"), "manual").unwrap();
-        assert!(save(&output, &[file("index.html", b"replacement")]).is_err());
+        let error = save(&output, &[file("index.html", b"replacement")]).unwrap_err();
+        assert!(error.to_string().contains("unknown file: manual.txt"));
+        assert!(error.to_string().contains("new or empty output directory"));
         assert_eq!(fs::read(output.join("index.html")).unwrap(), b"original");
         assert_eq!(fs::read(output.join("manual.txt")).unwrap(), b"manual");
         fs::remove_file(output.join("manual.txt")).unwrap();
         fs::write(output.join("index.html"), "manual edit").unwrap();
-        assert!(save(&output, &[file("index.html", b"replacement")]).is_err());
+        let error = save(&output, &[file("index.html", b"replacement")]).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("managed file was edited: index.html")
+        );
         assert_eq!(fs::read(output.join("index.html")).unwrap(), b"manual edit");
         assert!(open_managed_bundle(&output, ProjectLimits::default(), &NeverCancel).is_err());
+    }
+
+    #[test]
+    fn nonempty_unmanaged_missing_and_metadata_files_have_specific_diagnostics() {
+        let (_root, path) = root();
+        let unmanaged = path.join("manual");
+        fs::create_dir(&unmanaged).unwrap();
+        fs::write(unmanaged.join("manual.txt"), b"keep").unwrap();
+        let error = save(&unmanaged, &[file("index.html", b"public")]).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("output is not a managed bundle: missing")
+        );
+        assert!(error.to_string().contains(MANIFEST));
+        assert_eq!(fs::read(unmanaged.join("manual.txt")).unwrap(), b"keep");
+        assert!(!unmanaged.join("index.html").exists());
+
+        let managed = path.join("talk");
+        save(&managed, &[file("index.html", b"original")]).unwrap();
+        fs::remove_file(managed.join("index.html")).unwrap();
+        let error = save(&managed, &[file("index.html", b"replacement")]).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("missing managed file: index.html")
+        );
+        fs::write(managed.join("index.html"), b"original").unwrap();
+        fs::write(managed.join(".DS_Store"), b"metadata").unwrap();
+        let error = save(&managed, &[file("index.html", b"replacement")]).unwrap_err();
+        assert!(error.to_string().contains("unknown file: .DS_Store"));
+        assert_eq!(fs::read(managed.join(".DS_Store")).unwrap(), b"metadata");
+        assert_eq!(fs::read(managed.join("index.html")).unwrap(), b"original");
     }
 
     #[test]
@@ -971,12 +1063,32 @@ mod tests {
             &cancellation,
         );
         assert!(matches!(result, Err(BundleError::Io { .. })));
+        let message = result.unwrap_err().to_string();
+        assert!(message.contains("notes"));
+        assert!(message.contains("new or empty output directory"));
         assert_eq!(fs::read(directory.join(MANIFEST)).unwrap(), old_manifest);
         assert_eq!(
             fs::read(directory.join("notes/late-manual.txt")).unwrap(),
             b"manual"
         );
         assert!(open_managed_bundle(&directory, ProjectLimits::default(), &NeverCancel).is_err());
+
+        let error = save(&directory, &[file("index.html", b"public")]).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("unknown file: notes/late-manual.txt")
+        );
+        let retained = path.join("talk-retained");
+        fs::rename(&directory, &retained).unwrap();
+        save(&directory, &[file("index.html", b"public")]).unwrap();
+        assert_eq!(fs::read(retained.join(MANIFEST)).unwrap(), old_manifest);
+        assert_eq!(
+            fs::read(retained.join("notes/late-manual.txt")).unwrap(),
+            b"manual"
+        );
+        assert!(!directory.join("notes").exists());
+        open_managed_bundle(&directory, ProjectLimits::default(), &NeverCancel).unwrap();
     }
 
     #[cfg(unix)]
@@ -986,7 +1098,12 @@ mod tests {
         let (_root, path) = root();
         fs::create_dir(path.join("real")).unwrap();
         symlink(path.join("real"), path.join("alias")).unwrap();
-        assert!(save(&path.join("alias/talk"), &[file("index.html", b"body")]).is_err());
+        let error = save(&path.join("alias/talk"), &[file("index.html", b"body")]).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains(&path.join("alias").to_string_lossy().to_string())
+        );
         assert!(!path.join("real/talk").exists());
         save(&path.join("talk"), &[file("index.html", b"body")]).unwrap();
         fs::remove_file(path.join("talk/index.html")).unwrap();

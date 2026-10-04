@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { cpSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { processRequest } from "./index.mjs";
@@ -8,6 +11,38 @@ import { researchRequest } from "./fixtures.mjs";
 
 const empty = () => ({ schemaVersion: 1, eqnums: "none", scopes: { body: { equations: [], citations: [] }, notes: { equations: [], citations: [] } } });
 const run = (input) => spawnSync(process.execPath, [new URL("./bin.mjs", import.meta.url).pathname], { input, encoding: "utf8", maxBuffer: LIMITS.outputBytes + 1024 });
+
+test("the executable reports the installed engine requirement before loading processing libraries", () => {
+  for (const version of ["22.11.0", "24.18.9", "24.19.0", "25.0.0"]) {
+    const script = `Object.defineProperty(process.versions, 'node', { value: ${JSON.stringify(version)} }); await import(${JSON.stringify(new URL("./bin.mjs", import.meta.url).href)});`;
+    const output = spawnSync(process.execPath, ["--input-type=module", "--eval", script], { input: JSON.stringify(empty()), encoding: "utf8" });
+    if (version === "22.11.0" || version === "24.18.9") {
+      assert.equal(output.status, 1);
+      assert.equal(output.stdout, "");
+      assert.match(output.stderr, /requires Node\.js >=24\.19\.0/);
+      assert.ok(output.stderr.includes(`found ${version}`));
+      assert.match(output.stderr, /release-installation\.adoc/);
+    } else {
+      assert.equal(output.status, 0, output.stderr);
+      assert.equal(JSON.parse(output.stdout).schemaVersion, 1);
+    }
+  }
+});
+
+test("an unsupported installed engine range fails before any processing library is required", () => {
+  const directory = mkdtempSync(join(tmpdir(), "slides-helper-engine-"));
+  try {
+    for (const file of ["bin.mjs", "protocol.mjs"]) cpSync(new URL(file, import.meta.url), join(directory, file));
+    writeFileSync(join(directory, "package.json"), JSON.stringify({ engines: { node: "^24" } }));
+    const output = spawnSync(process.execPath, [join(directory, "bin.mjs")], { input: JSON.stringify(empty()), encoding: "utf8" });
+    assert.equal(output.status, 1);
+    assert.equal(output.stdout, "");
+    assert.match(output.stderr, /unsupported engines\.node requirement; reinstall/);
+    assert.ok(!output.stderr.includes("index.mjs"));
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test("an empty request is one complete JSON response with no stdout or stderr logs", () => {
   const output = run(JSON.stringify(empty()));
