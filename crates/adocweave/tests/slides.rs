@@ -583,6 +583,62 @@ fn included_stem_positional_language_overrides_the_document_setting() {
 }
 
 #[test]
+fn unsupported_reveal_presentation_metadata_has_original_position_errors() {
+    let root = tempfile::tempdir().unwrap();
+    for source in [
+        "[background-color=yellow]\n== Slide\n",
+        "[background-image=missing.png]\n== Slide\n",
+        "[background-video=missing.webm]\n== Slide\n",
+        "[background-iframe=https://example.test/]\n== Slide\n",
+        "[background-size=cover,background-opacity=0.5]\n== Slide\n",
+        "[transition=zoom,transition-speed=fast,state=overview,data-custom=value]\n== Slide\n",
+        "[%auto-animate]\n== Slide\n",
+        "[options=\"auto-animate,auto-animate-restart\"]\n== Slide\n",
+        "[.r-fit-text]\nLarge.\n",
+        "[.r-stack.r-stretch.stretch]\n--\nContent.\n--\n",
+    ] {
+        write(root.path(), "talk.adoc", "= Talk\n\ninclude::part.adoc[]\n");
+        write(root.path(), "part.adoc", source);
+        let output = convert(
+            root.path(),
+            &[
+                "--no-config",
+                "talk.adoc",
+                "--to",
+                "revealjs",
+                "--output",
+                "dist",
+            ],
+        );
+        assert!(!output.status.success(), "{source}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("part.adoc:1:"), "{stderr}");
+        assert!(
+            stderr.contains("error[slides-unsupported-option]"),
+            "{stderr}"
+        );
+        assert!(!root.path().join("dist").exists());
+        success(&convert(root.path(), &["--no-config", "talk.adoc"]));
+    }
+    write(
+        root.path(),
+        "talk.adoc",
+        "= Talk\n\n[.custom%unnumbered,custom=value]\n== Slide\n\n[.custom,background-color=yellow,data-custom=value]\nGeneral metadata.\n",
+    );
+    success(&convert(
+        root.path(),
+        &[
+            "--no-config",
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--output",
+            "dist",
+        ],
+    ));
+}
+
+#[test]
 fn unsupported_speaker_note_forms_fail_at_their_original_source() {
     let root = tempfile::tempdir().unwrap();
     for marker in [
