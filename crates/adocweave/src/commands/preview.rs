@@ -66,6 +66,9 @@ impl PreviewWatchAccess {
                         ProjectObservationKind::ContentsNoSymlinks
                     }
                     preview::DependencyKind::Existence => ProjectObservationKind::Existence,
+                    preview::DependencyKind::BinaryContentsNoSymlinks => {
+                        ProjectObservationKind::BinaryContentsNoSymlinks
+                    }
                 };
                 let fingerprint = preview::Fingerprint::from_observation(
                     observer.observe(dependency.path(), kind),
@@ -269,6 +272,9 @@ fn dependency(candidate: &adocweave_project::ProjectObservationCandidate) -> pre
             preview::Dependency::contents_no_symlinks(candidate.path.clone())
         }
         ProjectObservationKind::Existence => preview::Dependency::existence(candidate.path.clone()),
+        ProjectObservationKind::BinaryContentsNoSymlinks => {
+            preview::Dependency::binary_contents_no_symlinks(candidate.path.clone())
+        }
     }
 }
 

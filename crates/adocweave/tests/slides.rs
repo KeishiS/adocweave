@@ -45,6 +45,14 @@ fn public_is_offline_and_private_resources_are_not_even_acquired() {
             "dist/talk",
             "--slides-helper",
             "/missing/helper",
+            "--bibliography",
+            "missing.json",
+            "--csl-style",
+            "missing-style.xml",
+            "--csl-locale",
+            "missing-locale.xml",
+            "--math-macros",
+            "missing-macros.json",
         ],
     );
     success(&output);
@@ -159,6 +167,222 @@ fn ordinary_convert_still_keeps_notes_and_writes_html_to_stdout() {
             .contains("PRIVATE_NOTE")
     );
     assert!(!root.path().join(".adocweave-manifest.json").exists());
+}
+
+#[test]
+fn helper_failures_and_invalid_local_data_never_save_raw_math() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "talk.adoc",
+        "= Talk\n:stem: latexmath\n\n== Slide\n\nlatexmath:[E=mc^2].\n",
+    );
+    let output = convert(
+        root.path(),
+        &[
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--output",
+            "dist",
+            "--slides-helper",
+            "/missing/helper",
+        ],
+    );
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("slides-helper-not-found"));
+    assert!(!root.path().join("dist").exists());
+    write(root.path(), "macros.json", "[{\n invalid }]");
+    let output = convert(
+        root.path(),
+        &[
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--output",
+            "dist",
+            "--math-macros",
+            "macros.json",
+            "--slides-helper",
+            "/missing/helper",
+        ],
+    );
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("macros.json:2:"), "{stderr}");
+    assert!(stderr.contains("invalid math macro JSON"), "{stderr}");
+    assert!(!stderr.contains("slides-helper-not-found"), "{stderr}");
+    assert!(!root.path().join("dist").exists());
+}
+
+#[test]
+fn visible_citations_require_explicit_data_and_reject_manual_key_collisions_first() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "talk.adoc",
+        "= Talk\n\n== Slide\n\ncite:[shared].\n",
+    );
+    let output = convert(
+        root.path(),
+        &["talk.adoc", "--to", "revealjs", "--output", "dist"],
+    );
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("require --bibliography FILE"));
+    write(
+        root.path(),
+        "talk.adoc",
+        "= Talk\n\n== Slide\n\ncite:[shared].\n\n[bibliography]\n* [[[shared]]] Hand-written entry.\n",
+    );
+    let output = convert(
+        root.path(),
+        &[
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--output",
+            "dist",
+            "--bibliography",
+            "missing.json",
+            "--csl-style",
+            "missing.xml",
+            "--csl-locale",
+            "missing-locale.xml",
+            "--slides-helper",
+            "/missing/helper",
+        ],
+    );
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("slides-bibliography-key-conflict"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("cannot open"), "{stderr}");
+    assert!(!root.path().join("dist").exists());
+}
+
+#[test]
+fn local_css_is_linked_after_the_fixed_theme_in_author_order_and_updated_by_digest() {
+    let root = tempfile::tempdir().unwrap();
+    write(root.path(), "talk.adoc", "= Talk\n\n== Slide\n\nText.\n");
+    write(root.path(), "z-first.css", ".reveal { color: red; }\n");
+    write(root.path(), "a-last.css", ".reveal { color: green; }\n");
+    let arguments = [
+        "talk.adoc",
+        "--to",
+        "revealjs",
+        "--output",
+        "dist",
+        "--css",
+        "z-first.css",
+        "--css",
+        "a-last.css",
+    ];
+    success(&convert(root.path(), &arguments));
+    let reader = adocweave_project::open_managed_bundle(
+        &root.path().join("dist"),
+        Default::default(),
+        &adocweave_core::NeverCancel,
+    )
+    .unwrap();
+    let find = |content: &[u8]| {
+        reader
+            .manifest()
+            .files
+            .iter()
+            .find(|file| {
+                file.media_type == adocweave_project::BundleMediaType::Css
+                    && reader.read_file(&file.path).unwrap().1 == content
+            })
+            .unwrap()
+            .path
+            .clone()
+    };
+    let first = find(b".reveal { color: red; }\n");
+    let last = find(b".reveal { color: green; }\n");
+    let html = fs::read_to_string(root.path().join("dist/index.html")).unwrap();
+    assert!(html.find("assets/theme.css").unwrap() < html.find(&first).unwrap());
+    assert!(html.find(&first).unwrap() < html.find(&last).unwrap());
+    write(root.path(), "a-last.css", ".reveal { color: blue; }\n");
+    success(&convert(root.path(), &arguments));
+    assert!(root.path().join("dist").join(first).exists());
+    assert!(!root.path().join("dist").join(last).exists());
+    let output = convert(
+        root.path(),
+        &[
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--output",
+            "dist",
+            "--css-url",
+            "https://example.com/theme.css",
+        ],
+    );
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("--css-url apply only to ordinary HTML")
+    );
+}
+
+#[test]
+fn slide_footnotes_are_per_slide_and_notes_do_not_change_body_numbers() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "talk.adoc",
+        "= Talk\n\n== First\n\nPublic footnote:shared[Public footnote text].\n\n[.notes]\n--\nPRIVATE_NOTE footnote:private[PRIVATE_FOOTNOTE].\nShared footnote:shared[].\n--\n\n== Last\n\nAgain footnote:shared[].\n",
+    );
+    let mut body = None;
+    for audience in ["public", "presenter"] {
+        success(&convert(
+            root.path(),
+            &[
+                "talk.adoc",
+                "--to",
+                "revealjs",
+                "--output",
+                audience,
+                "--audience",
+                audience,
+            ],
+        ));
+        let html = fs::read_to_string(root.path().join(audience).join("index.html")).unwrap();
+        assert!(html.contains("slides-body-s2-footnote-1"), "{html}");
+        assert!(html.contains("slides-body-s3-footnote-1"), "{html}");
+        assert!(!html.contains("slides-body-s2-footnote-2"));
+        if audience == "public" {
+            assert!(!html.contains("PRIVATE"));
+            body = Some(html);
+        } else {
+            assert!(html.contains("slides-notes-s2-footnote-1"), "{html}");
+            assert!(html.contains("slides-notes-s2-footnote-2"), "{html}");
+            assert!(html.contains("PRIVATE_FOOTNOTE"));
+            assert!(body.as_ref().unwrap().contains("Public footnote text"));
+        }
+    }
+}
+
+#[test]
+fn slide_page_keeps_header_language_and_uses_the_ordinary_empty_default() {
+    let root = tempfile::tempdir().unwrap();
+    for (header, expected) in [(":lang: ja\n", "ja"), ("", "")] {
+        write(
+            root.path(),
+            "talk.adoc",
+            &format!("= Talk\n{header}\n== Slide\n\n研究.\n"),
+        );
+        success(&convert(
+            root.path(),
+            &["talk.adoc", "--to", "revealjs", "--output", "dist"],
+        ));
+        assert!(
+            fs::read_to_string(root.path().join("dist/index.html"))
+                .unwrap()
+                .contains(&format!("<html lang=\"{expected}\">"))
+        );
+    }
 }
 
 #[test]

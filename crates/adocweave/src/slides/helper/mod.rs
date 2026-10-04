@@ -10,7 +10,11 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 pub use prepare::{Prepared, Selection, prepare};
-pub use process::{ProcessLimits, execute, execute_sync, resolve_executable};
+#[cfg(test)]
+#[allow(unused_imports)]
+// The path-based host integration suite exercises this async entrypoint.
+pub use process::execute;
+pub use process::{ProcessLimits, execute_sync};
 pub use protocol::{Csl, Macro, Scope};
 pub use validation::{ValidatedResults, validate_response};
 

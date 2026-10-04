@@ -17,9 +17,13 @@
     const slide = target.closest(".slides section");
     if (!slide) return false;
     const indices = deck.getIndices(slide);
-    const fragment = target.closest(".fragment") || target.querySelector(".fragment");
-    const value = fragment ? Number(fragment.dataset.fragmentIndex) : undefined;
-    deck.slide(indices.h, indices.v, Number.isInteger(value) ? value : undefined);
+    const fragment = target.closest(".fragment");
+    const value = fragment ? Number(fragment.dataset.fragmentIndex) : -1;
+    const current = deck.getIndices();
+    const required = Number.isInteger(value) ? value : -1;
+    const sameSlide = current.h === indices.h && current.v === indices.v;
+    const stage = sameSlide && Number.isInteger(current.f) ? Math.max(current.f, required) : required;
+    deck.slide(indices.h, indices.v, stage);
     return true;
   }
 
