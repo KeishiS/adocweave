@@ -12,7 +12,7 @@ use adocweave_project::{
     resolve_config,
 };
 
-use crate::arguments::{Arguments, ColorChoice, CommandOptions};
+use crate::arguments::{Arguments, ColorChoice, CommandOptions, ConvertTarget};
 use crate::check_output::{
     DiagnosticCounts, DiagnosticFormat, FailOn, ProjectSourceView, sarif_log, sarif_results,
 };
@@ -35,6 +35,8 @@ pub(crate) fn run(arguments: &Arguments) -> Result<CliExitCode, CliError> {
         return show_config(arguments, &current);
     }
     let request = request(arguments, &current)?;
+    let authority = request.authority.clone();
+    let limits = request.limits;
     let mut result = process(request, &NeverCancel).map_err(CliError::Project)?;
     if result.targets.is_empty() {
         return Err(CliError::Path(
@@ -52,7 +54,95 @@ pub(crate) fn run(arguments: &Arguments) -> Result<CliExitCode, CliError> {
         ));
     }
     match &arguments.command {
-        CommandOptions::Convert { complete, css } => {
+        CommandOptions::Convert {
+            target: ConvertTarget::Revealjs,
+            output,
+            audience,
+            slides_helper,
+            ..
+        } => {
+            let target = only_target(&result.targets)?;
+            let analysis = expanded_analysis(target)?;
+            let primary_base = target
+                .path
+                .as_deref()
+                .and_then(Path::parent)
+                .map(Path::to_owned)
+                .or_else(|| {
+                    arguments
+                        .stdin_base
+                        .as_ref()
+                        .and_then(|path| absolute_path(&current, path).ok())
+                })
+                .unwrap_or_else(|| current.clone());
+            let configured = target.config.config.resource_limits();
+            let remaining_resources = adocweave_project::ProjectResourceLimits {
+                max_files: configured
+                    .max_files
+                    .min(limits.resources.max_files)
+                    .saturating_sub(result.usage.read_operations as usize),
+                max_resource_bytes: configured
+                    .max_resource_bytes
+                    .min(limits.resources.max_resource_bytes),
+                max_total_bytes: configured
+                    .max_total_bytes
+                    .min(limits.resources.max_total_bytes)
+                    .saturating_sub(result.usage.read_bytes),
+            };
+            let bundle = crate::slides::bundle::build(
+                &analysis.preprocessed,
+                target,
+                &authority,
+                &primary_base,
+                *audience,
+                slides_helper.as_deref(),
+                remaining_resources,
+            )?;
+            let sources = diagnostic_sources(target, &current)?;
+            let diagnostics = commands::convert::render_diagnostics(
+                &analysis.preprocessed,
+                &bundle.diagnostics,
+                &sources,
+            )
+            .map_err(convert_error)?;
+            print_convert_diagnostics(arguments, &diagnostics.output)?;
+            if diagnostics.counts.fails(FailOn::Error) {
+                return Ok(CliExitCode::Diagnostics);
+            }
+            let directory = absolute_path(
+                &current,
+                output
+                    .as_deref()
+                    .expect("revealjs output is required by arguments"),
+            )?;
+            let mut protected = vec![primary_base];
+            protected.extend(
+                target
+                    .resources
+                    .iter()
+                    .filter(|resource| {
+                        matches!(
+                            resource.kind,
+                            ProjectResourceKind::Primary | ProjectResourceKind::Include
+                        )
+                    })
+                    .filter_map(|resource| resource.path.parent().map(Path::to_owned)),
+            );
+            adocweave_project::save_managed_bundle(
+                &directory,
+                &protected,
+                &bundle.files,
+                limits,
+                &NeverCancel,
+            )
+            .map_err(CliError::Bundle)?;
+            eprintln!(
+                "Saved reveal.js slides to {}",
+                display_path(&directory, &current)
+            );
+            Ok(CliExitCode::Success)
+        }
+        CommandOptions::Convert { complete, css, .. } => {
             let target = only_target(&result.targets)?;
             let analysis = expanded_analysis(target)?;
             let sources = diagnostic_sources(target, &current)?;
@@ -73,17 +163,7 @@ pub(crate) fn run(arguments: &Arguments) -> Result<CliExitCode, CliError> {
             )
             .map_err(convert_error)?;
             let html = finish_output(output.html)?;
-            let diagnostics_color =
-                if crate::terminal::color_for(arguments.color, io::stderr().is_terminal()) {
-                    ColorChoice::Always
-                } else {
-                    ColorChoice::Never
-                };
-            let diagnostics_text =
-                finish_output(colorize_lines(&diagnostics.output, diagnostics_color))?;
-            io::stderr()
-                .write_all(diagnostics_text.as_bytes())
-                .map_err(CliError::Write)?;
+            print_convert_diagnostics(arguments, &diagnostics.output)?;
             print_output(html)?;
             Ok(if diagnostics.counts.fails(FailOn::Error) {
                 CliExitCode::Diagnostics
@@ -144,6 +224,18 @@ pub(crate) fn run(arguments: &Arguments) -> Result<CliExitCode, CliError> {
             unreachable!("handled outside project one-shot processing")
         }
     }
+}
+
+fn print_convert_diagnostics(arguments: &Arguments, output: &str) -> Result<(), CliError> {
+    let color = if crate::terminal::color_for(arguments.color, io::stderr().is_terminal()) {
+        ColorChoice::Always
+    } else {
+        ColorChoice::Never
+    };
+    let text = finish_output(colorize_lines(output, color))?;
+    io::stderr()
+        .write_all(text.as_bytes())
+        .map_err(CliError::Write)
 }
 
 fn show_config(arguments: &Arguments, current: &Path) -> Result<CliExitCode, CliError> {
@@ -248,7 +340,13 @@ pub(crate) fn request_with_authority(
             arguments.command,
             CommandOptions::Check(_) | CommandOptions::Preview { .. }
         ),
-        stylesheets: matches!(
+        stylesheets: !matches!(
+            arguments.command,
+            CommandOptions::Convert {
+                target: ConvertTarget::Revealjs,
+                ..
+            }
+        ) && matches!(
             arguments.command,
             CommandOptions::Convert { .. } | CommandOptions::Preview { .. }
         ),

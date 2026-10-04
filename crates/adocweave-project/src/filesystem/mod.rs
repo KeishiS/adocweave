@@ -127,6 +127,140 @@ struct OpenedTarget {
 }
 
 impl RootAuthority {
+    /// Reads a regular binary file through the existing confined authority.
+    pub(crate) fn read_binary(
+        &self,
+        candidate: &Path,
+        max_bytes: u64,
+    ) -> Result<Vec<u8>, FilesystemError> {
+        #[cfg(target_os = "linux")]
+        let file = self.open_confined_with_symlinks(candidate, false)?.file;
+        #[cfg(not(target_os = "linux"))]
+        let file = fs::File::open(self.inspect_candidate_no_symlinks(candidate)?)
+            .map_err(|source| classify_io(candidate.to_owned(), source))?;
+        let mut bytes = Vec::new();
+        file.take(max_bytes.saturating_add(1))
+            .read_to_end(&mut bytes)
+            .map_err(|source| classify_io(candidate.to_owned(), source))?;
+        if bytes.len() as u64 > max_bytes {
+            return Err(FilesystemError::ResourceTooLarge(candidate.to_owned()));
+        }
+        Ok(bytes)
+    }
+
+    /// Creates directories beneath an opened root without following symlinks.
+    pub(crate) fn create_directory_tree(&self, candidate: &Path) -> Result<Self, FilesystemError> {
+        let relative = candidate
+            .strip_prefix(&self.root)
+            .map_err(|_| FilesystemError::OutsideRoot(candidate.to_owned()))?;
+        #[cfg(target_os = "linux")]
+        {
+            use rustix::fs::{Mode, OFlags, mkdirat, openat};
+            let mut directory = self.root_directory_handle()?;
+            for component in relative.components() {
+                let Component::Normal(name) = component else {
+                    return Err(FilesystemError::Unverifiable(
+                        "invalid output directory component".to_owned(),
+                    ));
+                };
+                match mkdirat(&directory, name, Mode::from_raw_mode(0o755)) {
+                    Ok(()) => {}
+                    Err(rustix::io::Errno::EXIST) => {}
+                    Err(error) => return Err(classify_errno(candidate, error)),
+                }
+                directory = fs::File::from(
+                    openat(
+                        &directory,
+                        name,
+                        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                        Mode::empty(),
+                    )
+                    .map_err(|error| classify_errno(candidate, error))?,
+                );
+            }
+            Ok(Self {
+                root: candidate.to_owned(),
+                root_handle: Arc::new(directory),
+            })
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let mut path = self.root.clone();
+            for component in relative.components() {
+                let std::path::Component::Normal(name) = component else {
+                    return Err(FilesystemError::Unverifiable(
+                        "invalid output directory component".to_owned(),
+                    ));
+                };
+                path.push(name);
+                match fs::create_dir(&path) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                    Err(source) => return Err(classify_io(path.clone(), source)),
+                }
+                self.inspect_directory_no_symlinks(&path)?;
+            }
+            self.derive_confined_directory(candidate)
+        }
+    }
+
+    /// A retained directory and its operational path. The handle must outlive use of the path.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn operation_directory(
+        &self,
+        candidate: &Path,
+    ) -> Result<(fs::File, PathBuf), FilesystemError> {
+        use std::os::fd::AsRawFd;
+        let directory = self.open_directory_no_symlinks(candidate)?;
+        let path = PathBuf::from(format!("/proc/self/fd/{}", directory.as_raw_fd()));
+        Ok((directory, path))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub(crate) fn operation_directory(
+        &self,
+        candidate: &Path,
+    ) -> Result<(fs::File, PathBuf), FilesystemError> {
+        let path = self.inspect_directory_no_symlinks(candidate)?;
+        // The descriptor is retained on all platforms; path operations use the existing canonical policy outside Linux.
+        #[cfg(target_os = "windows")]
+        let directory = {
+            use std::os::windows::fs::OpenOptionsExt;
+            fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(0x0200_0000)
+                .open(&path)
+        }
+        .map_err(|source| classify_io(path.clone(), source))?;
+        #[cfg(not(target_os = "windows"))]
+        let directory =
+            fs::File::open(&path).map_err(|source| classify_io(path.clone(), source))?;
+        Ok((directory, path))
+    }
+
+    pub(crate) fn verify_directory_namespace(&self) -> Result<(), FilesystemError> {
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let expected = self
+                .root_handle
+                .metadata()
+                .map_err(|source| classify_io(self.root.clone(), source))?;
+            let actual = fs::symlink_metadata(&self.root)
+                .map_err(|source| classify_io(self.root.clone(), source))?;
+            if actual.file_type().is_symlink()
+                || expected.dev() != actual.dev()
+                || expected.ino() != actual.ino()
+            {
+                return Err(FilesystemError::Unverifiable(
+                    "output directory changed during generation".to_owned(),
+                ));
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        self.inspect_directory_no_symlinks(&self.root)?;
+        Ok(())
+    }
     /// Returns whether both values retain the same filesystem authority.
     ///
     /// This is deliberately distinct from [`PartialEq`], which compares only
