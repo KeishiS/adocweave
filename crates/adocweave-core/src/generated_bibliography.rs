@@ -1,5 +1,23 @@
 //! Host-provided bibliography content appended by renderers as structured data.
 
+/// Finite anchor namespaces for a regular document and the two slide scopes.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum BibliographyNamespace {
+    #[default]
+    Document,
+    SlidesBody,
+    SlidesNotes,
+}
+impl BibliographyNamespace {
+    pub fn anchor_id(self, key: &str) -> String {
+        match self {
+            Self::Document => key.to_owned(),
+            Self::SlidesBody => format!("slides-body-bib-{key}"),
+            Self::SlidesNotes => format!("slides-notes-bib-{key}"),
+        }
+    }
+}
+
 /// A bibliography section generated from a library outside the document.
 ///
 /// The title and entry contents are plain text. Renderers must never parse them
@@ -7,6 +25,7 @@
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GeneratedBibliography {
     title: String,
+    namespace: BibliographyNamespace,
     entries: Vec<GeneratedBibliographyEntry>,
 }
 
@@ -15,8 +34,19 @@ impl GeneratedBibliography {
     pub fn new(title: impl Into<String>, entries: Vec<GeneratedBibliographyEntry>) -> Self {
         Self {
             title: title.into(),
+            namespace: BibliographyNamespace::Document,
             entries,
         }
+    }
+
+    /// Selects a fixed namespace for generated HTML anchors.
+    #[must_use]
+    pub const fn with_namespace(mut self, namespace: BibliographyNamespace) -> Self {
+        self.namespace = namespace;
+        self
+    }
+    pub const fn namespace(&self) -> BibliographyNamespace {
+        self.namespace
     }
 
     pub fn title(&self) -> &str {
@@ -36,6 +66,7 @@ pub struct GeneratedBibliographyEntry {
     text: String,
     label: Option<String>,
     number: Option<u32>,
+    rich_text: Option<crate::rendered_content::ValidatedRichText>,
 }
 
 impl GeneratedBibliographyEntry {
@@ -46,6 +77,7 @@ impl GeneratedBibliographyEntry {
             text: text.into(),
             label: None,
             number: None,
+            rich_text: None,
         }
     }
 
@@ -69,6 +101,17 @@ impl GeneratedBibliographyEntry {
     pub const fn with_number(mut self, number: u32) -> Self {
         self.number = Some(number);
         self
+    }
+
+    /// Uses validated finite formatting, retaining plain text for other backends.
+    #[must_use]
+    pub fn with_rich_text(mut self, text: crate::rendered_content::ValidatedRichText) -> Self {
+        self.text = text.plain_text().to_owned();
+        self.rich_text = Some(text);
+        self
+    }
+    pub(crate) fn rich_text(&self) -> Option<&crate::rendered_content::ValidatedRichText> {
+        self.rich_text.as_ref()
     }
 
     pub fn citation_key(&self) -> &str {
