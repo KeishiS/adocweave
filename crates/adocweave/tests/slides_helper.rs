@@ -301,6 +301,46 @@ fn fake_helper(script: &str) -> (tempfile::TempDir, std::path::PathBuf) {
     std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
     (directory, executable)
 }
+
+#[tokio::test]
+async fn helper_waiting_for_stdin_eof_receives_one_complete_json_request() {
+    let directory = tempfile::Builder::new()
+        .prefix("slides helper with spaces ")
+        .tempdir()
+        .unwrap();
+    let path = directory.path().join("bin.mjs");
+    std::fs::write(
+        &path,
+        r#"import { readFileSync } from 'node:fs';
+const chunks = [];
+for await (const chunk of process.stdin) chunks.push(chunk);
+const request = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+if (request.schemaVersion !== 1 || !request.scopes.body.equations.length) process.exit(2);
+process.stdout.write(readFileSync(new URL('./response.json', import.meta.url)));
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        directory.path().join("response.json"),
+        include_str!("fixtures/slides-helper/response.json"),
+    )
+    .unwrap();
+    let result = helper::execute(
+        &fixture(),
+        Some(&path),
+        &NeverCancel,
+        helper::ProcessLimits {
+            timeout: std::time::Duration::from_secs(5),
+            ..Default::default()
+        },
+        &BTreeSet::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.inputs.body.math().len(), 6);
+    assert_eq!(result.inputs.notes.math().len(), 2);
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn stdout_logs_extra_json_and_stream_limits_are_rejected() {
