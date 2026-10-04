@@ -1,0 +1,6 @@
+(c) Frank Bennett
+citeproc-js implements the Citation Style Language
+https://citationstyles.org/
+
+Source: https://github.com/Juris-M/citeproc-js/tree/73bc1b44bc7d54d0bfec4e070fd27f5efe024ff9
+License: CPAL-1.0
