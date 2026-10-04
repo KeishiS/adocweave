@@ -763,8 +763,13 @@ impl<'document> Deck<'document> {
         let mut slide_index = 0;
         for group in &self.groups {
             if group.slides.len() > 1 {
-                writeln!(output, "<section id=\"{}\">", group.id)
-                    .expect("writing to a String cannot fail");
+                writeln!(
+                    output,
+                    "<section id=\"{}\" role=\"group\" aria-label=\"{}\">",
+                    group.id,
+                    bundle::escape(&group.slides[0].title)
+                )
+                .expect("writing to a String cannot fail");
             }
             for slide in &group.slides {
                 debug_assert!(semantic::is_valid_anchor_id(&slide.id));
@@ -1007,7 +1012,7 @@ mod tests {
         assert!(
             output
                 .html
-                .contains("<section id=\"method_stack\">\n<section id=\"method\">")
+                .contains("<section id=\"method_stack\" role=\"group\" aria-label=\"Method\">\n<section id=\"method\">")
         );
         assert!(
             output
@@ -1021,6 +1026,25 @@ mod tests {
         );
         assert!(!output.html.contains(">Result</h2>"));
         assert_eq!(output.html.matches("id=\"conditions\"").count(), 1);
+    }
+
+    #[test]
+    fn slide_headings_follow_one_document_title_and_vertical_group_names_are_escaped() {
+        let analysis = Engine::new(AnalysisOptions::default())
+            .analyze("= Talk\n\n[#method]\n== Method \"quoted\" & <unsafe>\n\n[#child]\n=== Child\n\n==== Detail\n")
+            .unwrap();
+        let deck = Deck::compile(analysis.document());
+        assert!(deck.diagnostics.is_empty(), "{:?}", deck.diagnostics);
+        let output = render(&deck, Audience::Public);
+        assert_eq!(output.html.matches("<h1").count(), 1);
+        assert_eq!(output.html.matches("<h2").count(), 2);
+        assert!(output.html.contains("<h3 id=\"_detail\">Detail</h3>"));
+        assert!(output.html.contains(
+            "role=\"group\" aria-label=\"Method &quot;quoted&quot; &amp; &lt;unsafe&gt;\""
+        ));
+        let ordinary = html::render(analysis.document(), &RenderPolicy::default());
+        assert!(ordinary.html.contains("<h1 id=\"method\">"));
+        assert!(ordinary.html.contains("<h2 id=\"child\">"));
     }
 
     #[test]

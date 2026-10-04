@@ -548,6 +548,150 @@ mod tests {
         }
     }
 
+    fn public_slide_build(root: &Path, data: &SlidesData) -> preview::Build {
+        let helper =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/slides-helper/bin.mjs");
+        build_with_slides(
+            slides_request(root),
+            &[],
+            Some(SlideOptions {
+                audience: Audience::Public,
+                helper: Some(&helper),
+                data,
+            }),
+            &CancellationToken::new(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn initial_macro_json_and_protocol_errors_are_repairable_and_note_only_files_are_unwatched() {
+        let root = tempfile::tempdir().unwrap();
+        let document = root.path().join("talk.adoc");
+        let macros = root.path().join("macros.json");
+        let visible = "= Talk\n\n== Body\n\nlatexmath:[\\R]\n";
+        let data = SlidesData {
+            math_macros: Some(PathBuf::from("macros.json")),
+            ..Default::default()
+        };
+        for (invalid, expected) in [
+            ("[{", "invalid math macro JSON"),
+            (
+                r#"[{"name":"R","definition":"\\mathbb{R}","arguments":99}]"#,
+                "helper-protocol",
+            ),
+        ] {
+            std::fs::write(&document, visible).unwrap();
+            std::fs::write(&macros, invalid).unwrap();
+            let failed = public_slide_build(root.path(), &data);
+            assert!(failed.html.contains("Preview error"), "{}", failed.html);
+            assert!(failed.has_dependency(&macros));
+            assert!(
+                failed.diagnostics.contains(expected),
+                "{}",
+                failed.diagnostics
+            );
+
+            std::fs::write(&macros, r#"[{"name":"R","definition":"\\mathbb{R}"}]"#).unwrap();
+            let repaired = public_slide_build(root.path(), &data);
+            assert!(repaired.has_dependency(&macros));
+            assert!(repaired.html.contains("math-rendered"), "{}", repaired.html);
+            assert!(!repaired.html.contains("Preview error"));
+
+            std::fs::write(
+                &document,
+                "= Talk\n\n== Body\n\nPublic.\n\n[.notes]\n--\nlatexmath:[\\R]\n--\n",
+            )
+            .unwrap();
+            std::fs::write(&macros, invalid).unwrap();
+            let note_only = public_slide_build(root.path(), &data);
+            assert!(note_only.html.contains("Public."));
+            assert!(!note_only.html.contains("Preview error"));
+            assert!(!note_only.has_dependency(&macros));
+            assert!(!note_only.html.contains("math-rendered"));
+        }
+    }
+
+    #[test]
+    fn initial_csl_json_and_xml_errors_are_repairable_and_note_only_files_are_unwatched() {
+        let root = tempfile::tempdir().unwrap();
+        let document = root.path().join("talk.adoc");
+        let resources = [
+            ("references.json", r#"[{"id":"result","title":"Result"}]"#),
+            (
+                "style.csl",
+                include_str!("../../../../packages/slides-helper/fixtures/numeric.csl"),
+            ),
+            (
+                "locale.xml",
+                include_str!("../../../../packages/slides-helper/fixtures/locale-en-US.xml"),
+            ),
+        ];
+        let data = SlidesData {
+            bibliography: Some(PathBuf::from("references.json")),
+            csl_style: Some(PathBuf::from("style.csl")),
+            csl_locale: Some(PathBuf::from("locale.xml")),
+            ..Default::default()
+        };
+        for (invalid_file, expected) in [
+            ("references.json", "invalid bibliography JSON"),
+            ("style.csl", "invalid style XML"),
+            ("locale.xml", "invalid locale XML"),
+        ] {
+            std::fs::write(&document, "= Talk\n\n== Body\n\ncite:[result].\n").unwrap();
+            for (file, valid) in resources {
+                std::fs::write(root.path().join(file), valid).unwrap();
+            }
+            let invalid_path = root.path().join(invalid_file);
+            std::fs::write(&invalid_path, "malformed [<").unwrap();
+            let failed = public_slide_build(root.path(), &data);
+            assert!(failed.html.contains("Preview error"), "{}", failed.html);
+            assert!(failed.has_dependency(&invalid_path));
+            assert!(
+                failed.diagnostics.contains(expected),
+                "{}",
+                failed.diagnostics
+            );
+
+            let valid = resources
+                .iter()
+                .find(|(file, _)| *file == invalid_file)
+                .unwrap()
+                .1;
+            std::fs::write(&invalid_path, valid).unwrap();
+            let repaired = public_slide_build(root.path(), &data);
+            assert!(
+                !repaired.html.contains("Preview error"),
+                "{}",
+                repaired.html
+            );
+            assert!(repaired.html.contains("slides-body-references"));
+            for (file, _) in resources {
+                assert!(repaired.has_dependency(&root.path().join(file)), "{file}");
+            }
+
+            std::fs::write(
+                &document,
+                "= Talk\n\n== Body\n\nPublic.\n\n[.notes]\n--\ncite:[result].\n--\n",
+            )
+            .unwrap();
+            for (file, _) in resources {
+                std::fs::write(root.path().join(file), "malformed [<").unwrap();
+            }
+            let note_only = public_slide_build(root.path(), &data);
+            assert!(
+                !note_only.html.contains("Preview error"),
+                "{}",
+                note_only.html
+            );
+            assert!(note_only.html.contains("Public."));
+            assert!(!note_only.html.contains("slides-body-references"));
+            for (file, _) in resources {
+                assert!(!note_only.has_dependency(&root.path().join(file)), "{file}");
+            }
+        }
+    }
+
     #[test]
     fn public_preview_never_opens_or_watches_note_only_images_and_data_flags() {
         let root = tempfile::tempdir().unwrap();

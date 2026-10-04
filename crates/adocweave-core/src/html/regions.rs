@@ -723,6 +723,7 @@ mod tests {
         )
         .unwrap();
         assert!(output.regions.iter().all(|html| !html.contains(" id=")));
+        assert_eq!(output.regions[1], "<h1>Second</h1>\n");
         let limit =
             u32::try_from(output.regions.iter().map(String::len).sum::<usize>() - 1).unwrap();
         assert!(matches!(

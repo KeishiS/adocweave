@@ -858,6 +858,17 @@ pub(super) fn render_heading(
         }
         HeadingKind::DocumentTitle => {}
         HeadingKind::Part => render_heading_level(output, heading, id, 1, context),
+        HeadingKind::Section { .. }
+            if context.slides.is_some()
+                && context
+                    .region
+                    .as_ref()
+                    .is_some_and(|region| region.container_headings.contains(&heading.range)) =>
+        {
+            // The deck has one document title. Each host slide container owns
+            // its section ID and uses a peer heading below that title.
+            render_heading_level(output, heading, id, 2, context);
+        }
         HeadingKind::Section { level } | HeadingKind::Discrete { level } => {
             render_heading_level(output, heading, id, level, context);
         }
