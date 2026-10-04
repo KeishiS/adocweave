@@ -73,6 +73,22 @@ pub(super) fn render_block(
     context: &mut InlineRenderContext<'_, '_>,
     scope: RenderScope,
 ) {
+    if context
+        .region
+        .as_ref()
+        .is_some_and(|region| region.omitted.contains(&block.range()))
+    {
+        return;
+    }
+    let step = context
+        .region
+        .as_ref()
+        .and_then(|region| region.steps.get(&block.range()).copied());
+    let wrap_step = step.filter(|_| !matches!(block, AstBlock::List(_)));
+    if let Some(index) = wrap_step {
+        BlockWriter::start(output, "div", &body::fragment_attributes(index));
+        BlockWriter::line_break(output);
+    }
     let explicit_id = context
         .identifiers
         .target_at(block.range())
@@ -90,6 +106,11 @@ pub(super) fn render_block(
             } else {
                 unreachable!("lowering assigns every heading an identifier")
             };
+            let id = (!context
+                .region
+                .as_ref()
+                .is_some_and(|region| region.container_headings.contains(&heading.range)))
+            .then_some(id);
             render_heading(output, heading, id, policy, context);
         }
         AstBlock::Paragraph(paragraph) => {
@@ -242,6 +263,10 @@ pub(super) fn render_block(
             render_delimited(output, block, explicit_id, policy, context, scope);
         }
         AstBlock::Unsupported(block) => render_unsupported(output, block, explicit_id),
+    }
+    if wrap_step.is_some() {
+        BlockWriter::end(output, "div");
+        BlockWriter::line_break(output);
     }
 }
 
@@ -677,7 +702,16 @@ pub(super) fn render_list(
     let attributes = block_attributes(explicit_id, &list.metadata, fixed, context);
     BlockWriter::start(output, tag, &attributes);
     BlockWriter::line_break(output);
-    for item in &list.items {
+    for (index, item) in list.items.iter().enumerate() {
+        let item_attributes = context
+            .region
+            .as_ref()
+            .and_then(|region| region.steps.get(&list.range))
+            .map_or_else(Vec::new, |first| {
+                body::fragment_attributes(
+                    *first + u32::try_from(index).expect("fragment indices were validated"),
+                )
+            });
         if list.kind == crate::block_model::ListKind::Description {
             for term in &item.terms {
                 BlockWriter::start(output, "dt", &[]);
@@ -687,7 +721,7 @@ pub(super) fn render_list(
             }
             BlockWriter::start(output, "dd", &[]);
         } else {
-            BlockWriter::start(output, "li", &[]);
+            BlockWriter::start(output, "li", &item_attributes);
         }
         if let Some(state) = item.checklist {
             BlockWriter::start(output, "span", &[classes(&["checklist-marker"])]);
@@ -788,7 +822,7 @@ pub(super) fn render_bibliography_backrefs(
 pub(super) fn render_heading(
     output: &mut String,
     heading: &Heading,
-    id: &str,
+    id: Option<&str>,
     policy: &RenderPolicy,
     context: &mut InlineRenderContext<'_, '_>,
 ) {
@@ -803,14 +837,9 @@ pub(super) fn render_heading(
     match heading.kind {
         HeadingKind::DocumentTitle if policy.render_document_title => {
             let roles = role_classes(&heading.metadata, context);
-            BlockWriter::start(
-                output,
-                "h1",
-                &[
-                    body::classes_with_roles(&["document-title"], roles),
-                    passive("id", id),
-                ],
-            );
+            let mut attributes = vec![body::classes_with_roles(&["document-title"], roles)];
+            attributes.extend(optional_id(id));
+            BlockWriter::start(output, "h1", &attributes);
             render_inlines(output, &heading.inlines, context);
             BlockWriter::end(output, "h1");
             BlockWriter::line_break(output);
@@ -826,7 +855,7 @@ pub(super) fn render_heading(
 pub(super) fn render_heading_level(
     output: &mut String,
     heading: &Heading,
-    id: &str,
+    id: Option<&str>,
     level: u8,
     context: &mut InlineRenderContext<'_, '_>,
 ) {
@@ -848,7 +877,7 @@ pub(super) fn render_heading_level(
     if !fixed.is_empty() || !roles.is_empty() {
         attributes.push(body::classes_with_roles(fixed, roles));
     }
-    attributes.push(passive("id", id));
+    attributes.extend(optional_id(id));
     BlockWriter::start(output, name, &attributes);
     if let Some(presentation) = context.presentation.heading_at(heading.range)
         && presentation.numbered
@@ -975,6 +1004,7 @@ pub(super) struct InlineRenderContext<'inputs, 'render> {
     pub(super) presentation: &'inputs crate::presentation::DocumentPresentation,
     pub(super) generated_bibliography:
         Option<&'render generated_bibliography::PreparedGeneratedBibliography<'inputs>>,
+    pub(super) region: Option<regions::RegionPresentation>,
 }
 
 pub(super) fn render_toc(

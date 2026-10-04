@@ -26,6 +26,19 @@ impl Document {
         self.inner.blocks()
     }
 
+    /// Stable block identities and locations within this analysis.
+    pub const fn index(&self) -> &crate::presentation::DocumentIndex {
+        self.inner.index()
+    }
+
+    /// Looks up a top-level or nested block without copying or parsing it.
+    ///
+    /// A `BlockId` belongs to the analysis that allocated it and must not be
+    /// reused with a different document.
+    pub fn block(&self, id: crate::presentation::BlockId) -> Option<&crate::block_model::Block> {
+        self.inner.block(id)
+    }
+
     pub fn anchors(&self) -> &[crate::block_model::ExplicitAnchor] {
         self.inner.anchors()
     }

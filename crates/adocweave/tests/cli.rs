@@ -1525,6 +1525,87 @@ fn convert_reads_a_file() {
     assert!(output.stderr.is_empty());
 }
 
+#[test]
+fn convert_writes_render_warnings_to_stderr_and_keeps_stdout_as_html() {
+    for color in ["auto", "always", "never"] {
+        let output = run_with_stdin(
+            &["convert", "--no-config", "--color", color, "-"],
+            b"link:javascript:alert(1)[unsafe]\n",
+        );
+
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"<p>unsafe</p>\n");
+        let stderr = String::from_utf8(output.stderr).expect("diagnostic");
+        assert!(stderr.contains("<stdin>:1:6: warning[invalid-url-scheme]:"));
+        assert_eq!(stderr.contains("\x1b[33m"), color == "always");
+        assert!(!stderr.contains("<p>"));
+    }
+}
+
+#[test]
+fn convert_maps_render_diagnostics_to_included_source_lines_and_byte_columns() {
+    let root = tempfile::tempdir().expect("project");
+    std::fs::write(
+        root.path().join("manual.adoc"),
+        "= Title\n\ninclude::part.adoc[]\n",
+    )
+    .expect("primary source");
+    std::fs::write(
+        root.path().join("part.adoc"),
+        "Included text.\n\n😀 link:javascript:alert(1)[unsafe]\n",
+    )
+    .expect("included source");
+
+    let output = adocweave()
+        .current_dir(root.path())
+        .args(["convert", "--no-config", "manual.adoc"])
+        .output()
+        .expect("included conversion");
+
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("😀 unsafe"));
+    let stderr = String::from_utf8(output.stderr).expect("diagnostic");
+    assert!(
+        stderr.starts_with("include:part.adoc:3:11: warning[invalid-url-scheme]:"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("manual.adoc:"));
+}
+
+#[test]
+fn convert_preserves_notes_as_a_regular_role_without_a_render_error() {
+    let root = tempfile::tempdir().expect("project");
+    std::fs::write(
+        root.path().join("manual.adoc"),
+        "[.notes]\n--\nPrivate explanation.\n--\n",
+    )
+    .expect("source");
+    std::fs::write(
+        root.path().join(".adocweave.toml"),
+        "schema-version = 2\n[html]\nroles = [\"notes\"]\n",
+    )
+    .expect("configuration");
+
+    for configured in [false, true] {
+        let mut command = adocweave();
+        command.current_dir(root.path()).arg("convert");
+        if !configured {
+            command.arg("--no-config");
+        }
+        let output = command.arg("manual.adoc").output().expect("conversion");
+
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stderr.is_empty());
+        let html = String::from_utf8(output.stdout).expect("HTML");
+        assert!(html.contains("Private explanation."));
+        assert_eq!(html.contains("role-notes"), configured);
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn file_arguments_accept_non_utf8_paths() {
