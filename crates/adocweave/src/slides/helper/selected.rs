@@ -91,7 +91,16 @@ pub fn selected_content(
                 .document()
                 .footnote_body(footnote.definition_range)
                 .ok_or_else(|| HostError::protocol("footnote body is missing").at(Some(range)))?;
+            let mut unsupported_anchor = None;
             walk_inlines(inlines, |node| match node {
+                SemanticNode::Inline(Inline::Macro(node))
+                    if matches!(
+                        node.kind,
+                        StandardMacroKind::Anchor | StandardMacroKind::BibliographyAnchor
+                    ) =>
+                {
+                    unsupported_anchor.get_or_insert(node.range);
+                }
                 SemanticNode::Inline(Inline::Formula(formula)) => {
                     if formula.uses_stem_attribute {
                         stem_ranges.insert(formula.range);
@@ -135,6 +144,13 @@ pub fn selected_content(
                 }
                 _ => {}
             });
+            if let Some(range) = unsupported_anchor {
+                return Err(HostError::new(
+                    "slides-footnote-anchor-unsupported",
+                    "anchor and bibliography definitions inside slide footnotes are unsupported",
+                )
+                .at(Some(range)));
+            }
         }
         equations.sort_unstable_by_key(|(order, _)| *order);
         cited.sort_unstable_by_key(|(order, _)| *order);
