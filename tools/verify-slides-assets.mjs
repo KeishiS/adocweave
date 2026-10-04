@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -28,7 +29,24 @@ export function verifySlidesAssets(directory = defaultDirectory, archiveDirector
     }
   }
   for (const asset of metadata.assets) {
-    assert.equal(hash(readFileSync(resolve(directory, asset.path))), asset.sha256, `asset digest: ${asset.path}`);
+    const bytes = readFileSync(resolve(directory, asset.path));
+    assert.equal(hash(bytes), asset.sha256, `asset digest: ${asset.path}`);
+    const expected = {
+      "LICENSE.fitty.txt": ["fitty", "package/LICENSE"],
+      "LICENSE.marked.txt": ["marked", "package/LICENSE.md"],
+      "LICENSE.revealjs.txt": ["reveal.js", "package/LICENSE"],
+      "notes.js": ["reveal.js", "package/dist/plugin/notes.js"],
+      "reset.css": ["reveal.js", "package/dist/reset.css"],
+      "reveal.css": ["reveal.js", "package/dist/reveal.css"],
+      "reveal.js": ["reveal.js", "package/dist/reveal.js"]
+    }[asset.path];
+    assert.deepEqual([asset.archive, asset.member], expected, `asset origin: ${asset.path}`);
+    if (archiveDirectory) {
+      const source = metadata.archives.find(source => source.name === asset.archive);
+      const archive = resolve(archiveDirectory, `${source.name}-${source.version}.tgz`);
+      const original = execFileSync("tar", ["-xOf", archive, asset.member], { maxBuffer: 2 * 1024 * 1024 });
+      assert.deepEqual(bytes, original, `archive member: ${asset.path}`);
+    }
   }
   assert.match(readFileSync(resolve(directory, "reveal.js"), "utf8"), /typeof exports/);
   const notice = readFileSync(resolve(directory, "NOTICE.txt"), "utf8");

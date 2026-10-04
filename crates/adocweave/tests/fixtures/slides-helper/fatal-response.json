@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "notices": {
+    "math": null,
+    "citations": null
+  },
+  "scopes": {
+    "body": {
+      "equations": [],
+      "citations": [],
+      "bibliography": []
+    },
+    "notes": {
+      "equations": [],
+      "citations": [],
+      "bibliography": []
+    }
+  },
+  "diagnostics": [
+    {
+      "scope": null,
+      "key": null,
+      "severity": "error",
+      "code": "invalid-request",
+      "message": "request.schemaVersion is required."
+    }
+  ]
+}

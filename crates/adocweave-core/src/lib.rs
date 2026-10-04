@@ -39,6 +39,7 @@ mod presentation;
 mod projection;
 mod reference;
 mod render;
+mod rendered_content;
 mod resolved;
 mod resource;
 mod source;
@@ -136,12 +137,17 @@ pub mod output {
         };
     }
     pub mod html {
+        pub use crate::generated_bibliography::BibliographyNamespace;
         pub use crate::html::{
             ExternalLinkPresentation, HtmlDocumentMode, HtmlOutput, HtmlRegionError,
             HtmlRegionSelection, HtmlRegions, MathLanguagePolicy, RenderPolicy,
             ResourceCapabilities, RolePolicy, SourceLanguagePolicy, StylesheetPolicy,
             StylesheetSource, UnknownRole, UnknownSourceLanguage, UnresolvedReferencePresentation,
             is_role_name, render, render_regions, render_with_inputs,
+        };
+        pub use crate::rendered_content::{
+            ContentValidationError, ResolvedMath, ResolvedRichCitation, RichInline, ValidatedMath,
+            ValidatedRichText,
         };
     }
     pub mod projection {
