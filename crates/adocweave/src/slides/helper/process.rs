@@ -12,6 +12,10 @@ use std::{
 };
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 
+#[cfg(windows)]
+#[path = "windows_job.rs"]
+mod windows_job;
+
 #[derive(Clone, Copy, Debug)]
 pub struct ProcessLimits {
     pub input_bytes: usize,
@@ -255,12 +259,36 @@ pub async fn execute(
             command.env_remove(name);
         }
     }
+    #[cfg(unix)]
+    command.process_group(0);
+    #[cfg(windows)]
+    command.creation_flags(windows_sys::Win32::System::Threading::CREATE_SUSPENDED);
+    #[cfg(windows)]
+    let job = windows_job::Job::new().map_err(|e| {
+        HostError::new(
+            "slides-helper-spawn",
+            format!("cannot create helper process job: {e}"),
+        )
+    })?;
     let mut child = command
         .spawn()
         .map_err(|e| HostError::new("slides-helper-spawn", e.to_string()))?;
+    #[cfg(unix)]
+    let group = child.id().expect("new child has a process ID") as i32;
+    #[cfg(windows)]
+    if let Err(error) = job.assign_and_resume(&child) {
+        // Assignment/resume failure must never leave a suspended child behind.
+        let _ = child.kill().await;
+        let _ = child.wait().await;
+        return Err(HostError::new(
+            "slides-helper-spawn",
+            format!("cannot start helper in its process job: {error}"),
+        ));
+    }
     let mut stdin = child.stdin.take().expect("piped stdin");
     let stdout = child.stdout.take().expect("piped stdout");
     let stderr = child.stderr.take().expect("piped stderr");
+    let timeout = limits.timeout.min(Duration::from_secs(30));
     let result = {
         let operation = async {
             let (input_result, stdout, stderr, status) = tokio::try_join!(
@@ -295,17 +323,41 @@ pub async fn execute(
         tokio::pin!(operation);
         tokio::select! {
             result=&mut operation=>result,
-            _=tokio::time::sleep(limits.timeout.min(Duration::from_secs(30)))=>Err(HostError::new("slides-helper-timeout","slide helper exceeded its fixed 30-second time limit; reduce the document's math or citation workload and retry")),
+            _=tokio::time::sleep(timeout)=>Err(HostError::new("slides-helper-timeout",format!("slide helper exceeded its {timeout:?} time limit; reduce the document's math or citation workload and retry"))),
             _=wait_cancelled(cancellation)=>Err(HostError::new("slides-helper-cancelled","slide generation was cancelled")),
         }
     };
     let (input_result, stdout, stderr, status) = match result {
         Ok(result) => result,
         Err(error) => {
+            #[cfg(unix)]
+            // The helper started in its own group; inherited descendants share
+            // it unless a trusted helper deliberately detaches itself.
+            let cleanup = if unsafe { libc::kill(-group, libc::SIGKILL) } == -1 {
+                let error = io::Error::last_os_error();
+                if error.raw_os_error() == Some(libc::ESRCH) {
+                    Ok(())
+                } else {
+                    Err(error)
+                }
+            } else {
+                Ok(())
+            };
+            #[cfg(windows)]
+            let cleanup = job.terminate();
             // Reap even after an I/O/limit/cancellation failure, including a child that just exited.
             let _ = child.kill().await;
             let _ = child.wait().await;
-            return Err(error);
+            return Err(match cleanup {
+                Ok(()) => error,
+                Err(cleanup) => HostError::new(
+                    error.code,
+                    format!(
+                        "{}; helper process cleanup failed: {cleanup}",
+                        error.message
+                    ),
+                ),
+            });
         }
     };
     let exit = status.code().ok_or_else(|| {

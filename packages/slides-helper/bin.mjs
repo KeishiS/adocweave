@@ -7,7 +7,13 @@ import { LIMITS, RequestError, diagnostic, emptyResponse, encodeResponse } from 
 
 // Check before loading MathJax/citeproc so an unsupported runtime gets a useful error.
 const required = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")).engines.node;
-const minimum = required.slice(2).split(".").map(Number);
+// This package declares exactly one minimum version, not a general semver range.
+const minimumMatch = /^>=(\d+)\.(\d+)\.(\d+)$/.exec(required);
+if (!minimumMatch) {
+  process.stderr.write("adocweave-slides-helper has an unsupported engines.node requirement; reinstall @adocweave/slides-helper.\n");
+  process.exit(1);
+}
+const minimum = minimumMatch.slice(1).map(Number);
 const actual = process.versions.node.split(".").map(Number);
 const older = actual[0] < minimum[0] || (actual[0] === minimum[0]
   && (actual[1] < minimum[1] || (actual[1] === minimum[1] && actual[2] < minimum[2])));

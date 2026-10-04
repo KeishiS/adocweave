@@ -19,22 +19,33 @@ separate changelogs for the
 - Slide outputs use managed directories and a manifest shared by saving and serving. Updates reject unknown or modified files, remove obsolete managed assets, and remove presenter-only content when switching to public output.
 - Generated slides use bundled reveal.js assets and system fonts. Dependency attribution and license texts accompany the output; browser pages do not load MathJax or a citation processor.
 
+### Breaking changes
+
+- Generic `stem` notation follows the `stem` attribute at its source position, including fixed attributes and include-local changes. `latexmath`, `latex`, and `tex` select LaTeX; other values, empty values, and an unset attribute select AsciiMath. Ordinary HTML output now identifies implicit formulas as AsciiMath when no LaTeX notation is selected.
+
 ### Fixed
 
 - `convert` now reports HTML rendering diagnostics on standard error, mapped back to the original document or include file. Rendering errors produce exit code 1; warning-only output succeeds.
 - Math block styles can share a metadata line with an ID, role, or option. Explicit `asciimath` notation is recognized alongside `latexmath`.
-- Generic `stem` notation follows the `stem` attribute at its source position, including fixed attributes and include-local changes. `latexmath`, `latex`, and `tex` select LaTeX; other values, empty values, and an unset attribute select AsciiMath.
+- Original TeX in rendered slide equations remains hidden before stylesheets load. Native archives and Nix packages include the bundled browser assets' license texts.
+- Slides reject unsupported note forms and reveal.js presentation attributes instead of silently publishing their contents or ignoring their intended appearance. Empty and note-only decks are rejected; notes preceding the first body slide attach to that slide.
+- Slide page titles use resolved heading text, and generated reference IDs follow visible occurrences without disclosing private note sizes. Ordinary HTML ID generation is unchanged.
+- Helper execution drops `NODE_*` variables and relative `PATH` entries, uses the selected entry's directory, and invokes standard npm JavaScript entries directly with an absolute Node executable. Helper startup validates the required Node version, and failures retain bounded exit status and stderr details.
+- Managed output errors identify the affected path and explain how to preserve the directory and regenerate into a new or empty output directory.
 
 ### Rust API
 
 - `MathLanguage` adds `AsciiMath`. `InlineFormula` adds `uses_stem_attribute`, and math block `range` includes preceding metadata while `content_range` identifies the formula text.
 - Validated SVG and finite citation content can be passed through output inputs. Validation rejects unsupported XML, external references, missing or duplicated helper results, and processing-limit violations before rendering.
-- Selected body-region rendering preserves the existing HTML escaping and URL policy while slide numbering separates body and presenter-note references.
+- `render_regions`, `render_slide_regions`, `HtmlRegions`, `HtmlRegionSelection`, `HtmlRegionError`, `HtmlSlideScope`, `HtmlSlideSelections`, and `HtmlSlideRegions` expose selected body-region rendering. They preserve the existing HTML escaping and URL policy while slide numbering separates body and presenter-note references.
+- `RenderInputDomain` adds `Math` and `RichCitation`.
+- `output::projection::heading_text(&Heading)` exposes resolved plain heading text using the existing inline-text rules; it does not run host math or citation processing. The public document model and WASM schema are unchanged by this helper.
 
 ### Migration
 
 - Set `:stem: latexmath` or use explicit `latexmath:[...]` / `[latexmath]` where a document relied on implicit LaTeX. Slides accept LaTeX equations and report unsupported math notation.
 - Update exhaustive `MathLanguage` matches for `AsciiMath` and supply `uses_stem_attribute` when constructing `InlineFormula` with a struct literal.
+- Add `Math` and `RichCitation` cases to exhaustive `RenderInputDomain` matches.
 
 ## [0.58.0] - 2026-09-20
 

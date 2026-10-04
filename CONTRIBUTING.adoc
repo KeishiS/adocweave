@@ -181,8 +181,9 @@ Zed拡張のadvisory、licenseおよび取得元を検査します。npmはVS Co
 NewcmフォントのGUST Font Licenseについては、確認したarchiveと本文・通知のdigestだけを
 ``packages/slides-helper/licenses/evidence.json``へ記録します。依存の版やarchiveが変わった場合は、配布実物の
 本文と通知を確認し直します。CPALのGUI帰属表示条件について、CSLを使うpreviewの初期表示へExhibit Bの
-copyright、phrase、URLを見える形で設け、生成物にも帰属表示とlicense本文を同梱します。ブラウザーUIへの
-法的な適用範囲を確定済みとはせず、この保守的な対応を受入検査で確認します。
+copyright、phrase、URLが見え、生成物に帰属表示とlicense本文が同梱されることを受入検査で確認します。
+licenseの選択と帰属表示を採用した理由はxref:docs/developer-guide/adr/0034-standard-runtime-dependency-audit.adoc[ADR 0034]を
+参照してください。
 
 Reveal資産の正本は``crates/adocweave/assets/revealjs/sources.json``です。上流manifestで``devDependencies``へ
 分類されていても、同梱してブラウザーで実行するライブラリはruntime監査へ含めます。この正本から一時的な

@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { cpSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { processRequest } from "./index.mjs";
@@ -23,6 +26,21 @@ test("the executable reports the installed engine requirement before loading pro
       assert.equal(output.status, 0, output.stderr);
       assert.equal(JSON.parse(output.stdout).schemaVersion, 1);
     }
+  }
+});
+
+test("an unsupported installed engine range fails before any processing library is required", () => {
+  const directory = mkdtempSync(join(tmpdir(), "slides-helper-engine-"));
+  try {
+    for (const file of ["bin.mjs", "protocol.mjs"]) cpSync(new URL(file, import.meta.url), join(directory, file));
+    writeFileSync(join(directory, "package.json"), JSON.stringify({ engines: { node: "^24" } }));
+    const output = spawnSync(process.execPath, [join(directory, "bin.mjs")], { input: JSON.stringify(empty()), encoding: "utf8" });
+    assert.equal(output.status, 1);
+    assert.equal(output.stdout, "");
+    assert.match(output.stderr, /unsupported engines\.node requirement; reinstall/);
+    assert.ok(!output.stderr.includes("index.mjs"));
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });
 
