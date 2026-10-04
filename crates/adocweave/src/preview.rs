@@ -467,12 +467,13 @@ mod tests {
             .cloned()
             .map(|dependency| {
                 let fingerprint = match dependency.kind() {
-                    DependencyKind::Contents | DependencyKind::ContentsNoSymlinks => {
-                        fs::read(dependency.path()).map_or_else(
+                    DependencyKind::Contents
+                    | DependencyKind::ContentsNoSymlinks
+                    | DependencyKind::BinaryContentsNoSymlinks => fs::read(dependency.path())
+                        .map_or_else(
                             |error| Fingerprint::unavailable(&error.kind().to_string()),
                             |bytes| Fingerprint::from_loaded_bytes(&bytes),
-                        )
-                    }
+                        ),
                     DependencyKind::Existence => {
                         if dependency.path().is_file() {
                             Fingerprint::present()

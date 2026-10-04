@@ -1,7 +1,44 @@
 use std::fs;
 
 use adocweave_core::{CancellationToken, NeverCancel};
-use adocweave_project::{ProjectAuthority, ProjectResourceLimits};
+use adocweave_project::{ProjectAuthority, ProjectObservationKind, ProjectResourceLimits};
+
+#[test]
+fn binary_observation_detects_same_size_changes_without_decoding_utf8() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("figure.png");
+    fs::write(&path, [0, 1, 255]).unwrap();
+    let authority = ProjectAuthority::open(root.path(), [root.path().to_owned()]).unwrap();
+    let resource = authority
+        .read_binary_resources(
+            &[root.path().to_owned()],
+            std::slice::from_ref(&path),
+            ProjectResourceLimits::default(),
+            &NeverCancel,
+        )
+        .unwrap()
+        .remove(0);
+    let acquired = resource.observation();
+    assert_eq!(
+        acquired.kind,
+        ProjectObservationKind::BinaryContentsNoSymlinks
+    );
+    let access = authority.observation_access();
+    assert_eq!(
+        access.observer().observe(&path, acquired.kind),
+        acquired.observation
+    );
+    fs::write(&path, [0, 2, 255]).unwrap();
+    assert_ne!(
+        access.observer().observe(&path, acquired.kind),
+        acquired.observation
+    );
+    fs::remove_file(&path).unwrap();
+    assert_ne!(
+        access.observer().observe(&path, acquired.kind),
+        acquired.observation
+    );
+}
 
 #[test]
 fn selected_binary_reads_are_deduplicated_confined_and_bounded() {

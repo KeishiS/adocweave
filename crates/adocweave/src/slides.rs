@@ -9,7 +9,9 @@ use std::fmt::Write as _;
 
 use adocweave_core::OutputLimits;
 use adocweave_core::output::diagnostics::{Diagnostic, DiagnosticCode, DiagnosticId, Severity};
-use adocweave_core::output::html::{self, HtmlRegionError, HtmlRegionSelection, RenderPolicy};
+use adocweave_core::output::html::{
+    self, HtmlRegionError, HtmlRegionSelection, HtmlSlideScope, HtmlSlideSelections, RenderPolicy,
+};
 use adocweave_core::resolution::RenderInputs;
 use adocweave_core::semantic::{
     self, Block, BlockId, BlockMetadata, DelimitedBlockKind, Document, HeadingKind, ListKind,
@@ -18,6 +20,9 @@ use adocweave_core::semantic::{
 use adocweave_core::text::TextRange;
 
 pub(crate) mod bundle;
+mod data;
+pub(crate) mod helper;
+mod styles;
 mod svg;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, clap::ValueEnum)]
@@ -624,11 +629,11 @@ impl<'document> Deck<'document> {
         }
     }
 
-    pub(crate) fn body_regions(&self) -> Vec<HtmlRegionSelection> {
+    fn body_regions(&self) -> Vec<Vec<HtmlRegionSelection>> {
         self.groups
             .iter()
             .flat_map(|group| &group.slides)
-            .flat_map(|slide| {
+            .map(|slide| {
                 let mut heading = slide
                     .heading
                     .filter(|_| !slide.hide_title)
@@ -644,7 +649,8 @@ impl<'document> Deck<'document> {
                 }
                 selections
                     .into_iter()
-                    .map(|blocks| HtmlRegionSelection {
+                    .enumerate()
+                    .map(|(region, blocks)| HtmlRegionSelection {
                         omitted_blocks: slide.notes.iter().copied().collect(),
                         stepped_blocks: slide
                             .steps
@@ -666,9 +672,9 @@ impl<'document> Deck<'document> {
                             })
                             .map(|(&id, &first)| (id, first))
                             .collect(),
-                        container_headings: slide
-                            .heading
-                            .filter(|id| blocks.contains(id))
+                        container_headings: (region == 0)
+                            .then_some(slide.heading)
+                            .flatten()
                             .into_iter()
                             .collect(),
                         blocks,
@@ -678,14 +684,30 @@ impl<'document> Deck<'document> {
             .collect()
     }
 
-    pub(crate) fn note_regions(&self) -> Vec<HtmlRegionSelection> {
+    fn note_regions(&self) -> Vec<Vec<HtmlRegionSelection>> {
         self.groups
             .iter()
             .flat_map(|group| &group.slides)
-            .map(|slide| HtmlRegionSelection {
-                blocks: slide.notes.clone(),
-                ..Default::default()
+            .map(|slide| {
+                vec![HtmlRegionSelection {
+                    blocks: slide.notes.clone(),
+                    ..Default::default()
+                }]
             })
+            .collect()
+    }
+
+    pub(crate) fn reserved_ids(&self) -> BTreeSet<String> {
+        self.document
+            .reference_targets()
+            .iter()
+            .map(|target| target.id.clone())
+            .chain(self.groups.iter().map(|group| group.id.clone()))
+            .chain(
+                self.groups
+                    .iter()
+                    .flat_map(|group| group.slides.iter().map(|slide| slide.id.clone())),
+            )
             .collect()
     }
 
@@ -697,19 +719,33 @@ impl<'document> Deck<'document> {
         note_inputs: &RenderInputs,
         limits: OutputLimits,
     ) -> Result<RenderedDeck, HtmlRegionError> {
-        let body = html::render_regions(
+        let selections = HtmlSlideSelections {
+            body: self.body_regions(),
+            notes: if audience == Audience::Presenter {
+                self.note_regions()
+            } else {
+                Vec::new()
+            },
+        };
+        let mut reserved = self.reserved_ids();
+        let body = html::render_slide_regions(
             self.document,
             policy,
             body_inputs,
-            &self.body_regions(),
+            &selections,
+            HtmlSlideScope::Body,
+            &reserved,
             limits,
         )?;
+        reserved.extend(body.generated_ids.iter().cloned());
         let notes = if audience == Audience::Presenter {
-            html::render_regions(
+            html::render_slide_regions(
                 self.document,
                 policy,
                 note_inputs,
-                &self.note_regions(),
+                &selections,
+                HtmlSlideScope::Notes,
+                &reserved,
                 limits,
             )?
         } else {
@@ -718,6 +754,14 @@ impl<'document> Deck<'document> {
         let mut output = String::from("<div class=\"reveal\">\n<div class=\"slides\">\n");
         let mut body_regions = body.regions.iter();
         let mut note_regions = notes.regions.iter();
+        let mut body_footnotes = body.footnotes.iter();
+        let mut note_footnotes = notes.footnotes.iter();
+        let slide_count = self
+            .groups
+            .iter()
+            .map(|group| group.slides.len())
+            .sum::<usize>();
+        let mut slide_index = 0;
         for group in &self.groups {
             if group.slides.len() > 1 {
                 writeln!(output, "<section id=\"{}\">", group.id)
@@ -745,18 +789,35 @@ impl<'document> Deck<'document> {
                     }
                     output.push_str("</div>\n");
                 }
-                if let Some(note) = note_regions.next()
-                    && !note.is_empty()
-                {
+                output.push_str(
+                    body_footnotes
+                        .next()
+                        .expect("one footnote region per slide"),
+                );
+                let note = note_regions.next().map(String::as_str).unwrap_or("");
+                let footnotes = note_footnotes.next().map(String::as_str).unwrap_or("");
+                let bibliography = (slide_index + 1 == slide_count)
+                    .then_some(notes.bibliography.as_deref())
+                    .flatten()
+                    .unwrap_or("");
+                if !note.is_empty() || !footnotes.is_empty() || !bibliography.is_empty() {
                     output.push_str("<aside class=\"notes\">\n");
                     output.push_str(note);
+                    output.push_str(footnotes);
+                    output.push_str(bibliography);
                     output.push_str("</aside>\n");
                 }
                 output.push_str("</section>\n");
+                slide_index += 1;
             }
             if group.slides.len() > 1 {
                 output.push_str("</section>\n");
             }
+        }
+        if let Some(bibliography) = &body.bibliography {
+            output.push_str("<section id=\"slides-body-references\">\n<h2>References</h2>\n");
+            output.push_str(bibliography);
+            output.push_str("</section>\n");
         }
         output.push_str("</div>\n</div>\n");
         if output.len() > limits.max_output_bytes as usize {
