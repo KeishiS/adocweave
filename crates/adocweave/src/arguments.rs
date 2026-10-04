@@ -74,6 +74,10 @@ pub(crate) enum CommandOptions {
     },
     Preview {
         css: Vec<StylesheetArgument>,
+        target: ConvertTarget,
+        audience: crate::slides::Audience,
+        slides_helper: Option<PathBuf>,
+        data: SlidesData,
         bind: IpAddr,
         port: u16,
         debounce_ms: u64,
@@ -134,11 +138,22 @@ pub(crate) struct Arguments {
 
 pub(crate) enum Action {
     Run(Box<Arguments>),
+    Serve {
+        directory: PathBuf,
+        bind: IpAddr,
+        port: u16,
+    },
     Lsp,
     Help(clap::Error),
-    Version { json: bool },
-    Completion { shell: CompletionShell },
-    Rules { json: bool },
+    Version {
+        json: bool,
+    },
+    Completion {
+        shell: CompletionShell,
+    },
+    Rules {
+        json: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -200,6 +215,9 @@ enum CliCommand {
         after_help = "Security:\n  A non-loopback address requires --allow-external.\n  The server does not provide authentication or TLS encryption.\n\nExample:\n  adocweave preview --port 8080 manual.adoc"
     )]
     Preview(PreviewArgs),
+
+    /// Serve an existing managed slide bundle without rebuilding it.
+    Serve(ServeArgs),
 
     /// Check AsciiDoc documents.
     #[command(
@@ -359,6 +377,17 @@ struct ViewArgs {
 
 #[derive(Debug, Args)]
 struct PreviewArgs {
+    #[command(flatten)]
+    data: SlidesData,
+    /// Output format; revealjs runs as a complete slide presentation.
+    #[arg(long = "to", value_name = "FORMAT", value_enum, default_value_t)]
+    target: ConvertTarget,
+    /// Content to preview with revealjs; defaults to presenter.
+    #[arg(long, value_name = "AUDIENCE", value_enum)]
+    audience: Option<crate::slides::Audience>,
+    /// Slides helper executable or .mjs entrypoint; overrides ADOCWEAVE_SLIDES_HELPER.
+    #[arg(long, value_name = "FILE", value_hint = ValueHint::FilePath)]
+    slides_helper: Option<PathBuf>,
     /// AsciiDoc file to preview; standard input and symbolic links are not supported.
     #[arg(value_name = "FILE", value_hint = ValueHint::FilePath)]
     file: PathBuf,
@@ -395,6 +424,22 @@ struct PreviewArgs {
     config: ProjectConfigArgs,
     #[command(flatten)]
     color: ColorArgs,
+}
+
+#[derive(Debug, Args)]
+struct ServeArgs {
+    /// Dedicated directory produced by convert --to revealjs.
+    #[arg(value_name = "DIR", value_hint = ValueHint::DirPath)]
+    directory: PathBuf,
+    /// Listen address.
+    #[arg(long, value_name = "ADDRESS", default_value_t = IpAddr::V4(Ipv4Addr::LOCALHOST))]
+    bind: IpAddr,
+    /// Listen port.
+    #[arg(long, value_name = "PORT", default_value_t = DEFAULT_PREVIEW_PORT)]
+    port: u16,
+    /// Permit an explicitly selected non-loopback address.
+    #[arg(long)]
+    allow_external: bool,
 }
 
 #[derive(Debug, Args)]
@@ -702,6 +747,24 @@ fn convert_action(command: ConvertArgs, matches: &clap::ArgMatches) -> Result<Ac
 }
 
 fn preview_action(command: PreviewArgs, matches: &clap::ArgMatches) -> Result<Action, CliError> {
+    let css = stylesheet_arguments(matches);
+    if command.target == ConvertTarget::Revealjs {
+        if css
+            .iter()
+            .any(|value| matches!(value, StylesheetArgument::Url(_)))
+        {
+            return Err(CliError::Usage(
+                "--css-url applies only to ordinary HTML".to_owned(),
+            ));
+        }
+    } else if command.audience.is_some()
+        || command.slides_helper.is_some()
+        || command.data.specified()
+    {
+        return Err(CliError::Usage(
+            "slide audience, helper and data options require --to revealjs".to_owned(),
+        ));
+    }
     if command.file.as_os_str() == OsStr::new("-") {
         return Err(CliError::Usage(
             "standard input is not supported by preview".to_owned(),
@@ -714,7 +777,13 @@ fn preview_action(command: PreviewArgs, matches: &clap::ArgMatches) -> Result<Ac
     }
     run_action(Arguments {
         command: CommandOptions::Preview {
-            css: stylesheet_arguments(matches),
+            css,
+            target: command.target,
+            audience: command
+                .audience
+                .unwrap_or(crate::slides::Audience::Presenter),
+            slides_helper: command.slides_helper,
+            data: command.data,
             bind: command.bind,
             port: command.port,
             debounce_ms: command.debounce_ms,
@@ -862,6 +931,18 @@ where
     match command {
         CliCommand::Convert(command) => convert_action(command, command_matches),
         CliCommand::Preview(command) => preview_action(command, command_matches),
+        CliCommand::Serve(command) => {
+            if !command.bind.is_loopback() && !command.allow_external {
+                return Err(CliError::Usage(
+                    "a non-loopback --bind requires --allow-external".to_owned(),
+                ));
+            }
+            Ok(Action::Serve {
+                directory: command.directory,
+                bind: command.bind,
+                port: command.port,
+            })
+        }
         CliCommand::Check(command) => check_action(command),
         CliCommand::Format(command) => format_action(command),
         CliCommand::Symbols(command) => symbols_action(command),

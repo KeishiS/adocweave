@@ -25,20 +25,44 @@ pub(crate) struct GeneratedBundle {
 }
 
 pub(crate) struct Options<'a> {
-    pub(crate) audience: Audience,
-    pub(crate) helper: Option<&'a Path>,
-    pub(crate) data: &'a crate::arguments::SlidesData,
+    audience: Audience,
+    helper: Option<&'a Path>,
+    data: &'a crate::arguments::SlidesData,
+    preview: bool,
+}
+
+impl<'a> Options<'a> {
+    pub(crate) fn convert(
+        audience: Audience,
+        helper: Option<&'a Path>,
+        data: &'a crate::arguments::SlidesData,
+    ) -> Self {
+        Self {
+            audience,
+            helper,
+            data,
+            preview: false,
+        }
+    }
+    pub(crate) fn with_preview(mut self) -> Self {
+        self.preview = true;
+        self
+    }
 }
 
 fn host_error(
     error: super::helper::HostError,
     diagnostics: &mut Vec<Diagnostic>,
+    observations: &[ProjectObservationCandidate],
 ) -> Result<(), CliError> {
     if let Some(range) = error.range {
         problem(diagnostics, error.code, &error.message, range);
         Ok(())
     } else {
-        Err(CliError::Slides(error.to_string()))
+        Err(CliError::SlidesResources {
+            message: error.to_string(),
+            observations: observations.to_vec(),
+        })
     }
 }
 
@@ -92,7 +116,7 @@ fn static_file(path: &str, media_type: BundleMediaType, bytes: &[u8]) -> BundleF
     }
 }
 
-fn fixed_files(audience: Audience) -> Vec<BundleFile> {
+fn fixed_files(audience: Audience, preview: bool) -> Vec<BundleFile> {
     let mut files = vec![
         static_file(
             "assets/reveal.js",
@@ -131,6 +155,13 @@ fn fixed_files(audience: Audience) -> Vec<BundleFile> {
         ),
     ];
     let mut notice = "reveal.js 6.0.2 and its bundled fitty 2.4.2 are distributed under their accompanying MIT licenses.\n".to_owned();
+    if preview {
+        files.push(static_file(
+            "assets/preview.js",
+            BundleMediaType::JavaScript,
+            include_bytes!("../../assets/slides/preview.js"),
+        ));
+    }
     if audience == Audience::Presenter {
         files.push(static_file(
             "assets/notes.js",
@@ -161,6 +192,7 @@ fn page(
     language: &str,
     attribution: Option<&str>,
     styles: &[String],
+    preview: bool,
 ) -> String {
     let language = escape(language);
     let title = deck
@@ -191,8 +223,18 @@ fn page(
         .iter()
         .map(|path| format!("<link rel=\"stylesheet\" href=\"{}\">\n", escape(path)))
         .collect::<String>();
+    let preview_body = if preview {
+        " data-preview=\"true\""
+    } else {
+        ""
+    };
+    let preview_script = if preview {
+        "<pre class=\"slides-diagnostics\" aria-live=\"polite\" hidden></pre>\n<script src=\"assets/preview.js\"></script>\n"
+    } else {
+        ""
+    };
     format!(
-        "<!doctype html>\n<html lang=\"{language}\">\n<head>\n<meta charset=\"utf-8\">\n<meta http-equiv=\"Content-Security-Policy\" content=\"{}\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>{}</title>\n<link rel=\"stylesheet\" href=\"assets/reset.css\">\n<link rel=\"stylesheet\" href=\"assets/reveal.css\">\n<link rel=\"stylesheet\" href=\"assets/theme.css\">\n{styles}</head>\n<body data-audience=\"{audience_name}\"{citations}>\n{html}{attribution}<script src=\"assets/reveal.js\"></script>\n{notes}<script src=\"assets/bootstrap.js\"></script>\n</body>\n</html>\n",
+        "<!doctype html>\n<html lang=\"{language}\">\n<head>\n<meta charset=\"utf-8\">\n<meta http-equiv=\"Content-Security-Policy\" content=\"{}\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>{}</title>\n<link rel=\"stylesheet\" href=\"assets/reset.css\">\n<link rel=\"stylesheet\" href=\"assets/reveal.css\">\n<link rel=\"stylesheet\" href=\"assets/theme.css\">\n{styles}</head>\n<body data-audience=\"{audience_name}\"{citations}{preview_body}>\n{html}{attribution}<script src=\"assets/reveal.js\"></script>\n{notes}<script src=\"assets/bootstrap.js\"></script>\n{preview_script}</body>\n</html>\n",
         escape(&content_security_policy(audience)),
         escape(title)
     )
@@ -249,6 +291,7 @@ pub(crate) fn build(
         audience,
         helper: slides_helper,
         data,
+        preview,
     } = options;
     let analysis = &preprocessed.analysis;
     let language = analysis
@@ -365,7 +408,7 @@ pub(crate) fn build(
     ) {
         Ok(selected) => selected,
         Err(error) => {
-            host_error(error, &mut diagnostics)?;
+            host_error(error, &mut diagnostics, &observations)?;
             return Ok(GeneratedBundle {
                 files: Vec::new(),
                 diagnostics,
@@ -490,7 +533,7 @@ pub(crate) fn build(
     ) {
         Ok(prepared) => prepared,
         Err(error) => {
-            host_error(error, &mut diagnostics)?;
+            host_error(error, &mut diagnostics, &observations)?;
             return Ok(GeneratedBundle {
                 files: Vec::new(),
                 diagnostics,
@@ -528,7 +571,7 @@ pub(crate) fn build(
     ) {
         Ok(helper) => helper,
         Err(error) => {
-            host_error(error, &mut diagnostics)?;
+            host_error(error, &mut diagnostics, &observations)?;
             return Ok(GeneratedBundle {
                 files: Vec::new(),
                 diagnostics,
@@ -758,7 +801,7 @@ pub(crate) fn build(
             })
             .collect::<Vec<_>>(),
     );
-    let mut files = fixed_files(audience);
+    let mut files = fixed_files(audience, preview);
     files.extend(styles.files);
     helper_notices(&helper.notices, &mut files);
     files.extend(assets.into_values());
@@ -773,6 +816,7 @@ pub(crate) fn build(
             .as_ref()
             .map(|notices| notices.attribution.as_str()),
         &styles.links,
+        preview,
     );
     let limit = OutputLimits::default().max_output_bytes;
     if page.len() > limit as usize {
@@ -810,6 +854,7 @@ mod tests {
             "ja",
             Some("<script>Copyright & citation</script>"),
             &[],
+            false,
         );
         assert!(html.contains("&lt;script&gt;Copyright &amp; citation&lt;/script&gt;"));
         assert!(html.contains("href=\"https://citationstyles.org/\""));
@@ -833,7 +878,7 @@ mod tests {
             )
             .unwrap();
         for audience in [Audience::Public, Audience::Presenter] {
-            let html = page(&deck, &rendered.html, audience, "", None, &[]);
+            let html = page(&deck, &rendered.html, audience, "", None, &[], false);
             assert!(
                 html.find("Content-Security-Policy").unwrap() < html.find("stylesheet").unwrap()
             );
@@ -844,7 +889,7 @@ mod tests {
             );
             assert_eq!(html.contains("notes.js"), audience == Audience::Presenter);
             assert_eq!(
-                fixed_files(audience)
+                fixed_files(audience, false)
                     .iter()
                     .any(|file| file.path == "assets/notes.js"),
                 audience == Audience::Presenter

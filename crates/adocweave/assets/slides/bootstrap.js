@@ -21,9 +21,13 @@
     const value = fragment ? Number(fragment.dataset.fragmentIndex) : -1;
     const current = deck.getIndices();
     const required = Number.isInteger(value) ? value : -1;
-    const sameSlide = current.h === indices.h && current.v === indices.v;
+    const vertical = indices.v ?? 0;
+    const sameSlide = current.h === indices.h && current.v === vertical;
     const stage = sameSlide && Number.isInteger(current.f) ? Math.max(current.f, required) : required;
-    deck.slide(indices.h, indices.v, stage);
+    deck.slide(indices.h, vertical, stage);
+    // Reveal may expose all fragments when returning to a previous slide.
+    // Apply the requested stage after its slide transition has finished.
+    deck.navigateFragment(stage);
     return true;
   }
 
@@ -33,8 +37,12 @@
     let id;
     try { id = decodeURIComponent(anchor.getAttribute("href").slice(1)); } catch { return; }
     const target = document.getElementById(id);
-    if (target && navigate(target)) event.preventDefault();
-  });
+    if (target && navigate(target)) {
+      event.preventDefault();
+      // Handle authored references before Reveal's bubbling hash listener.
+      event.stopPropagation();
+    }
+  }, true);
 
   function imageReady(image) {
     if (image.decode) return image.decode().catch(() => {});

@@ -8,8 +8,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+use crate::slides::Audience;
 use adocweave_core::CancellationToken;
 use adocweave_core::output::diagnostics::{self, Diagnostic};
+use adocweave_project::BundleSnapshot;
 use serde::Serialize;
 
 mod dependency;
@@ -78,6 +80,8 @@ pub struct Build {
     dependencies: BTreeMap<Dependency, Fingerprint>,
     style_origins: BTreeSet<String>,
     retain_previous_dependencies: bool,
+    bundle: Option<Arc<BundleSnapshot>>,
+    audience: Option<Audience>,
 }
 
 impl Build {
@@ -92,6 +96,8 @@ impl Build {
             dependencies,
             style_origins: BTreeSet::new(),
             retain_previous_dependencies: false,
+            bundle: None,
+            audience: None,
         }
     }
 
@@ -106,6 +112,27 @@ impl Build {
     pub fn with_style_origins(mut self, origins: BTreeSet<String>) -> Self {
         self.style_origins = origins;
         self
+    }
+
+    pub(crate) fn with_slides(mut self, bundle: BundleSnapshot, audience: Audience) -> Self {
+        self.bundle = Some(Arc::new(bundle));
+        self.audience = Some(audience);
+        self
+    }
+
+    pub(crate) fn slide_failure(
+        message: String,
+        dependencies: BTreeMap<Dependency, Fingerprint>,
+        audience: Audience,
+    ) -> Self {
+        let mut build = Self::failure(message.clone(), dependencies);
+        build.html = format!(
+            "<!doctype html><html><head><meta charset=\"utf-8\"><meta http-equiv=\"Content-Security-Policy\" content=\"{}\"><title>Preview error</title></head><body data-preview=\"true\"><h1>Preview error</h1><pre class=\"slides-diagnostics\" aria-live=\"polite\">{}</pre><script src=\"assets/preview.js\"></script></body></html>\n",
+            escape_html(&crate::slides::bundle::content_security_policy(audience)),
+            escape_html(&message)
+        );
+        build.audience = Some(audience);
+        build
     }
 
     #[cfg(test)]
@@ -173,14 +200,27 @@ struct State {
 
 impl State {
     fn from_build(generation: u64, build: Build) -> Self {
+        let mut http = HttpSnapshot::new(
+            generation,
+            build.html,
+            build.diagnostics,
+            build.style_origins,
+        );
+        if let Some(audience) = build.audience {
+            http = http.with_slides(build.bundle, audience, true);
+        }
         Self {
-            http: Arc::new(HttpSnapshot::new(
-                generation,
-                build.html,
-                build.diagnostics,
-                build.style_origins,
-            )),
+            http: Arc::new(http),
             dependencies: build.dependencies,
+        }
+    }
+
+    fn adopt(&mut self, generation: u64, build: Build) {
+        if build.audience.is_some() && build.retain_previous_dependencies {
+            self.http = Arc::new(self.http.failure(generation, build.html, build.diagnostics));
+            self.dependencies = build.dependencies;
+        } else {
+            *self = Self::from_build(generation, build);
         }
     }
 
@@ -411,7 +451,7 @@ pub fn run(
                         debounce.restart(Instant::now());
                         continue;
                     }
-                    state = State::from_build(next_generation, next);
+                    state.adopt(next_generation, next);
                 }
                 Err(message) => {
                     state.replace_failure(next_generation, &message, &mut snapshot);
@@ -424,6 +464,38 @@ pub fn run(
             Ok((stream, _)) => http_workers.dispatch(stream, &state.http, local),
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                 std::thread::sleep(ACCEPT_RETRY_INTERVAL);
+            }
+            Err(error) => return Err(Error::Io(error)),
+        }
+    }
+    Ok(())
+}
+
+/// Serves a complete validated bundle without filesystem reads during requests.
+pub(crate) fn serve(
+    options: Options,
+    bundle: BundleSnapshot,
+    audience: Audience,
+    shutdown: &AtomicBool,
+) -> Result<(), Error> {
+    let address = SocketAddr::new(options.bind, options.port);
+    let listener = TcpListener::bind(address).map_err(|source| Error::Bind { address, source })?;
+    listener.set_nonblocking(true).map_err(Error::Io)?;
+    let local = listener.local_addr().map_err(Error::Io)?;
+    eprintln!("AdocWeave slides: http://{local}/");
+    let http = Arc::new(
+        HttpSnapshot::new(1, String::new(), String::new(), BTreeSet::new()).with_slides(
+            Some(Arc::new(bundle)),
+            audience,
+            false,
+        ),
+    );
+    let workers = HttpWorkers::new().map_err(Error::Io)?;
+    while !shutdown.load(Ordering::Acquire) {
+        match listener.accept() {
+            Ok((stream, _)) => workers.dispatch(stream, &http, local),
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                std::thread::sleep(ACCEPT_RETRY_INTERVAL)
             }
             Err(error) => return Err(Error::Io(error)),
         }

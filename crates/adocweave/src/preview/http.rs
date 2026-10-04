@@ -6,6 +6,9 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use crate::slides::{self, Audience};
+use adocweave_project::BundleSnapshot;
+
 const MAX_REQUEST_BYTES: usize = 8192;
 const HTTP_WORKERS: usize = 4;
 const HTTP_QUEUE_CAPACITY: usize = 28;
@@ -35,6 +38,9 @@ pub(super) struct HttpSnapshot {
     html: String,
     diagnostics: String,
     style_origins: BTreeSet<String>,
+    bundle: Option<Arc<BundleSnapshot>>,
+    audience: Option<Audience>,
+    live: bool,
 }
 
 impl HttpSnapshot {
@@ -49,7 +55,22 @@ impl HttpSnapshot {
             html,
             diagnostics,
             style_origins,
+            bundle: None,
+            audience: None,
+            live: true,
         }
+    }
+
+    pub(super) fn with_slides(
+        mut self,
+        bundle: Option<Arc<BundleSnapshot>>,
+        audience: Audience,
+        live: bool,
+    ) -> Self {
+        self.bundle = bundle;
+        self.audience = Some(audience);
+        self.live = live;
+        self
     }
 
     pub(super) const fn generation(&self) -> u64 {
@@ -59,9 +80,16 @@ impl HttpSnapshot {
     pub(super) fn failure(&self, generation: u64, html: String, diagnostics: String) -> Self {
         Self {
             generation,
-            html,
+            html: if self.audience.is_some() {
+                self.html.clone()
+            } else {
+                html
+            },
             diagnostics,
             style_origins: self.style_origins.clone(),
+            bundle: self.bundle.clone(),
+            audience: self.audience,
+            live: self.live,
         }
     }
 }
@@ -229,6 +257,68 @@ fn respond(mut stream: TcpStream, snapshot: &HttpSnapshot, local: SocketAddr) ->
             &snapshot.style_origins,
         );
     }
+    if let Some(audience) = snapshot.audience {
+        let policy = format!(
+            "{}; frame-ancestors 'self'",
+            slides::bundle::content_security_policy(audience)
+        );
+        let path = request.path.split('?').next().unwrap_or(request.path);
+        let relative = if matches!(path, "/" | "/index.html") {
+            "index.html"
+        } else {
+            path.strip_prefix('/').unwrap_or("")
+        };
+        if let Some(file) = snapshot
+            .bundle
+            .as_ref()
+            .and_then(|bundle| bundle.file(relative))
+        {
+            return write_bytes(
+                &mut stream,
+                request.method,
+                200,
+                file.media_type.content_type(),
+                &file.bytes,
+                &policy,
+            );
+        }
+        if snapshot.live {
+            let (mime, body) = match path {
+                "/" | "/index.html" => (
+                    "text/html; charset=utf-8",
+                    snapshot.html.as_bytes().to_vec(),
+                ),
+                "/assets/preview.js" => (
+                    "text/javascript; charset=utf-8",
+                    include_bytes!("../../assets/slides/preview.js").to_vec(),
+                ),
+                "/events" => (
+                    "application/json",
+                    format!("{{\"generation\":{}}}\n", snapshot.generation).into_bytes(),
+                ),
+                "/diagnostics" => ("application/json", snapshot.diagnostics.as_bytes().to_vec()),
+                _ => {
+                    return write_bytes(
+                        &mut stream,
+                        request.method,
+                        404,
+                        "text/plain; charset=utf-8",
+                        b"not found\n",
+                        &policy,
+                    );
+                }
+            };
+            return write_bytes(&mut stream, request.method, 200, mime, &body, &policy);
+        }
+        return write_bytes(
+            &mut stream,
+            request.method,
+            404,
+            "text/plain; charset=utf-8",
+            b"not found\n",
+            &policy,
+        );
+    }
     let (status, content_type, body) = match request.path {
         "/" => (200, "text/html; charset=utf-8", shell()),
         "/document" => (200, "text/html; charset=utf-8", snapshot.html.clone()),
@@ -392,6 +482,24 @@ fn write_response(
     body: &str,
     style_origins: &BTreeSet<String>,
 ) -> io::Result<()> {
+    write_bytes(
+        stream,
+        method,
+        status,
+        content_type,
+        body.as_bytes(),
+        &content_security_policy(style_origins),
+    )
+}
+
+fn write_bytes(
+    stream: &mut TcpStream,
+    method: &str,
+    status: u16,
+    content_type: &str,
+    body: &[u8],
+    policy: &str,
+) -> io::Result<()> {
     let reason = match status {
         200 => "OK",
         404 => "Not Found",
@@ -409,12 +517,12 @@ fn write_response(
     let headers = format!(
         "HTTP/1.1 {status} {reason}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\n{allow}Cache-Control: no-store\r\nContent-Security-Policy: {}\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n",
         body.len(),
-        content_security_policy(style_origins)
+        policy
     );
     let deadline = Instant::now() + RESPONSE_DEADLINE;
     write_until(stream, headers.as_bytes(), deadline)?;
     if method != "HEAD" {
-        write_until(stream, body.as_bytes(), deadline)?;
+        write_until(stream, body, deadline)?;
     }
     Ok(())
 }
@@ -508,6 +616,108 @@ mod tests {
 
     fn snapshot(html: String) -> Arc<HttpSnapshot> {
         Arc::new(HttpSnapshot::new(1, html, "[]".to_owned(), BTreeSet::new()))
+    }
+
+    fn slide_snapshot(live: bool) -> HttpSnapshot {
+        use adocweave_core::NeverCancel;
+        use adocweave_project::{BundleFile, BundleMediaType, ProjectLimits};
+        let bundle = BundleSnapshot::from_files(
+            vec![
+                BundleFile {
+                    path: "index.html".to_owned(),
+                    media_type: BundleMediaType::Html,
+                    bytes: b"<html>complete slides</html>".to_vec(),
+                },
+                BundleFile {
+                    path: "assets/picture.png".to_owned(),
+                    media_type: BundleMediaType::Png,
+                    bytes: vec![0, 255, 137, 1],
+                },
+            ],
+            ProjectLimits::default(),
+            &NeverCancel,
+        )
+        .unwrap();
+        HttpSnapshot::new(3, "fallback".to_owned(), "[]".to_owned(), BTreeSet::new()).with_slides(
+            Some(Arc::new(bundle)),
+            Audience::Public,
+            live,
+        )
+    }
+
+    fn slide_response(snapshot: &HttpSnapshot, path: &str, method: &str) -> Vec<u8> {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::scope(|scope| {
+            let server = scope.spawn(|| {
+                let (stream, _) = listener.accept().unwrap();
+                respond(stream, snapshot, address).unwrap();
+            });
+            let mut stream = TcpStream::connect(address).unwrap();
+            stream
+                .write_all(
+                    format!("{method} {path} HTTP/1.1\r\nHost: {address}\r\n\r\n").as_bytes(),
+                )
+                .unwrap();
+            let mut response = Vec::new();
+            stream.read_to_end(&mut response).unwrap();
+            server.join().unwrap();
+            response
+        })
+    }
+
+    #[test]
+    fn slide_http_serves_top_level_html_binary_assets_and_only_manifest_paths() {
+        let snapshot = slide_snapshot(false);
+        let html = String::from_utf8(slide_response(&snapshot, "/?receiver", "GET")).unwrap();
+        assert!(html.contains("<html>complete slides</html>"));
+        assert!(!html.contains("<iframe"));
+        assert!(html.contains("frame-ancestors 'self'"));
+        assert!(!html.contains("script-src 'self' 'unsafe-inline'"));
+        let image = slide_response(&snapshot, "/assets/picture.png", "GET");
+        assert!(image.ends_with(&[0, 255, 137, 1]));
+        assert!(String::from_utf8_lossy(&image).contains("Content-Type: image/png"));
+        let head = slide_response(&snapshot, "/assets/picture.png", "HEAD");
+        assert!(head.ends_with(b"\r\n\r\n"));
+        assert!(String::from_utf8_lossy(&head).contains("Content-Length: 4"));
+        for path in [
+            "/events",
+            "/diagnostics",
+            "/document",
+            "/assets/../index.html",
+            "/%69ndex.html",
+            "/.adocweave-manifest.json",
+            "/unknown",
+        ] {
+            assert!(
+                String::from_utf8_lossy(&slide_response(&snapshot, path, "GET"))
+                    .starts_with("HTTP/1.1 404"),
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn failed_live_generation_keeps_previous_complete_bundle_and_new_diagnostics() {
+        let previous = slide_snapshot(true);
+        let failed = previous.failure(
+            4,
+            "incomplete page".to_owned(),
+            "[{\"code\":\"preview-build\"}]".to_owned(),
+        );
+        assert!(
+            String::from_utf8_lossy(&slide_response(&failed, "/", "GET"))
+                .contains("complete slides")
+        );
+        assert!(slide_response(&failed, "/assets/picture.png", "GET").ends_with(&[0, 255, 137, 1]));
+        assert!(
+            String::from_utf8_lossy(&slide_response(&failed, "/events", "GET"))
+                .contains("\"generation\":4")
+        );
+        assert!(
+            String::from_utf8_lossy(&slide_response(&failed, "/diagnostics", "GET"))
+                .contains("preview-build")
+        );
     }
 
     #[test]

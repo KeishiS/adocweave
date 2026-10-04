@@ -58,12 +58,20 @@ pub(super) fn load(
         .collect::<BTreeMap<_, _>>();
     for path in config.stylesheet_files() {
         let resource = by_path[path];
-        std::str::from_utf8(&resource.bytes).map_err(|_| {
-            CliError::Stylesheet(format!(
-                "stylesheet {} must be UTF-8",
-                resource.path.display()
-            ))
+        std::str::from_utf8(&resource.bytes).map_err(|_| CliError::SlidesResources {
+            message: format!("stylesheet {} must be UTF-8", resource.path.display()),
+            observations: vec![resource.observation()],
         })?;
+        if resource.bytes.len() > policy.max_inline_bytes as usize {
+            return Err(CliError::SlidesResources {
+                message: format!(
+                    "stylesheet {} exceeds the limit of {} bytes",
+                    resource.path.display(),
+                    policy.max_inline_bytes
+                ),
+                observations: vec![resource.observation()],
+            });
+        }
         sources.push(resource.bytes.clone());
     }
     for source in &policy.sources {

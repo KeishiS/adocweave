@@ -33,6 +33,10 @@ pub(crate) enum CliError {
     FormattingRequired,
     Stylesheet(String),
     Slides(String),
+    SlidesResources {
+        message: String,
+        observations: Vec<adocweave_project::ProjectObservationCandidate>,
+    },
     Bundle(adocweave_project::BundleError),
     Path(String),
     PartialWrite {
@@ -76,6 +80,7 @@ impl fmt::Display for CliError {
             Self::FormattingRequired => formatter.write_str("document is not formatted"),
             Self::Stylesheet(message) => formatter.write_str(message),
             Self::Slides(message) => formatter.write_str(message),
+            Self::SlidesResources { message, .. } => formatter.write_str(message),
             Self::Bundle(source) => source.fmt(formatter),
             Self::Path(message) => formatter.write_str(message),
             Self::PartialWrite {
@@ -207,6 +212,7 @@ impl Error for CliError {
             | Self::FormattingRequired
             | Self::Stylesheet(_)
             | Self::Slides(_)
+            | Self::SlidesResources { .. }
             | Self::Path(_)
             | Self::PartialWrite { .. } => None,
         }
@@ -269,6 +275,7 @@ impl CliError {
             | Self::FormattingRequired
             | Self::Serialize(_)
             | Self::Slides(_)
+            | Self::SlidesResources { .. }
             | Self::Project(adocweave_project::ProjectError::Cancelled)
             | Self::ProjectPrimary(adocweave_project::ProjectTargetError::Parse(_))
             | Self::ProjectPrimary(adocweave_project::ProjectTargetError::EditConflict(_))
