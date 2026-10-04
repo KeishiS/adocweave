@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.55.2] - 2026-10-04
+
+### Fixed
+
+- Updated the runtime `brace-expansion` dependency to fix denial of service from crafted brace patterns.
+
 ## [0.55.1] - 2026-08-30
 
 ### Changed
