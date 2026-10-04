@@ -1316,6 +1316,7 @@ fn html_contract_has_explicit_allowlists() {
             "callout-number",
             "checklist-marker",
             "citation",
+            "citation-link",
             "document-title",
             "example",
             "footnote",

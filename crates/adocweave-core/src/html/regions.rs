@@ -30,6 +30,8 @@ pub struct HtmlRegionSelection {
     /// Only fixed `fragment` and `data-fragment-index` attributes are produced.
     pub stepped_blocks: BTreeMap<BlockId, u32>,
     /// Headings whose ID is emitted on the host's surrounding container.
+    /// The slide-specific entry point also permits a heading omitted from
+    /// `blocks` when its surrounding host container retains the heading ID.
     pub container_headings: BTreeSet<BlockId>,
 }
 
@@ -355,6 +357,12 @@ fn render_selected(
             .chain(&selection.container_headings)
         {
             if !included.contains(&block) {
+                if slides.is_some()
+                    && selection.container_headings.contains(&block)
+                    && !selection.stepped_blocks.contains_key(&block)
+                {
+                    continue;
+                }
                 return Err(HtmlRegionError::InvalidSelection {
                     block,
                     reason: "presentation target is outside the region or omitted",

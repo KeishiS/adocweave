@@ -90,6 +90,7 @@ pub(super) struct SlideCatalogs<'document> {
     captions: BTreeMap<TextRange, BlockCaption>,
     shared_body_captions: BTreeMap<TextRange, BlockCaption>,
     shared_body_ranges: BTreeSet<TextRange>,
+    body_container_headings: BTreeSet<TextRange>,
     footnote_links: BTreeMap<(usize, TextRange), FootnoteLink>,
     footnotes: Vec<Vec<FootnotePlacement<'document>>>,
     pub(super) selected: BTreeSet<TextRange>,
@@ -198,11 +199,24 @@ impl<'document> SlideCatalogs<'document> {
             captions: BTreeMap::new(),
             shared_body_captions: BTreeMap::new(),
             shared_body_ranges: BTreeSet::new(),
+            body_container_headings: BTreeSet::new(),
             footnote_links: BTreeMap::new(),
             footnotes: Vec::with_capacity(groups.len()),
             selected,
             generated_ids: BTreeSet::new(),
         };
+        for selection in selections.body.iter().flatten() {
+            for &id in &selection.container_headings {
+                let Some(crate::block_model::AstBlock::Heading(heading)) = document.block(id)
+                else {
+                    return Err(HtmlRegionError::InvalidSelection {
+                        block: id,
+                        reason: "container heading is not a heading",
+                    });
+                };
+                plan.body_container_headings.insert(heading.range);
+            }
+        }
         if scope == HtmlSlideScope::Notes {
             for selection in selections.body.iter().flatten() {
                 walk_selected(document, selection, |node| {
@@ -394,7 +408,9 @@ impl<'document> SlideCatalogs<'document> {
     }
 
     pub(super) fn permits_target(&self, range: TextRange) -> bool {
-        self.selected.contains(&range) || self.shared_body_ranges.contains(&range)
+        self.selected.contains(&range)
+            || self.shared_body_ranges.contains(&range)
+            || self.body_container_headings.contains(&range)
     }
 
     pub(super) fn footnote_link(&self, slide: usize, range: TextRange) -> Option<&FootnoteLink> {
@@ -403,6 +419,10 @@ impl<'document> SlideCatalogs<'document> {
 
     pub(super) fn reference_id(&self, range: TextRange) -> String {
         reference_id(self.scope, range)
+    }
+
+    pub(super) fn bibliography_id(&self) -> &'static str {
+        self.scope.bibliography_id()
     }
 
     pub(super) fn render_footnotes(
