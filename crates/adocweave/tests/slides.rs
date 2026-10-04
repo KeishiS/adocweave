@@ -25,6 +25,98 @@ fn write(root: &Path, path: &str, content: &str) {
 
 const SVG: &str = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\"><rect width=\"80\" height=\"80\" fill=\"#123\"/><text x=\"2\" y=\"20\">結果</text></svg>";
 
+#[cfg(unix)]
+#[test]
+fn helper_execution_does_not_inherit_project_node_loader_or_relative_path_entries() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    let root = tempfile::tempdir().unwrap();
+    let installation = tempfile::tempdir().unwrap();
+    let node = Command::new("node")
+        .args(["-p", "process.execPath"])
+        .output()
+        .unwrap();
+    assert!(node.status.success());
+    let node = std::path::PathBuf::from(String::from_utf8(node.stdout).unwrap().trim());
+    let helper = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../packages/slides-helper/bin.mjs")
+        .canonicalize()
+        .unwrap();
+    write(
+        root.path(),
+        "talk.adoc",
+        "= Talk\n\n== Math\n\nlatexmath:[x^2]\n",
+    );
+    write(
+        root.path(),
+        "node",
+        "#!/bin/sh\nprintf project-node > \"$TEST_NODE_MARKER\"\nexit 9\n",
+    );
+    fs::set_permissions(root.path().join("node"), fs::Permissions::from_mode(0o700)).unwrap();
+    write(
+        root.path(),
+        "preload.cjs",
+        "require('node:fs').writeFileSync(process.env.TEST_PRELOAD_MARKER, 'preload');\n",
+    );
+    symlink(&helper, installation.path().join("adocweave-slides-helper")).unwrap();
+    write(
+        installation.path(),
+        "trusted-helper",
+        "#!/bin/sh\nprintf '%s' \"$PWD\" > \"$TEST_CWD_MARKER\"\nexec \"$TEST_REAL_NODE\" \"$TEST_HELPER_MODULE\"\n",
+    );
+    fs::set_permissions(
+        installation.path().join("trusted-helper"),
+        fs::Permissions::from_mode(0o700),
+    )
+    .unwrap();
+    let path = std::env::join_paths([Path::new("."), installation.path(), node.parent().unwrap()])
+        .unwrap();
+    for (output_directory, explicit) in [("default", false), ("explicit", true)] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_adocweave"));
+        command
+            .current_dir(root.path())
+            .args([
+                "convert",
+                "talk.adoc",
+                "--to",
+                "revealjs",
+                "--output",
+                output_directory,
+            ])
+            .env("PATH", &path)
+            .env("NODE_OPTIONS", "--require ./preload.cjs")
+            .env("NODE_PATH", ".")
+            .env("TEST_NODE_MARKER", root.path().join("node-started"))
+            .env("TEST_PRELOAD_MARKER", root.path().join("preload-started"))
+            .env("TEST_CWD_MARKER", root.path().join("helper-cwd"))
+            .env("TEST_REAL_NODE", &node)
+            .env("TEST_HELPER_MODULE", &helper);
+        if explicit {
+            command
+                .arg("--slides-helper")
+                .arg(installation.path().join("trusted-helper"));
+        } else {
+            command.env_remove("ADOCWEAVE_SLIDES_HELPER");
+        }
+        success(&command.output().unwrap());
+        assert!(
+            fs::read_to_string(root.path().join(output_directory).join("index.html"))
+                .unwrap()
+                .contains("math-rendered")
+        );
+    }
+    assert!(!root.path().join("node-started").exists());
+    assert!(!root.path().join("preload-started").exists());
+    assert_eq!(
+        fs::read_to_string(root.path().join("helper-cwd")).unwrap(),
+        installation
+            .path()
+            .canonicalize()
+            .unwrap()
+            .to_str()
+            .unwrap()
+    );
+}
+
 #[test]
 fn public_is_offline_and_private_resources_are_not_even_acquired() {
     let root = tempfile::tempdir().unwrap();

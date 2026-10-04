@@ -35,6 +35,7 @@ impl Default for ProcessLimits {
 pub struct HelperCommand {
     pub executable: PathBuf,
     pub arguments: Vec<std::ffi::OsString>,
+    pub working_directory: PathBuf,
 }
 
 /// Only explicit configuration or installed known PATH commands are considered.
@@ -101,6 +102,10 @@ fn resolve_from_paths(
             ));
         }
         return Ok(HelperCommand {
+            working_directory: path
+                .parent()
+                .expect("absolute executable has a parent")
+                .to_owned(),
             executable: path,
             arguments: Vec::new(),
         });
@@ -112,7 +117,23 @@ fn resolve_from_paths(
             "adocweave-slides-helper"
         });
         if executable(&native) {
+            // npm's Unix entry is a symlink to bin.mjs. Resolve it before
+            // choosing Node so its env shebang cannot search PATH again.
+            let resolved = native
+                .canonicalize()
+                .map_err(|e| HostError::new("slides-helper-io", e.to_string()))?;
+            if !windows
+                && resolved
+                    .extension()
+                    .is_some_and(|extension| extension == "mjs")
+            {
+                return node_command(resolved, paths, false);
+            }
             return Ok(HelperCommand {
+                working_directory: native
+                    .parent()
+                    .expect("absolute executable has a parent")
+                    .to_owned(),
                 executable: native,
                 arguments: Vec::new(),
             });
@@ -146,6 +167,10 @@ fn node_command(module: PathBuf, paths: &[PathBuf], windows: bool) -> HostResult
             )
         })?;
     Ok(HelperCommand {
+        working_directory: module
+            .parent()
+            .expect("absolute module has a parent")
+            .to_owned(),
         executable: node,
         arguments: vec![module.into_os_string()],
     })
@@ -206,12 +231,31 @@ pub async fn execute(
     serde_json::to_writer(&mut input, &prepared.request)
         .map_err(|e| HostError::new("slides-helper-input-limit", e.to_string()))?;
     let executable = resolve_executable(explicit)?;
-    let mut child = tokio::process::Command::new(executable.executable)
+    let path = std::env::join_paths(
+        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+            .filter(|path| path.is_absolute()),
+    )
+    .map_err(|e| HostError::new("slides-helper-spawn", e.to_string()))?;
+    let mut command = tokio::process::Command::new(executable.executable);
+    command
         .args(executable.arguments)
+        .current_dir(executable.working_directory)
+        .env("PATH", path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .kill_on_drop(true)
+        .kill_on_drop(true);
+    // Node loader/preload settings are not part of the finite helper request.
+    for (name, _) in std::env::vars_os() {
+        if name
+            .to_string_lossy()
+            .to_ascii_uppercase()
+            .starts_with("NODE_")
+        {
+            command.env_remove(name);
+        }
+    }
+    let mut child = command
         .spawn()
         .map_err(|e| HostError::new("slides-helper-spawn", e.to_string()))?;
     let mut stdin = child.stdin.take().expect("piped stdin");
