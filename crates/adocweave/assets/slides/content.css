@@ -1,5 +1,4 @@
 /* Validated content shared with the independent Reveal speaker window. */
-.math-assistive { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .math-source { display: none; }
 .math-rendered svg { max-width: 100%; vertical-align: middle; }
 .csl-smallcaps { font-variant: small-caps; }
