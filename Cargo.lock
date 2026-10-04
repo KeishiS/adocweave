@@ -21,6 +21,7 @@ dependencies = [
  "terminal_size",
  "tokio",
  "url",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
