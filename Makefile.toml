@@ -60,6 +60,7 @@ args = [
 ]
 
 [tasks.test]
+dependencies = ["slides-helper-install"]
 private = true
 description = "Run all workspace tests and require generated declarations and schemas to stay unchanged"
 script_runner = "@shell"
@@ -191,7 +192,8 @@ args = [
 
 [tasks.npm-package-contracts]
 private = true
-description = "Verify WebAssembly and textlint package installation contracts"
+description = "Verify WebAssembly, textlint, and slides helper package installation contracts"
+dependencies = ["slides-helper-package"]
 command = "node"
 args = [
   "--test",
@@ -201,6 +203,43 @@ args = [
   "tools/textlint-plugin-consumer-e2e.test.mjs",
   "tools/verify-textlint-plugin-reproducibility.test.mjs",
 ]
+
+[tasks.slides-helper-install]
+private = true
+description = "Install the locked Node slides helper without dependency scripts"
+command = "npm"
+args = ["ci", "--ignore-scripts", "--no-audit", "--no-fund", "--prefix", "packages/slides-helper"]
+
+[tasks.slides-helper-test]
+private = true
+description = "Check static math, scoped citations, and the one-request JSON executable"
+dependencies = ["slides-helper-install"]
+command = "node"
+args = ["--test", "packages/slides-helper/math.test.mjs", "packages/slides-helper/citations.test.mjs", "packages/slides-helper/protocol.test.mjs"]
+
+[tasks.slides-helper-package]
+private = true
+description = "Verify the npm helper executable, archive contents, and distribution notices"
+dependencies = ["slides-helper-install"]
+command = "node"
+args = ["--test", "packages/slides-helper/package.test.mjs"]
+
+[tasks.slides-runtime-contracts]
+private = true
+description = "Verify bundled Reveal assets and reviewed Node runtime source and license evidence"
+dependencies = ["slides-helper-install"]
+script_runner = "@shell"
+script = '''
+node --test tools/verify-slides-assets.test.mjs tools/verify-slides-dependencies.test.mjs
+node tools/verify-slides-dependencies.mjs
+'''
+
+[tasks.test-slides-helper-release-candidate]
+category = "CI entry points"
+description = "Pack the slides helper and exercise the installed archive with the audited runtime tree"
+dependencies = ["slides-helper-test", "slides-helper-package", "slides-runtime-contracts"]
+command = "node"
+args = ["tools/slides-helper-release-smoke.mjs", "--pack"]
 
 [tasks.check-windows-target]
 private = true
@@ -476,8 +515,8 @@ args = ["build", "-p", "adocweave-wasm", "--bin", "adocweave-conformance-native"
 
 [tasks.html5-check]
 private = true
-description = "Validate generated fragment and complete-document HTML with Nu Html Checker"
-dependencies = ["build-adoc-check", "build-conformance-native"]
+description = "Validate generated HTML and research slides with Nu Html Checker"
+dependencies = ["build-adoc-check", "build-conformance-native", "slides-helper-install"]
 command = "node"
 args = ["tools/html5-check.mjs"]
 
@@ -692,6 +731,8 @@ dependencies = [
   "native-release-ci",
   "native-platform-contract",
   "npm-package-contracts",
+  "slides-helper-test",
+  "slides-runtime-contracts",
   "third-party-notice-contracts",
   "doc-check",
   "docs-check",
@@ -739,7 +780,17 @@ dependencies = [
   "test-vscode-acquisition",
   "textlint-plugin-wasm-contract",
   "textlint-plugin-browser-isolation",
+  "test-slides-browser",
 ]
+
+[tasks.test-slides-browser]
+private = true
+description = "Exercise research slides in the fixed browser with local files, managed HTTP, notes, and live preview"
+dependencies = ["build-adoc-check", "slides-helper-install"]
+script_runner = "@shell"
+script = '''
+node tools/slides-browser-smoke.mjs target/debug/adocweave "${ADOCWEAVE_BROWSER:-chromium}" packages/slides-helper/bin.mjs
+'''
 
 [tasks.main-gate]
 category = "CI entry points"

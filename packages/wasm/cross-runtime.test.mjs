@@ -29,6 +29,16 @@ const cases = [
     },
   },
   {
+    name: "数式の明示記法と位置属性",
+    request: {
+      source: {
+        text: ":stem: tex\n\n式 stem:[{x}] asciimath:[sqrt x]\n\n:stem!:\n\n[stem#energy]\n++++\nx < y\n++++\n",
+        id: "math.adoc",
+      },
+      products: { html: true, document: true, diagnostics: true },
+    },
+  },
+  {
     name: "include文書",
     request: {
       source: { text: "include::part.adoc[]", id: "main.adoc" },

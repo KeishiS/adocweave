@@ -1,0 +1,132 @@
+{
+  "schemaVersion": 1,
+  "eqnums": "ams",
+  "macros": [
+    {
+      "name": "R",
+      "definition": "\\mathbb{R}"
+    }
+  ],
+  "scopes": {
+    "body": {
+      "equations": [
+        {
+          "key": "math1",
+          "tex": "\\eqref{energy}",
+          "display": false
+        },
+        {
+          "key": "math2",
+          "tex": "\\begin{equation}E=mc^2\\label{energy}\\end{equation}",
+          "display": true
+        },
+        {
+          "key": "math3",
+          "tex": "\\begin{align}x&=1\\\\y&=2\\notag\\end{align}",
+          "display": true
+        },
+        {
+          "key": "math4",
+          "tex": "\\begin{equation}z\\in\\R\\tag{A}\\end{equation}",
+          "display": true
+        },
+        {
+          "key": "math5",
+          "tex": "\\begin{array}{|c:c|}\\hline\\alpha&\\beta\\\\\\hline1&2\\end{array}",
+          "display": true
+        },
+        {
+          "key": "math6",
+          "tex": "\\text{漢字 α 😀}",
+          "display": false
+        }
+      ],
+      "citations": [
+        {
+          "key": "cite1",
+          "items": [
+            {
+              "id": "zebra",
+              "locator": "12-15",
+              "label": "page"
+            }
+          ]
+        },
+        {
+          "key": "cite2",
+          "items": [
+            {
+              "id": "alpha"
+            }
+          ]
+        }
+      ]
+    },
+    "notes": {
+      "equations": [
+        {
+          "key": "math1",
+          "tex": "\\begin{equation}a\\in\\R\\label{energy}\\end{equation}",
+          "display": true
+        },
+        {
+          "key": "math2",
+          "tex": "\\ref{energy}",
+          "display": false
+        }
+      ],
+      "citations": [
+        {
+          "key": "cite1",
+          "items": [
+            {
+              "id": "zebra"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "csl": {
+    "items": [
+      {
+        "id": "zebra",
+        "type": "article-journal",
+        "title": "Zebra result",
+        "author": [
+          {
+            "family": "Doe",
+            "given": "Jane"
+          }
+        ],
+        "issued": {
+          "date-parts": [
+            [
+              2024
+            ]
+          ]
+        }
+      },
+      {
+        "id": "alpha",
+        "type": "article-journal",
+        "title": "Alpha result",
+        "author": [
+          {
+            "family": "Doe",
+            "given": "Jane"
+          }
+        ],
+        "issued": {
+          "date-parts": [
+            [
+              2024
+            ]
+          ]
+        }
+      }
+    ],
+    "style": "<style xmlns=\"http://purl.org/net/xbiblio/csl\" version=\"1.0\" class=\"in-text\" default-locale=\"en-US\">\n  <info><title>AdocWeave test author-date</title><id>urn:adocweave:test:author-date</id></info>\n  <macro name=\"author\"><names variable=\"author\"><name form=\"short\"/></names></macro>\n  <citation disambiguate-add-year-suffix=\"true\">\n    <layout prefix=\"(\" suffix=\")\" delimiter=\"; \">\n      <group delimiter=\", \">\n        <group delimiter=\" \"><text macro=\"author\"/><date variable=\"issued\"><date-part name=\"year\"/></date></group>\n        <group delimiter=\" \"><label variable=\"locator\" form=\"short\"/><text variable=\"locator\"/></group>\n      </group>\n    </layout>\n  </citation>\n  <bibliography>\n    <sort><key variable=\"title\"/></sort>\n    <layout suffix=\".\">\n      <group delimiter=\". \"><text macro=\"author\"/><text variable=\"title\" font-style=\"italic\"/><date variable=\"issued\"><date-part name=\"year\"/></date></group>\n    </layout>\n  </bibliography>\n</style>\n",
+    "locale": "<locale xmlns=\"http://purl.org/net/xbiblio/csl\" version=\"1.0\" xml:lang=\"en-US\">\n  <terms>\n    <term name=\"and\">and</term>\n    <term name=\"et-al\">et al.</term>\n    <term name=\"page\" form=\"short\"><single>p.</single><multiple>pp.</multiple></term>\n    <term name=\"chapter\" form=\"short\"><single>ch.</single><multiple>chs.</multiple></term>\n    <term name=\"open-quote\">“</term><term name=\"close-quote\">”</term>\n    <term name=\"open-inner-quote\">‘</term><term name=\"close-inner-quote\">’</term>\n    <term name=\"page-range-delimiter\">–</term>\n    <term name=\"year-range-delimiter\">–</term>\n  </terms>\n</locale>\n"
+  }
+}

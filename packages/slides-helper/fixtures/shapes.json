@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "eqnums": "ams",
+  "scopes": {
+    "body": {
+      "equations": [
+        {
+          "key": "shape0",
+          "tex": "\\sqrt{\\frac{x^2+1}{2}}",
+          "display": true
+        },
+        {
+          "key": "shape1",
+          "tex": "\\sum_{i=1}^{n}a_i + \\int_0^1 f(x)\\,dx",
+          "display": true
+        },
+        {
+          "key": "shape2",
+          "tex": "\\begin{pmatrix}a&b\\\\c&d\\end{pmatrix}",
+          "display": true
+        },
+        {
+          "key": "shape3",
+          "tex": "\\begin{cases}x&x>0\\\\-x&x\\le0\\end{cases}",
+          "display": true
+        },
+        {
+          "key": "shape4",
+          "tex": "\\boxed{\\frac{a}{b}} + \\underbrace{x+y}_{n} + \\overset{!}{=} + \\xrightarrow{long}",
+          "display": true
+        }
+      ],
+      "citations": []
+    },
+    "notes": {
+      "equations": [],
+      "citations": []
+    }
+  }
+}

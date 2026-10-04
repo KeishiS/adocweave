@@ -39,6 +39,7 @@ mod presentation;
 mod projection;
 mod reference;
 mod render;
+mod rendered_content;
 mod resolved;
 mod resource;
 mod source;
@@ -107,7 +108,7 @@ pub mod semantic {
         TableFormat, TableFrame, TableGrid, TablePresentation, TableProblem, TableProblemKind,
         TableRow, TableSection, TableStripes, VerticalAlignment,
     };
-    pub use crate::walker::{SemanticNode, walk};
+    pub use crate::walker::{SemanticNode, walk, walk_inlines};
 }
 
 /// Deterministic document output and serialization backends.
@@ -136,11 +137,18 @@ pub mod output {
         };
     }
     pub mod html {
+        pub use crate::generated_bibliography::BibliographyNamespace;
         pub use crate::html::{
-            ExternalLinkPresentation, HtmlDocumentMode, HtmlOutput, MathLanguagePolicy,
-            RenderPolicy, ResourceCapabilities, RolePolicy, SourceLanguagePolicy, StylesheetPolicy,
-            StylesheetSource, UnknownRole, UnknownSourceLanguage, UnresolvedReferencePresentation,
-            is_role_name, render, render_with_inputs,
+            ExternalLinkPresentation, HtmlDocumentMode, HtmlOutput, HtmlRegionError,
+            HtmlRegionSelection, HtmlRegions, HtmlSlideRegions, HtmlSlideScope,
+            HtmlSlideSelections, MathLanguagePolicy, RenderPolicy, ResourceCapabilities,
+            RolePolicy, SourceLanguagePolicy, StylesheetPolicy, StylesheetSource, UnknownRole,
+            UnknownSourceLanguage, UnresolvedReferencePresentation, is_role_name, render,
+            render_regions, render_slide_regions, render_with_inputs,
+        };
+        pub use crate::rendered_content::{
+            ContentValidationError, ResolvedMath, ResolvedRichCitation, RichInline, ValidatedMath,
+            ValidatedRichText,
         };
     }
     pub mod projection {

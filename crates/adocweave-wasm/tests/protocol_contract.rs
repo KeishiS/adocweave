@@ -13,6 +13,52 @@ fn analyze(value: Value) -> Result<Value, AdocWeaveError> {
 }
 
 #[test]
+fn math_notation_and_source_ranges_match_effective_attributes_and_explicit_macros() {
+    let source = ":stem: tex\n\n数式 stem:[{x}] asciimath:[sqrt x]\n\n:stem!:\n\n[stem#energy]\n++++\nx < y\n++++\n";
+    let response = analyze(json!({
+        "source": { "text": source },
+        "products": { "document": true, "html": true }
+    }))
+    .expect("math response");
+    let formulas = response["document"]["formulas"]
+        .as_array()
+        .expect("formulas");
+    assert_eq!(
+        formulas
+            .iter()
+            .map(|formula| formula["language"].as_str().expect("language"))
+            .collect::<Vec<_>>(),
+        ["latex", "asciimath", "asciimath"]
+    );
+    for formula in formulas {
+        let range = &formula["contentRange"];
+        let start = range["start"].as_u64().expect("range start") as usize;
+        let end = range["end"].as_u64().expect("range end") as usize;
+        assert_eq!(
+            &source[start..end],
+            formula["source"].as_str().expect("source")
+        );
+    }
+    let html = response["html"].as_str().expect("HTML");
+    assert!(html.contains("<pre id=\"energy\" class=\"math-asciimath\""));
+    assert!(html.contains("x &lt; y"));
+    assert!(!html.contains("<script"));
+
+    let locked = analyze(json!({
+        "source": { "text": source, "attributes": { "stem": "latex" } },
+        "products": { "document": true, "html": { "mathLanguages": ["asciimath"] } }
+    }))
+    .expect("locked attribute and AsciiMath policy");
+    assert_eq!(locked["document"]["formulas"][2]["language"], "latex");
+    assert!(
+        locked["html"]
+            .as_str()
+            .expect("HTML")
+            .contains("data-math-language=\"asciimath\"")
+    );
+}
+
+#[test]
 fn request_requires_source_text_products_and_a_selected_product() {
     for value in [
         json!({ "products": { "html": true } }),

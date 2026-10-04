@@ -1334,7 +1334,7 @@ fn stem_recovery_keeps_unclosed_block_before_heading() {
 }
 
 #[test]
-fn stem_language_boundary_keeps_latex_distinct_from_future_typst() {
+fn stem_without_a_default_preserves_asciimath_notation() {
     assert_ne!(MathLanguage::Latex, MathLanguage::Typst);
     let parsed = parse("stem:[x]").expect("parse");
     let AstBlock::Paragraph(paragraph) = &parsed.ast.blocks()[0] else {
@@ -1342,8 +1342,234 @@ fn stem_language_boundary_keeps_latex_distinct_from_future_typst() {
     };
     assert!(matches!(
         paragraph.inlines[0],
-        Inline::Formula(ref formula) if formula.language == MathLanguage::Latex
+        Inline::Formula(ref formula) if formula.language == MathLanguage::AsciiMath
     ));
+}
+
+#[test]
+fn math_metadata_is_recognized_on_the_same_line_and_in_either_line_order() {
+    for metadata in [
+        "[latexmath#energy.important%step]",
+        "[#energy.important%step]\n[latexmath]",
+        "[latexmath]\n[#energy.important%step]",
+    ] {
+        let source = format!("{metadata}\n++++\nE = {{mass}} * c^2\n++++\n");
+        let parsed = parse(&source).expect("math metadata");
+        let AstBlock::Math(math) = &parsed.ast.blocks()[0] else {
+            panic!("math block: {metadata}");
+        };
+        assert_eq!(math.language, MathLanguage::Latex);
+        assert_eq!(math.value, "E = {mass} * c^2\n");
+        assert_eq!(math.metadata.id.as_ref().expect("ID").value, "energy");
+        assert_eq!(math.metadata.roles[0].value, "important");
+        assert_eq!(math.metadata.options[0].value, "step");
+        assert_eq!(math.range.start().to_usize(), 0);
+        assert_eq!(parsed.ast.anchors()[0].target_range, Some(math.range));
+        assert!(parsed.ast.anchors()[0].valid);
+        assert_eq!(parsed.syntax.reconstruct(), source);
+        for value in math
+            .metadata
+            .id
+            .iter()
+            .chain(&math.metadata.roles)
+            .chain(&math.metadata.options)
+        {
+            assert_eq!(
+                &source[value.range.start().to_usize()..value.range.end().to_usize()],
+                value.value
+            );
+        }
+        assert_eq!(
+            &source[math.content_range.start().to_usize()..math.content_range.end().to_usize()],
+            math.value
+        );
+    }
+    let parsed =
+        parse("[latexmath,role=important,options=step]\n++++\nx\n++++\n").expect("named metadata");
+    let AstBlock::Math(math) = &parsed.ast.blocks()[0] else {
+        panic!("math");
+    };
+    assert!(
+        math.metadata
+            .attributes
+            .iter()
+            .any(|attribute| attribute.name.as_deref() == Some("role")
+                && attribute.value == "important")
+    );
+    assert!(
+        math.metadata
+            .attributes
+            .iter()
+            .any(|attribute| attribute.name.as_deref() == Some("options")
+                && attribute.value == "step")
+    );
+}
+
+#[test]
+fn math_after_separate_metadata_recovers_empty_unclosed_and_oversized_sources() {
+    for body in ["++++\n++++\n", "++++\nx\n== Next\n", "++++\nx + y\n++++\n"] {
+        let source = format!("[asciimath]\n[#equation]\n{body}");
+        let parsed = super::parse_with_config(
+            &source,
+            &super::ParseConfig {
+                max_formula_bytes: 2,
+                ..super::ParseConfig::default()
+            },
+        )
+        .expect("recovered math");
+        assert!(matches!(parsed.ast.blocks()[0], AstBlock::Math(_)));
+        assert!(
+            parsed
+                .syntax
+                .issues()
+                .iter()
+                .any(|issue| issue.class == crate::syntax::SyntaxIssueClass::InvalidStem)
+        );
+        assert_eq!(parsed.syntax.reconstruct(), source);
+    }
+    let parsed = parse("asciimath:[open\n\n== Next\n").expect("unclosed inline math");
+    assert!(
+        parsed
+            .syntax
+            .issues()
+            .iter()
+            .any(|issue| issue.class == crate::syntax::SyntaxIssueClass::InvalidStem)
+    );
+    assert!(matches!(parsed.ast.blocks()[1], AstBlock::Heading(_)));
+}
+
+#[test]
+fn stem_defaults_and_explicit_notations_are_resolved_for_inline_and_block_math() {
+    for (setting, expected) in [
+        ("", MathLanguage::AsciiMath),
+        (":stem:\n", MathLanguage::AsciiMath),
+        (":stem: asciimath\n", MathLanguage::AsciiMath),
+        (":stem: unknown\n", MathLanguage::AsciiMath),
+        (":stem: latexmath\n", MathLanguage::Latex),
+        (":stem: latex\n", MathLanguage::Latex),
+        (":stem: tex\n", MathLanguage::Latex),
+    ] {
+        let source = format!(
+            "{setting}\nstem:[{{x}} * y] latexmath:[x] asciimath:[sqrt x]\n\n[stem]\n++++\nx\n++++\n\n[latexmath]\n++++\nx\n++++\n\n[asciimath]\n++++\nsqrt x\n++++\n"
+        );
+        let parsed = parse(&source).expect("notation");
+        let AstBlock::Paragraph(paragraph) = &parsed.ast.blocks()[0] else {
+            panic!("paragraph");
+        };
+        let formulas = paragraph
+            .inlines
+            .iter()
+            .filter_map(|inline| match inline {
+                Inline::Formula(formula) => Some(formula),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            formulas
+                .iter()
+                .map(|formula| formula.language)
+                .collect::<Vec<_>>(),
+            [expected, MathLanguage::Latex, MathLanguage::AsciiMath],
+            "{setting}"
+        );
+        assert_eq!(formulas[0].value, "{x} * y");
+        assert!(formulas[0].uses_stem_attribute);
+        assert!(!formulas[1].uses_stem_attribute);
+        let languages = parsed
+            .ast
+            .blocks()
+            .iter()
+            .filter_map(|block| match block {
+                AstBlock::Math(math) => Some(math.language),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            languages,
+            [expected, MathLanguage::Latex, MathLanguage::AsciiMath],
+            "{setting}"
+        );
+    }
+}
+
+#[test]
+fn stem_language_uses_source_order_redefinitions_and_unsets() {
+    let source = ":stem: latex\n\nstem:[first]\n\n:stem: asciimath\n\n[stem]\n++++\nsecond\n++++\n\n:stem: tex\n\n* stem:[third]\n\n:stem!:\n\n[stem]\n++++\nfourth\n++++\n";
+    let analysis = crate::Engine::new(crate::AnalysisOptions::default())
+        .analyze(source)
+        .expect("analysis");
+    let formulas = crate::projection::formulas(&analysis);
+    assert_eq!(
+        formulas
+            .iter()
+            .map(|formula| formula.language)
+            .collect::<Vec<_>>(),
+        [
+            MathLanguage::Latex,
+            MathLanguage::AsciiMath,
+            MathLanguage::Latex,
+            MathLanguage::AsciiMath
+        ]
+    );
+}
+
+#[test]
+fn unknown_stem_value_and_its_authored_position_remain_available() {
+    let source = ":stem: unknown-engine\n\nstem:[x]\n";
+    let analysis = crate::core::Engine::new(crate::core::AnalysisOptions::default())
+        .analyze(source)
+        .expect("unknown STEM default");
+    let formula = &crate::projection::formulas(&analysis)[0];
+    assert_eq!(formula.language, MathLanguage::AsciiMath);
+    let resolved = analysis
+        .attribute_environment()
+        .resolve_at("stem", formula.source_range.start())
+        .expect("effective STEM attribute");
+    assert_eq!(resolved.value, Ok(Some("unknown-engine")));
+    let range = resolved
+        .binding
+        .expect("authored binding")
+        .occurrence()
+        .value
+        .source_range;
+    assert_eq!(
+        &source[range.start().to_usize()..range.end().to_usize()],
+        "unknown-engine"
+    );
+}
+
+#[test]
+fn external_stem_attribute_is_locked_and_expands_authored_aliases() {
+    let source =
+        ":notation: tex\n:stem: {notation}\n\nstem:[first]\n\n:stem: asciimath\n\nstem:[second]\n";
+    let engine = crate::Engine::new(crate::AnalysisOptions::default());
+    let analysis = engine.analyze(source).expect("expanded notation");
+    assert_eq!(
+        crate::projection::formulas(&analysis)
+            .iter()
+            .map(|formula| formula.language)
+            .collect::<Vec<_>>(),
+        [MathLanguage::Latex, MathLanguage::AsciiMath]
+    );
+    for external in [Some("tex".to_owned()), None] {
+        let expected = if external.is_some() {
+            MathLanguage::Latex
+        } else {
+            MathLanguage::AsciiMath
+        };
+        let options = crate::AnalysisOptions {
+            attributes: [("stem".to_owned(), external)].into(),
+            ..crate::AnalysisOptions::default()
+        };
+        let analysis = crate::Engine::new(options)
+            .analyze(source)
+            .expect("external notation");
+        assert!(
+            crate::projection::formulas(&analysis)
+                .iter()
+                .all(|formula| formula.language == expected)
+        );
+    }
 }
 
 #[test]

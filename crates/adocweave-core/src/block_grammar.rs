@@ -311,8 +311,14 @@ fn unquote(value: &str) -> &str {
 }
 
 pub(crate) fn parse_math_attribute(text: &str) -> Option<MathLanguage> {
-    match text {
-        "[stem]" | "[latexmath]" => Some(MathLanguage::Latex),
+    let metadata = parse_block_attributes(text, 0)?;
+    let style = metadata
+        .attributes
+        .iter()
+        .find(|attribute| attribute.name.is_none())?;
+    match style.value.as_str() {
+        "stem" | "asciimath" => Some(MathLanguage::AsciiMath),
+        "latexmath" => Some(MathLanguage::Latex),
         _ => None,
     }
 }

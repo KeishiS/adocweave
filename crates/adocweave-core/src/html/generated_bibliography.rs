@@ -21,7 +21,8 @@ pub(super) struct PreparedGeneratedBibliography<'input> {
 #[derive(Clone, Debug)]
 pub(super) struct PreparedGeneratedBibliographyEntry<'input> {
     pub(super) input: &'input GeneratedBibliographyEntry,
-    references: Vec<crate::source::TextRange>,
+    pub(super) anchor_id: String,
+    references: Vec<String>,
 }
 
 impl PreparedGeneratedBibliography<'_> {
@@ -40,6 +41,15 @@ pub(super) fn prepare<'input>(
     bibliography: Option<&'input GeneratedBibliography>,
     document: &AstDocument,
     diagnostics: &mut Vec<Diagnostic>,
+) -> Option<PreparedGeneratedBibliography<'input>> {
+    prepare_selected(bibliography, document, diagnostics, None)
+}
+
+pub(super) fn prepare_selected<'input>(
+    bibliography: Option<&'input GeneratedBibliography>,
+    document: &AstDocument,
+    diagnostics: &mut Vec<Diagnostic>,
+    slides: Option<&super::slide_catalogs::SlideCatalogs<'_>>,
 ) -> Option<PreparedGeneratedBibliography<'input>> {
     let bibliography = bibliography?;
     let diagnostic_range =
@@ -78,7 +88,8 @@ pub(super) fn prepare<'input>(
             ));
             continue;
         }
-        if document.identifiers().target_by_id(key).is_some() {
+        let anchor_id = bibliography.namespace().anchor_id(key);
+        if document.identifiers().target_by_id(&anchor_id).is_some() {
             diagnostics.push(render_input_diagnostic(
                 "shadowed-generated-bibliography-entry",
                 &diagnostic_domain,
@@ -92,23 +103,34 @@ pub(super) fn prepare<'input>(
         entry_by_key.insert(key, entries.len());
         entries.push(PreparedGeneratedBibliographyEntry {
             input: entry,
+            anchor_id,
             references: Vec::new(),
         });
     }
 
-    crate::walker::walk_ast(document, |node| {
-        let crate::walker::SemanticNode::Inline(Inline::Macro(node)) = node else {
-            return;
-        };
-        if node.kind != crate::inline_model::StandardMacroKind::Citation {
-            return;
+    if let Some(slides) = slides {
+        for entry in &mut entries {
+            entry
+                .references
+                .extend_from_slice(slides.bibliography_references(entry.input.citation_key()));
         }
-        for key in node.attributes.iter().filter(|key| key.name.is_none()) {
-            if let Some(index) = entry_by_key.get(key.value.as_str()).copied() {
-                entries[index].references.push(key.value_range);
+    } else {
+        crate::walker::walk_ast(document, |node| {
+            let crate::walker::SemanticNode::Inline(Inline::Macro(node)) = node else {
+                return;
+            };
+            if node.kind != crate::inline_model::StandardMacroKind::Citation {
+                return;
             }
-        }
-    });
+            for key in node.attributes.iter().filter(|key| key.name.is_none()) {
+                if let Some(index) = entry_by_key.get(key.value.as_str()).copied() {
+                    entries[index]
+                        .references
+                        .push(bibliography_reference_id(key.value_range));
+                }
+            }
+        });
+    }
 
     for (entry_index, entry) in entries.iter().enumerate() {
         if entry.references.is_empty() {
@@ -188,8 +210,36 @@ fn numbering(entries: &[PreparedGeneratedBibliographyEntry<'_>]) -> Result<bool,
     Ok(true)
 }
 
-pub(super) fn render(output: &mut String, bibliography: &PreparedGeneratedBibliography<'_>) {
-    BlockWriter::start(output, "div", &[]);
+pub(super) fn render(
+    output: &mut String,
+    bibliography: &PreparedGeneratedBibliography<'_>,
+    policy: &super::RenderPolicy,
+) {
+    render_bounded(
+        output,
+        bibliography,
+        policy,
+        None,
+        0,
+        crate::OutputLimits {
+            max_output_bytes: u32::MAX,
+        },
+    )
+    .expect("ordinary HTML output is bounded by its outer caller");
+}
+
+pub(super) fn render_bounded(
+    output: &mut String,
+    bibliography: &PreparedGeneratedBibliography<'_>,
+    policy: &super::RenderPolicy,
+    container_id: Option<&str>,
+    prior_bytes: usize,
+    limits: crate::OutputLimits,
+) -> Result<(), super::HtmlRegionError> {
+    let attributes = container_id
+        .map(|id| vec![passive("id", id)])
+        .unwrap_or_default();
+    BlockWriter::start(output, "div", &attributes);
     BlockWriter::line_break(output);
     BlockWriter::start(output, "h2", &[]);
     BlockWriter::inline_text(output, bibliography.title);
@@ -204,16 +254,21 @@ pub(super) fn render(output: &mut String, bibliography: &PreparedGeneratedBiblio
             output,
             "span",
             &[
-                passive("id", entry.input.citation_key()),
+                passive("id", &entry.anchor_id),
                 classes(&["bibliography-anchor"]),
             ],
         );
         BlockWriter::end(output, "span");
-        BlockWriter::inline_text(output, entry.input.text());
+        if let Some(rich) = entry.input.rich_text()
+            && rich.allowed_by(&policy.active_urls)
+        {
+            safe::HtmlWriter::new(output).validated_rich(rich);
+        } else {
+            BlockWriter::inline_text(output, entry.input.text());
+        }
         for (index, reference) in entry.references.iter().enumerate() {
             BlockWriter::text(output, " ");
-            let target = bibliography_reference_id(*reference);
-            let href = safe::SafeFragmentUrl::new(&target)
+            let href = safe::SafeFragmentUrl::new(reference)
                 .expect("generated bibliography reference IDs are control-free")
                 .into_owned();
             BlockWriter::start(
@@ -226,12 +281,15 @@ pub(super) fn render(output: &mut String, bibliography: &PreparedGeneratedBiblio
             );
             BlockWriter::text(output, &format!("↩{}", index + 1));
             BlockWriter::end(output, "a");
+            super::regions::check_output_limit(prior_bytes, output.len(), limits)?;
         }
         BlockWriter::end(output, "li");
         BlockWriter::line_break(output);
+        super::regions::check_output_limit(prior_bytes, output.len(), limits)?;
     }
     BlockWriter::end(output, list);
     BlockWriter::line_break(output);
     BlockWriter::end(output, "div");
     BlockWriter::line_break(output);
+    super::regions::check_output_limit(prior_bytes, output.len(), limits)
 }

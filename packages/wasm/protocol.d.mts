@@ -97,7 +97,7 @@ export type MacroForm = "inline" | "block";
 
 export type Manpage = { name: string, section: string, purpose: string, titleRange: TextRange, nameRange: TextRange, purposeRange: TextRange, };
 
-export type MathLanguage = "latex" | "typst";
+export type MathLanguage = "latex" | "asciimath" | "typst";
 
 export type OrderedList = { sourceRange: TextRange, start: number | null, reversed: boolean, style: OrderedListStyle, };
 

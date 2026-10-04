@@ -4,8 +4,37 @@ This changelog covers the native `adocweave` executable and the public Rust APIs
 separate changelogs for the
 [WebAssembly package](https://github.com/KeishiS/adocweave/blob/main/packages/wasm/CHANGELOG.md),
 [textlint plugin](https://github.com/KeishiS/adocweave/blob/main/packages/textlint-plugin-asciidoc/CHANGELOG.md),
+[slides helper](https://github.com/KeishiS/adocweave/blob/main/packages/slides-helper/CHANGELOG.md),
 [VS Code extension](https://github.com/KeishiS/adocweave/blob/main/editors/vscode/CHANGELOG.md), and
 [Zed extension](https://github.com/KeishiS/adocweave/blob/main/editors/zed/CHANGELOG.md).
+
+## [0.59.0] - 2026-10-04
+
+### Main changes
+
+- `convert --to revealjs` produces a local reveal.js slide directory. The existing CLI also provides slide preview and serves generated directories; no separate build command or executable is required.
+- Slides reuse the AsciiDoc analysis for headings, vertical groups, two columns, fragments, images, cross-references, and presenter notes. Public output excludes presenter notes before collecting their resources and processing their formulas or citations.
+- LaTeX equations are rendered to static SVG, and CSL citations and bibliographies are rendered as finite inline content by the independently versioned `@adocweave/slides-helper` package. The CLI validates helper results and preserves original source positions for diagnostics. Documents without LaTeX equations or CSL-formatted citations do not start the helper.
+- The slide body and all presenter notes use two independent numbering and citation scopes. Generated body references occupy one final slide; note references appear once in the final slide's presenter notes.
+- Slide outputs use managed directories and a manifest shared by saving and serving. Updates reject unknown or modified files, remove obsolete managed assets, and remove presenter-only content when switching to public output.
+- Generated slides use bundled reveal.js assets and system fonts. Dependency attribution and license texts accompany the output; browser pages do not load MathJax or a citation processor.
+
+### Fixed
+
+- `convert` now reports HTML rendering diagnostics on standard error, mapped back to the original document or include file. Rendering errors produce exit code 1; warning-only output succeeds.
+- Math block styles can share a metadata line with an ID, role, or option. Explicit `asciimath` notation is recognized alongside `latexmath`.
+- Generic `stem` notation follows the `stem` attribute at its source position, including fixed attributes and include-local changes. `latexmath`, `latex`, and `tex` select LaTeX; other values, empty values, and an unset attribute select AsciiMath.
+
+### Rust API
+
+- `MathLanguage` adds `AsciiMath`. `InlineFormula` adds `uses_stem_attribute`, and math block `range` includes preceding metadata while `content_range` identifies the formula text.
+- Validated SVG and finite citation content can be passed through output inputs. Validation rejects unsupported XML, external references, missing or duplicated helper results, and processing-limit violations before rendering.
+- Selected body-region rendering preserves the existing HTML escaping and URL policy while slide numbering separates body and presenter-note references.
+
+### Migration
+
+- Set `:stem: latexmath` or use explicit `latexmath:[...]` / `[latexmath]` where a document relied on implicit LaTeX. Slides accept LaTeX equations and report unsupported math notation.
+- Update exhaustive `MathLanguage` matches for `AsciiMath` and supply `uses_stem_attribute` when constructing `InlineFormula` with a struct literal.
 
 ## [0.58.0] - 2026-09-20
 
@@ -134,6 +163,7 @@ if let Ok(expanded) = analysis.expanded {
 }
 ```
 
+[0.59.0]: https://github.com/KeishiS/adocweave/compare/v0.58.0...v0.59.0
 [0.58.0]: https://github.com/KeishiS/adocweave/compare/v0.57.0...v0.58.0
 [0.57.0]: https://github.com/KeishiS/adocweave/compare/v0.56.5...v0.57.0
 [0.56.5]: https://github.com/KeishiS/adocweave/compare/v0.56.4...v0.56.5

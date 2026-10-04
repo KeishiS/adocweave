@@ -9,7 +9,13 @@ mod body;
 mod generated_bibliography;
 mod head;
 mod plan;
+mod regions;
 mod safe;
+mod slide_catalogs;
+
+pub use regions::{HtmlRegionError, HtmlRegionSelection, HtmlRegions, render_regions};
+pub use regions::{HtmlSlideRegions, render_slide_regions};
+pub use slide_catalogs::{HtmlSlideScope, HtmlSlideSelections};
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -116,6 +122,7 @@ impl Default for MathLanguagePolicy {
         Self {
             allowed: [
                 crate::inline_model::MathLanguage::Latex,
+                crate::inline_model::MathLanguage::AsciiMath,
                 crate::inline_model::MathLanguage::Typst,
             ]
             .into_iter()
@@ -274,6 +281,10 @@ pub(crate) fn render_with_inputs_ast(
             structure: document.structure(),
             presentation: document.presentation(),
             generated_bibliography: generated_bibliography.as_ref(),
+            region: None,
+            slides: None,
+            slide: 0,
+            footnote: None,
         };
         let body_plan = body::plan_body_traversal(document, policy);
         serialize_body_traversal(
@@ -284,7 +295,7 @@ pub(crate) fn render_with_inputs_ast(
             &mut inline_context,
         );
         if let Some(bibliography) = &generated_bibliography {
-            generated_bibliography::render(&mut fragment, bibliography);
+            generated_bibliography::render(&mut fragment, bibliography, policy);
         }
     }
     for problem in input_usage.finish() {

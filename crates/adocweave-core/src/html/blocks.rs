@@ -73,6 +73,22 @@ pub(super) fn render_block(
     context: &mut InlineRenderContext<'_, '_>,
     scope: RenderScope,
 ) {
+    if context
+        .region
+        .as_ref()
+        .is_some_and(|region| region.omitted.contains(&block.range()))
+    {
+        return;
+    }
+    let step = context
+        .region
+        .as_ref()
+        .and_then(|region| region.steps.get(&block.range()).copied());
+    let wrap_step = step.filter(|_| !matches!(block, AstBlock::List(_)));
+    if let Some(index) = wrap_step {
+        BlockWriter::start(output, "div", &body::fragment_attributes(index));
+        BlockWriter::line_break(output);
+    }
     let explicit_id = context
         .identifiers
         .target_at(block.range())
@@ -90,6 +106,11 @@ pub(super) fn render_block(
             } else {
                 unreachable!("lowering assigns every heading an identifier")
             };
+            let id = (!context
+                .region
+                .as_ref()
+                .is_some_and(|region| region.container_headings.contains(&heading.range)))
+            .then_some(id);
             render_heading(output, heading, id, policy, context);
         }
         AstBlock::Paragraph(paragraph) => {
@@ -198,7 +219,25 @@ pub(super) fn render_block(
         },
         AstBlock::List(list) => render_list(output, list, explicit_id, policy, context, scope),
         AstBlock::Math(block) => {
-            if policy.math_languages.allowed.contains(&block.language) {
+            if let crate::render::ResolutionMatch::Unique(resolution) =
+                context.input_usage.math_at(block.range)
+                && policy.math_languages.allowed.contains(&block.language)
+            {
+                let mut attributes = block_attributes(
+                    explicit_id,
+                    &block.metadata,
+                    &[body::math_class(block.language)],
+                    context,
+                );
+                attributes.extend(body::math_data_attributes(block.language, "block"));
+                BlockWriter::start(output, "div", &attributes);
+                super::safe::HtmlWriter::new(output).validated_math(
+                    &context.math_value(block.range, &resolution.value),
+                    &block.value,
+                );
+                BlockWriter::end(output, "div");
+                BlockWriter::line_break(output);
+            } else if policy.math_languages.allowed.contains(&block.language) {
                 let mut attributes = block_attributes(
                     explicit_id,
                     &block.metadata,
@@ -226,6 +265,10 @@ pub(super) fn render_block(
             render_delimited(output, block, explicit_id, policy, context, scope);
         }
         AstBlock::Unsupported(block) => render_unsupported(output, block, explicit_id),
+    }
+    if wrap_step.is_some() {
+        BlockWriter::end(output, "div");
+        BlockWriter::line_break(output);
     }
 }
 
@@ -661,7 +704,16 @@ pub(super) fn render_list(
     let attributes = block_attributes(explicit_id, &list.metadata, fixed, context);
     BlockWriter::start(output, tag, &attributes);
     BlockWriter::line_break(output);
-    for item in &list.items {
+    for (index, item) in list.items.iter().enumerate() {
+        let item_attributes = context
+            .region
+            .as_ref()
+            .and_then(|region| region.steps.get(&list.range))
+            .map_or_else(Vec::new, |first| {
+                body::fragment_attributes(
+                    *first + u32::try_from(index).expect("fragment indices were validated"),
+                )
+            });
         if list.kind == crate::block_model::ListKind::Description {
             for term in &item.terms {
                 BlockWriter::start(output, "dt", &[]);
@@ -671,7 +723,7 @@ pub(super) fn render_list(
             }
             BlockWriter::start(output, "dd", &[]);
         } else {
-            BlockWriter::start(output, "li", &[]);
+            BlockWriter::start(output, "li", &item_attributes);
         }
         if let Some(state) = item.checklist {
             BlockWriter::start(output, "span", &[classes(&["checklist-marker"])]);
@@ -697,7 +749,7 @@ pub(super) fn render_list(
             && list.kind == crate::block_model::ListKind::Unordered
             && let Some(entry) = bibliography_entry_for_item(&item.inlines, context.catalogs)
         {
-            render_bibliography_backrefs(output, entry);
+            render_bibliography_backrefs(output, entry, context);
         }
         for child in &item.children {
             BlockWriter::line_break(output);
@@ -749,11 +801,21 @@ pub(super) fn bibliography_reference_id(range: crate::source::TextRange) -> Stri
 pub(super) fn render_bibliography_backrefs(
     output: &mut String,
     entry: &crate::catalog::BibliographyEntry,
+    context: &InlineRenderContext<'_, '_>,
 ) {
-    for (index, reference) in entry.references.iter().enumerate() {
+    let targets: Vec<String> = context.slides.map_or_else(
+        || {
+            entry
+                .references
+                .iter()
+                .map(|reference| bibliography_reference_id(reference.range))
+                .collect()
+        },
+        |slides| slides.bibliography_references(&entry.id).to_vec(),
+    );
+    for (index, target) in targets.iter().enumerate() {
         BlockWriter::text(output, " ");
-        let target = bibliography_reference_id(reference.range);
-        let href = safe::SafeFragmentUrl::new(&target)
+        let href = safe::SafeFragmentUrl::new(target)
             .expect("generated bibliography reference IDs are control-free")
             .into_owned();
         BlockWriter::start(
@@ -772,7 +834,7 @@ pub(super) fn render_bibliography_backrefs(
 pub(super) fn render_heading(
     output: &mut String,
     heading: &Heading,
-    id: &str,
+    id: Option<&str>,
     policy: &RenderPolicy,
     context: &mut InlineRenderContext<'_, '_>,
 ) {
@@ -787,20 +849,26 @@ pub(super) fn render_heading(
     match heading.kind {
         HeadingKind::DocumentTitle if policy.render_document_title => {
             let roles = role_classes(&heading.metadata, context);
-            BlockWriter::start(
-                output,
-                "h1",
-                &[
-                    body::classes_with_roles(&["document-title"], roles),
-                    passive("id", id),
-                ],
-            );
+            let mut attributes = vec![body::classes_with_roles(&["document-title"], roles)];
+            attributes.extend(optional_id(id));
+            BlockWriter::start(output, "h1", &attributes);
             render_inlines(output, &heading.inlines, context);
             BlockWriter::end(output, "h1");
             BlockWriter::line_break(output);
         }
         HeadingKind::DocumentTitle => {}
         HeadingKind::Part => render_heading_level(output, heading, id, 1, context),
+        HeadingKind::Section { .. }
+            if context.slides.is_some()
+                && context
+                    .region
+                    .as_ref()
+                    .is_some_and(|region| region.container_headings.contains(&heading.range)) =>
+        {
+            // The deck has one document title. Each host slide container owns
+            // its section ID and uses a peer heading below that title.
+            render_heading_level(output, heading, id, 2, context);
+        }
         HeadingKind::Section { level } | HeadingKind::Discrete { level } => {
             render_heading_level(output, heading, id, level, context);
         }
@@ -810,7 +878,7 @@ pub(super) fn render_heading(
 pub(super) fn render_heading_level(
     output: &mut String,
     heading: &Heading,
-    id: &str,
+    id: Option<&str>,
     level: u8,
     context: &mut InlineRenderContext<'_, '_>,
 ) {
@@ -832,7 +900,7 @@ pub(super) fn render_heading_level(
     if !fixed.is_empty() || !roles.is_empty() {
         attributes.push(body::classes_with_roles(fixed, roles));
     }
-    attributes.push(passive("id", id));
+    attributes.extend(optional_id(id));
     BlockWriter::start(output, name, &attributes);
     if let Some(presentation) = context.presentation.heading_at(heading.range)
         && presentation.numbered
@@ -918,7 +986,6 @@ fn caption_lead(
     context: &InlineRenderContext<'_, '_>,
 ) -> Option<String> {
     context
-        .presentation
         .caption_at(range)
         .and_then(crate::caption::BlockCaption::lead)
 }
@@ -959,6 +1026,40 @@ pub(super) struct InlineRenderContext<'inputs, 'render> {
     pub(super) presentation: &'inputs crate::presentation::DocumentPresentation,
     pub(super) generated_bibliography:
         Option<&'render generated_bibliography::PreparedGeneratedBibliography<'inputs>>,
+    pub(super) region: Option<regions::RegionPresentation>,
+    pub(super) slides: Option<&'render super::slide_catalogs::SlideCatalogs<'inputs>>,
+    pub(super) slide: usize,
+    pub(super) footnote: Option<crate::source::TextRange>,
+}
+
+impl InlineRenderContext<'_, '_> {
+    pub(super) fn math_value(
+        &self,
+        range: crate::source::TextRange,
+        value: &crate::rendered_content::ValidatedMath,
+    ) -> crate::rendered_content::ValidatedMath {
+        self.slides
+            .and_then(|slides| slides.math_value(self.slide, self.footnote, range))
+            .unwrap_or(value)
+            .clone()
+    }
+
+    pub(super) fn caption_at(
+        &self,
+        range: crate::source::TextRange,
+    ) -> Option<&crate::caption::BlockCaption> {
+        match self.slides {
+            Some(slides) => slides.caption(range),
+            None => self.presentation.caption_at(range),
+        }
+    }
+
+    pub(super) fn bibliography_reference_id(&self, range: crate::source::TextRange) -> String {
+        self.slides.map_or_else(
+            || bibliography_reference_id(range),
+            |slides| slides.placement_reference_id(self.slide, self.footnote, range),
+        )
+    }
 }
 
 pub(super) fn render_toc(

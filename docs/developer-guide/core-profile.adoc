@@ -86,6 +86,7 @@ Source block、catalogなどを同時に生成しません。
 数式の``FormulaProjection.kind``は表示形式を表す``inline``または``block``です。Rust APIの
 ``MathLanguage::Latex``は``as_asciidoc_name()``で``latexmath``を返します。JSON/WASM protocolでは``latex``を使い、
 AsciiDoc構文名やHTMLの``data-math-language``と混同しません。
+``MathLanguage::AsciiMath``は、AsciiDoc構文名、HTMLおよびJSON/WASMのいずれでも``asciimath``を使います。
 
 Source blockの``sourceRange``は、開始区切り行の行頭から終了区切り行の行末までを表します。
 先行するblock title、anchorおよび属性行は含みません。本文には``contentRange``、言語名には
@@ -95,7 +96,7 @@ native APIの``VerbatimBlock.metadata.range``またはsyntax treeの先行する
 
 ``rendering_features``は、描画に追加対応が必要な数式言語、Source block言語および
 TOC出力の有無を``RenderingFeatures``として返します。言語は重複を除きます。数式言語は固定順の
-``latexmath``、``typst``で返し、将来の言語はこの順序表へ追加します。Source block言語はHTMLの言語classと
+``latexmath``、``typst``、``asciimath``で返し、将来の言語はこの順序表へ追加します。Source block言語はHTMLの言語classと
 同じ規則でASCII英字を小文字化し、ASCII英数字、``-``および``_``以外を``-``へ置き換えてから文字列の
 昇順で返します。言語指定のないSource blockは含めません。TOCは有効化され、かつ実際の取得結果に
 一つ以上の項目がある場合にだけ``true``です。
@@ -395,7 +396,7 @@ type HtmlOptions = {
     allowed?: string[];
     unknown?: "silent" | "diagnostic";
   };
-  mathLanguages?: Array<"latex" | "typst">;
+  mathLanguages?: Array<"latex" | "asciimath" | "typst">;
   unresolvedReferences?: "target" | "label-only" | "hidden";
   resourceCapabilities?: { images?: boolean; media?: boolean };
   stylesheets?: Array<
@@ -430,7 +431,7 @@ type HtmlOptions = {
 |HTMLのclassへ出せるblock roleです。
 
 |``mathLanguages``
-|``["latex", "typst"]``
+|``["latex", "asciimath", "typst"]``
 |数式として扱う言語です。
 
 |``unresolvedReferences``

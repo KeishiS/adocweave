@@ -1,0 +1,29 @@
+html, body { background: #fff; color: #202124; }
+.reveal { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 34px; line-height: 1.35; }
+.reveal h1, .reveal h2, .reveal h3, .reveal h4, .reveal h5 { margin: 0 0 .55em; font-weight: 650; line-height: 1.2; text-transform: none; }
+.reveal h1 { font-size: 1.8em; }
+.reveal h2 { font-size: 1.5em; }
+.reveal h3 { font-size: 1.25em; }
+.reveal p { margin: .6em 0; }
+.reveal a { color: #1558b0; }
+.reveal ul, .reveal ol { margin: 0 0 .6em 1.2em; display: block; }
+.reveal li { margin: .25em 0; }
+.reveal table { width: 100%; border-collapse: collapse; }
+.reveal th, .reveal td { padding: .25em .5em; border-bottom: 1px solid #dadce0; }
+.reveal pre { box-sizing: border-box; padding: .65em; width: 100%; font-size: .68em; background: #f1f3f4; text-align: left; white-space: pre-wrap; }
+.reveal code { font-family: ui-monospace, monospace; }
+.reveal img { max-width: 100%; max-height: 70vh; }
+.reveal figure { margin: .5em 0; }
+.reveal figcaption { font-size: .7em; }
+.reveal .columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1.3em; text-align: left; }
+.reveal .column { min-width: 0; }
+.reveal .controls { color: #1558b0; }
+.reveal .progress { color: #1558b0; }
+body[data-citations] { display: grid; grid-template-rows: minmax(0, 1fr) auto; height: 100vh; }
+body[data-citations] > .reveal { min-height: 0; height: 100%; }
+.slides-attribution { box-sizing: border-box; max-height: 15vh; overflow: auto; padding: 6px 16px; border-top: 1px solid #dadce0; background: #f1f3f4; font: 12px/1.4 system-ui, sans-serif; }
+.slides-attribution a { color: #1558b0; }
+body[data-preview] { display: grid; grid-template-rows: minmax(0, 1fr) auto auto; height: 100vh; }
+body[data-preview] > .reveal { min-height: 0; height: 100%; }
+.slides-diagnostics { box-sizing: border-box; max-height: 20vh; overflow: auto; margin: 0; padding: 8px 16px; background: #fff3f3; color: #9c1822; font: 12px/1.4 ui-monospace, monospace; white-space: pre-wrap; }
+.slides-diagnostics[hidden] { display: none; }

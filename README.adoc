@@ -24,6 +24,7 @@ AdocWeaveは、AsciiDoc文書の確認、整形、HTML変換を行うRust製ツ�
 == 主な機能
 
 * AsciiDocからHTMLへの変換
+* 数式、引用および発表者ノートを含むreveal.jsスライドの作成
 * 端末で読むための整形表示
 * AsciiDocファイルの整形
 * VS CodeとZedでの診断、移動および補完
@@ -42,6 +43,7 @@ xref:docs/user-guide/compatibility.adoc[AsciiDocとの互換性]を参照して�
 * VS CodeとZed
 * WebAssemblyライブラリ
 * textlint用Processor
+* 研究スライドの数式・引用処理用Node.js補助プログラム
 
 == 基本的な使い方
 
@@ -49,6 +51,12 @@ xref:docs/user-guide/compatibility.adoc[AsciiDocとの互換性]を参照して�
 ----
 # HTMLへ変換する
 adocweave convert manual.adoc > manual.html
+
+# 共有用スライドを生成する
+adocweave convert talk.adoc --to revealjs --output dist/talk
+
+# 発表者ノートを含むスライドをプレビューする
+adocweave preview talk.adoc --to revealjs
 
 # 端末で読む
 adocweave view manual.adoc
@@ -66,6 +74,8 @@ adocweave format --write docs
 
 全オプション、標準入力および``include::``の扱いは、
 xref:docs/user-guide/command-line.adoc[コマンドライン]を参照してください。
+研究スライドのLaTeX数式やCSLによる引用整形には、Node.jsと別配布の補助プログラムが必要です。
+導入方法と原稿の書き方は、xref:docs/user-guide/command-line.adoc#revealjs-slides[reveal.jsスライド]を参照してください。
 
 == ドキュメント
 

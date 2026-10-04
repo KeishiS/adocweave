@@ -26,6 +26,19 @@ impl Document {
         self.inner.blocks()
     }
 
+    /// Stable block identities and locations within this analysis.
+    pub const fn index(&self) -> &crate::presentation::DocumentIndex {
+        self.inner.index()
+    }
+
+    /// Looks up a top-level or nested block without copying or parsing it.
+    ///
+    /// A `BlockId` belongs to the analysis that allocated it and must not be
+    /// reused with a different document.
+    pub fn block(&self, id: crate::presentation::BlockId) -> Option<&crate::block_model::Block> {
+        self.inner.block(id)
+    }
+
     pub fn anchors(&self) -> &[crate::block_model::ExplicitAnchor] {
         self.inner.anchors()
     }
@@ -76,6 +89,16 @@ impl Document {
 
     pub const fn catalogs(&self) -> &crate::catalog::DocumentCatalogs {
         self.inner.catalogs()
+    }
+
+    /// Resolved inline prose of an existing footnote definition.
+    /// Ranges keep the original definition's source positions, including when
+    /// a renderer places the same footnote on more than one slide.
+    pub fn footnote_body(
+        &self,
+        definition_range: TextRange,
+    ) -> Option<&[crate::inline_model::Inline]> {
+        self.inner.facts().footnote_body(definition_range)
     }
 
     pub const fn presentation(&self) -> &crate::presentation::DocumentPresentation {

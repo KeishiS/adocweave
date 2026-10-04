@@ -7,5 +7,3 @@ GitHub Issueを参照してください。
 完了した作業の経緯はIssue、バージョンごとの変更は
 https://github.com/KeishiS/adocweave/releases[GitHub Releases]のRelease Notesに記録します。
 このページには完了したmilestoneの履歴を残しません。
-
-現在、ここに掲載する主要な未完了作業はありません。

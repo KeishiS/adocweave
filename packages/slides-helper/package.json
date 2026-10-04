@@ -1,0 +1,48 @@
+{
+  "name": "@adocweave/slides-helper",
+  "version": "0.1.0",
+  "description": "Static MathJax and CSL processing for AdocWeave HTML slides",
+  "type": "module",
+  "bin": {
+    "adocweave-slides-helper": "./bin.mjs"
+  },
+  "engines": {
+    "node": ">=24.19.0"
+  },
+  "scripts": {
+    "test": "node --test *.test.mjs"
+  },
+  "files": [
+    "bin.mjs",
+    "index.mjs",
+    "protocol.mjs",
+    "math.mjs",
+    "citations.mjs",
+    "inline.mjs",
+    "notices.mjs",
+    "protocol.d.mts",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+    "THIRD_PARTY_NOTICES.adoc",
+    "licenses/"
+  ],
+  "dependencies": {
+    "@mathjax/src": "4.1.3",
+    "citeproc": "2.4.63",
+    "parse5": "8.0.1"
+  },
+  "bundleDependencies": true,
+  "license": "MIT OR Apache-2.0",
+  "publishConfig": {
+    "access": "public"
+  },
+  "homepage": "https://github.com/KeishiS/adocweave",
+  "bugs": "https://github.com/KeishiS/adocweave/issues",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/KeishiS/adocweave.git",
+    "directory": "packages/slides-helper"
+  }
+}

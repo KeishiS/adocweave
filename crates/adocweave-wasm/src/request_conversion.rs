@@ -244,10 +244,17 @@ fn render_policy(options: Option<&HtmlOptions>) -> Result<RenderPolicy, AdocWeav
         allowed: options
             .math_languages
             .clone()
-            .unwrap_or_else(|| vec![MathLanguage::Latex, MathLanguage::Typst])
+            .unwrap_or_else(|| {
+                vec![
+                    MathLanguage::Latex,
+                    MathLanguage::AsciiMath,
+                    MathLanguage::Typst,
+                ]
+            })
             .into_iter()
             .map(|language| match language {
                 MathLanguage::Latex => adocweave_core::semantic::MathLanguage::Latex,
+                MathLanguage::AsciiMath => adocweave_core::semantic::MathLanguage::AsciiMath,
                 MathLanguage::Typst => adocweave_core::semantic::MathLanguage::Typst,
             })
             .collect(),

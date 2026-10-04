@@ -56,12 +56,23 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Verify portable project and Language Server filesystem behavior
+      - name: Resolve the pinned Node.js version
+        id: node-version
+        shell: bash
+        run: echo "value=$(node -p "require('./toolchains.json').nodeVersion")" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ steps.node-version.outputs.value }}
+          package-manager-cache: false
+      - name: Install the locked slides helper without dependency scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund --prefix packages/slides-helper
+      - name: Verify portable project, Language Server, and slides helper behavior
         shell: bash
         run: |
           rust_version="$(node -p "require('./toolchains.json').rustVersion")"
           rustup toolchain install "$rust_version" --profile minimal
           rustup run "$rust_version" cargo test --locked -p adocweave-project -p adocweave-lsp --all-features
+          rustup run "$rust_version" cargo test --locked -p adocweave --test slides --test slides_helper
 
   zed-registry:
     name: zed-registry

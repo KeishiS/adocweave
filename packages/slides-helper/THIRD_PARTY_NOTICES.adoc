@@ -1,0 +1,78 @@
+= Third-party notices for @adocweave/slides-helper
+
+This package processes equations and citations in a Node.js process.
+It does not bundle dependency implementations into generated browser pages.
+The npm archive includes the runtime dependencies installed from package-lock.json,
+which records their versions and archive integrity.
+License texts and copyright notices are included in the licenses directory.
+
+== citeproc
+
+citeproc 2.4.63 is used under CPAL-1.0.
+The npm metadata says CPAL-1.0 OR AGPL-1.0, but the distributed LICENSE and source header
+offer CPAL-1.0 or AGPL version 3.
+The metadata is not used as permission to accept other copyleft dependencies.
+The upstream implementation is installed without modifying its files.
+
+The npm archive is https://registry.npmjs.org/citeproc/-/citeproc-2.4.63.tgz[citeproc 2.4.63].
+Its source commit is
+https://github.com/Juris-M/citeproc-js/tree/73bc1b44bc7d54d0bfec4e070fd27f5efe024ff9[upstream source].
+The archive's original license notice is in licenses/citeproc.txt.
+The complete upstream CPAL, including Exhibits A and B, is in licenses/citeproc-CPAL.txt.
+
+Attribution Copyright Notice: (c) Frank Bennett
+
+Attribution Phrase: citeproc-js implements the Citation Style Language
+
+Attribution URL: https://citationstyles.org/
+
+Section 14 and Exhibit B specify the attribution requirements for a graphical user interface accessing the covered code,
+including a Larger Work. Section 14(a) exempts access that does not create a graphical user interface.
+This stdin/stdout executable has no graphical interface.
+The original terms remain applicable when integrating or redistributing the covered code in another interface.
+
+== MathJax font data
+
+@mathjax/src 4.1.3 is licensed under Apache-2.0; its license text is licenses/@mathjax-src.txt.
+@mathjax/mathjax-newcm-font 4.1.3 declares Apache-2.0 in npm metadata,
+but its 105 distributed WOFF2 files contain
+GUST Font License notices. All distinct copyright name records from those files
+are in licenses/mathjax-newcm-font-notices.txt.
+They identify MathJax, Inc. (2024) and Antonis Tsolomitis (2019-2021).
+
+The font notices specify
+https://www.gust.org.pl/projects/e-foundry/licenses/GUST-FONT-LICENSE.txt[GUST Font License 1.0],
+which applies the https://www.latex-project.org/lppl/lppl-1-3c.txt[LaTeX Project Public License 1.3c or later].
+The full texts are licenses/GUST-FONT-LICENSE.txt and licenses/LPPL-1.3c.txt.
+The npm archive is
+https://registry.npmjs.org/@mathjax/mathjax-newcm-font/-/mathjax-newcm-font-4.1.3.tgz[MathJax-Newcm 4.1.3].
+The helper uses that installed font data without changing the dependency's files.
+Generated SVG includes glyph paths from the font data;
+retain these font notices and license texts with redistributed SVG.
+
+== Other runtime dependencies
+
+Each license file below preserves the distributed license notice; line endings and trailing whitespace are normalized.
+The copyright holders retain their rights.
+
+[cols="2,1,2",options="header"]
+|===
+|Package |Version and license |License text
+|@xmldom/xmldom |0.9.12; MIT |licenses/@xmldom-xmldom.txt
+|balanced-match |4.0.4; MIT |licenses/balanced-match.txt
+|brace-expansion |5.0.12; MIT |licenses/brace-expansion.txt
+|commander |14.0.3; MIT |licenses/commander.txt
+|entities |8.1.0; BSD-2-Clause |licenses/entities.txt
+|glob |13.0.6; BlueOak-1.0.0 |licenses/glob.txt
+|lru-cache |11.5.3; BlueOak-1.0.0 |licenses/lru-cache.txt
+|mhchemparser |4.2.1; Apache-2.0 |licenses/mhchemparser.txt
+|minimatch |10.2.6; BlueOak-1.0.0 |licenses/minimatch.txt
+|minipass |7.1.3; BlueOak-1.0.0 |licenses/minipass.txt
+|mj-context-menu |1.0.0; Apache-2.0 |licenses/mj-context-menu.txt
+|package-json-from-dist |1.0.1; BlueOak-1.0.0 |licenses/package-json-from-dist.txt
+|parse5 |8.0.1; MIT |licenses/parse5.txt
+|path-scurry |2.0.2; BlueOak-1.0.0 |licenses/path-scurry.txt
+|rimraf |6.1.3; BlueOak-1.0.0 |licenses/rimraf.txt
+|speech-rule-engine |5.0.0-rc.4; Apache-2.0 |licenses/speech-rule-engine.txt
+|wicked-good-xpath |1.3.0; MIT |licenses/wicked-good-xpath.txt
+|===

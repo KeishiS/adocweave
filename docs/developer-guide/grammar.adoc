@@ -42,6 +42,17 @@ line-ending = LF | CRLF ;
 単独のCRは内容です。lossless層は全バイトと元の改行を保持しなければなりません。
 別途指定しない限り、ブロックマーカーは列0でのみ認識します。
 
+数式の内容は不透明な文字列として保持し、AsciiDocの置換を適用しません。明示した``latexmath``はLaTeX、
+``asciimath``はAsciiMathを表します。``stem``はその位置で有効な文書属性``stem``を参照し、
+値が``latexmath``、``latex``または``tex``ならLaTeX、それ以外、空または未設定ならAsciiMathを選びます。
+文書外の固定属性、属性値の展開、本文の再定義および解除には、通常の文書属性と同じ規則を適用します。
+明示記法には文書属性を適用しません。
+
+数式ブロックのstyleは、ID、roleおよびoptionと同じ属性行にも別の属性行にも記述できます。
+数式の``source_range``はブロックメタデータから終了区切り行まで、``content_range``は数式本文だけを表します。
+各範囲はinclude後の文書の位置を保持し、include元の位置は既存のsource mapから取得します。
+空の数式、閉じていない数式および数式のバイト数上限を超えた内容は保持し、``invalid-stem``を報告します。
+
 == 文書とブロック
 
 [source,ebnf]
@@ -68,9 +79,10 @@ literal-block  = "....", line-ending,
 source-option  = "linenums" | "%linenums" | "options=linenums"
                | "start=", source-start ;
 source-start   = nonempty text excluding "," and "]" ;
-math-block     = ("[stem]" | "[latexmath]"), line-ending,
-                 "++++", [ line-ending ], opaque-math,
+math-block     = math-metadata, "++++", [ line-ending ], opaque-math,
                  "++++", [ line-ending ] ;
+math-metadata  = block-metadata with first positional style
+                 "stem", "latexmath", or "asciimath" ;
 document-attribute = ":", attribute-name, [ "!" ], ":",
                      [ horizontal-space,
                        { continued-attribute-value-line },
@@ -203,7 +215,7 @@ principal-text      = inline-sequence,
 principal-continuation-line = { " " | "\t" }, inline-sequence ;
 list-continuation   = "+", line-end,
                       { block-metadata }, (literal-block | delimited-block | paragraph) ;
-inline-math      = ("stem:[" | "latexmath:["), opaque-math, "]" ;
+inline-math      = ("stem:[" | "latexmath:[" | "asciimath:["), opaque-math, "]" ;
 hard-break       = " +", line-ending ;
 ----
 
@@ -226,7 +238,7 @@ EBNFには次の区切り記号条件を追加します。
   同順位におけるsource順の優先
 - 等幅内容の不透明性、および強調・斜体内容の再帰的な解析
 - 数式内容の不透明性、および属性、書式、linkその他のAsciiDoc置換の非適用
-- 所定のtoken先頭位置に限定したURL、email、`link:`、`xref:`、`stem:`、``latexmath:``および
+- 所定のtoken先頭位置に限定したURL、email、`link:`、`xref:`、`stem:`、``latexmath:``、``asciimath:``および
   標準macroの認識、escape用backslash直前の一つ前の文字による開始位置の判定、ならびに
   短縮xrefの``<<``に対する開始位置条件の非適用
 - 既定の再帰深さ上限32、および上限到達spanのテキスト化と

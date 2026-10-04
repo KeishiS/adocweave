@@ -3,6 +3,40 @@ use adocweave_core::{AnalysisOptions, Engine};
 use adocweave_textlint::{TxtAstNode, Utf16Range};
 
 #[test]
+fn explicit_and_metadata_combined_math_stays_outside_prose_linting() {
+    let source = "本文 asciimath:[sqrt x] latexmath:[x^2]。\n\n[latexmath#energy]\n++++\n{mass} * c^2\n++++\n\n[asciimath]\n[#root]\n++++\nsqrt x\n++++\n";
+    let analysis = Engine::new(AnalysisOptions::default())
+        .analyze(source)
+        .expect("math analysis");
+    let plan = adocweave_textlint::plan(&analysis, adocweave_textlint::PlanLimits::default())
+        .expect("math textlint plan");
+    assert_eq!(plan.children.len(), 1, "math blocks have no lintable prose");
+    let TxtAstNode::Paragraph { children, .. } = &plan.children[0] else {
+        panic!("prose paragraph")
+    };
+    assert_eq!(
+        children
+            .iter()
+            .filter(|node| matches!(node, TxtAstNode::Code { .. }))
+            .count(),
+        2
+    );
+    let mut code = Vec::new();
+    let mut prose = Vec::new();
+    collect_ranges(&plan.children, &mut code, &mut prose);
+    for formula in adocweave_core::output::projection::formulas(&analysis) {
+        let range = (
+            utf16_offset(source, formula.source_range.start().to_usize()),
+            utf16_offset(source, formula.source_range.end().to_usize()),
+        );
+        assert!(
+            prose.iter().all(|prose| !overlaps(*prose, range)),
+            "math must not be linted as prose"
+        );
+    }
+}
+
+#[test]
 fn textlint_and_search_projection_separate_representative_prose_and_code() {
     let source = concat!(
         "= 見出し\n\n",

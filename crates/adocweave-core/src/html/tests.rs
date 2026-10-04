@@ -67,6 +67,42 @@ fn html_renderer_renders_paragraphs_and_folds_source_lines() {
     );
 }
 
+#[test]
+fn combined_and_separate_math_ids_are_shared_with_local_references() {
+    for metadata in [
+        "[latexmath#energy]",
+        "[#energy]\n[latexmath]",
+        "[latexmath]\n[#energy]",
+    ] {
+        let source = format!("{metadata}\n++++\nE = mc^2\n++++\n\nSee xref:#energy[].\n");
+        let parsed = parse(&source).expect("math ID");
+        let output = render(&parsed.ast, &RenderPolicy::default());
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert!(
+            output
+                .html
+                .contains("<pre id=\"energy\" class=\"math-latex\""),
+            "{}",
+            output.html
+        );
+        assert!(output.html.contains("href=\"#energy\""), "{}", output.html);
+    }
+}
+
+#[test]
+fn asciimath_is_escaped_raw_math_under_the_default_html_policy() {
+    let parsed =
+        parse("asciimath:[x < y] latexmath:[x < y]\n\n[asciimath#energy]\n++++\nx < y\n++++\n")
+            .expect("math");
+    let output = render(&parsed.ast, &RenderPolicy::default());
+    assert!(output.diagnostics.is_empty());
+    assert!(output.html.contains(
+        "class=\"math-asciimath\" data-math-language=\"asciimath\" data-math-display=\"inline\""
+    ));
+    assert!(output.html.contains("<pre id=\"energy\" class=\"math-asciimath\" data-math-language=\"asciimath\" data-math-display=\"block\"><code>x &lt; y\n</code></pre>"), "{}", output.html);
+    assert!(!output.html.contains("<script"));
+}
+
 /// The specification turns a line break inside a paragraph into a space.
 /// Between two characters of a script written without word spaces, that
 /// space is one the sentence never asked for, so it is not written.
@@ -1257,6 +1293,7 @@ fn html_contract_has_explicit_allowlists() {
             "src",
             "target",
             "title",
+            "value",
             "width"
         ]
     );
@@ -1279,6 +1316,7 @@ fn html_contract_has_explicit_allowlists() {
             "callout-number",
             "checklist-marker",
             "citation",
+            "citation-link",
             "document-title",
             "example",
             "footnote",
@@ -1292,6 +1330,7 @@ fn html_contract_has_explicit_allowlists() {
             "listing-block",
             "literal-block",
             "math-latex",
+            "math-asciimath",
             "math-typst",
             "menu",
             "open",
@@ -2363,4 +2402,94 @@ fn source_blocks_are_recognized_from_merged_metadata() {
             "<p><a href=\"#id-c\">src/c.rs</a> <a href=\"#id-e\">src/e.rs</a> <a href=\"#id-attached\">Attached source</a> <a href=\"#id-second\">second</a></p>\n",
         )
     );
+}
+
+#[test]
+fn validated_math_and_finite_citations_share_safe_rendering_and_usage_checks() {
+    use crate::rendered_content::{
+        ResolvedMath, ResolvedRichCitation, RichInline, ValidatedMath, ValidatedRichText,
+    };
+    let analysis = analyze("latexmath:[x < y & \"quoted\"] cite:[paper].\n");
+    let formula = crate::projection::formulas(&analysis).remove(0);
+    let citation = analysis.citations().remove(0);
+    let math = ValidatedMath::validate(
+        "body",
+        "m0",
+        r#"<svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><text>x &lt; y</text></svg>"#,
+    )
+    .unwrap();
+    let rich = ValidatedRichText::validate(vec![RichInline::Emphasis {
+        children: vec![RichInline::Text {
+            text: "<Paper>".into(),
+        }],
+    }])
+    .unwrap();
+    let inputs = RenderInputs::default()
+        .with_math(vec![ResolvedMath::new(formula.source_range, math.clone())])
+        .with_rich_citations(vec![ResolvedRichCitation::new(
+            citation.range,
+            rich.clone(),
+        )]);
+    let output = super::render_with_inputs(analysis.document(), &RenderPolicy::default(), &inputs);
+    assert!(output.html.contains("<svg xmlns="));
+    assert!(
+        output
+            .html
+            .contains("role=\"math\" aria-label=\"x &lt; y &amp; &#34;quoted&#34;\""),
+        "{}",
+        output.html
+    );
+    assert!(output.html.contains(
+        "class=\"math-source\" aria-hidden=\"true\">x &lt; y &amp; &#34;quoted&#34;</code>"
+    ));
+    assert!(output.html.contains("<em>&lt;Paper&gt;</em>"));
+    assert!(output.diagnostics.is_empty());
+    let raw = super::render(analysis.document(), &RenderPolicy::default());
+    assert!(!raw.html.contains("<svg"));
+    assert!(raw.html.contains("x &lt; y"));
+    let duplicate = RenderInputs::default()
+        .with_math(vec![
+            ResolvedMath::new(formula.source_range, math.clone()),
+            ResolvedMath::new(formula.source_range, math),
+        ])
+        .with_rich_citations(vec![ResolvedRichCitation::new(formula.source_range, rich)]);
+    let output =
+        super::render_with_inputs(analysis.document(), &RenderPolicy::default(), &duplicate);
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("math") && d.message.contains("same source range"))
+    );
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("rich citation") && d.message.contains("does not match"))
+    );
+}
+
+#[test]
+fn slide_bibliography_anchors_are_separate_while_regular_html_keeps_keys() {
+    use crate::generated_bibliography::BibliographyNamespace;
+    let analysis = analyze("cite:[paper].\n");
+    for (namespace, anchor) in [
+        (BibliographyNamespace::Document, "paper"),
+        (BibliographyNamespace::SlidesBody, "slides-body-bib-paper"),
+        (BibliographyNamespace::SlidesNotes, "slides-notes-bib-paper"),
+    ] {
+        let bibliography = GeneratedBibliography::new(
+            "References",
+            vec![GeneratedBibliographyEntry::new("paper", "Title")],
+        )
+        .with_namespace(namespace);
+        let output = super::render_with_inputs(
+            analysis.document(),
+            &RenderPolicy::default(),
+            &RenderInputs::default().with_generated_bibliography(bibliography),
+        );
+        assert!(output.html.contains(&format!("href=\"#{anchor}\"")));
+        assert!(output.html.contains(&format!("id=\"{anchor}\"")));
+        assert!(output.diagnostics.is_empty());
+    }
 }

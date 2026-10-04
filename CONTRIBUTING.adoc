@@ -16,6 +16,14 @@ cargo make verify
 生成fileの差分、browserおよびeditor adapter、HTML5標準適合性、人が書いた文書および配布metadataを
 まとめて検査します。
 
+スライドのCLI試験は実際のNode補助も使います。``cargo make verify``は補助の依存関係を先に導入します。
+``adocweave``のCLI試験を``cargo test``で直接実行する場合は、その前に次を実行してください。
+
+[source,console]
+----
+npm ci --ignore-scripts --prefix packages/slides-helper
+----
+
 次のtask名は、並行して開発するMarginalis、Renkanと共通の外向きの名前です。repositoryが変わっても
 同じ名前で同じ意味の検査を実行できます。
 
@@ -149,7 +157,8 @@ remote名、ブランチ名、mergeの方式および必須checkの構成は、M
 
 依存関係は各manifestとlockfileを基準とし、文書や別の目録へパッケージ一覧とバージョンを転記しません。
 Rustの許可licenseと取得元は``deny.toml``、VS Code拡張の配布runtimeに許可するlicenseとnpm registryは
-``tools/verify-vscode-dependencies.mjs``で定義します。
+``tools/verify-vscode-dependencies.mjs``で定義します。スライド用Node補助パッケージと同梱するブラウザー資産は
+``tools/verify-slides-dependencies.mjs``で別に検査し、VS Code拡張の許可範囲を広げません。
 
 依存関係を更新するときは次を確認します。
 
@@ -164,10 +173,22 @@ Rustの許可licenseと取得元は``deny.toml``、VS Code拡張の配布runtime
 WebAssembly本体の大きさを、``test-vscode-release-determinism``はVSIXの大きさを検査します。
 
 ``security-audit``は、``cargo-deny``が実行時に取得する最新のRustSec Advisory Databaseを使い、root workspaceと
-Zed拡張のadvisory、licenseおよび取得元を検査します。npmはVS Code拡張の配布runtime treeだけを標準の
-``npm audit --omit=dev``で検査します。そのruntime treeでは、推移依存を含めて取得元をnpm registryに限定し、
-利用者への通知が必要なlicenseを許可した集合へ限定します。Browserとtextlint用パッケージはruntime npm依存を
-持ちません。
+Zed拡張のadvisory、licenseおよび取得元を検査します。npmはVS Code拡張、スライド用Node補助パッケージ、
+同梱するReveal資産を``npm audit --omit=dev``で検査します。推移依存を含めて取得元をnpm registryに限定し、
+許可するlicenseを配布物ごとに検査します。``@adocweave/wasm``とtextlint用パッケージはruntime npm依存を持ちません。
+
+スライド用補助パッケージはSHA-512 integrityと、導入した依存物のlicense本文を検査します。citeprocのCPAL選択と
+NewcmフォントのGUST Font Licenseについては、確認したarchiveと本文・通知のdigestだけを
+``packages/slides-helper/licenses/evidence.json``へ記録します。依存の版やarchiveが変わった場合は、配布実物の
+本文と通知を確認し直します。CPALのGUI帰属表示条件について、CSLを使うpreviewの初期表示へExhibit Bの
+copyright、phrase、URLを見える形で設け、生成物にも帰属表示とlicense本文を同梱します。ブラウザーUIへの
+法的な適用範囲を確定済みとはせず、この保守的な対応を受入検査で確認します。
+
+Reveal資産の正本は``crates/adocweave/assets/revealjs/sources.json``です。上流manifestで``devDependencies``へ
+分類されていても、同梱してブラウザーで実行するライブラリはruntime監査へ含めます。この正本から一時的な
+npm audit入力を生成し、別の恒久的な依存一覧を作りません。``verify``では資産とlicenseのdigest、notesの
+popup scriptを検査します。資産の更新時には、取得archiveと保存した資産の対応も
+``node tools/verify-slides-assets.mjs ARCHIVE_DIRECTORY``で検査します。
 
 ビルド専用のnpm依存は配布runtimeの脆弱性・license検査へ含めません。lockfileに固定し、``npm ci --ignore-scripts``が
 取得時にintegrityを検証します。観測したビルド依存のlicense集合を別の目録として保守しません。
@@ -249,6 +270,23 @@ cargo make acceptance
 
 手元とCIでは、``flake.lock``で固定した開発環境のChromiumを使用します。別のbrowserを確認する場合は
 ``ADOCWEAVE_BROWSER``で実行ファイルを指定できます。
+Linuxの``default``、``ci-integrations``および``ci-browser``の開発環境は、
+同じ固定版のDejaVuとNoto CJKをFontconfigへ登録します。
+日本語を含むBrowser検査は、この開発環境で実行してください。これらのフォントは開発環境だけに含め、
+ネイティブパッケージや生成HTMLへ配布しません。
+
+研究スライドの受入確認には、CLIと同じ固定Chromiumを使う既存のsmokeを実行します。
+helperを指定すると、公開版と発表者版の数式・引用・脚注・表、日本語のHTML/SVG描画および
+保存後のプレビュー更新を確認し、画面と測定値を``target/slides-browser/``へ保存します。
+
+[source,console]
+----
+nix develop .#ci-browser -c node tools/slides-browser-smoke.mjs \
+  target/debug/adocweave "${ADOCWEAVE_BROWSER:-chromium}" packages/slides-helper/bin.mjs
+----
+
+この測定はファイルの保存完了から新しいDOMとRevealの準備完了までを対象にし、HTTPへの生成物採用時間と区別します。
+結果の時間を合否の閾値には使いません。helperを省略すると、Node補助なしのスライド生成・配信を確認します。
 
 ブランチ保護では、GitHub Actionsが表示する``verify``だけをrequired status checkに設定します。
 従来の集約jobも同じ表示名だったため、``verify``だけを要求しているrulesetの変更は不要です。旧構成の
@@ -341,12 +379,13 @@ xref:docs/developer-guide/release-distribution.adoc[GitHub Releases配布仕様]
 
 最初の自動公開より前に、``github-release``、``cachix-publish``、``marketplace-publish``、``npm-publish``および
 ``open-vsx-publish``の5つのenvironmentを作成します。各environmentのdeployment branch policyではSelected branches
-and tagsを選びます。``npm-publish``では``wasm/v*``と``textlint-plugin-asciidoc/v*``、
+and tagsを選びます。``npm-publish``では``wasm/v*``、``textlint-plugin-asciidoc/v*``と``slides-helper/v*``、
 ``marketplace-publish``と``open-vsx-publish``では
 ``vscode/v*``を許可します。``github-release``と``cachix-publish``では``main``だけを許可します。
 ネイティブ版は``main``から手動実行します。
 Open VSXとCachixのtokenは対応するenvironmentへ移します。
 textlint用Processorのnpm Trusted Publisherには``textlint-plugin-publish.yml``と``npm-publish`` environment、
+スライド用補助のnpm Trusted Publisherには``slides-helper-publish.yml``と同じenvironmentを登録します。
 Visual Studio Marketplace用の``marketplace-publish`` environmentには``AZURE_CLIENT_ID``と
 ``AZURE_TENANT_ID``を変数として登録します。
 
@@ -436,6 +475,35 @@ git push upstream wasm/vX.Y.Z
 environment``npm-publish``を登録します。失敗した場合は同じworkflow runの``Re-run failed jobs``を使用します。
 同じ版が公開済みであれば内容を確認して送信を省略します。公開後はnpmから導入し直し、署名とprovenance、
 Node.jsおよび実ブラウザーでの動作を確認します。修正が必要な場合は新しい版を使用します。
+
+[#slides-helper-npm-publication]
+=== スライド用補助パッケージの公開
+
+``@adocweave/slides-helper``の版は``packages/slides-helper/package.json``、変更内容は同じディレクトリの
+``CHANGELOG.md``を正本とします。native版とは独立して更新します。実行時の全推移依存は
+``package-lock.json``から導入し、npmの``bundleDependencies``でarchiveへ収録します。
+監査した依存と配布通知を保ち、導入時の依存版の再選択を避けます。
+
+公開候補は次のコマンドで作成します。``target/distrib``へ保存したarchiveを別の場所へ導入し、
+依存の版、実行入口、空要求、数式・引用および通知を検査します。
+
+[source,console]
+----
+cargo make test-slides-helper-release-candidate
+----
+
+変更を``main``へ統合し、そのcommitの検査が成功した後、manifestと一致するtagを作成します。
+
+[source,console]
+----
+git tag -a slides-helper/vX.Y.Z -m "@adocweave/slides-helper X.Y.Z"
+git push upstream slides-helper/vX.Y.Z
+----
+
+``slides-helper-publish.yml``は同じ候補を共通の``npm-publish.yml``へ渡します。Trusted Publisherには
+``slides-helper-publish.yml``と``npm-publish`` environmentを登録します。公開後はnpmから導入し直し、
+署名、provenance、固定依存および実行を確認します。失敗時は同じrunの失敗jobだけを再実行し、
+既に公開された同じ版の内容は置き換えません。
 
 [#cachix-publication]
 === Cachixへの公開

@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "upstreamLock": "https://raw.githubusercontent.com/hakimel/reveal.js/6.0.2/package-lock.json",
+  "archives": [
+    {
+      "name": "reveal.js",
+      "version": "6.0.2",
+      "tarball": "https://registry.npmjs.org/reveal.js/-/reveal.js-6.0.2.tgz",
+      "integrity": "sha512-JYIg5D9aoxoaLeb84O+OvAwsKWdIavVgEDScxtYEXFCT6t6TQrhNtSgogcjdCpdLsWglhJn3zyE3fUOwiH5KEg==",
+      "sha256": "2f0c20bfb02447a198a1ebe8a8c097a5437d035caa38f2820bf4ba887a3eac91"
+    },
+    {
+      "name": "fitty",
+      "version": "2.4.2",
+      "tarball": "https://registry.npmjs.org/fitty/-/fitty-2.4.2.tgz",
+      "integrity": "sha512-GNhWgImK4+wEkgEZjBkQMyu5NLSmmryg/CaRP7zYby+TWzCrUou6BHL+iqbjKzJRXMyzuJkH+LBB1+lh4oO77g==",
+      "sha256": "d5b57f6687fc924cd6fb385d52b3604190d542dd21e2f2e1aca32cd01c4fd486"
+    },
+    {
+      "name": "marked",
+      "version": "17.0.5",
+      "tarball": "https://registry.npmjs.org/marked/-/marked-17.0.5.tgz",
+      "integrity": "sha512-6hLvc0/JEbRjRgzI6wnT2P1XuM1/RrrDEX0kPt0N7jGm1133g6X7DlxFasUIx+72aKAr904GTxhSLDrd5DIlZg==",
+      "sha256": "1aebca0400d160cb1bedca2e271daad0e324503b7e0d0b4b23781ca3293bacce"
+    }
+  ],
+  "assets": [
+    {
+      "path": "LICENSE.fitty.txt",
+      "sha256": "53e4fe18b1542d7c8193cc5a733624aa77b09542730e447736dd6ea8ac0e5c66",
+      "archive": "fitty",
+      "member": "package/LICENSE"
+    },
+    {
+      "path": "LICENSE.marked.txt",
+      "sha256": "8e3a3f82f59a60958f56ca08f445647c32a4733dc7ca6c2c46f6eb898471ab9c",
+      "archive": "marked",
+      "member": "package/LICENSE.md"
+    },
+    {
+      "path": "LICENSE.revealjs.txt",
+      "sha256": "b2883e4b610bfa1b4d8fff84c4d4b825cc7d553cbd9fec4777c04068a2859dc0",
+      "archive": "reveal.js",
+      "member": "package/LICENSE"
+    },
+    {
+      "path": "notes.js",
+      "sha256": "447c42f365876e41853de81453d0c53c580c5b2099132e8f61200de4a0ba2af3",
+      "archive": "reveal.js",
+      "member": "package/dist/plugin/notes.js"
+    },
+    {
+      "path": "reset.css",
+      "sha256": "39413c3490fdcf826427c26ff4c1ee59ea961a0aa8507c18454e0c6dc96c12d8",
+      "archive": "reveal.js",
+      "member": "package/dist/reset.css"
+    },
+    {
+      "path": "reveal.css",
+      "sha256": "615ee850cbbb98a0f688b60ed37b21819a3f54c9f3e6f20e33e63693ab74a0c0",
+      "archive": "reveal.js",
+      "member": "package/dist/reveal.css"
+    },
+    {
+      "path": "reveal.js",
+      "sha256": "aa1bbbf2617b23a623b23612cb3c5bdb63de512e652bf20fcfa832b045d37844",
+      "archive": "reveal.js",
+      "member": "package/dist/reveal.js"
+    }
+  ],
+  "speakerScripts": [
+    {
+      "sha256": "GzCveToXhSIzS3M5eQeRm3McVRB7cYneYKwTkzA3wDk=",
+      "sizeBytes": 17130
+    }
+  ]
+}

@@ -1,0 +1,80 @@
+= 研究スライドの受入原稿
+:lang: ja
+:stem: latexmath
+:eqnums:
+
+[#method]
+== Method — 手法
+
+The heading reference <<method>> preserves an already visible stage.
+Forward equation reference latexmath:[\eqref{result}].
+Japanese formula latexmath:[\text{日本語の数式}].
+Public citation cite:[zebra, locator="12-15", label=page].
+
+[%step]
+* [[first-step]]First stage — 最初の結果。
+* [[second-step]]Second stage — 次の結果。
+
+[latexmath]
+++++
+\begin{align}
+x&=1\notag\\
+y&=2\label{result}
+\end{align}
+++++
+
+footnote:shared[latexmath:[\eqref{i}] latexmath:[\begin{equation}z=3\label{i}\end{equation}], cite:[inside].].
+
+.研究の図
+image::result.svg[研究の図,width=220]
+
+[.notes]
+--
+PRIVATE_NOTE cite:[secret].
+Notes footnote:shared[].
+Notes formula latexmath:[\begin{equation}n=4\label{result}\end{equation}] and latexmath:[\eqref{result}].
+--
+
+[#vertical]
+== Vertical — 行列
+
+The heading reference <<vertical>> preserves an already visible stage.
+
+[%step]
+* [[vertical-first]]First vertical stage.
+* [[vertical-second]]Second vertical stage.
+
+[latexmath]
+++++
+A=\begin{pmatrix}1&2\\3&4\end{pmatrix}
+++++
+
+[#detail]
+=== Detail — 表
+
+The heading reference <<detail>> preserves an already visible stage.
+
+[%step]
+* [[detail-first]]First detail stage.
+* [[detail-second]]Second detail stage.
+
+[cols="1,1",options="header"]
+|===
+|項目 |値
+|数式 |latexmath:[x^2]
+|引用 |cite:[alpha]
+|===
+
+[#last]
+== Last — 参照
+
+Return to <<method>>, <<first-step>>, or <<second-step>>;
+<<vertical>>, <<vertical-first>>, or <<vertical-second>>;
+<<detail>>, <<detail-first>>, or <<detail-second>>.
+
+Again footnote:shared[]. External latexmath:[\eqref{i}].
+
+[.notes]
+--
+PRIVATE_LAST_NOTE. Again footnote:shared[].
+--
