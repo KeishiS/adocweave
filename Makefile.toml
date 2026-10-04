@@ -234,6 +234,13 @@ node --test tools/verify-slides-assets.test.mjs tools/verify-slides-dependencies
 node tools/verify-slides-dependencies.mjs
 '''
 
+[tasks.test-slides-helper-release-candidate]
+category = "CI entry points"
+description = "Pack the slides helper and exercise the installed archive with the audited runtime tree"
+dependencies = ["slides-helper-test", "slides-helper-package", "slides-runtime-contracts"]
+command = "node"
+args = ["tools/slides-helper-release-smoke.mjs", "--pack"]
+
 [tasks.check-windows-target]
 private = true
 description = "Type-check native crates for the supported Windows target without linking"

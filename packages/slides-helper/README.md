@@ -3,6 +3,32 @@
 AdocWeaveのHTMLスライド向けに、TeX数式とCSL形式の引用・参考文献を事前処理するNode.jsパッケージです。
 Node.js 24.19.0以降を使用します。実行入口は`adocweave-slides-helper`です。
 
+## 導入
+
+npm Registryの配布版は、版を指定して導入します。
+
+```console
+npm install --global --ignore-scripts @adocweave/slides-helper@X.Y.Z
+```
+
+npm archiveには監査した実行時の依存一式を含め、導入時に推移依存の版を選び直しません。
+独自に原稿のディレクトリへ置いた実行ファイルは自動探索しません。
+AdocWeave CLIから使う場合は`PATH`へ導入するか、`--slides-helper`に入口を指定します。
+
+ソースから使う場合は、リポジトリ直下で固定依存を導入します。
+
+```console
+npm ci --ignore-scripts --prefix packages/slides-helper
+adocweave convert talk.adoc --to revealjs --output dist/talk \
+  --slides-helper /absolute/path/to/adocweave/packages/slides-helper/bin.mjs
+```
+
+通常の本文と手書きの書誌定義だけの生成には、この補助パッケージは必要ありません。
+数式やCSL引用を含むスライドの記法とデータ指定は
+[CLI利用手順](../../docs/user-guide/command-line.adoc#revealjs-slides)を参照してください。
+
+## 実行
+
 ```console
 adocweave-slides-helper < request.json > result.json
 ```
@@ -54,7 +80,7 @@ MathJaxのlicense、引用の通知にはciteprocの帰属表示とCPAL本文を
 成功時には、ブラウザーでMathJaxを実行する必要のない静的`svg`と、読み上げ支援用の`mathml`を返します。
 SVGのglyph pathを各式に含め、IDと内部リンクに掲載範囲・keyを反映します。
 
-MathJax 4.1.3の`base`、`ams`、`newcommand`、`configmacros`を使用します。
+MathJaxの`base`、`ams`、`newcommand`、`configmacros`を使用します。
 `label`、前方の`ref`・`eqref`、`tag`、`notag`、AMS環境、macro定義を処理します。
 未定義のmacro、重複label、番号のある参照先がない式参照はerrorです。
 TeXの`require`、拡張機能の自動取得、任意HTMLの埋込みは受け付けません。
@@ -71,7 +97,7 @@ MathJax自身のmacro展開上限とbuffer上限を有効にしています。
 共通の`csl`にはCSL-JSONの`items`、CSL styleのXML文字列、localeのXML文字列を渡します。
 ファイル名やURLを指定して取得する操作はありません。
 
-citeproc 2.4.63で掲載範囲全体を文書順に処理します。後の引用によって名前や年の区別が変わる場合は、
+citeprocで掲載範囲全体を文書順に処理します。後の引用によって名前や年の区別が変わる場合は、
 前の引用の表示も更新して返します。参考文献はCSL styleの順序で、引用されたitemだけを返します。
 参考文献の配置は呼出し側が行います。
 

@@ -1,7 +1,7 @@
 = インストールと更新
 
 この文書では、native実行ファイル、WebAssemblyライブラリ、
-エディタ拡張およびtextlint用Processorの導入、更新、ロールバックおよび削除を説明します。
+エディタ拡張、textlint用Processorおよびスライド用補助パッケージの導入、更新、ロールバックおよび削除を説明します。
 
 [cols="2,3",options="header"]
 |===
@@ -23,9 +23,49 @@ xref:#wasm-library-deployment[WebAssemblyライブラリの配備]
 
 |AsciiDoc文書をtextlintで検査
 |xref:#textlint-plugin-installation[textlint用Processorの導入]
+
+|スライドのLaTeX数式とCSL引用を事前処理
+|xref:#slides-helper-installation[スライド用補助パッケージの導入]
 |===
 
 GitHub Releaseから取得する場合は、導入前にチェックサムとArtifact Attestationを確認してください。
+
+[#slides-helper-installation]
+== スライド用補助パッケージの導入
+
+LaTeX数式またはCSLで整形する引用を含むスライドには、CLIに加えてNode.jsと
+``@adocweave/slides-helper``が必要です。数式のない本文と手書きの書誌定義だけで生成する場合は不要です。
+生成したスライドを閲覧する側にはNode.jsは必要ありません。
+
+npm Registryの配布版は、版を指定して導入します。必要なNode.jsの版はパッケージの
+link:../../packages/slides-helper/package.json[``engines.node``]を確認してください。
+
+[source,console]
+----
+npm install --global --ignore-scripts @adocweave/slides-helper@X.Y.Z
+----
+
+パッケージには監査した実行時の依存一式を同梱し、導入時に依存の版を再選択しません。
+更新またはロールバックでは、同じコマンドへ取得したい版を指定します。削除する場合は次のコマンドを使います。
+
+[source,console]
+----
+npm uninstall --global @adocweave/slides-helper
+----
+
+ソースから使う場合は、使用するcommitを固定したcheckoutの直下で依存を導入し、
+``bin.mjs``の絶対pathをCLIへ渡します。Windowsでも``PATH``上のNode.jsでこの入口を起動できます。
+
+[source,console]
+----
+npm ci --ignore-scripts --prefix packages/slides-helper
+adocweave convert talk.adoc --to revealjs --output dist/talk \
+  --slides-helper /absolute/path/to/adocweave/packages/slides-helper/bin.mjs
+----
+
+CLIは``--slides-helper``、環境変数``ADOCWEAVE_SLIDES_HELPER``、``PATH``上の既知の実行名の順で選びます。
+原稿のディレクトリや``node_modules/.bin``を自動探索せず、暗黙にnpmから取得しません。
+数式・引用・CSSと公開用／発表者用の指定はxref:command-line.adoc#revealjs-slides[スライドの利用手順]を参照してください。
 
 [#nix-installation]
 == Nixによる導入
