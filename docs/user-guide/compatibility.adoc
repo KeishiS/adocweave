@@ -98,7 +98,7 @@ Asciidoctor reveal.jsのすべての属性や拡張を再現するものでは�
 表示用roleの``stretch``、``r-fit-text``、``r-stretch``および``r-stack``もエラーにします。
 通常のroleや属性、見出しの``%unnumbered``はこの制限へ含めません。
 ノートだけの原稿は生成せず、本文からノート専用の手書き書誌を参照する場合もエラーにします。
-公開出力の本文IDと番号は非公開ノートの量に依存せず、通常HTMLのID生成方法は維持します。
+本文の脚注・引用の生成IDと表示番号は非公開ノートの量に依存せず、通常HTMLのID生成方法は維持します。
 記法、補助プログラムの導入および公開用／発表者用の指定は、
 xref:command-line.adoc#revealjs-slides[reveal.jsスライド]を参照してください。
 

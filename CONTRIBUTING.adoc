@@ -250,10 +250,10 @@ CLIが端末へ表示するhelp、診断、進捗、要約およびerrorは英�
 pull requestを作成するときは、link:.github/pull_request_template.md[Pull Request template]を使用します。
 変更の目的、主な変更点、実行した検証を簡潔に記載し、未実施の検証がある場合は理由を記載してください。
 
-CIの必須checkは``verify``の一つだけです。すべてのPull Requestで、``cargo make verify``によるsource検査と
-固定Chromiumによる研究スライドのブラウザー検査、
-macOSとWindowsのProjectおよびLanguage Server試験、Zed公式レジストリが使用するRust 1.90での
-``wasm32-wasip2``向け構築を別のjobとして実行し、``verify``へ結果をまとめます。
+CIの必須checkは``verify``の一つだけです。Pull Requestの``source`` jobでは、``cargo make verify``によるsource検査と
+固定Chromiumによる研究スライドのブラウザー検査を実行します。macOSとWindowsのProject、Language Serverおよび
+スライド補助の試験と、Zed公式レジストリが使用するRust 1.90での``wasm32-wasip2``向け構築は、別のjobで実行します。
+これらの結果を``verify``へまとめます。
 
 手元の``cargo make verify``で再現できるのはsource検査です。OS別の試験はCI workflow、Zedの構築は
 xref:docs/developer-guide/zed-development.adoc[Zed拡張の開発]に記載したRust版とtargetで確認してください。

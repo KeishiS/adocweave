@@ -476,30 +476,44 @@ setInterval(() => {}, 1000);
         let reserved = BTreeSet::new();
         let wait_for_start = async {
             let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
-            while !directory.path().join("descendant.pid").exists() {
-                assert!(
-                    tokio::time::Instant::now() < deadline,
-                    "helper descendant did not start"
-                );
+            let read_pid = |file| {
+                std::fs::read_to_string(directory.path().join(file))
+                    .ok()?
+                    .parse::<u32>()
+                    .ok()
+            };
+            loop {
+                // File creation precedes writeFileSync's write: wait for both
+                // complete PID values before cancellation can stop the writers.
+                if let (Some(parent), Some(descendant)) =
+                    (read_pid("helper.pid"), read_pid("descendant.pid"))
+                {
+                    if cancelled {
+                        token.cancel();
+                    }
+                    return Some((parent, descendant));
+                }
+                if tokio::time::Instant::now() >= deadline {
+                    token.cancel();
+                    return None;
+                }
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
-            if cancelled {
-                token.cancel();
-            }
         };
-        let (result, ()) = tokio::join!(
+        let (result, pids) = tokio::join!(
             helper::execute(
                 &prepared,
                 Some(&path),
                 &token,
                 helper::ProcessLimits {
-                    timeout: std::time::Duration::from_secs(2),
+                    timeout: std::time::Duration::from_secs(10),
                     ..Default::default()
                 },
                 &reserved,
             ),
             wait_for_start
         );
+        let (parent, descendant) = pids.expect("helper descendant did not start");
         let error = result.unwrap_err();
         assert_eq!(
             error.code,
@@ -509,11 +523,7 @@ setInterval(() => {}, 1000);
                 "slides-helper-timeout"
             }
         );
-        for file in ["helper.pid", "descendant.pid"] {
-            let pid = std::fs::read_to_string(directory.path().join(file))
-                .unwrap()
-                .parse()
-                .unwrap();
+        for (file, pid) in [("helper.pid", parent), ("descendant.pid", descendant)] {
             let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
             while !process_has_terminated(pid) {
                 assert!(
