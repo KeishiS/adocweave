@@ -99,7 +99,7 @@ pub(crate) fn content_security_policy(audience: Audience) -> String {
     )
 }
 
-fn escape(value: &str) -> String {
+pub(super) fn escape(value: &str) -> String {
     value
         .replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -216,7 +216,7 @@ fn page(
         ""
     };
     let attribution = attribution.map_or_else(String::new, |text| format!(
-        "<div class=\"slides-attribution\" aria-label=\"Citation processor attribution\">{} <a href=\"https://citationstyles.org/\">Citation Style Language</a> · <a href=\"licenses/citations-license.txt\">License</a></div>\n",
+        "<div class=\"slides-attribution\" role=\"note\" aria-label=\"Citation processor attribution\">{} <a href=\"https://citationstyles.org/\">Citation Style Language</a> · <a href=\"licenses/citations-license.txt\">License</a></div>\n",
         escape(text)
     ));
     let styles = styles
@@ -859,6 +859,7 @@ mod tests {
         assert!(html.contains("&lt;script&gt;Copyright &amp; citation&lt;/script&gt;"));
         assert!(html.contains("href=\"https://citationstyles.org/\""));
         assert!(html.contains("href=\"licenses/citations-license.txt\""));
+        assert!(html.contains("role=\"note\" aria-label=\"Citation processor attribution\""));
         assert!(html.find("slides-attribution").unwrap() > html.find("</div></div>").unwrap());
         assert!(!html.contains("<script>Copyright"));
     }
