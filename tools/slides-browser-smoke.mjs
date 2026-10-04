@@ -299,6 +299,8 @@ Return to <<method>>, <<first-step>>, or <<second-step>>;
   await poll(() => popup.evaluate("document.body?.textContent.includes('PRIVATE_NOTE')&&[...document.querySelectorAll('iframe')].length===2&&[...document.querySelectorAll('iframe')].every(frame=>frame.contentWindow.Reveal?.isReady())"));
   assert.deepEqual(await popup.evaluate("probeViolations"), []);
   if (helper) {
+    // Notes arrive through innerHTML; iframe readiness does not wait for their CSS.
+    await poll(() => popup.evaluate("Boolean(document.querySelector('.speaker-controls-notes link[rel=\"stylesheet\"][href=\"assets/content.css\"]')?.sheet)"));
     assert.equal(await popup.evaluate("document.querySelector('.speaker-controls-notes .math-rendered') !== null"), true);
     const notesMath = await popup.evaluate(`(() => {
       const root = document.querySelector('.speaker-controls-notes .math-rendered');
