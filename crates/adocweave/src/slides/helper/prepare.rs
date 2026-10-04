@@ -53,7 +53,9 @@ pub fn prepare(
                 .metadata
                 .attributes
                 .iter()
-                .any(|a| a.name.is_none() && a.value == "stem") =>
+                .filter(|attribute| attribute.name.is_none())
+                .map(|attribute| attribute.value.as_str())
+                .eq(["stem"]) =>
         {
             stem_ranges.insert(block.range);
         }

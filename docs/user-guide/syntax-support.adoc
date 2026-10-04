@@ -351,6 +351,8 @@ AsciiMathの数式を記述できます。数式内の属性参照、書式お�
 ``stem`` styleは、その位置で有効な文書属性``stem``に従います。値が``latexmath``、``latex``または
 ``tex``ならLaTeX、それ以外の値、空の値および未設定ならAsciiMathです。本文やinclude先で属性を変更すると、
 それ以降の``stem``へ適用します。明示した``latexmath``と``asciimath``は文書属性より優先します。
+``[stem,latexmath]``のように2番目の位置属性で記法を指定すると、文書属性より優先します。
+``latexmath``、``latex``および``tex``はLaTeX、それ以外の値と明示した空の値``""``はAsciiMathです。
 ID、roleおよびoptionはstyleと同じ属性行にも、直前の別の属性行にも記述できます。
 
 [source,asciidoc]

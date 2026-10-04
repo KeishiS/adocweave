@@ -90,6 +90,17 @@ fn combined_and_separate_math_ids_are_shared_with_local_references() {
 }
 
 #[test]
+fn positional_stem_languages_are_preserved_by_raw_html_output() {
+    let analysis = analyze(
+        ":stem: unknown-document-engine\n\n[stem#latex,tex]\n++++\nx < y\n++++\n\n:stem: latexmath\n\n[stem#ascii,asciimath]\n++++\nx < y\n++++\n",
+    );
+    let output = super::render(analysis.document(), &RenderPolicy::default());
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    assert!(output.html.contains("<pre id=\"latex\" class=\"math-latex\" data-math-language=\"latexmath\" data-math-display=\"block\"><code>x &lt; y\n</code></pre>"), "{}", output.html);
+    assert!(output.html.contains("<pre id=\"ascii\" class=\"math-asciimath\" data-math-language=\"asciimath\" data-math-display=\"block\"><code>x &lt; y\n</code></pre>"), "{}", output.html);
+}
+
+#[test]
 fn asciimath_is_escaped_raw_math_under_the_default_html_policy() {
     let parsed =
         parse("asciimath:[x < y] latexmath:[x < y]\n\n[asciimath#energy]\n++++\nx < y\n++++\n")

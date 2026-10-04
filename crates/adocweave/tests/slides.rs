@@ -520,6 +520,69 @@ fn body_cannot_link_to_note_only_targets_and_unsafe_svg_cannot_be_saved() {
 }
 
 #[test]
+fn included_stem_positional_language_overrides_the_document_setting() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "talk.adoc",
+        "= Talk\n:stem: asciimath\n\n== Slide\n\ninclude::part.adoc[]\n",
+    );
+    write(
+        root.path(),
+        "part.adoc",
+        "[stem#energy,tex]\n++++\nE=mc^2\n++++\n",
+    );
+    let helper = helper_bin();
+    success(&convert(
+        root.path(),
+        &[
+            "--no-config",
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--output",
+            "latex",
+            "--slides-helper",
+            &helper,
+        ],
+    ));
+    let html = fs::read_to_string(root.path().join("latex/index.html")).unwrap();
+    assert!(html.contains("class=\"math-rendered\""), "{html}");
+    assert!(html.contains("id=\"energy\""));
+    write(
+        root.path(),
+        "talk.adoc",
+        "= Talk\n:stem: unknown-document-engine\n\n== Slide\n\ninclude::part.adoc[]\n",
+    );
+    write(
+        root.path(),
+        "part.adoc",
+        "[stem,asciimath]\n++++\nx\n++++\n",
+    );
+    let output = convert(
+        root.path(),
+        &[
+            "--no-config",
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--output",
+            "ascii",
+            "--slides-helper",
+            "/missing/helper",
+        ],
+    );
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("part.adoc:1:1: error[slides-math-unsupported]"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("stem=unknown-document-engine"), "{stderr}");
+    assert!(!root.path().join("ascii").exists());
+}
+
+#[test]
 fn unsupported_speaker_note_forms_fail_at_their_original_source() {
     let root = tempfile::tempdir().unwrap();
     for marker in [
