@@ -40,7 +40,7 @@ use config::{ConfigError, ConfigErrorCode, LoadedProjectConfig};
 use filesystem::{FilesystemAuthority, FilesystemError, RootAuthority};
 
 pub use bundle::{
-    BundleError, BundleFile, BundleManifest, BundleManifestFile, BundleMediaType,
+    BundleError, BundleFile, BundleManifest, BundleManifestFile, BundleMediaType, BundleSnapshot,
     ManagedBundleReader, open_managed_bundle, save_managed_bundle,
 };
 pub use config::{ProjectConfig, TerminalColor, TerminalSettings, TerminalTheme};
@@ -216,7 +216,20 @@ impl ProjectAuthority {
                         .max_resource_bytes
                         .min(limits.max_total_bytes.saturating_sub(total)),
                 )
-                .map_err(project_authority_error)?;
+                .map_err(|error| {
+                    let observation = if matches!(&error, FilesystemError::Missing(_)) {
+                        ProjectResourceObservation::missing()
+                    } else {
+                        ProjectResourceObservation::unavailable()
+                    };
+                    project_authority_error(error).with_repair_candidate(
+                        ProjectObservationCandidate {
+                            path: path.clone(),
+                            kind: ProjectObservationKind::BinaryContentsNoSymlinks,
+                            observation,
+                        },
+                    )
+                })?;
             total += bytes.len() as u64;
             result.push(ProjectBinaryResource {
                 path: path.clone(),

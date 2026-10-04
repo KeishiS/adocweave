@@ -818,3 +818,47 @@ fn manual_bibliography_keeps_local_xref_backrefs_and_all_footnote_citation_place
     assert!(bibliography.contains("href=\"#slides-body-bib-ref-"));
     assert!(output.diagnostics.is_empty());
 }
+
+#[test]
+fn slide_footnotes_reject_authored_anchor_definitions_without_repeating_their_ids() {
+    for anchor in [
+        "anchor:inside[]",
+        "[[inside]]",
+        "bibanchor:inside[]",
+        "[[[inside]]]",
+    ] {
+        let analysis = Engine::new(AnalysisOptions::default())
+            .analyze(&format!(
+                "First footnote:shared[{anchor} detail].\n\nAgain footnote:shared[].\n"
+            ))
+            .unwrap();
+        let document = analysis.document();
+        let selections = HtmlSlideSelections {
+            body: vec![vec![region(document, &[0])], vec![region(document, &[1])]],
+            notes: vec![],
+        };
+        let output = render(
+            document,
+            &RenderInputs::default(),
+            &selections,
+            HtmlSlideScope::Body,
+        );
+        assert!(
+            !output.footnotes.concat().contains("id=\"inside\""),
+            "{anchor}"
+        );
+        assert!(
+            output
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code.as_str() == "slides-footnote-anchor-unsupported"),
+            "{anchor}"
+        );
+        assert!(
+            html::render(document, &RenderPolicy::default())
+                .html
+                .contains("id=\"inside\""),
+            "{anchor}"
+        );
+    }
+}

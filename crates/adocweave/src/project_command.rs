@@ -95,11 +95,7 @@ pub(crate) fn run(arguments: &Arguments) -> Result<CliExitCode, CliError> {
                 target,
                 &authority,
                 &primary_base,
-                crate::slides::bundle::Options {
-                    audience: *audience,
-                    helper: slides_helper.as_deref(),
-                    data,
-                },
+                crate::slides::bundle::Options::convert(*audience, slides_helper.as_deref(), data),
                 remaining_resources,
                 &NeverCancel,
             )?;
@@ -357,6 +353,9 @@ pub(crate) fn request_with_authority(
         stylesheets: !matches!(
             arguments.command,
             CommandOptions::Convert {
+                target: ConvertTarget::Revealjs,
+                ..
+            } | CommandOptions::Preview {
                 target: ConvertTarget::Revealjs,
                 ..
             }
@@ -629,7 +628,7 @@ fn run_check(
     })
 }
 
-fn diagnostic_sources<'target>(
+pub(crate) fn diagnostic_sources<'target>(
     target: &'target ProjectTargetResult,
     current: &Path,
 ) -> Result<BTreeMap<adocweave_core::SourceId, ProjectSourceView<'target>>, CliError> {
