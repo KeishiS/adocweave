@@ -717,16 +717,7 @@ fn repeated_footnote_math_uses_local_copy_targets_and_prose_uses_the_first_place
             let svg = format!(
                 "<svg xmlns=\"http://www.w3.org/2000/svg\"><g id=\"body-{key}-i0\">{link}</g></svg>"
             );
-            ResolvedMath::new(
-                *range,
-                ValidatedMath::validate(
-                    "body",
-                    &key,
-                    &svg,
-                    "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><mi>x</mi></math>",
-                )
-                .unwrap(),
-            )
+            ResolvedMath::new(*range, ValidatedMath::validate("body", &key, &svg).unwrap())
         })
         .collect();
     let inputs = RenderInputs::default().with_math(math);

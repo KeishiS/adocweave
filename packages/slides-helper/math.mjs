@@ -3,7 +3,6 @@ import { TeX } from "@mathjax/src/js/input/tex.js";
 import { SVG } from "@mathjax/src/js/output/svg.js";
 import { liteAdaptor } from "@mathjax/src/js/adaptors/liteAdaptor.js";
 import { RegisterHTMLHandler } from "@mathjax/src/js/handlers/html.js";
-import { LimitedMmlVisitor } from "@mathjax/src/js/a11y/assistive-mml.js";
 import "@mathjax/src/js/util/asyncLoad/esm.js";
 import "@mathjax/src/js/input/tex/ams/AmsConfiguration.js";
 import "@mathjax/src/js/input/tex/newcommand/NewcommandConfiguration.js";
@@ -105,7 +104,7 @@ export async function renderEquations(scope, equations, eqnums, macros) {
     math.root.walkTree((node) => {
       if (node.attributes?.get("class") === "MathJax_ref") {
         const target = localFragment(node.attributes.get("href"));
-        references.push({ key, node, target });
+        references.push({ key, target });
         if (!target || !ids.has(target)) {
           report(key, "unresolved-equation-reference", "Equation reference has no numbered target in this scope.");
         }
@@ -124,10 +123,6 @@ export async function renderEquations(scope, equations, eqnums, macros) {
       }
     }
   } while (changed);
-  for (const { key, node, target } of references) {
-    if (!failures.has(key)) node.attributes.set("href", `#${ids.get(target)}`);
-  }
-  const visitor = new LimitedMmlVisitor();
   const results = items.map((math, index) => {
     const key = equations[index].key;
     const root = roots[index];
@@ -163,7 +158,7 @@ export async function renderEquations(scope, equations, eqnums, macros) {
     });
     adaptor.setStyle(root, "min-height", "1px");
     adaptor.setAttribute(root, "aria-hidden", "true");
-    return { key, status: "ok", svg: adaptor.outerHTML(root), mathml: visitor.visitTree(math.root) };
+    return { key, status: "ok", svg: adaptor.outerHTML(root) };
   });
   return { results, diagnostics };
 }

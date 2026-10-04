@@ -155,7 +155,11 @@ in
   ci-integrations = shell {
     rust = ciRust pkgs;
     vscodeLibraries = true;
-    extra = lib.optionals stdenv.isLinux [ pkgs.xvfb ];
+    browserFontsEnabled = true;
+    extra = lib.optionals stdenv.isLinux [
+      pkgs.chromium
+      pkgs.xvfb
+    ];
   };
 
   # The independent fuzz smoke keeps the large nightly toolchain out of every

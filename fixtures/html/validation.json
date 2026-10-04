@@ -11,6 +11,30 @@
   },
   "cases": [
     {
+      "name": "research-slides-public",
+      "kind": "cli-slides",
+      "source": "fixtures/slides-browser/research.adoc",
+      "args": [
+        "--audience", "public",
+        "--bibliography", "fixtures/slides-browser/references.json",
+        "--csl-style", "fixtures/slides-browser/research.csl",
+        "--csl-locale", "packages/slides-helper/fixtures/locale-en-US.xml",
+        "--css", "fixtures/slides-browser/research.css"
+      ]
+    },
+    {
+      "name": "research-slides-presenter",
+      "kind": "cli-slides",
+      "source": "fixtures/slides-browser/research.adoc",
+      "args": [
+        "--audience", "presenter",
+        "--bibliography", "fixtures/slides-browser/references.json",
+        "--csl-style", "fixtures/slides-browser/research.csl",
+        "--csl-locale", "packages/slides-helper/fixtures/locale-en-US.xml",
+        "--css", "fixtures/slides-browser/research.css"
+      ]
+    },
+    {
       "name": "representative-fragment",
       "kind": "cli-fragment",
       "source": "fixtures/html/validation.adoc"

@@ -44,7 +44,7 @@ export type Inline =
   | { kind: "link"; href: string; children: Inline[] };
 
 export type EquationResult =
-  | { key: string; status: "ok"; svg: string; mathml: string }
+  | { key: string; status: "ok"; svg: string }
   | { key: string; status: "failed" };
 export type CitationResult =
   | { key: string; status: "ok"; inlines: Inline[] }

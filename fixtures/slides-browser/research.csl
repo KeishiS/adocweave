@@ -1,0 +1,18 @@
+<style xmlns="http://purl.org/net/xbiblio/csl" version="1.0" class="in-text" default-locale="en-US">
+  <info><title>AdocWeave research acceptance</title><id>urn:adocweave:test:research</id></info>
+  <macro name="author"><names variable="author"><name form="short"/></names></macro>
+  <citation disambiguate-add-year-suffix="true">
+    <layout prefix="(" suffix=")" delimiter="; ">
+      <group delimiter=", " font-style="italic" font-weight="bold" font-variant="small-caps">
+        <group delimiter=" "><text macro="author" font-style="normal" font-weight="normal" font-variant="small-caps"/><date variable="issued" font-variant="normal"><date-part name="year"/></date></group>
+        <group delimiter=" "><label variable="locator" form="short"/><text variable="locator"/></group>
+      </group>
+    </layout>
+  </citation>
+  <bibliography>
+    <sort><key variable="title"/></sort>
+    <layout suffix=".">
+      <group delimiter=". "><text macro="author"/><text variable="title" font-style="italic"/><date variable="issued"><date-part name="year"/></date></group>
+    </layout>
+  </bibliography>
+</style>

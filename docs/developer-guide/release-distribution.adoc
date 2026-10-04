@@ -86,7 +86,7 @@ Rust crateはcrates.ioへ公開しません。
 
 スライド用補助も専用workflowでnpm archiveを一度だけ構築し、共通の``npm-publish.yml``で公開します。
 候補archiveを別のディレクトリへ導入し、空要求、数式・引用、実行入口と通知を検査します。
-``package-lock.json``から導入した全推移依存をnpmの``bundledDependencies``でarchiveへ収録し、
+``package-lock.json``から導入した全推移依存をnpmの``bundleDependencies``でarchiveへ収録し、
 導入後の依存が監査対象と一致することを検査します。Nodeの依存をnative archiveやブラウザーへ同梱しません。
 
 Visual Studio Marketplaceは公開後のVSIXへ署名情報を追加するため、取得したVSIX archive全体のbyte列は送信元と

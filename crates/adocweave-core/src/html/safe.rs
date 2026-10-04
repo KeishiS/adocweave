@@ -412,12 +412,13 @@ impl<'a> HtmlWriter<'a> {
         value: &crate::rendered_content::ValidatedMath,
         tex: &str,
     ) {
-        self.output.push_str("<span class=\"math-rendered\">");
-        self.output.push_str(value.svg());
-        self.output.push_str("<span class=\"math-assistive\">");
-        self.output.push_str(value.mathml());
         self.output
-            .push_str("</span><code class=\"math-source\" aria-hidden=\"true\">");
+            .push_str("<span class=\"math-rendered\" role=\"math\" aria-label=\"");
+        escape_into(self.output, tex);
+        self.output.push_str("\">");
+        self.output.push_str(value.svg());
+        self.output
+            .push_str("<code class=\"math-source\" aria-hidden=\"true\">");
         escape_into(self.output, tex);
         self.output.push_str("</code></span>");
     }

@@ -515,8 +515,8 @@ args = ["build", "-p", "adocweave-wasm", "--bin", "adocweave-conformance-native"
 
 [tasks.html5-check]
 private = true
-description = "Validate generated fragment and complete-document HTML with Nu Html Checker"
-dependencies = ["build-adoc-check", "build-conformance-native"]
+description = "Validate generated HTML and research slides with Nu Html Checker"
+dependencies = ["build-adoc-check", "build-conformance-native", "slides-helper-install"]
 command = "node"
 args = ["tools/html5-check.mjs"]
 
@@ -780,7 +780,17 @@ dependencies = [
   "test-vscode-acquisition",
   "textlint-plugin-wasm-contract",
   "textlint-plugin-browser-isolation",
+  "test-slides-browser",
 ]
+
+[tasks.test-slides-browser]
+private = true
+description = "Exercise research slides in the fixed browser with local files, managed HTTP, notes, and live preview"
+dependencies = ["build-adoc-check", "slides-helper-install"]
+script_runner = "@shell"
+script = '''
+node tools/slides-browser-smoke.mjs target/debug/adocweave "${ADOCWEAVE_BROWSER:-chromium}" packages/slides-helper/bin.mjs
+'''
 
 [tasks.main-gate]
 category = "CI entry points"

@@ -17,7 +17,8 @@ const evidence = JSON.parse(await readFile(join(helper, "licenses/evidence.json"
 export async function verifyInstalledHelper(archive, { published = false } = {}) {
   const temporary = await mkdtemp(join(tmpdir(), "adocweave-slides-install-"));
   try {
-    const install = ["install", "--ignore-scripts", "--no-audit", "--no-fund", "--prefix", temporary];
+    const cache = join(temporary, ".npm-cache");
+    const install = ["install", "--ignore-scripts", "--no-audit", "--no-fund", "--prefix", temporary, "--cache", cache];
     install.push("--registry=https://registry.npmjs.org");
     if (!published) install.push("--offline");
     install.push(published ? `${manifest.name}@${manifest.version}` : resolve(archive));
@@ -54,13 +55,14 @@ export async function verifyInstalledHelper(archive, { published = false } = {})
         assert.deepEqual(result.scopes[scope][kind].map(({ key, status }) => ({ key, status })),
           fixture.scopes[scope][kind].map(({ key }) => ({ key, status: "ok" })));
       }
-      assert.ok(result.scopes[scope].equations.every(({ svg, mathml }) => svg.includes("<svg") && mathml.includes("<math")));
+      assert.ok(result.scopes[scope].equations.every((equation) => equation.svg.includes("<svg")
+        && Object.keys(equation).sort().join(",") === "key,status,svg"));
       assert.equal(result.scopes[scope].bibliography.length, fixture.scopes[scope].citations.length);
     }
     assert.match(result.notices.math.fontAttribution, /Tsolomitis/);
     assert.match(result.notices.citations.license, /Exhibit B/);
     if (published) {
-      const report = JSON.parse(execFileSync("npm", ["audit", "signatures", "--json", "--include-attestations", "--prefix", temporary], {
+      const report = JSON.parse(execFileSync("npm", ["audit", "signatures", "--json", "--include-attestations", "--prefix", temporary, "--cache", cache], {
         encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
       }));
       assertSignatureAudit(report, manifest);

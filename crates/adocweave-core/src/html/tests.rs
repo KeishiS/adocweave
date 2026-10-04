@@ -2409,10 +2409,15 @@ fn validated_math_and_finite_citations_share_safe_rendering_and_usage_checks() {
     use crate::rendered_content::{
         ResolvedMath, ResolvedRichCitation, RichInline, ValidatedMath, ValidatedRichText,
     };
-    let analysis = analyze("latexmath:[x < y] cite:[paper].\n");
+    let analysis = analyze("latexmath:[x < y & \"quoted\"] cite:[paper].\n");
     let formula = crate::projection::formulas(&analysis).remove(0);
     let citation = analysis.citations().remove(0);
-    let math=ValidatedMath::validate("body","m0",r#"<svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><text>x &lt; y</text></svg>"#,r#"<math xmlns="http://www.w3.org/1998/Math/MathML"><mi>x</mi><mo>&lt;</mo><mi>y</mi></math>"#).unwrap();
+    let math = ValidatedMath::validate(
+        "body",
+        "m0",
+        r#"<svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><text>x &lt; y</text></svg>"#,
+    )
+    .unwrap();
     let rich = ValidatedRichText::validate(vec![RichInline::Emphasis {
         children: vec![RichInline::Text {
             text: "<Paper>".into(),
@@ -2427,12 +2432,16 @@ fn validated_math_and_finite_citations_share_safe_rendering_and_usage_checks() {
         )]);
     let output = super::render_with_inputs(analysis.document(), &RenderPolicy::default(), &inputs);
     assert!(output.html.contains("<svg xmlns="));
-    assert!(output.html.contains("class=\"math-assistive\"><math"));
     assert!(
         output
             .html
-            .contains("class=\"math-source\" aria-hidden=\"true\">x &lt; y</code>")
+            .contains("role=\"math\" aria-label=\"x &lt; y &amp; &#34;quoted&#34;\""),
+        "{}",
+        output.html
     );
+    assert!(output.html.contains(
+        "class=\"math-source\" aria-hidden=\"true\">x &lt; y &amp; &#34;quoted&#34;</code>"
+    ));
     assert!(output.html.contains("<em>&lt;Paper&gt;</em>"));
     assert!(output.diagnostics.is_empty());
     let raw = super::render(analysis.document(), &RenderPolicy::default());

@@ -278,14 +278,8 @@ pub fn check(condition: bool, message: &str) -> HostResult<()> {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "status", rename_all = "lowercase", deny_unknown_fields)]
 pub enum EquationResult {
-    Ok {
-        key: String,
-        svg: String,
-        mathml: String,
-    },
-    Failed {
-        key: String,
-    },
+    Ok { key: String, svg: String },
+    Failed { key: String },
 }
 impl EquationResult {
     pub fn key(&self) -> &str {

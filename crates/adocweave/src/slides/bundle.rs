@@ -139,6 +139,11 @@ fn fixed_files(audience: Audience, preview: bool) -> Vec<BundleFile> {
             include_bytes!("../../assets/slides/theme.css"),
         ),
         static_file(
+            "assets/content.css",
+            BundleMediaType::Css,
+            include_bytes!("../../assets/slides/content.css"),
+        ),
+        static_file(
             "assets/bootstrap.js",
             BundleMediaType::JavaScript,
             include_bytes!("../../assets/slides/bootstrap.js"),
@@ -234,7 +239,7 @@ fn page(
         ""
     };
     format!(
-        "<!doctype html>\n<html lang=\"{language}\">\n<head>\n<meta charset=\"utf-8\">\n<meta http-equiv=\"Content-Security-Policy\" content=\"{}\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>{}</title>\n<link rel=\"stylesheet\" href=\"assets/reset.css\">\n<link rel=\"stylesheet\" href=\"assets/reveal.css\">\n<link rel=\"stylesheet\" href=\"assets/theme.css\">\n{styles}</head>\n<body data-audience=\"{audience_name}\"{citations}{preview_body}>\n{html}{attribution}<script src=\"assets/reveal.js\"></script>\n{notes}<script src=\"assets/bootstrap.js\"></script>\n{preview_script}</body>\n</html>\n",
+        "<!doctype html>\n<html lang=\"{language}\">\n<head>\n<meta charset=\"utf-8\">\n<meta http-equiv=\"Content-Security-Policy\" content=\"{}\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>{}</title>\n<link rel=\"stylesheet\" href=\"assets/reset.css\">\n<link rel=\"stylesheet\" href=\"assets/reveal.css\">\n<link rel=\"stylesheet\" href=\"assets/theme.css\">\n<link rel=\"stylesheet\" href=\"assets/content.css\">\n{styles}</head>\n<body data-audience=\"{audience_name}\"{citations}{preview_body}>\n{html}{attribution}<script src=\"assets/reveal.js\"></script>\n{notes}<script src=\"assets/bootstrap.js\"></script>\n{preview_script}</body>\n</html>\n",
         escape(&content_security_policy(audience)),
         escape(title)
     )
