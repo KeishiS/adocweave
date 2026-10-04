@@ -27,31 +27,45 @@
   "assets": [
     {
       "path": "LICENSE.fitty.txt",
-      "sha256": "53e4fe18b1542d7c8193cc5a733624aa77b09542730e447736dd6ea8ac0e5c66"
+      "sha256": "53e4fe18b1542d7c8193cc5a733624aa77b09542730e447736dd6ea8ac0e5c66",
+      "archive": "fitty",
+      "member": "package/LICENSE"
     },
     {
       "path": "LICENSE.marked.txt",
-      "sha256": "8e3a3f82f59a60958f56ca08f445647c32a4733dc7ca6c2c46f6eb898471ab9c"
+      "sha256": "8e3a3f82f59a60958f56ca08f445647c32a4733dc7ca6c2c46f6eb898471ab9c",
+      "archive": "marked",
+      "member": "package/LICENSE.md"
     },
     {
       "path": "LICENSE.revealjs.txt",
-      "sha256": "b2883e4b610bfa1b4d8fff84c4d4b825cc7d553cbd9fec4777c04068a2859dc0"
+      "sha256": "b2883e4b610bfa1b4d8fff84c4d4b825cc7d553cbd9fec4777c04068a2859dc0",
+      "archive": "reveal.js",
+      "member": "package/LICENSE"
     },
     {
       "path": "notes.js",
-      "sha256": "447c42f365876e41853de81453d0c53c580c5b2099132e8f61200de4a0ba2af3"
+      "sha256": "447c42f365876e41853de81453d0c53c580c5b2099132e8f61200de4a0ba2af3",
+      "archive": "reveal.js",
+      "member": "package/dist/plugin/notes.js"
     },
     {
       "path": "reset.css",
-      "sha256": "39413c3490fdcf826427c26ff4c1ee59ea961a0aa8507c18454e0c6dc96c12d8"
+      "sha256": "39413c3490fdcf826427c26ff4c1ee59ea961a0aa8507c18454e0c6dc96c12d8",
+      "archive": "reveal.js",
+      "member": "package/dist/reset.css"
     },
     {
       "path": "reveal.css",
-      "sha256": "615ee850cbbb98a0f688b60ed37b21819a3f54c9f3e6f20e33e63693ab74a0c0"
+      "sha256": "615ee850cbbb98a0f688b60ed37b21819a3f54c9f3e6f20e33e63693ab74a0c0",
+      "archive": "reveal.js",
+      "member": "package/dist/reveal.css"
     },
     {
       "path": "reveal.js",
-      "sha256": "aa1bbbf2617b23a623b23612cb3c5bdb63de512e652bf20fcfa832b045d37844"
+      "sha256": "aa1bbbf2617b23a623b23612cb3c5bdb63de512e652bf20fcfa832b045d37844",
+      "archive": "reveal.js",
+      "member": "package/dist/reveal.js"
     }
   ],
   "speakerScripts": [
