@@ -72,7 +72,7 @@ fn public_is_offline_and_private_resources_are_not_even_acquired() {
     assert!(!manifest.contains("first.svg"));
     assert!(manifest.contains("sizeBytes"));
     let reader = adocweave_project::open_managed_bundle(
-        &root.path().join("dist/talk"),
+        &root.path().join("dist/talk").canonicalize().unwrap(),
         Default::default(),
         &adocweave_core::NeverCancel,
     )
@@ -112,7 +112,7 @@ fn presenter_to_public_removes_private_images_plugin_and_manifest_entries() {
         ],
     ));
     let old = adocweave_project::open_managed_bundle(
-        &root.path().join("dist"),
+        &root.path().join("dist").canonicalize().unwrap(),
         Default::default(),
         &adocweave_core::NeverCancel,
     )
@@ -284,7 +284,7 @@ fn local_css_is_linked_after_the_fixed_theme_in_author_order_and_updated_by_dige
     ];
     success(&convert(root.path(), &arguments));
     let reader = adocweave_project::open_managed_bundle(
-        &root.path().join("dist"),
+        &root.path().join("dist").canonicalize().unwrap(),
         Default::default(),
         &adocweave_core::NeverCancel,
     )
