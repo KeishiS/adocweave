@@ -21,6 +21,7 @@ pub(crate) struct ParsedFacts<'a> {
     pub header: DocumentHeader,
     pub attribute_expansion_limits: AttributeExpansionLimits,
     pub processing_limits: crate::limits::AnalysisLimits,
+    pub max_formula_bytes: usize,
     pub external_attributes: &'a std::collections::BTreeMap<String, Option<String>>,
 }
 
@@ -85,7 +86,12 @@ pub(crate) fn lower(
         checkpoint,
     )
     .map_err(|()| LoweringFailure::Cancelled)?;
-    facts.blocks = normalize_verbatim_blocks(facts.blocks, &attribute_environment, checkpoint)?;
+    facts.blocks = normalize_verbatim_blocks(
+        facts.blocks,
+        &attribute_environment,
+        facts.max_formula_bytes,
+        checkpoint,
+    )?;
     resolve_delimited_presentations(&mut facts.blocks, checkpoint)?;
     attach_anchors(&mut facts.anchors, &facts.blocks, checkpoint)?;
     facts.header.doctype = document_type(&attribute_environment, facts.header.end);
@@ -333,6 +339,7 @@ fn resolve_delimited_presentation(
 fn normalize_verbatim_blocks(
     blocks: Vec<AstBlock>,
     attributes: &crate::attributes::AttributeEnvironment,
+    max_formula_bytes: usize,
     checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
 ) -> Result<Vec<AstBlock>, LoweringFailure> {
     let mut normalized = Vec::with_capacity(blocks.len());
@@ -340,7 +347,12 @@ fn normalize_verbatim_blocks(
         if checkpoint.is_cancelled() {
             return Err(LoweringFailure::Cancelled);
         }
-        normalized.push(normalize_verbatim_block(block, attributes, checkpoint)?);
+        normalized.push(normalize_verbatim_block(
+            block,
+            attributes,
+            max_formula_bytes,
+            checkpoint,
+        )?);
     }
     Ok(normalized)
 }
@@ -348,6 +360,7 @@ fn normalize_verbatim_blocks(
 fn normalize_verbatim_block(
     block: AstBlock,
     attributes: &crate::attributes::AttributeEnvironment,
+    max_formula_bytes: usize,
     checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
 ) -> Result<AstBlock, LoweringFailure> {
     let block = match block {
@@ -357,6 +370,7 @@ fn normalize_verbatim_block(
                     *children = normalize_verbatim_blocks(
                         std::mem::take(children),
                         attributes,
+                        max_formula_bytes,
                         checkpoint,
                     )?;
                 }
@@ -375,6 +389,7 @@ fn normalize_verbatim_block(
                                 *children = normalize_verbatim_blocks(
                                     std::mem::take(children),
                                     attributes,
+                                    max_formula_bytes,
                                     checkpoint,
                                 )?;
                             }
@@ -383,6 +398,56 @@ fn normalize_verbatim_block(
                 }
                 crate::block_model::DelimitedContent::Verbatim(_)
                 | crate::block_model::DelimitedContent::Passthrough(_) => {}
+            }
+            // Like source listings below, math style belongs to the merged
+            // metadata, even when an ID or role is written on a later line.
+            if block.kind == crate::block_model::DelimitedBlockKind::Pass
+                && let Some(language) =
+                    math_language(&block.metadata, attributes, block.range.start())
+                && let crate::block_model::DelimitedContent::Passthrough(value) = block.content
+            {
+                let mut problems = Vec::new();
+                if block.problems.iter().any(|problem| {
+                    problem.kind == crate::block_model::BlockProblemKind::UnclosedBlock
+                }) {
+                    problems.push(crate::block_model::MathProblem {
+                        kind: crate::block_model::MathProblemKind::Unclosed,
+                        range: block.opening_delimiter_range,
+                    });
+                }
+                if value.is_empty() {
+                    problems.push(crate::block_model::MathProblem {
+                        kind: crate::block_model::MathProblemKind::Empty,
+                        range: block.content_range,
+                    });
+                }
+                if value.len() > max_formula_bytes {
+                    problems.push(crate::block_model::MathProblem {
+                        kind: crate::block_model::MathProblemKind::SizeLimitExceeded,
+                        range: block.content_range,
+                    });
+                }
+                let range = crate::source::TextRange::new(
+                    block
+                        .metadata
+                        .range
+                        .map_or(block.range.start(), |range| range.start()),
+                    block.range.end(),
+                )
+                .expect("metadata precedes math block");
+                return Ok(AstBlock::Math(crate::block_model::MathBlock {
+                    attribute_range: block
+                        .metadata
+                        .range
+                        .unwrap_or(block.opening_delimiter_range),
+                    metadata: block.metadata,
+                    range,
+                    delimiter_range: block.opening_delimiter_range,
+                    content_range: block.content_range,
+                    language,
+                    value,
+                    problems,
+                }));
             }
             // A listing block styled `source`, or written `[,lang]`, is a source
             // block wherever among the metadata lines the attribute sits: the
@@ -500,19 +565,52 @@ fn normalize_verbatim_block(
                     return Err(LoweringFailure::Cancelled);
                 }
                 for child in &mut item.children {
-                    normalize_list(child, attributes, checkpoint)?;
+                    normalize_list(child, attributes, max_formula_bytes, checkpoint)?;
                 }
                 item.continuations = normalize_verbatim_blocks(
                     std::mem::take(&mut item.continuations),
                     attributes,
+                    max_formula_bytes,
                     checkpoint,
                 )?;
             }
             AstBlock::List(list)
         }
+        AstBlock::Math(mut math) => {
+            if let Some(metadata_range) = math.metadata.range {
+                math.range =
+                    crate::source::TextRange::new(metadata_range.start(), math.range.end())
+                        .expect("metadata precedes math block");
+            }
+            if let Some(language) = math_language(&math.metadata, attributes, math.range.start()) {
+                math.language = language;
+            }
+            AstBlock::Math(math)
+        }
         other => other,
     };
     Ok(block)
+}
+
+fn math_language(
+    metadata: &crate::block_model::BlockMetadata,
+    attributes: &crate::attributes::AttributeEnvironment,
+    offset: crate::source::TextSize,
+) -> Option<crate::inline_model::MathLanguage> {
+    let style = metadata
+        .attributes
+        .iter()
+        .find(|attribute| attribute.name.is_none())?;
+    match style.value.as_str() {
+        "latexmath" => Some(crate::inline_model::MathLanguage::Latex),
+        "asciimath" => Some(crate::inline_model::MathLanguage::AsciiMath),
+        "stem" => Some(crate::inline_model::stem_language(
+            attributes
+                .resolve_at("stem", offset)
+                .and_then(|resolved| resolved.value.ok().flatten()),
+        )),
+        _ => None,
+    }
 }
 
 /// The language attribute of a block whose first positional attribute makes it a
@@ -625,6 +723,7 @@ fn source_info(
 fn normalize_list(
     list: &mut crate::block_model::ListBlock,
     attributes: &crate::attributes::AttributeEnvironment,
+    max_formula_bytes: usize,
     checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
 ) -> Result<(), LoweringFailure> {
     resolve_list_presentation(list, checkpoint)?;
@@ -633,11 +732,12 @@ fn normalize_list(
             return Err(LoweringFailure::Cancelled);
         }
         for child in &mut item.children {
-            normalize_list(child, attributes, checkpoint)?;
+            normalize_list(child, attributes, max_formula_bytes, checkpoint)?;
         }
         item.continuations = normalize_verbatim_blocks(
             std::mem::take(&mut item.continuations),
             attributes,
+            max_formula_bytes,
             checkpoint,
         )?;
     }
@@ -785,7 +885,7 @@ fn attach_anchors(
             return std::ops::ControlFlow::Break(());
         }
         if let crate::walker::SemanticNode::Block(block) = node {
-            ranges.push(block.range());
+            ranges.push((block.range(), block.metadata().range));
         }
         std::ops::ControlFlow::Continue(())
     });
@@ -794,7 +894,7 @@ fn attach_anchors(
     }
     crate::cancellation::sort_by_cancellable(
         &mut ranges,
-        &mut |left, right| (left.start(), left.end()).cmp(&(right.start(), right.end())),
+        &mut |left, right| (left.0.start(), left.0.end()).cmp(&(right.0.start(), right.0.end())),
         checkpoint,
     )
     .map_err(|()| LoweringFailure::Cancelled)?;
@@ -803,11 +903,15 @@ fn attach_anchors(
             return Err(LoweringFailure::Cancelled);
         }
         anchor.target_range = None;
-        for range in &ranges {
+        for (range, metadata_range) in &ranges {
             if checkpoint.is_cancelled() {
                 return Err(LoweringFailure::Cancelled);
             }
-            if range.start() >= anchor.range.end() {
+            if range.start() >= anchor.range.end()
+                || metadata_range.is_some_and(|metadata| {
+                    metadata.start() <= anchor.range.start() && anchor.range.end() <= metadata.end()
+                })
+            {
                 anchor.target_range = Some(*range);
                 break;
             }
@@ -943,6 +1047,13 @@ pub(crate) fn resolve_inlines(
             }
             Inline::Text(text) => {
                 text.value = crate::substitution::apply_replacements(&text.value);
+            }
+            Inline::Formula(formula) if formula.uses_stem_attribute => {
+                formula.language = crate::inline_model::stem_language(
+                    attributes
+                        .resolve_at("stem", offset)
+                        .and_then(|resolved| resolved.value.ok().flatten()),
+                );
             }
             Inline::Literal { .. }
             | Inline::HardBreak { .. }

@@ -628,7 +628,24 @@ fn parse_block_sequence(
             budget,
         )? {
             match recognition {
-                LineRecognition::Math => parser.mark_content_seen(),
+                LineRecognition::Math => {
+                    if let Some(id) = ast_blocks
+                        .last()
+                        .and_then(|block| block.metadata().id.as_ref())
+                        && id.range.start() >= line.full_range().start()
+                    {
+                        anchors.push(ExplicitAnchor {
+                            range: line.full_range(),
+                            id_range: id.range,
+                            label_range: None,
+                            id: id.value.clone(),
+                            label: None,
+                            target_range: None,
+                            valid: crate::document::is_valid_anchor_id(&id.value),
+                        });
+                    }
+                    parser.mark_content_seen();
+                }
                 LineRecognition::Break
                 | LineRecognition::LiteralParagraph
                 | LineRecognition::PreprocessorDirective
@@ -886,6 +903,7 @@ fn finish_document(
                 max_bytes: config.limits.max_attribute_expansion_bytes,
             },
             processing_limits: config.limits,
+            max_formula_bytes: config.max_formula_bytes,
         },
         &mut checkpoint,
     )
