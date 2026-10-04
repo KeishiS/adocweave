@@ -784,6 +784,7 @@ fn append_dimension(
 pub(super) const fn math_class(language: crate::inline_model::MathLanguage) -> &'static str {
     match language {
         crate::inline_model::MathLanguage::Latex => "math-latex",
+        crate::inline_model::MathLanguage::AsciiMath => "math-asciimath",
         crate::inline_model::MathLanguage::Typst => "math-typst",
     }
 }

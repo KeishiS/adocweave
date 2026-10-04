@@ -342,13 +342,20 @@ CSV、DSV、TSVや、cellの結合、配置およびAsciiDoc形式のcellにも�
 用語:: 用語の説明です。
 ----
 
-==== LaTeX STEMブロック
+==== STEMブロック
 
-``stem``または``latexmath`` styleを付けたpass blockへLaTeX数式を記述します。
+``++++``で囲んだブロックへ``latexmath`` styleを付けるとLaTeX、``asciimath`` styleを付けると
+AsciiMathの数式を記述できます。数式内の属性参照、書式およびmacroは展開せず、記述した文字列を保持します。
+通常のHTML出力では、数式をHTMLエスケープした``pre``と``code``として表示します。
+
+``stem`` styleは、その位置で有効な文書属性``stem``に従います。値が``latexmath``、``latex``または
+``tex``ならLaTeX、それ以外の値、空の値および未設定ならAsciiMathです。本文やinclude先で属性を変更すると、
+それ以降の``stem``へ適用します。明示した``latexmath``と``asciimath``は文書属性より優先します。
+ID、roleおよびoptionはstyleと同じ属性行にも、直前の別の属性行にも記述できます。
 
 [source,asciidoc]
 ----
-[stem]
+[latexmath#energy]
 ++++
 E = mc^2
 ++++
@@ -463,11 +470,13 @@ xref:another-document.adoc#target[別の文書へ移動]
 
 ==== インラインSTEM
 
-``stem:[...]``または``latexmath:[...]``へLaTeX数式を記述します。
+``latexmath:[...]``へLaTeX、``asciimath:[...]``へAsciiMathの数式を記述します。
+``stem:[...]``はSTEMブロックと同じ規則で、その位置の文書属性から記法を選びます。
+通常のHTML出力では、記述した数式をHTMLエスケープした``code``として表示します。
 
 [source,asciidoc]
 ----
-質量とエネルギーの関係はstem:[E = mc^2]です。
+質量とエネルギーの関係は latexmath:[E = mc^2] です。
 ----
 
 ==== 標準macroとmedia

@@ -63,6 +63,16 @@ highlight、subscript、superscript、typographic quoteを含む対応書式に�
 passthroughは置換を抑止する内容として保持しますが、生のHTMLとして出力せずHTMLエスケープします。
 任意の``subs``属性による置換段階の追加、削除および並べ替えには対応していません。
 
+=== 数式
+
+``latexmath``と``asciimath``の明示記法、および文書属性``stem``による記法の選択に対応します。
+``stem``の値が``latexmath``、``latex``または``tex``ならLaTeX、それ以外、空および未設定ならAsciiMathです。
+各数式の位置で有効な属性値を使い、明示記法を優先します。LaTeXを使う文書では``:stem: latexmath``を設定するか、
+``latexmath:[...]``および``[latexmath]``を指定してください。
+
+通常のHTML出力では数式をHTMLエスケープした原文として表示し、数式エンジンを読み込みません。
+AsciidoctorのHTML出力における、文書属性``stem``の存在によるMathJaxの有効化は再現しません。
+
 === ブロックのroleとHTML class
 
 roleをそのままclassにせず、利用側が許可した名前だけを``role-<name>``として出力します。

@@ -450,6 +450,37 @@ mod tests {
     }
 
     #[test]
+    fn formatter_preserves_math_notation_and_metadata_with_opaque_contents() {
+        let source = ":stem: tex\n\nlatexmath:[{x} * y] asciimath:[sqrt x]  \n\n[stem]\n[#energy]\n++++\n  {x} * y < z  \r\n++++\n";
+        let formatted = format(source, &FormatConfig::default()).expect("format math");
+        assert!(formatted.formatted.contains("  {x} * y < z  \r\n"));
+        let reparsed = crate::core::Engine::new(crate::core::AnalysisOptions::default())
+            .analyze(&formatted.formatted)
+            .expect("formatted math");
+        let formulas = crate::projection::formulas(&reparsed);
+        assert_eq!(
+            formulas
+                .iter()
+                .map(|formula| formula.language)
+                .collect::<Vec<_>>(),
+            [
+                crate::inline_model::MathLanguage::Latex,
+                crate::inline_model::MathLanguage::AsciiMath,
+                crate::inline_model::MathLanguage::Latex
+            ]
+        );
+        assert_eq!(
+            reparsed.document().blocks()[1]
+                .metadata()
+                .id
+                .as_ref()
+                .expect("ID")
+                .value,
+            "energy"
+        );
+    }
+
+    #[test]
     fn formatter_preserves_quoted_and_asciidoc_table_cells_byte_for_byte() {
         let source = "[format=csv]\n|===\na,\"one,  two\"\n|===\n\n[cols=a]\n|===\n|paragraph  \n\n* item\n|===\n";
         let formatted = format(source, &FormatConfig::default()).expect("format");

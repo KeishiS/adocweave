@@ -7,6 +7,8 @@
 #[serde(rename_all = "kebab-case")]
 pub enum MathLanguage {
     Latex,
+    #[serde(rename = "asciimath")]
+    AsciiMath,
     Typst,
 }
 

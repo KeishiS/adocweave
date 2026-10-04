@@ -116,6 +116,7 @@ impl Default for MathLanguagePolicy {
         Self {
             allowed: [
                 crate::inline_model::MathLanguage::Latex,
+                crate::inline_model::MathLanguage::AsciiMath,
                 crate::inline_model::MathLanguage::Typst,
             ]
             .into_iter()

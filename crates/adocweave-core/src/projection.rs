@@ -716,6 +716,7 @@ const fn math_language_feature(language: crate::inline_model::MathLanguage) -> (
     match language {
         crate::inline_model::MathLanguage::Latex => (0, "latexmath"),
         crate::inline_model::MathLanguage::Typst => (1, "typst"),
+        crate::inline_model::MathLanguage::AsciiMath => (2, "asciimath"),
     }
 }
 
@@ -778,6 +779,10 @@ mod tests {
     fn every_math_language_has_a_stable_rendering_feature_name() {
         assert_eq!(math_language_feature(MathLanguage::Latex), (0, "latexmath"));
         assert_eq!(math_language_feature(MathLanguage::Typst), (1, "typst"));
+        assert_eq!(
+            math_language_feature(MathLanguage::AsciiMath),
+            (2, "asciimath")
+        );
     }
 
     #[test]
@@ -811,6 +816,117 @@ mod tests {
                 source_languages: vec!["kotlin".to_owned()],
                 table_of_contents: false,
             }
+        );
+    }
+
+    #[test]
+    fn math_include_metadata_keeps_all_origins_and_source_order_attributes() {
+        let included = "[stem.important]\n++++\n{x} * y < z\n++++\n\n:stem!:\n\nstem:[sqrt x]\n";
+        let mut snapshot = ResourceSnapshot::default();
+        snapshot.insert(
+            "math.adoc",
+            ResourceDocument {
+                source_id: SourceId::new("included:math.adoc"),
+                source: included.into(),
+            },
+        );
+        let options = PreprocessOptions {
+            enable_includes: true,
+            ..PreprocessOptions::default()
+        };
+        let result = analyze_preprocessed_fixture(
+            AnalysisOptions::default(),
+            ":stem: tex\n\n[#energy]\ninclude::math.adoc[]\n\nstem:[after]\n",
+            &snapshot,
+            &options,
+        );
+        let projected = formulas(&result.analysis);
+        assert_eq!(
+            projected
+                .iter()
+                .map(|formula| formula.language)
+                .collect::<Vec<_>>(),
+            [
+                MathLanguage::Latex,
+                MathLanguage::AsciiMath,
+                MathLanguage::AsciiMath
+            ]
+        );
+        let origin = result
+            .document
+            .origins_for_range(crate::preprocessor::ExpandedRange::new(
+                projected[0].content_range,
+            ));
+        assert_eq!(origin.len(), 1);
+        assert_eq!(
+            origin[0].source_id,
+            Some(SourceId::new("included:math.adoc"))
+        );
+        let range = origin[0].range.text_range();
+        assert_eq!(
+            &included[range.start().to_usize()..range.end().to_usize()],
+            projected[0].source
+        );
+        let crate::block_model::AstBlock::Math(math) = &result.analysis.ast().blocks()[0] else {
+            panic!("math");
+        };
+        assert_eq!(math.metadata.id.as_ref().expect("ID").value, "energy");
+        let metadata_origins =
+            result
+                .document
+                .origins_for_range(crate::preprocessor::ExpandedRange::new(
+                    math.metadata.range.expect("metadata"),
+                ));
+        assert_eq!(metadata_origins.len(), 2);
+        assert_eq!(
+            metadata_origins[1].source_id,
+            Some(SourceId::new("included:math.adoc"))
+        );
+        let role = &math.metadata.roles[0];
+        let role_origins = result
+            .document
+            .origins_for_range(crate::preprocessor::ExpandedRange::new(role.range));
+        let range = role_origins[0].range.text_range();
+        assert_eq!(
+            &included[range.start().to_usize()..range.end().to_usize()],
+            "important"
+        );
+    }
+
+    #[test]
+    fn math_include_transformed_ranges_keep_whole_source_lines() {
+        let included = "  [latexmath#energy]\n  ++++\n  E = mc^2\n  ++++\n";
+        let mut snapshot = ResourceSnapshot::default();
+        snapshot.insert(
+            "math.adoc",
+            ResourceDocument {
+                source_id: SourceId::new("included:math.adoc"),
+                source: included.into(),
+            },
+        );
+        let options = PreprocessOptions {
+            enable_includes: true,
+            ..PreprocessOptions::default()
+        };
+        let result = analyze_preprocessed_fixture(
+            AnalysisOptions::default(),
+            "include::math.adoc[indent=-2]\n",
+            &snapshot,
+            &options,
+        );
+        let projected = formulas(&result.analysis);
+        assert_eq!(projected.len(), 1);
+        assert_eq!(projected[0].language, MathLanguage::Latex);
+        let origins = result
+            .document
+            .origins_for_range(crate::preprocessor::ExpandedRange::new(
+                projected[0].content_range,
+            ));
+        assert_eq!(origins.len(), 1);
+        let range = origins[0].range.text_range();
+        assert_eq!(
+            &included[range.start().to_usize()..range.end().to_usize()],
+            "  E = mc^2\n"
         );
     }
 
@@ -951,9 +1067,9 @@ a^2
         assert_eq!(projected[0].display(), FormulaKind::Inline);
         assert_eq!(
             projected[0].language,
-            crate::inline_model::MathLanguage::Latex
+            crate::inline_model::MathLanguage::AsciiMath
         );
-        assert_eq!(projected[0].language.as_asciidoc_name(), "latexmath");
+        assert_eq!(projected[0].language.as_asciidoc_name(), "asciimath");
         assert_eq!(projected[0].source, "x + y");
         assert_eq!(
             &analysis.source()[projected[0].content_range.start().to_usize()
@@ -964,7 +1080,7 @@ a^2
         assert_eq!(projected[1].display(), FormulaKind::Block);
         assert_eq!(
             projected[1].language,
-            crate::inline_model::MathLanguage::Latex
+            crate::inline_model::MathLanguage::AsciiMath
         );
         assert_eq!(projected[1].source, "a^2\n");
         assert_eq!(

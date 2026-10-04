@@ -104,6 +104,7 @@ pub(super) const ALLOWED_CLASSES: &[&str] = &[
     "listing-block",
     "literal-block",
     "math-latex",
+    "math-asciimath",
     "math-typst",
     "menu",
     "open",
