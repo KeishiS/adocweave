@@ -520,6 +520,52 @@ fn body_cannot_link_to_note_only_targets_and_unsafe_svg_cannot_be_saved() {
 }
 
 #[test]
+fn unsupported_speaker_note_forms_fail_at_their_original_source() {
+    let root = tempfile::tempdir().unwrap();
+    for marker in [
+        "[NOTE.speaker]",
+        "[NOTE.aside]",
+        "[NOTE.notes]",
+        "[.aside]",
+        "[.speaker]",
+    ] {
+        write(
+            root.path(),
+            "talk.adoc",
+            "= Talk\n\n== Slide\n\ninclude::part.adoc[]\n",
+        );
+        write(
+            root.path(),
+            "part.adoc",
+            &format!("{marker}\n--\nSECRET\n--\n"),
+        );
+        for audience in ["public", "presenter"] {
+            let output = convert(
+                root.path(),
+                &[
+                    "--no-config",
+                    "talk.adoc",
+                    "--to",
+                    "revealjs",
+                    "--output",
+                    "dist",
+                    "--audience",
+                    audience,
+                ],
+            );
+            assert!(!output.status.success(), "{marker}: {audience}");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(stderr.contains("slides-invalid-notes"), "{stderr}");
+            assert!(stderr.contains("part.adoc:"), "{stderr}");
+            assert!(!root.path().join("dist").exists());
+        }
+        let ordinary = convert(root.path(), &["--no-config", "talk.adoc"]);
+        success(&ordinary);
+        assert!(String::from_utf8_lossy(&ordinary.stdout).contains("SECRET"));
+    }
+}
+
+#[test]
 fn finite_fragment_syntax_rejects_effect_ordering_inline_and_note_steps() {
     let root = tempfile::tempdir().unwrap();
     for (source, expected) in [

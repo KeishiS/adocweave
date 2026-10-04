@@ -312,6 +312,19 @@ impl<'document> Deck<'document> {
             };
             for (name, range) in metadata
                 .role_names()
+                .filter(|(name, _)| matches!(*name, "speaker" | "aside"))
+            {
+                problem(
+                    &mut deck.diagnostics,
+                    "slides-invalid-notes",
+                    &format!(
+                        "speaker note role `{name}` is not supported; use the notes role on a plain open block"
+                    ),
+                    range,
+                );
+            }
+            for (name, range) in metadata
+                .role_names()
                 .filter(|(name, _)| unsupported_fragment_name(name))
             {
                 let _ = name;
