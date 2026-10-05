@@ -8,6 +8,7 @@
   ],
   "authoredDirectories": [
     "docs/",
+    "examples/slides/",
     "packages/textlint-plugin-asciidoc/",
     "packages/slides-helper/"
   ],
