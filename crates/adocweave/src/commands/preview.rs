@@ -694,6 +694,114 @@ mod tests {
     }
 
     #[test]
+    fn csl_defaults_watch_only_bibliography_and_explicit_overrides() {
+        let root = tempfile::tempdir().unwrap();
+        let bibliography = root.path().join("references.json");
+        let style = root.path().join("style.csl");
+        let locale = root.path().join("locale.xml");
+        std::fs::write(
+            root.path().join("talk.adoc"),
+            "= Talk\n\n== Slide\n\ncite:[work].\n",
+        )
+        .unwrap();
+        std::fs::write(&bibliography, r#"[{"id":"work","title":"Visible work"}]"#).unwrap();
+        std::fs::write(&style, include_str!("../../assets/slides/default.csl")).unwrap();
+        std::fs::write(
+            &locale,
+            include_str!("../../assets/slides/locale-en-US.xml"),
+        )
+        .unwrap();
+        for (use_style, use_locale) in [(false, false), (true, false), (false, true), (true, true)]
+        {
+            let data = SlidesData {
+                bibliography: Some(PathBuf::from("references.json")),
+                csl_style: use_style.then(|| PathBuf::from("style.csl")),
+                csl_locale: use_locale.then(|| PathBuf::from("locale.xml")),
+                ..Default::default()
+            };
+            let build = public_slide_build(root.path(), &data);
+            assert!(
+                !build.html().contains("Preview error"),
+                "{}",
+                build.diagnostics
+            );
+            assert!(build.html().contains("Visible work"));
+            assert!(build.has_dependency(&bibliography));
+            assert_eq!(build.has_dependency(&style), use_style);
+            assert_eq!(build.has_dependency(&locale), use_locale);
+        }
+        std::fs::write(
+            root.path().join("talk.adoc"),
+            "= Talk\n\n== Slide\n\nVisible.\n\n[.notes]\n--\ncite:[work].\n--\n",
+        )
+        .unwrap();
+        std::fs::remove_file(&bibliography).unwrap();
+        let data = SlidesData {
+            bibliography: Some(PathBuf::from("references.json")),
+            ..Default::default()
+        };
+        let build = public_slide_build(root.path(), &data);
+        assert!(
+            !build.html().contains("Preview error"),
+            "{}",
+            build.diagnostics
+        );
+        assert!(!build.has_dependency(&bibliography));
+        assert!(!build.html().contains("slides-body-references"));
+    }
+
+    #[test]
+    fn a_missing_single_csl_override_is_watched_until_repaired() {
+        for (filename, xml, style_override) in [
+            (
+                "style.csl",
+                include_str!("../../assets/slides/default.csl"),
+                true,
+            ),
+            (
+                "locale.xml",
+                include_str!("../../assets/slides/locale-en-US.xml"),
+                false,
+            ),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            std::fs::write(
+                root.path().join("talk.adoc"),
+                "= Talk\n\n== Slide\n\ncite:[work].\n",
+            )
+            .unwrap();
+            std::fs::write(
+                root.path().join("references.json"),
+                r#"[{"id":"work","title":"Repaired work"}]"#,
+            )
+            .unwrap();
+            let data = SlidesData {
+                bibliography: Some(PathBuf::from("references.json")),
+                csl_style: style_override.then(|| PathBuf::from(filename)),
+                csl_locale: (!style_override).then(|| PathBuf::from(filename)),
+                ..Default::default()
+            };
+            let path = root.path().join(filename);
+            let missing = public_slide_build(root.path(), &data);
+            assert!(missing.html().contains("Preview error"));
+            assert!(missing.has_dependency(&path));
+            std::fs::write(&path, "<invalid").unwrap();
+            let invalid = public_slide_build(root.path(), &data);
+            assert!(invalid.html().contains("Preview error"));
+            assert!(invalid.has_dependency(&path));
+            std::fs::write(&path, xml).unwrap();
+            let repaired = public_slide_build(root.path(), &data);
+            assert!(
+                !repaired.html().contains("Preview error"),
+                "{}",
+                repaired.diagnostics
+            );
+            assert!(repaired.html().contains("Repaired work"));
+            assert!(repaired.has_dependency(&path));
+        }
+    }
+
+    #[test]
     fn public_preview_never_opens_or_watches_note_only_images_and_data_flags() {
         let root = tempfile::tempdir().unwrap();
         std::fs::write(root.path().join("talk.adoc"), "= Public\n\n== Visible\n\nBody.\n\n[.notes]\n--\nstem:[x+y] cite:[private]\n\nimage::private.svg[]\n--\n").unwrap();

@@ -10,6 +10,10 @@ separate changelogs for the
 
 ## [0.61.0] - 2026-10-05
 
+### Added
+
+- Slides with CSL citations need only `--bibliography`: the CLI embeds a numeric citation style and the full CSL `en-US` locale. `--csl-style` and `--csl-locale` independently override these defaults; invalid explicit files remain errors. The built-in Mincho theme applies without `--css`.
+
 ### Breaking changes
 
 - Slide footnotes support unnumbered inline math; equation numbers and label definitions in footnotes are rejected. References to equations defined in the same scope's main content remain supported. Presenter notes require their own footnote definitions instead of reusing body footnotes.

@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<style xmlns="http://purl.org/net/xbiblio/csl" version="1.0" class="in-text" default-locale="en-US">
+  <info>
+    <title>AdocWeave research slides</title>
+    <id>https://github.com/KeishiS/adocweave/blob/main/crates/adocweave/assets/slides/default.csl</id>
+    <link href="https://github.com/KeishiS/adocweave/blob/main/crates/adocweave/assets/slides/default.csl" rel="self"/>
+    <author><name>AdocWeave contributors</name></author>
+    <category citation-format="numeric"/>
+    <category field="generic-base"/>
+    <summary>Compact numbered citations and bibliographies for research slides.</summary>
+    <updated>2026-10-05T00:00:00+00:00</updated>
+    <rights>MIT OR Apache-2.0</rights>
+  </info>
+  <macro name="author">
+    <names variable="author">
+      <name initialize-with=". " and="text" delimiter=", "/>
+      <substitute>
+        <names variable="editor">
+          <name initialize-with=". " and="text" delimiter=", "/>
+          <label form="short" prefix=", "/>
+        </names>
+      </substitute>
+    </names>
+  </macro>
+  <macro name="year">
+    <choose>
+      <if variable="issued">
+        <date variable="issued"><date-part name="year"/></date>
+      </if>
+      <else><text term="no date" form="short"/></else>
+    </choose>
+  </macro>
+  <macro name="source">
+    <group delimiter=", ">
+      <text variable="container-title"/>
+      <text variable="publisher"/>
+      <group>
+        <text variable="volume"/>
+        <text variable="issue" prefix="(" suffix=")"/>
+      </group>
+      <text variable="page"/>
+    </group>
+  </macro>
+  <macro name="identifier">
+    <choose>
+      <if variable="DOI"><text variable="DOI" prefix="doi: "/></if>
+      <else-if variable="URL"><text variable="URL"/></else-if>
+    </choose>
+  </macro>
+  <citation>
+    <sort><key variable="citation-number"/></sort>
+    <layout delimiter=", ">
+      <group prefix="[" suffix="]" delimiter=", ">
+        <text variable="citation-number"/>
+        <group delimiter=" ">
+          <label variable="locator" form="short"/>
+          <text variable="locator"/>
+        </group>
+      </group>
+    </layout>
+  </citation>
+  <bibliography et-al-min="4" et-al-use-first="3">
+    <sort><key variable="citation-number"/></sort>
+    <layout>
+      <text variable="citation-number" prefix="[" suffix="] "/>
+      <group delimiter=". ">
+        <group delimiter=" ">
+          <text macro="author"/>
+          <text macro="year" prefix="(" suffix=")"/>
+        </group>
+        <text variable="title" font-style="italic"/>
+        <text macro="source"/>
+        <text macro="identifier"/>
+      </group>
+    </layout>
+  </bibliography>
+</style>

@@ -146,12 +146,17 @@ ${license}
 ----
 `;
   }).join("\n");
+  const cslDirectory = new URL("../crates/adocweave/assets/slides/", import.meta.url);
+  const cslNotice = ["NOTICE.csl-locales.txt", "LICENSE.csl-locales.txt"]
+    .map(name => readFileSync(new URL(name, cslDirectory), "utf8").trimEnd())
+    .join("\n\n");
   writeNotice(
     outputPath,
     renderCargoThirdPartyNotices(
       cargoRuntimePackages("adocweave", target),
       "native archiveに含める実行ファイル",
-    ) + `\n== 同梱するブラウザー資産\n\n実行ファイルに含める資産の著作権表示とlicense全文を記載します。\n\n${browserNotices}`,
+    ) + `\n== 同梱するブラウザー資産\n\n実行ファイルに含める資産の著作権表示とlicense全文を記載します。\n\n${browserNotices}`
+      + `\n== 同梱するCSLロケール\n\n[listing]\n----\n${cslNotice}\n----\n`,
   );
 }
 

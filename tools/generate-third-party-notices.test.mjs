@@ -36,7 +36,7 @@ test("Cargo noticeには選択した配布runtime依存だけを含めます", (
   assert.doesNotMatch(rendered, /beta 2\.0\.0/);
 });
 
-test("native noticeは埋め込むブラウザー資産の出典とlicense全文も含めます", () => {
+test("native noticeは埋め込むブラウザー資産とCSLロケールの出典とlicense全文も含めます", () => {
   const temporary = mkdtempSync(join(tmpdir(), "adocweave-native-notices-"));
   try {
     const output = join(temporary, "THIRD_PARTY_NOTICES.adoc");
@@ -50,6 +50,12 @@ test("native noticeは埋め込むブラウザー資産の出典とlicense全文
       const asset = metadata.assets.find(asset => asset.archive === source.name && asset.path.startsWith("LICENSE."));
       assert.ok(notice.includes(readFileSync(new URL(asset.path, directory), "utf8").trimEnd()));
     }
+    const cslDirectory = new URL("../crates/adocweave/assets/slides/", import.meta.url);
+    for (const name of ["NOTICE.csl-locales.txt", "LICENSE.csl-locales.txt"]) {
+      assert.ok(notice.includes(readFileSync(new URL(name, cslDirectory), "utf8").trimEnd()));
+    }
+    assert.match(notice, /https:\/\/github\.com\/citation-style-language\/locales/);
+    assert.match(notice, /https:\/\/creativecommons\.org\/licenses\/by-sa\/3\.0/);
     assert.doesNotMatch(notice, /@mathjax\/src|citeproc/);
   } finally {
     rmSync(temporary, { recursive: true, force: true });

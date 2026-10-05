@@ -574,7 +574,7 @@ pub(crate) fn build(
                 problem(
                     &mut diagnostics,
                     "slides-citation-data-required",
-                    "unresolved citation key: supply --bibliography, --csl-style, and --csl-locale to use CSL citations",
+                    "unresolved citation key: supply --bibliography to use CSL citations",
                     citation.range,
                 );
             }

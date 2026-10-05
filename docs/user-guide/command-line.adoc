@@ -397,6 +397,7 @@ adocweave convert talk.adoc --to revealjs --output dist/talk --audience presente
 ``--output``は必須です。``--complete``と``--css-url``は併用できません。
 通常の``convert``は引き続きHTML fragmentを標準出力へ書き出します。
 
+CSSを指定しない場合は、実行ファイルに内包したテーマを使います。CSSファイルの準備や外部からの取得は不要です。
 ``--css FILE``とプロジェクト設定の``html.stylesheet-files``には、UTF-8のローカルCSSを指定できます。
 既定のテーマの後に、指定順で適用します。ファイル数と内容の上限は通常のHTML出力と同じです。
 CSS内の``@import``や``url()``が指定する資産は探索・コピーせず、その表示を保証しません。
@@ -473,17 +474,25 @@ LaTeX数式と外部の書誌データを使う引用には、別途Node.js 24.1
 ----
 npm install --global --ignore-scripts @adocweave/slides-helper@X.Y.Z
 adocweave convert talk.adoc --to revealjs --output dist/talk \
-  --bibliography references.json --csl-style style.csl --csl-locale locale.xml
+  --bibliography references.json
 ----
 
 公開前の補助を使う場合は、リポジトリの``packages/slides-helper``へ``npm ci --ignore-scripts``で依存を導入し、
 その``bin.mjs``を``--slides-helper``へ指定してください。詳しい導入方法は
 xref:release-installation.adoc#slides-helper-installation[スライド用補助パッケージの導入]を参照してください。
 
-``--bibliography``にはCSL JSONの配列、``--csl-style``と``--csl-locale``にはCSLのXMLファイルを指定します。
-CSLで整形する引用がある場合にだけ、3つのファイルを読み込みます。3つの指定をすべて省略すると、
-表示する引用の全キーが手書きの書誌定義へ解決する場合に限り、補助プログラムなしで描画します。
-いずれかを指定した場合は全引用をCSLで処理し、3つすべての入力を必要とします。
+``--bibliography``にはCSL JSONの配列を指定します。既定のCSLスタイルとロケールは実行ファイルに内包しているため、
+文献データだけで引用と参考文献を生成できます。引用は出現順の``[1]``、``[2]``形式で、ページなどの位置を指定した
+場合はその値も表示します。参考文献は番号順に並び、データにある著者、表題、年、掲載誌などを表示します。
+既定のロケールは英語（``en-US``）です。原稿や文献の日本語を翻訳するものではなく、ページの略記などに使う語を定めます。
+
+書式を変更する場合は``--csl-style style.csl``、語や日付の表記を変更する場合は``--csl-locale locale.xml``を追加してください。
+それぞれ個別に指定でき、省略した側には組込みの値を使います。明示したファイルの取得や解析に失敗した場合は、
+既定値へ戻さずエラーを表示します。実行時にCSLスタイルやロケールをダウンロードすることはありません。
+
+CSLで整形する引用が表示対象にある場合にだけ、文献データと明示したCSLファイルを読み込みます。
+3つの指定をすべて省略すると、表示する引用の全キーが手書きの書誌定義へ解決する場合に限り、補助プログラムなしで描画します。
+いずれかを指定した場合は全引用をCSLで処理し、``--bibliography``を必要とします。
 CSLの入力を指定した場合、表示対象に手書きの書誌定義があると生成を止めます。
 引用キーが異なる場合や、その書誌定義を引用していない場合も、二つの方式を併用できません。
 生成した参考文献は本文の最後に1枚だけ追加します。長い参考文献を自動で縮小・分割しません。
