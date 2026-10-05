@@ -1929,6 +1929,9 @@ fn numbered_or_labeled_footnote_math_is_rejected_at_its_included_source() {
 fn managed_slide_fixture(root: &Path, metadata: Option<&str>, notes_plugin: bool) {
     use adocweave_core::NeverCancel;
     use adocweave_project::{BundleFile, BundleMediaType, ProjectLimits, save_managed_bundle};
+    // Resolve macOS /var symlinks and Windows short-name temporary paths,
+    // matching the CLI's canonical working directory before calling the save API.
+    let root = root.canonicalize().unwrap();
     let mut files = vec![BundleFile {
         path: "index.html".to_owned(),
         media_type: BundleMediaType::Html,
