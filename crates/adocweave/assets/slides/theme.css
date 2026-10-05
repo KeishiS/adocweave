@@ -180,3 +180,27 @@ body[data-preview] { display: grid; grid-template-rows: minmax(0, 1fr) auto auto
 body[data-preview] > .reveal { min-height: 0; height: 100%; }
 .slides-diagnostics { box-sizing: border-box; max-height: 20vh; overflow: auto; margin: 0; padding: 8px 24px; background: #fff3f3; color: #9c1822; font: 12px/1.4 ui-monospace, monospace; white-space: pre-wrap; }
 .slides-diagnostics[hidden] { display: none; }
+
+/* Reveal's print view uses document flow instead of the fixed screen viewport. */
+html.reveal-print body { display: block; height: auto !important; }
+html.reveal-print .reveal .slides section:not(.stack) {
+  height: var(--slide-height);
+  padding: 48px 64px 56px !important;
+}
+html.reveal-print .reveal .slides section.title-slide { padding-top: 160px !important; }
+html.reveal-print .slides-attribution { max-height: none; overflow: visible; }
+html.reveal-print .slides-diagnostics { display: none; }
+
+@media print {
+  body[data-citations], body[data-preview] { display: block; height: auto !important; }
+  html.reveal-print .slides-attribution {
+    position: fixed;
+    z-index: 2;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    padding: 4px 20px;
+    font-size: 8px;
+    line-height: 1.3;
+  }
+}

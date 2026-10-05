@@ -15,6 +15,8 @@ const binary = resolve(binaryArgument);
 const chromium = await resolveHostExecutable(chromiumArgument);
 const helper = helperArgument && resolve(helperArgument);
 const artifacts = helper && resolve(artifactArgument ?? "target/slides-browser");
+const pdfInfo = helper && await resolveHostExecutable("pdfinfo");
+const pdfText = helper && await resolveHostExecutable("pdftotext");
 const reports = [];
 let publicBody;
 const root = await mkdtemp(join(tmpdir(), "adocweave-slides-smoke-"));
@@ -88,6 +90,77 @@ async function connect(target, ports) {
   // A newly opened speaker window may have loaded before CDP attached.
   await evaluate("window.probeViolations ??= [];document.addEventListener('securitypolicyviolation',e=>probeViolations.push(e.effectiveDirective))");
   return { call, evaluate, errors, blocked };
+}
+async function printPdf(page, url, name) {
+  const printUrl = `${url}?print-pdf`;
+  await page.call("Page.navigate", { url: printUrl });
+  await poll(() => page.evaluate(`location.href.split('#')[0] === ${JSON.stringify(printUrl)} &&
+    probeReady && document.querySelectorAll('.pdf-page').length > 0`));
+  // Preview errors belong to the interactive view, even when diagnostics exist.
+  await page.evaluate(`(() => {
+    const diagnostics = document.querySelector('.slides-diagnostics');
+    if (diagnostics) { diagnostics.hidden = false; diagnostics.textContent = 'PRINT_DIAGNOSTIC_PROBE'; }
+  })()`);
+  await page.call("Emulation.setEmulatedMedia", { media: "print" });
+  const layout = await page.evaluate(`(() => {
+    const rectangle = node => {
+      const box = node.getBoundingClientRect();
+      return { left: box.left, right: box.right, top: box.top, bottom: box.bottom };
+    };
+    const pages = [...document.querySelectorAll('.pdf-page')].map(page => {
+      const slide = page.querySelector('section');
+      const bounds = rectangle(page);
+      const style = getComputedStyle(slide);
+      const box = rectangle(slide);
+      const content = { left: box.left + parseFloat(style.paddingLeft), right: box.right - parseFloat(style.paddingRight),
+        top: box.top + parseFloat(style.paddingTop), bottom: box.bottom - parseFloat(style.paddingBottom) };
+      const outside = [...slide.querySelectorAll('h1,h2,h3,p,li,figure,table,.math-rendered > svg')]
+        .filter(node => !node.closest('aside.notes'))
+        .filter(node => {
+          const box = node.getBoundingClientRect();
+          return box.width > 0 && box.height > 0 && (box.left < content.left - 1 || box.right > content.right + 1 ||
+            box.top < content.top - 1 || box.bottom > content.bottom + 1);
+        }).map(node => node.tagName);
+      const footnotes = slide.querySelector(':scope > .slide-body > .footnotes');
+      return { slide: slide.id, outside, withinPage: box.top >= bounds.top && box.bottom <= bounds.bottom,
+        footnotesAtBottom: !footnotes || Math.abs(rectangle(footnotes).bottom - content.bottom) <= 1 };
+    });
+    const credits = document.querySelector('.slides-attribution');
+    const creditBox = rectangle(credits);
+    const topmost = document.elementFromPoint(Math.min(creditBox.right - 4, innerWidth - 4), creditBox.bottom - 3);
+    return { pages, creditsVisible: topmost?.closest('.slides-attribution') === credits, violations: probeViolations };
+  })()`);
+  assert.equal(layout.pages.length, 12, name);
+  assert.deepEqual(layout.violations, [], name);
+  assert.equal(layout.creditsVisible, true, `Attribution is covered by PDF page backgrounds: ${name}`);
+  for (const slide of layout.pages) {
+    assert.equal(slide.withinPage, true, `${name}: ${slide.slide}`);
+    assert.deepEqual(slide.outside, [], `${name}: ${slide.slide}`);
+    assert.equal(slide.footnotesAtBottom, true, `${name}: ${slide.slide}`);
+  }
+  const path = join(artifacts, `${name}.pdf`);
+  const pdf = await page.call("Page.printToPDF", { printBackground: true, preferCSSPageSize: true,
+    displayHeaderFooter: false, marginTop: 0, marginBottom: 0, marginLeft: 0, marginRight: 0 });
+  await writeFile(path, Buffer.from(pdf.data, "base64"));
+  function inspect(tool, arguments_) {
+    const result = spawnSync(tool, arguments_, { env: { ...environment, LC_ALL: "C" }, encoding: "utf8" });
+    assert.equal(result.status, 0, result.error?.message ?? result.stderr);
+    return result.stdout;
+  }
+  const info = inspect(pdfInfo, [path]);
+  assert.equal(Number(info.match(/^Pages:\s+(\d+)/m)?.[1]), layout.pages.length, `Missing PDF pages: ${name}`);
+  const size = info.match(/^Page size:\s+([\d.]+) x ([\d.]+) pts/m);
+  assert.ok(size && Math.abs(Number(size[1]) / Number(size[2]) - 16 / 9) < .01, `Unexpected PDF size: ${name}`);
+  const text = inspect(pdfText, ["-enc", "UTF-8", path, "-"]);
+  const compact = text.replace(/\s+/gu, "");
+  for (const content of ["研究スライドの受入原稿", "Method", "Vertical", "Detail", "Last", "References",
+    "観測値の取得", "結果の推定", "の定義は", "出典", "Doe", "Roe", "FrankBennett"]) {
+    assert.ok(compact.includes(content), `Missing printed content (${content}): ${name}`);
+  }
+  assert.doesNotMatch(text, /PRIVATE_NOTE|PRIVATE_LAST_NOTE|PRIVATE_BIBLIOGRAPHY|PRINT_DIAGNOSTIC_PROBE/);
+  await writeFile(join(artifacts, `${name}.txt`), text);
+  reports.push({ name, ...layout, info });
+  await page.call("Emulation.setEmulatedMedia", { media: "screen" });
 }
 try {
   await writeFile(join(root, "talk.adoc"), `= Reference regression
@@ -390,6 +463,8 @@ Return to <<method>>, <<first-step>>, or <<second-step>>;
     const screenshot = await popup.call("Page.captureScreenshot", { format: "png" });
     await writeFile(join(artifacts, "presenter-notes.png"), Buffer.from(screenshot.data, "base64"));
     console.log(`research slides verified: static SVG/TeX, citations, footnotes, tables, CJK DOM/SVG; artifacts: ${artifacts}`);
+    await printPdf(page, pathToFileURL(join(root, "public", "index.html")).href, "public-file-print");
+    await printPdf(page, `${publicServer}/`, "public-http-print");
   }
   // Live reload restores the Reveal hash; it does not retain a separate position model.
   const preview = child(binary, ["preview", "talk.adoc", "--to", "revealjs", "--port", "0", ...researchArguments]);
@@ -399,6 +474,13 @@ Return to <<method>>, <<first-step>>, or <<second-step>>;
   await page.call("Page.navigate", { url: previewUrl });
   await poll(() => page.evaluate(`location.href.split('#')[0]===${JSON.stringify(previewUrl)}&&probeReady`));
   const original = await readFile(join(root, "talk.adoc"), "utf8");
+  if (helper) {
+    await printPdf(page, previewUrl, "preview-print");
+    await page.call("Page.navigate", { url: previewUrl });
+    await poll(() => page.evaluate(`location.href.split('#')[0] === ${JSON.stringify(previewUrl)} &&
+      probeReady && Reveal.isReady()`));
+    assert.equal(await page.evaluate("getComputedStyle(document.body).display"), "grid");
+  }
   const saveToDom = [];
   async function update(source, marker) {
     await writeFile(join(root, "talk.adoc"), `${source}\n\n${marker}\n`);
