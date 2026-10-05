@@ -2296,9 +2296,29 @@ fn serve_uses_explicit_audience_instead_of_inferring_it_from_notes_plugin_files(
         stream
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();
-        write!(stream, "GET / HTTP/1.1\r\nHost: {address}\r\n\r\n").unwrap();
+        stream
+            .write_all(format!("GET / HTTP/1.1\r\nHost: {address}\r\n\r\n").as_bytes())
+            .unwrap();
+        let mut reader = std::io::BufReader::new(stream);
         let mut response = String::new();
-        stream.read_to_string(&mut response).unwrap();
+        while !response.ends_with("\r\n\r\n") {
+            let received = reader
+                .read_line(&mut response)
+                .unwrap_or_else(|error| panic!("HTTP headers: {error}; received {response:?}"));
+            assert!(received > 0, "incomplete HTTP headers: {response:?}");
+        }
+        let length = response
+            .lines()
+            .find_map(|line| line.strip_prefix("Content-Length: "))
+            .expect("Content-Length")
+            .parse::<usize>()
+            .unwrap();
+        // HTTP frames this response by length; TCP EOF is not part of the payload.
+        let mut body = vec![0; length];
+        reader
+            .read_exact(&mut body)
+            .unwrap_or_else(|error| panic!("HTTP body: {error}; headers {response:?}"));
+        response.push_str(&String::from_utf8(body).unwrap());
         assert!(response.starts_with("HTTP/1.1 200"), "{response}");
         assert!(response.contains("FIXTURE"));
         assert_eq!(
