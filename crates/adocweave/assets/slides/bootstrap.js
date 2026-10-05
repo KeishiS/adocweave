@@ -2,9 +2,13 @@
 (() => {
   "use strict";
   const presenter = document.body.dataset.audience === "presenter";
+  const dimensions = document.body.dataset.aspectRatio?.split(":").map(Number) ?? [screen.width, screen.height];
+  const detectedRatio = dimensions[0] / dimensions[1];
+  const aspectRatio = dimensions.every(value => value > 0) && detectedRatio >= .25 && detectedRatio <= 4 ? detectedRatio : 16 / 9;
   const deck = new Reveal(document.querySelector(".reveal"), {
     width: 1280,
-    height: 720,
+    height: 1280 / aspectRatio,
+    margin: new URLSearchParams(location.search).has("print-pdf") ? 0 : .04,
     hash: true,
     fragmentInURL: true,
     history: false,

@@ -91,6 +91,71 @@ async function connect(target, ports) {
   await evaluate("window.probeViolations ??= [];document.addEventListener('securitypolicyviolation',e=>probeViolations.push(e.effectiveDirective))");
   return { call, evaluate, errors, blocked };
 }
+function inspectPdf(tool, arguments_) {
+  const result = spawnSync(tool, arguments_, { env: { ...environment, LC_ALL: "C" }, encoding: "utf8" });
+  assert.equal(result.status, 0, result.error?.message ?? result.stderr);
+  return result.stdout;
+}
+async function aspectRatios(page) {
+  const cases = [
+    ["screen-wide", "", 1920, 1200, 16 / 10],
+    ["screen-widescreen", ":slides-aspect-ratio: auto", 1920, 1080, 16 / 9],
+    ["screen-unset", ":slides-aspect-ratio!:", 1920, 1200, 16 / 10],
+    ["fixed-widescreen", ":slides-aspect-ratio: 16:9", 1920, 1200, 16 / 9],
+    ["fixed-standard", ":slides-aspect-ratio: 4:3", 1920, 1200, 4 / 3],
+    ["screen-unavailable", "", 0, 0, 16 / 9],
+    ["screen-negative", "", -1920, -1200, 16 / 9],
+    ["screen-out-of-range", "", 6000, 1000, 16 / 9],
+  ];
+  for (const [name, attribute, width, height, ratio] of cases) {
+    await writeFile(join(root, "aspect.adoc"), `= Aspect ratio
+${attribute}
+
+== Size
+
+Screen dimensions determine the initial aspect ratio.
+`);
+    const conversion = spawnSync(binary, ["convert", "aspect.adoc", "--to", "revealjs", "--output", name],
+      { cwd: root, env: environment, encoding: "utf8" });
+    assert.equal(conversion.status, 0, conversion.stderr);
+    await page.call("Emulation.setDeviceMetricsOverride", { width: 800, height: 600, deviceScaleFactor: 1, mobile: false });
+    const injection = await page.call("Page.addScriptToEvaluateOnNewDocument", { source:
+      `Object.defineProperty(screen,'width',{get:()=>${width}});Object.defineProperty(screen,'height',{get:()=>${height}});` });
+    const url = pathToFileURL(join(root, name, "index.html")).href;
+    try {
+      await page.call("Page.navigate", { url });
+      await poll(() => page.evaluate(`location.href.split('#')[0] === ${JSON.stringify(url)} && probeReady && Reveal.isReady()`));
+      const dimensions = await page.evaluate("({width:Reveal.getConfig().width,height:Reveal.getConfig().height,screen:[screen.width,screen.height],viewport:[innerWidth,innerHeight]})");
+      assert.equal(dimensions.width, 1280, name);
+      assert.ok(Math.abs(dimensions.width / dimensions.height - ratio) < 1e-8, name);
+      assert.deepEqual(dimensions.screen, [width, height], name);
+      assert.deepEqual(dimensions.viewport, [800, 600], name);
+      await page.call("Emulation.setDeviceMetricsOverride", { width: 1200, height: 800, deviceScaleFactor: 1, mobile: false });
+      await page.evaluate("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+      assert.deepEqual(await page.evaluate("[Reveal.getConfig().width,Reveal.getConfig().height]"),
+        [dimensions.width, dimensions.height], `Resize changed aspect ratio: ${name}`);
+      const printUrl = `${url}?print-pdf`;
+      await page.call("Page.navigate", { url: printUrl });
+      await poll(() => page.evaluate(`location.href.split('#')[0] === ${JSON.stringify(printUrl)} &&
+        probeReady && document.querySelectorAll('.pdf-page').length === 2`));
+      assert.equal(await page.evaluate("Reveal.getConfig().margin"), 0, name);
+      const path = join(artifacts, `aspect-${name}.pdf`);
+      const pdf = await page.call("Page.printToPDF", { printBackground: true, preferCSSPageSize: true,
+        displayHeaderFooter: false, marginTop: 0, marginBottom: 0, marginLeft: 0, marginRight: 0 });
+      await writeFile(path, Buffer.from(pdf.data, "base64"));
+      const info = inspectPdf(pdfInfo, [path]);
+      assert.equal(Number(info.match(/^Pages:\s+(\d+)/m)?.[1]), 2, name);
+      const size = info.match(/^Page size:\s+([\d.]+) x ([\d.]+) pts/m);
+      assert.ok(size && Math.abs(Number(size[1]) - 960) < 1 && Math.abs(Number(size[2]) - 960 / ratio) < 1,
+        `Unexpected PDF dimensions or outer margins: ${name}: ${info}`);
+      assert.deepEqual(await page.evaluate("probeViolations"), [], name);
+      reports.push({ name: `aspect-${name}`, dimensions, ratio, info });
+    } finally {
+      await page.call("Page.removeScriptToEvaluateOnNewDocument", { identifier: injection.identifier });
+    }
+  }
+  await page.call("Emulation.clearDeviceMetricsOverride");
+}
 async function printPdf(page, url, name) {
   const printUrl = `${url}?print-pdf`;
   await page.call("Page.navigate", { url: printUrl });
@@ -122,7 +187,8 @@ async function printPdf(page, url, name) {
             box.top < content.top - 1 || box.bottom > content.bottom + 1);
         }).map(node => node.tagName);
       const footnotes = slide.querySelector(':scope > .slide-body > .footnotes');
-      return { slide: slide.id, outside, withinPage: box.top >= bounds.top && box.bottom <= bounds.bottom,
+      // Reveal shortens each PDF page wrapper by 1px to avoid extra blank pages.
+      return { slide: slide.id, outside, withinPage: box.top >= bounds.top - 1 && box.bottom <= bounds.bottom + 1,
         footnotesAtBottom: !footnotes || Math.abs(rectangle(footnotes).bottom - content.bottom) <= 1 };
     });
     const credits = document.querySelector('.slides-attribution');
@@ -142,16 +208,11 @@ async function printPdf(page, url, name) {
   const pdf = await page.call("Page.printToPDF", { printBackground: true, preferCSSPageSize: true,
     displayHeaderFooter: false, marginTop: 0, marginBottom: 0, marginLeft: 0, marginRight: 0 });
   await writeFile(path, Buffer.from(pdf.data, "base64"));
-  function inspect(tool, arguments_) {
-    const result = spawnSync(tool, arguments_, { env: { ...environment, LC_ALL: "C" }, encoding: "utf8" });
-    assert.equal(result.status, 0, result.error?.message ?? result.stderr);
-    return result.stdout;
-  }
-  const info = inspect(pdfInfo, [path]);
+  const info = inspectPdf(pdfInfo, [path]);
   assert.equal(Number(info.match(/^Pages:\s+(\d+)/m)?.[1]), layout.pages.length, `Missing PDF pages: ${name}`);
   const size = info.match(/^Page size:\s+([\d.]+) x ([\d.]+) pts/m);
   assert.ok(size && Math.abs(Number(size[1]) / Number(size[2]) - 16 / 9) < .01, `Unexpected PDF size: ${name}`);
-  const text = inspect(pdfText, ["-enc", "UTF-8", path, "-"]);
+  const text = inspectPdf(pdfText, ["-enc", "UTF-8", path, "-"]);
   const compact = text.replace(/\s+/gu, "");
   for (const content of ["研究スライドの受入原稿", "Method", "Vertical", "Detail", "Last", "References",
     "観測値の取得", "結果の推定", "の定義は", "出典", "Doe", "Roe", "FrankBennett"]) {
@@ -465,6 +526,7 @@ Return to <<method>>, <<first-step>>, or <<second-step>>;
     console.log(`research slides verified: static SVG/TeX, citations, footnotes, tables, CJK DOM/SVG; artifacts: ${artifacts}`);
     await printPdf(page, pathToFileURL(join(root, "public", "index.html")).href, "public-file-print");
     await printPdf(page, `${publicServer}/`, "public-http-print");
+    await aspectRatios(page);
   }
   // Live reload restores the Reveal hash; it does not retain a separate position model.
   const preview = child(binary, ["preview", "talk.adoc", "--to", "revealjs", "--port", "0", ...researchArguments]);

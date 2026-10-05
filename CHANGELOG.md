@@ -8,6 +8,13 @@ separate changelogs for the
 [VS Code extension](https://github.com/KeishiS/adocweave/blob/main/editors/vscode/CHANGELOG.md), and
 [Zed extension](https://github.com/KeishiS/adocweave/blob/main/editors/zed/CHANGELOG.md).
 
+## [0.60.0] - 2026-10-05
+
+### Added
+
+- Slides use the screen's aspect ratio on initial page load by default, with a 16:9 fallback when screen dimensions are unavailable or invalid. The document-header attribute `slides-aspect-ratio` accepts `auto` or a fixed positive-integer `WIDTH:HEIGHT` ratio between 1:4 and 4:1. An explicit ratio takes precedence over the screen, and normal presentation and browser PDF output use the same ratio.
+- Browser PDF instructions cover Firefox's built-in Save to PDF alongside Chrome and Chromium, and distinguish browser PDF output from system PDF printers.
+
 ## [0.59.3] - 2026-10-05
 
 ### Fixed
@@ -193,6 +200,7 @@ if let Ok(expanded) = analysis.expanded {
 }
 ```
 
+[0.60.0]: https://github.com/KeishiS/adocweave/compare/v0.59.3...v0.60.0
 [0.59.3]: https://github.com/KeishiS/adocweave/compare/v0.59.2...v0.59.3
 [0.59.2]: https://github.com/KeishiS/adocweave/compare/v0.59.1...v0.59.2
 [0.59.1]: https://github.com/KeishiS/adocweave/compare/v0.59.0...v0.59.1
