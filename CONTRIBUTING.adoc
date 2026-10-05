@@ -278,8 +278,8 @@ Linuxの``default``、``ci-integrations``および``ci-browser``の開発環境�
 ネイティブパッケージや生成HTMLへ配布しません。
 
 研究スライドの受入確認には、CLIと同じ固定Chromiumを使う既存のsmokeを実行します。
-helperを指定すると、公開版と発表者版の数式・引用・脚注・表、日本語のHTML/SVG描画および
-保存後のプレビュー更新を確認し、画面と測定値を``target/slides-browser/``へ保存します。
+helperを指定すると、公開版と発表者版の数式・引用・脚注・表、日本語のHTML/SVG描画、
+印刷用PDFおよび保存後のプレビュー更新を確認し、画面、PDFと測定値を``target/slides-browser/``へ保存します。
 
 [source,console]
 ----

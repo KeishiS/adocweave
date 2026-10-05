@@ -143,6 +143,7 @@ in
     ++ lib.optionals stdenv.isLinux [
       pkgs.chromium
       pkgs.xvfb
+      pkgs.poppler-utils
     ];
   };
 
@@ -160,6 +161,7 @@ in
     extra = lib.optionals stdenv.isLinux [
       pkgs.chromium
       pkgs.xvfb
+      pkgs.poppler-utils
     ];
   };
 
@@ -178,6 +180,7 @@ in
     extra = lib.optionals stdenv.isLinux [
       pkgs.chromium
       pkgs.xvfb
+      pkgs.poppler-utils
     ];
   };
 

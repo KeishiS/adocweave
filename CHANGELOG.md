@@ -8,6 +8,12 @@ separate changelogs for the
 [VS Code extension](https://github.com/KeishiS/adocweave/blob/main/editors/vscode/CHANGELOG.md), and
 [Zed extension](https://github.com/KeishiS/adocweave/blob/main/editors/zed/CHANGELOG.md).
 
+## [0.59.3] - 2026-10-05
+
+### Fixed
+
+- Reveal.js slides opened with `?print-pdf` retain their layout, equations, figures, and footnotes when saved as PDF from Chrome or Chromium. Browser printing works with local public output and HTTP-served slides, and preserves reveal.js's default separate pages for fragment stages.
+
 ## [0.59.2] - 2026-10-05
 
 ### Fixed
@@ -187,6 +193,7 @@ if let Ok(expanded) = analysis.expanded {
 }
 ```
 
+[0.59.3]: https://github.com/KeishiS/adocweave/compare/v0.59.2...v0.59.3
 [0.59.2]: https://github.com/KeishiS/adocweave/compare/v0.59.1...v0.59.2
 [0.59.1]: https://github.com/KeishiS/adocweave/compare/v0.59.0...v0.59.1
 [0.59.0]: https://github.com/KeishiS/adocweave/compare/v0.58.0...v0.59.0
