@@ -190,16 +190,79 @@ fn fixed_files(audience: Audience, preview: bool) -> Vec<BundleFile> {
     files
 }
 
+fn parse_aspect_ratio(value: &str) -> Option<String> {
+    let (width, height) = value.trim().split_once(':')?;
+    let width = width.trim().parse::<u32>().ok()?;
+    let height = height.trim().parse::<u32>().ok()?;
+    if width == 0 || height == 0 || !(0.25..=4.0).contains(&(width as f64 / height as f64)) {
+        return None;
+    }
+    let (mut divisor, mut remainder) = (width, height);
+    while remainder != 0 {
+        (divisor, remainder) = (remainder, divisor % remainder);
+    }
+    Some(format!("{}:{}", width / divisor, height / divisor))
+}
+
+fn resolve_aspect_ratio(
+    analysis: &adocweave_core::Analysis,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<Option<String>, CliError> {
+    let Some(attribute) = analysis
+        .attribute_environment()
+        .resolve_at("slides-aspect-ratio", analysis.document().header().end)
+    else {
+        return Ok(None);
+    };
+    if matches!(attribute.value, Ok(None)) {
+        return Ok(None);
+    }
+    if let Ok(Some(value)) = attribute.value {
+        if value.trim() == "auto" {
+            return Ok(None);
+        }
+        if let Some(ratio) = parse_aspect_ratio(value) {
+            return Ok(Some(ratio));
+        }
+    }
+    let message = "slides-aspect-ratio must be auto or WIDTH:HEIGHT, using positive integers and a ratio between 1:4 and 4:1";
+    if let Some(binding) = attribute.binding {
+        problem(
+            diagnostics,
+            "slides-invalid-aspect-ratio",
+            message,
+            binding.occurrence().range,
+        );
+        Ok(None)
+    } else {
+        Err(CliError::Usage(message.to_owned()))
+    }
+}
+
+struct PageOptions<'a> {
+    audience: Audience,
+    language: &'a str,
+    aspect_ratio: Option<&'a str>,
+    preview: bool,
+}
+
 fn page(
     deck: &Deck<'_>,
     html: &str,
-    audience: Audience,
-    language: &str,
+    options: PageOptions<'_>,
     attribution: Option<&str>,
     styles: &[String],
-    preview: bool,
 ) -> String {
+    let PageOptions {
+        audience,
+        language,
+        aspect_ratio,
+        preview,
+    } = options;
     let language = escape(language);
+    let aspect_ratio = aspect_ratio.map_or_else(String::new, |ratio| {
+        format!(" data-aspect-ratio=\"{}\"", escape(ratio))
+    });
     let title = deck
         .groups
         .iter()
@@ -240,7 +303,7 @@ fn page(
         ""
     };
     format!(
-        "<!doctype html>\n<html lang=\"{language}\">\n<head>\n<meta charset=\"utf-8\">\n<meta http-equiv=\"Content-Security-Policy\" content=\"{}\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>{}</title>\n<link rel=\"stylesheet\" href=\"assets/reset.css\">\n<link rel=\"stylesheet\" href=\"assets/reveal.css\">\n<link rel=\"stylesheet\" href=\"assets/theme.css\">\n<link rel=\"stylesheet\" href=\"assets/content.css\">\n{styles}</head>\n<body data-audience=\"{audience_name}\"{citations}{preview_body}>\n{html}{attribution}<script src=\"assets/reveal.js\"></script>\n{notes}<script src=\"assets/bootstrap.js\"></script>\n{preview_script}</body>\n</html>\n",
+        "<!doctype html>\n<html lang=\"{language}\">\n<head>\n<meta charset=\"utf-8\">\n<meta http-equiv=\"Content-Security-Policy\" content=\"{}\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>{}</title>\n<link rel=\"stylesheet\" href=\"assets/reset.css\">\n<link rel=\"stylesheet\" href=\"assets/reveal.css\">\n<link rel=\"stylesheet\" href=\"assets/theme.css\">\n<link rel=\"stylesheet\" href=\"assets/content.css\">\n{styles}</head>\n<body data-audience=\"{audience_name}\"{aspect_ratio}{citations}{preview_body}>\n{html}{attribution}<script src=\"assets/reveal.js\"></script>\n{notes}<script src=\"assets/bootstrap.js\"></script>\n{preview_script}</body>\n</html>\n",
         escape(&content_security_policy(audience)),
         escape(title)
     )
@@ -307,6 +370,7 @@ pub(crate) fn build(
         .unwrap_or("");
     let deck = Deck::compile(analysis.document());
     let mut diagnostics = analysis.diagnostics().to_vec();
+    let aspect_ratio = resolve_aspect_ratio(analysis, &mut diagnostics)?;
     let mut observations = Vec::new();
     diagnostics.extend(deck.diagnostics.clone());
     if let Some(name) = target
@@ -830,15 +894,18 @@ pub(crate) fn build(
     let page = page(
         &deck,
         &rendered.html,
-        audience,
-        language,
+        PageOptions {
+            audience,
+            language,
+            aspect_ratio: aspect_ratio.as_deref(),
+            preview,
+        },
         helper
             .notices
             .citations
             .as_ref()
             .map(|notices| notices.attribution.as_str()),
         &styles.links,
-        preview,
     );
     let limit = OutputLimits::default().max_output_bytes;
     if page.len() > limit as usize {
@@ -872,11 +939,14 @@ mod tests {
         let html = page(
             &deck,
             "<div class=\"reveal\"><div class=\"slides\"></div></div>",
-            Audience::Public,
-            "ja",
+            PageOptions {
+                audience: Audience::Public,
+                language: "ja",
+                aspect_ratio: None,
+                preview: false,
+            },
             Some("<script>Copyright & citation</script>"),
             &[],
-            false,
         );
         assert!(html.contains("&lt;script&gt;Copyright &amp; citation&lt;/script&gt;"));
         assert!(html.contains("href=\"https://citationstyles.org/\""));
@@ -901,7 +971,18 @@ mod tests {
             )
             .unwrap();
         for audience in [Audience::Public, Audience::Presenter] {
-            let html = page(&deck, &rendered.html, audience, "", None, &[], false);
+            let html = page(
+                &deck,
+                &rendered.html,
+                PageOptions {
+                    audience,
+                    language: "",
+                    aspect_ratio: Some("16:9"),
+                    preview: false,
+                },
+                None,
+                &[],
+            );
             assert!(
                 html.find("Content-Security-Policy").unwrap() < html.find("stylesheet").unwrap()
             );

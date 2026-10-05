@@ -2,6 +2,7 @@
 :lang: ja
 :stem: latexmath
 :eqnums:
+:slides-aspect-ratio: 16:9
 
 手法、数式、図表、参考文献を含む研究発表のサンプル
 

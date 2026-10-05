@@ -25,6 +25,238 @@ fn write(root: &Path, path: &str, content: &str) {
 
 const SVG: &str = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\"><rect width=\"80\" height=\"80\" fill=\"#123\"/><text x=\"2\" y=\"20\">結果</text></svg>";
 
+#[test]
+fn slide_aspect_ratio_defaults_to_auto_and_uses_only_header_attributes() {
+    for header in [
+        "",
+        ":slides-aspect-ratio: auto\n",
+        ":slides-aspect-ratio: 16:9\n:slides-aspect-ratio!:\n",
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        write(
+            root.path(),
+            "talk.adoc",
+            &format!("= Talk\n{header}\n:slides-aspect-ratio: invalid\n\n== Slide\n\nBody.\n"),
+        );
+        success(&convert(
+            root.path(),
+            &[
+                "--no-config",
+                "talk.adoc",
+                "--to",
+                "revealjs",
+                "--output",
+                "dist",
+            ],
+        ));
+        let html = fs::read_to_string(root.path().join("dist/index.html")).unwrap();
+        assert!(!html.contains("data-aspect-ratio="), "{html}");
+    }
+}
+
+#[test]
+fn slide_aspect_ratio_accepts_fixed_and_referenced_header_values() {
+    for (header, expected) in [
+        (":slides-aspect-ratio: 16:9\n", "16:9"),
+        (":slides-aspect-ratio: 16:10\n", "8:5"),
+        (":slides-aspect-ratio: 4:3\n", "4:3"),
+        (":ratio: 1920:1080\n:slides-aspect-ratio: {ratio}\n", "16:9"),
+        (":slides-aspect-ratio: 1:4\n", "1:4"),
+        (":slides-aspect-ratio: 4:1\n", "4:1"),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        write(
+            root.path(),
+            "talk.adoc",
+            &format!("= Talk\n{header}\n:slides-aspect-ratio: invalid\n\n== Slide\n\nBody.\n"),
+        );
+        success(&convert(
+            root.path(),
+            &[
+                "--no-config",
+                "talk.adoc",
+                "--to",
+                "revealjs",
+                "--output",
+                "dist",
+            ],
+        ));
+        let html = fs::read_to_string(root.path().join("dist/index.html")).unwrap();
+        assert!(
+            html.contains(&format!("data-aspect-ratio=\"{expected}\"")),
+            "{html}"
+        );
+    }
+}
+
+#[test]
+fn configured_slide_aspect_ratio_overrides_header_values_and_unsetting() {
+    for (configuration, header, expected) in [
+        (
+            "value = \"4:3\"",
+            ":slides-aspect-ratio: 16:9\n",
+            Some("4:3"),
+        ),
+        ("value = \"16:10\"", ":slides-aspect-ratio!:\n", Some("8:5")),
+        ("value = \"auto\"", ":slides-aspect-ratio: 16:9\n", None),
+        ("unset = true", ":slides-aspect-ratio: 16:9\n", None),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        write(
+            root.path(),
+            ".adocweave.toml",
+            &format!(
+                "schema-version = 2\n[analysis.attributes.slides-aspect-ratio]\n{configuration}\n"
+            ),
+        );
+        write(
+            root.path(),
+            "talk.adoc",
+            &format!("= Talk\n{header}\n== Slide\n\nBody.\n"),
+        );
+        success(&convert(
+            root.path(),
+            &["talk.adoc", "--to", "revealjs", "--output", "dist"],
+        ));
+        let html = fs::read_to_string(root.path().join("dist/index.html")).unwrap();
+        if let Some(ratio) = expected {
+            assert!(
+                html.contains(&format!("data-aspect-ratio=\"{ratio}\"")),
+                "{html}"
+            );
+        } else {
+            assert!(!html.contains("data-aspect-ratio="), "{html}");
+        }
+    }
+}
+
+#[test]
+fn invalid_slide_aspect_ratio_has_original_source_and_preserves_the_output_directory() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "talk.adoc",
+        "= Talk\n\n== Slide\n\nOriginal.\n",
+    );
+    success(&convert(
+        root.path(),
+        &[
+            "--no-config",
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--output",
+            "dist",
+        ],
+    ));
+    let files = ["index.html", ".adocweave-manifest.json"]
+        .map(|file| (file, fs::read(root.path().join("dist").join(file)).unwrap()));
+    for value in [
+        "",
+        "wide",
+        "0:9",
+        "16:0",
+        "1:5",
+        "5:1",
+        "1.5:1",
+        "16:9:1",
+        "4294967296:1",
+        "\" onload=\"alert(1)",
+    ] {
+        write(
+            root.path(),
+            "talk.adoc",
+            &format!("= Talk\n:slides-aspect-ratio: {value}\n\n== Slide\n\nBody.\n"),
+        );
+        let output = convert(
+            root.path(),
+            &[
+                "--no-config",
+                "talk.adoc",
+                "--to",
+                "revealjs",
+                "--output",
+                "dist",
+            ],
+        );
+        assert!(!output.status.success(), "{value}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("error[slides-invalid-aspect-ratio]"),
+            "{stderr}"
+        );
+        assert!(stderr.contains("talk.adoc:2:"), "{stderr}");
+        for (file, original) in &files {
+            assert_eq!(
+                fs::read(root.path().join("dist").join(file)).unwrap(),
+                *original
+            );
+        }
+    }
+    write(
+        root.path(),
+        "talk.adoc",
+        "= Talk\ninclude::settings.adoc[]\n\n== Slide\n\nBody.\n",
+    );
+    write(
+        root.path(),
+        "settings.adoc",
+        ":slides-aspect-ratio: invalid\n",
+    );
+    let output = convert(
+        root.path(),
+        &[
+            "--no-config",
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--output",
+            "dist",
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(stderr.contains("settings.adoc:1:"), "{stderr}");
+    assert!(
+        stderr.contains("error[slides-invalid-aspect-ratio]"),
+        "{stderr}"
+    );
+    for (file, original) in &files {
+        assert_eq!(
+            fs::read(root.path().join("dist").join(file)).unwrap(),
+            *original
+        );
+    }
+}
+
+#[test]
+fn invalid_configured_slide_aspect_ratio_is_a_usage_error() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        ".adocweave.toml",
+        "schema-version = 2\n[analysis.attributes.slides-aspect-ratio]\nvalue = \"invalid\"\n",
+    );
+    write(
+        root.path(),
+        "talk.adoc",
+        "= Talk\n:slides-aspect-ratio: 16:9\n\n== Slide\n\nBody.\n",
+    );
+    let output = convert(
+        root.path(),
+        &["talk.adoc", "--to", "revealjs", "--output", "dist"],
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains("slides-aspect-ratio"), "{stderr}");
+    assert!(!stderr.contains("talk.adoc:"), "{stderr}");
+    assert!(
+        !stderr.contains("error[slides-invalid-aspect-ratio]"),
+        "{stderr}"
+    );
+    assert!(!root.path().join("dist").exists());
+}
+
 #[cfg(unix)]
 #[test]
 fn helper_execution_does_not_inherit_project_node_loader_or_relative_path_entries() {
