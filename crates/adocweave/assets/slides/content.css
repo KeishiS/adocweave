@@ -1,6 +1,13 @@
 /* Validated content shared with the independent Reveal speaker window. */
+:root {
+  --adocweave-font-family: "Noto Serif CJK JP", "Noto Serif JP", "Yu Mincho", "YuMincho", "Hiragino Mincho ProN", "Hiragino Mincho Pro", "MS PMincho", Georgia, "Times New Roman", serif;
+}
+.speaker-controls-notes { font-family: var(--adocweave-font-family); }
 .math-source { display: none; }
 .math-rendered svg { max-width: 100%; vertical-align: middle; }
+.math-rendered svg text[font-family="serif"] { font-family: var(--adocweave-font-family); }
+/* Numbered inline equations retain MathJax's min-width for the formula and label. */
+.footnotes [data-math-display="inline"] .math-rendered > svg[width="100%"][style*="min-width"] { width: 0; }
 .csl-smallcaps { font-variant: small-caps; }
 .csl-normal-emphasis { font-style: normal; }
 .csl-normal-strong { font-weight: normal; }

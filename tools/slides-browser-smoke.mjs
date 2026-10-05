@@ -218,7 +218,7 @@ Return to <<method>>, <<first-step>>, or <<second-step>>;
           tableMath: document.querySelectorAll('#detail td .math-rendered').length,
           tableCitation: document.querySelectorAll('#detail td .citation').length,
           duplicateIds: ids.length - new Set(ids).size, missing,
-          footnote: label('#method > .footnotes li .math-rendered'),
+          footnote: label('#method > .slide-body > .footnotes li .math-rendered'),
           notesFootnote: label('#method aside.notes .footnotes li .math-rendered'),
           notesResult: label(notesMath.find(node => node.closest('#method') &&
             node.querySelector('.math-source')?.textContent.includes('label{result}'))),
@@ -277,7 +277,20 @@ Return to <<method>>, <<first-step>>, or <<second-step>>;
               (box.left < content.left - 1 || box.right > content.right + 1 ||
                box.top < content.top - 1 || box.bottom > content.bottom + 1))
             .map(({ tag }) => tag);
-          layouts.push({ slide: slide.id, outside, alignment: style.textAlign });
+          const footnotes = slide.querySelector(':scope > .slide-body > .footnotes');
+          const footnoteBounds = footnotes?.getBoundingClientRect();
+          const bodyBounds = slide.querySelector(':scope > .slide-body > .slide-content').getBoundingClientRect();
+          const numberedEquation = [...(footnotes?.querySelectorAll('.math-rendered') ?? [])]
+            .find(node => node.querySelector('.math-source')?.textContent.includes('begin{equation}'))
+            ?.querySelector('svg').getBoundingClientRect();
+          layouts.push({ slide: slide.id, outside, alignment: style.textAlign,
+            footnote: footnoteBounds && {
+              bottomDifference: Math.abs(footnoteBounds.bottom - content.bottom),
+              contentGap: footnoteBounds.top - bodyBounds.bottom,
+              equationWidth: numberedEquation?.width,
+              width: footnoteBounds.width,
+            },
+          });
         }
         Reveal.slide(1, 0, 1);
         return { aspect: Reveal.getConfig().width / Reveal.getConfig().height, slides: layouts };
@@ -286,6 +299,14 @@ Return to <<method>>, <<first-step>>, or <<second-step>>;
       for (const layout of layouts.slides) {
         assert.equal(layout.alignment, "left", layout.slide);
         assert.deepEqual(layout.outside, [], layout.slide);
+        if (layout.footnote) {
+          assert.ok(layout.footnote.bottomDifference <= 1, `Footnotes must align to the slide bottom: ${layout.slide}`);
+          assert.ok(layout.footnote.contentGap >= 0, `Footnotes overlap slide content: ${layout.slide}`);
+          if (layout.footnote.equationWidth !== undefined) {
+            assert.ok(layout.footnote.equationWidth > 0 && layout.footnote.equationWidth < layout.footnote.width / 2,
+              `Inline footnote equation occupies the slide width: ${layout.slide}`);
+          }
+        }
       }
       assert.equal(content.creditsVisible, true);
       assert.match(content.credits, /Frank Bennett/);
@@ -311,12 +332,18 @@ Return to <<method>>, <<first-step>>, or <<second-step>>;
         await page.call("DOM.enable");
         await page.call("CSS.enable");
         const { root: document_ } = await page.call("DOM.getDocument");
-        for (const [kind, selector] of [["dom", "#method h1, #method h2"], ["svg", "#method .math-rendered svg text"]]) {
+        for (const [kind, selector] of [
+          ["heading", "#method h2"],
+          ["body", "#method .column p"],
+          ["caption", "#method figcaption"],
+          ["svg", "#method .math-rendered svg text"],
+          ["footnote", "#method > .slide-body > .footnotes li"],
+        ]) {
           const { nodeId } = await page.call("DOM.querySelector", { nodeId: document_.nodeId, selector });
           assert.ok(nodeId, `Missing CJK ${kind} probe node.`);
           fonts[kind] = (await page.call("CSS.getPlatformFontsForNode", { nodeId })).fonts;
-          assert.ok(fonts[kind].some(font => /Noto.*CJK/.test(font.familyName) && font.glyphCount >= 2 && !font.isCustomFont),
-            `Missing system CJK glyphs in ${kind}: ${JSON.stringify(fonts[kind])}`);
+          assert.ok(fonts[kind].some(font => /Noto.*Serif.*CJK/.test(font.familyName) && font.glyphCount >= 2 && !font.isCustomFont),
+            `Missing system Mincho glyphs in ${kind}: ${JSON.stringify(fonts[kind])}`);
         }
       }
       const name = url.startsWith("file:") ? "public-file" : presenter ? "presenter-http" : "public-http";

@@ -906,6 +906,7 @@ impl<'document> Deck<'document> {
                 };
                 writeln!(output, "<section id=\"{}\"{title_class}>", slide.id)
                     .expect("writing to a String cannot fail");
+                output.push_str("<div class=\"slide-body\">\n<div class=\"slide-content\">\n");
                 output.push_str(
                     body_regions
                         .next()
@@ -924,11 +925,13 @@ impl<'document> Deck<'document> {
                     }
                     output.push_str("</div>\n");
                 }
+                output.push_str("</div>\n");
                 output.push_str(
                     body_footnotes
                         .next()
                         .expect("one footnote region per slide"),
                 );
+                output.push_str("</div>\n");
                 let note = note_regions.next().map(String::as_str).unwrap_or("");
                 let footnotes = note_footnotes.next().map(String::as_str).unwrap_or("");
                 let bibliography = (slide_index + 1 == slide_count)
@@ -954,8 +957,9 @@ impl<'document> Deck<'document> {
         }
         if let Some(bibliography) = &body.bibliography {
             output.push_str("<section id=\"slides-body-references\">\n");
+            output.push_str("<div class=\"slide-body\">\n<div class=\"slide-content\">\n");
             output.push_str(bibliography);
-            output.push_str("</section>\n");
+            output.push_str("</div>\n</div>\n</section>\n");
         }
         output.push_str("</div>\n</div>\n");
         if output.len() > limits.max_output_bytes as usize {
@@ -1159,7 +1163,7 @@ mod tests {
         assert!(
             output
                 .html
-                .contains("<section id=\"result\">\n<h3 id=\"conditions\">Conditions</h3>")
+                .contains("<section id=\"result\">\n<div class=\"slide-body\">\n<div class=\"slide-content\">\n<h3 id=\"conditions\">Conditions</h3>")
         );
         assert!(!output.html.contains(">Result</h2>"));
         assert_eq!(output.html.matches("id=\"conditions\"").count(), 1);

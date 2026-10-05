@@ -24,6 +24,7 @@ let
   browserFonts = with pkgs; [
     dejavu_fonts
     noto-fonts-cjk-sans
+    noto-fonts-cjk-serif
   ];
   browserFontConfig = pkgs.makeFontsConf {
     fontDirectories = browserFonts;
