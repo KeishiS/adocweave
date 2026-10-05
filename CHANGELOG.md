@@ -8,6 +8,13 @@ separate changelogs for the
 [VS Code extension](https://github.com/KeishiS/adocweave/blob/main/editors/vscode/CHANGELOG.md), and
 [Zed extension](https://github.com/KeishiS/adocweave/blob/main/editors/zed/CHANGELOG.md).
 
+## [0.59.2] - 2026-10-05
+
+### Fixed
+
+- Slides and presenter notes use locally installed Japanese Mincho fonts by default. The `--adocweave-font-family` CSS variable customizes body text and Japanese text inside equation SVGs without downloading fonts.
+- Footnotes align to the bottom of each slide without overlapping body content. Numbered equations in inline footnotes retain their natural width instead of filling the entire slide.
+
 ## [0.59.1] - 2026-10-05
 
 ### Fixed
@@ -180,6 +187,7 @@ if let Ok(expanded) = analysis.expanded {
 }
 ```
 
+[0.59.2]: https://github.com/KeishiS/adocweave/compare/v0.59.1...v0.59.2
 [0.59.1]: https://github.com/KeishiS/adocweave/compare/v0.59.0...v0.59.1
 [0.59.0]: https://github.com/KeishiS/adocweave/compare/v0.58.0...v0.59.0
 [0.58.0]: https://github.com/KeishiS/adocweave/compare/v0.57.0...v0.58.0

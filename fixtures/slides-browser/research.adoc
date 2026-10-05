@@ -23,7 +23,7 @@ y&=2\label{result}
 ++++
 
 [%step]
-* [[first-step]]観測値の取得 footnote:shared[latexmath:[\eqref{i}] latexmath:[\begin{equation}z=3\label{i}\end{equation}], cite:[inside].]
+* [[first-step]]観測値の取得 footnote:shared[式 latexmath:[\eqref{i}] の定義は latexmath:[\begin{equation}z=3\label{i}\end{equation}] です。出典 cite:[inside]。]
 * [[second-step]]結果の推定
 --
 

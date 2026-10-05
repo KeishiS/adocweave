@@ -1,14 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="600" height="340" viewBox="0 0 600 340">
   <rect x="1" y="1" width="598" height="338" rx="18" fill="#eef4f6" stroke="#d8e2e8"/>
-  <text x="36" y="56" font-size="22" font-family="sans-serif" fill="#526579">研究の流れ</text>
+  <text x="36" y="56" font-size="22" font-family="Noto Serif CJK JP, Noto Serif JP, Yu Mincho, Hiragino Mincho ProN, MS PMincho, serif" fill="#526579">研究の流れ</text>
   <path d="M110 174H490" fill="none" stroke="#9bb6bd" stroke-width="3"/>
   <circle cx="110" cy="174" r="52" fill="#ffffff" stroke="#d8e2e8" stroke-width="2"/>
   <circle cx="300" cy="174" r="52" fill="#ffffff" stroke="#d8e2e8" stroke-width="2"/>
   <circle cx="490" cy="174" r="52" fill="#126b78"/>
-  <text x="110" y="184" text-anchor="middle" font-size="30" font-family="sans-serif" fill="#1c3047">01</text>
-  <text x="300" y="184" text-anchor="middle" font-size="30" font-family="sans-serif" fill="#1c3047">02</text>
-  <text x="490" y="184" text-anchor="middle" font-size="30" font-family="sans-serif" fill="#ffffff">03</text>
-  <text x="110" y="274" text-anchor="middle" font-size="26" font-family="sans-serif" fill="#1c3047">観測</text>
-  <text x="300" y="274" text-anchor="middle" font-size="26" font-family="sans-serif" fill="#1c3047">解析</text>
-  <text x="490" y="274" text-anchor="middle" font-size="26" font-family="sans-serif" fill="#126b78">結果</text>
+  <text x="110" y="184" text-anchor="middle" font-size="30" font-family="Noto Serif CJK JP, Noto Serif JP, Yu Mincho, Hiragino Mincho ProN, MS PMincho, serif" fill="#1c3047">01</text>
+  <text x="300" y="184" text-anchor="middle" font-size="30" font-family="Noto Serif CJK JP, Noto Serif JP, Yu Mincho, Hiragino Mincho ProN, MS PMincho, serif" fill="#1c3047">02</text>
+  <text x="490" y="184" text-anchor="middle" font-size="30" font-family="Noto Serif CJK JP, Noto Serif JP, Yu Mincho, Hiragino Mincho ProN, MS PMincho, serif" fill="#ffffff">03</text>
+  <text x="110" y="274" text-anchor="middle" font-size="26" font-family="Noto Serif CJK JP, Noto Serif JP, Yu Mincho, Hiragino Mincho ProN, MS PMincho, serif" fill="#1c3047">観測</text>
+  <text x="300" y="274" text-anchor="middle" font-size="26" font-family="Noto Serif CJK JP, Noto Serif JP, Yu Mincho, Hiragino Mincho ProN, MS PMincho, serif" fill="#1c3047">解析</text>
+  <text x="490" y="274" text-anchor="middle" font-size="26" font-family="Noto Serif CJK JP, Noto Serif JP, Yu Mincho, Hiragino Mincho ProN, MS PMincho, serif" fill="#126b78">結果</text>
 </svg>

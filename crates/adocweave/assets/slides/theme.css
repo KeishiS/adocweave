@@ -12,7 +12,7 @@
 
 html, body, .reveal-viewport { background: var(--adocweave-background); color: var(--adocweave-foreground); }
 .reveal {
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans CJK JP", sans-serif;
+  font-family: var(--adocweave-font-family);
   font-size: var(--adocweave-font-size);
   line-height: 1.45;
   font-weight: 400;
@@ -24,6 +24,8 @@ html, body, .reveal-viewport { background: var(--adocweave-background); color: v
   padding: 48px 64px 56px;
 }
 .reveal .slides section.stack { padding: 0; }
+.reveal .slide-body { display: flex; flex-direction: column; height: 100%; }
+.reveal .slide-content { display: flow-root; flex: 0 0 auto; margin-bottom: 24px; }
 .reveal .slides section:not(.stack)::after {
   content: "";
   position: absolute;
@@ -46,8 +48,8 @@ html, body, .reveal-viewport { background: var(--adocweave-background); color: v
 .reveal h2 { font-size: 1.5em; letter-spacing: -.015em; }
 .reveal h3 { font-size: 1.1em; }
 .reveal h4, .reveal h5, .reveal h6 { font-size: 1em; }
-.reveal section:not(.title-slide) > h2::after,
-.reveal #slides-body-references > div > h2::after {
+.reveal section:not(.title-slide) > .slide-body > .slide-content > h2::after,
+.reveal #slides-body-references .slide-content > div > h2::after {
   content: "";
   display: block;
   width: 48px;
@@ -68,8 +70,8 @@ html, body, .reveal-viewport { background: var(--adocweave-background); color: v
   height: 6px;
   background: var(--adocweave-accent);
 }
-.reveal .title-slide > h1 { max-width: 16em; margin-bottom: .45em; }
-.reveal .title-slide > p { max-width: 34em; color: var(--adocweave-muted); }
+.reveal .title-slide .slide-content > h1 { max-width: 16em; margin-bottom: .45em; }
+.reveal .title-slide .slide-content > p { max-width: 34em; color: var(--adocweave-muted); }
 .reveal p { margin: .6em 0; }
 .reveal strong { font-weight: 700; }
 .reveal a { color: var(--adocweave-accent); text-decoration: none; text-underline-offset: .15em; }
@@ -133,18 +135,18 @@ html, body, .reveal-viewport { background: var(--adocweave-background); color: v
 .reveal figure { margin: .7em 0; text-align: center; }
 .reveal figcaption, .reveal caption { margin-top: .35em; color: var(--adocweave-muted); font-size: .7em; }
 .reveal .footnotes {
-  margin-top: 1em;
   padding-top: .5em;
   border-top: 1px solid var(--adocweave-border);
   color: var(--adocweave-muted);
-  font-size: .62em;
-  line-height: 1.4;
+  font-size: .65em;
+  line-height: 1.5;
 }
+.reveal .slide-body > .footnotes { flex: 0 0 auto; margin: auto 0 0; }
 .reveal .footnotes ol { margin-top: 0; margin-bottom: 0; }
 .reveal .footnotes li { margin: .2em 0; }
 .reveal .footnote-ref { margin-left: .12em; font-size: .65em; line-height: 0; vertical-align: super; }
-.reveal #slides-body-references > div > ul,
-.reveal #slides-body-references > div > ol { font-size: .8em; line-height: 1.5; }
+.reveal #slides-body-references .slide-content > div > ul,
+.reveal #slides-body-references .slide-content > div > ol { font-size: .8em; line-height: 1.5; }
 .reveal #slides-body-references li { margin-bottom: .75em; }
 .reveal .bibliography-backref, .reveal .footnote-backref { font-size: .8em; }
 .reveal .columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 48px; }
@@ -159,7 +161,7 @@ html, body, .reveal-viewport { background: var(--adocweave-background); color: v
   padding: 0;
   background: transparent;
   color: var(--adocweave-muted);
-  font: 500 14px/1.4 system-ui, sans-serif;
+  font: 500 14px/1.4 var(--adocweave-font-family);
 }
 body[data-citations] { display: grid; grid-template-rows: minmax(0, 1fr) auto; height: 100vh; }
 body[data-citations] > .reveal { min-height: 0; height: 100%; }
@@ -171,7 +173,7 @@ body[data-citations] > .reveal { min-height: 0; height: 100%; }
   border-top: 1px solid var(--adocweave-border);
   background: var(--adocweave-surface);
   color: var(--adocweave-muted);
-  font: 12px/1.4 system-ui, sans-serif;
+  font: 12px/1.4 var(--adocweave-font-family);
 }
 .slides-attribution a { color: var(--adocweave-accent); }
 body[data-preview] { display: grid; grid-template-rows: minmax(0, 1fr) auto auto; height: 100vh; }
