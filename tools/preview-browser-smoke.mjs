@@ -62,6 +62,16 @@ try {
     assert.equal(result.exceptionDetails, undefined, JSON.stringify(result.exceptionDetails));
     return result.result.value;
   };
+  const renderedTextIncludes = async text => {
+    try {
+      return (await cdp.call("Page.captureSnapshot", { format: "mhtml" })).data.includes(text);
+    } catch (error) {
+      // A reload can replace the sandboxed frame during MHTML serialization.
+      // Keep polling the rendered frame; unrelated CDP failures remain fatal.
+      if (["Failed to generate MHTML", "Not attached to an active page"].includes(error.message)) return false;
+      throw error;
+    }
+  };
   await cdp.call("Page.navigate", { url: address });
   await poll(() => pausedPoll);
   assert.equal(await evaluate('document.querySelector(\'meta[name="adocweave-preview-generation"]\').content'), "1");
@@ -71,11 +81,11 @@ try {
   await poll(async () => (await fetch(`${address}events`, { signal: AbortSignal.timeout(5000) }).then(response => response.json())).generation >= 2);
   await cdp.call("Fetch.continueRequest", { requestId: pausedPoll });
   await cdp.call("Fetch.disable");
-  await poll(async () => (await cdp.call("Page.captureSnapshot", { format: "mhtml" })).data.includes("AFTER_UPDATE"));
+  await poll(() => renderedTextIncludes("AFTER_UPDATE"));
   await writeFile(manuscript, "= Preview\n\ninclude::missing.adoc[]\n");
   await poll(async () => (await evaluate("document.querySelector('pre')?.textContent ?? ''")).includes("missing.adoc"));
   await writeFile(join(root, "missing.adoc"), "RECOVERED_INCLUDE\n");
-  await poll(async () => (await cdp.call("Page.captureSnapshot", { format: "mhtml" })).data.includes("RECOVERED_INCLUDE"));
+  await poll(() => renderedTextIncludes("RECOVERED_INCLUDE"));
   await poll(async () => (await evaluate("document.querySelector('pre')?.textContent ?? ''")).trim() === "[]");
   assert.deepEqual(violations, [], "preview polling must satisfy its real response CSP");
   cdp.check();
