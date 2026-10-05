@@ -2022,7 +2022,7 @@ fn config_show_reports_source_and_redacts_attribute_values() {
     let config = root.join("project.toml");
     std::fs::write(
         &config,
-        "schema-version = 2\n[analysis.attributes.token]\nvalue = \"do-not-print\"\n",
+        "schema-version = 2\n[analysis.attributes.token]\nvalue = \"do-not-print\"\n[math]\nextensions = [\"mathtools\", \"color\"]\n",
     )
     .expect("write config");
 
@@ -2040,6 +2040,10 @@ fn config_show_reports_source_and_redacts_attribute_values() {
         config.canonicalize().unwrap().to_string_lossy().as_ref()
     );
     assert_eq!(value["analysis"]["attributes"]["token"]["state"], "set");
+    assert_eq!(
+        value["math"]["extensions"],
+        serde_json::json!(["color", "mathtools"])
+    );
 
     std::fs::remove_dir_all(root).expect("remove project");
 }

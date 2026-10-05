@@ -60,8 +60,11 @@ function boundedJson(value, depth = 0) {
 }
 
 export function validateRequest(request) {
-  object(request, "request", ["schemaVersion", "eqnums", "scopes", "macros", "csl"], ["schemaVersion", "eqnums", "scopes"]);
-  requireCondition(request.schemaVersion === 2, "Unsupported schemaVersion; expected 2.");
+  object(request, "request", ["schemaVersion", "extensions", "eqnums", "scopes", "macros", "csl"], ["schemaVersion", "eqnums", "scopes"]);
+  requireCondition(request.schemaVersion === 3, "Unsupported schemaVersion; expected 3.");
+  list(request.extensions, "extensions", 3);
+  requireCondition(request.extensions.every(name => ["color", "cancel", "mathtools"].includes(name)), "extensions must contain only color, cancel, or mathtools.");
+  requireCondition(new Set(request.extensions).size === request.extensions.length, "extensions must not contain duplicates.");
   requireCondition(["none", "ams", "all"].includes(request.eqnums), "eqnums must be none, ams, or all.");
   object(request.scopes, "scopes", SCOPES);
   let equationCount = 0;
@@ -141,7 +144,7 @@ export function validateRequest(request) {
 
 export function emptyResponse() {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     status: "ok",
     notices: { math: null, citations: null },
     scopes: Object.fromEntries(SCOPES.map((scope) => [scope, { equations: [], citations: [], bibliography: [] }])),
@@ -155,7 +158,7 @@ export function diagnostic(scope, key, code, message, severity = "error") {
 
 export function finishResponse(response) {
   if (response.diagnostics.some(({ severity }) => severity === "error")) {
-    return { schemaVersion: 2, status: "failed", diagnostics: response.diagnostics };
+    return { schemaVersion: 3, status: "failed", diagnostics: response.diagnostics };
   }
   return response;
 }

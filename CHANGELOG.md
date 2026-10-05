@@ -15,7 +15,8 @@ separate changelogs for the
 - `convert --to revealjs` produces a local reveal.js slide directory. The existing CLI also previews manuscripts and serves generated directories; no separate build command or executable is required.
 - `convert --to revealjs --single-file` writes a self-contained public presentation to standard output. Redirect it to an HTML file to distribute scripts, styles, validated images, and dependency notices together. It excludes presenter notes, supports browser PDF export, and cannot be combined with `--output` or `--audience presenter`.
 - Slides support horizontal and vertical groups, two columns, fragments, images, cross-references, and presenter notes. Public output removes notes before collecting resources or processing their equations and citations. Body content and presenter notes have independent equation, footnote, and citation scopes.
-- LaTeX equations render to static SVG with original TeX retained. CSL citations and bibliographies use the independently versioned `@adocweave/slides-helper` 0.2.0 and helper protocol 2. Documents without LaTeX or CSL citations do not start the helper. Browsers do not load MathJax or a citation processor.
+- LaTeX equations render to static SVG with original TeX retained. CSL citations and bibliographies use the independently versioned `@adocweave/slides-helper` 0.2.0 and helper protocol 3. Documents without LaTeX or CSL citations do not start the helper. Browsers do not load MathJax or a citation processor.
+- `math.extensions` selects the bundled `color`, `cancel`, and `mathtools` extensions for slide equations. Omitted or empty settings enable no additional extensions; unknown and duplicate entries are rejected. Named CSS colors and hexadecimal colors remain in validated SVG, while arbitrary CSS functions and external references remain unsupported. Preview reflects configuration changes.
 - CSL citations need only `--bibliography`: the CLI embeds a numeric citation style and the full CSL `en-US` locale. `--csl-style` and `--csl-locale` override these defaults independently; invalid explicit files remain errors. CSL inputs and visible hand-written bibliography entries cannot be combined.
 - Slides include an offline theme with locally installed Japanese Mincho fonts, bottom-aligned footnotes, and consistent equation, figure, table, and reference styling. Local CSS can customize the theme. Footnote equations are unnumbered inline math; references to equations outside footnotes remain supported within the same scope.
 - Slides use the initial screen aspect ratio by default, with a 16:9 fallback. The document-header attribute `slides-aspect-ratio` selects `auto` or a fixed positive-integer `WIDTH:HEIGHT` ratio between 1:4 and 4:1. Presenter previews use the main presentation's dimensions. A fixed ratio keeps distributed slides consistent across screens.
@@ -33,6 +34,7 @@ separate changelogs for the
 
 ### Rust API
 
+- `adocweave_project::MathExtension`, `ProjectConfig::math_extensions()`, and `ProjectConfigErrorCode::InvalidMathExtension` expose the finite slide-math extension setting and its diagnostics. Update exhaustive error-code matches accordingly.
 - `MathLanguage` adds `AsciiMath`. `InlineFormula` adds `uses_stem_attribute`, and math block `range` includes preceding metadata while `content_range` identifies the formula text. Update exhaustive matches and struct literals accordingly.
 - Validated SVG and finite citation content can be passed through output inputs. Validation rejects unsupported XML, external references, missing or duplicated helper results, and processing-limit violations before rendering.
 - `render_regions`, `render_slide_regions`, `HtmlRegions`, `HtmlRegionSelection`, `HtmlRegionError`, `HtmlSlideScope`, `HtmlSlideSelections`, and `HtmlSlideRegions` expose selected body-region rendering. Slide regions group rendered content and footnotes by source slide, preserving the existing escaping and URL policy while separating body and presenter-note references.
@@ -43,7 +45,7 @@ separate changelogs for the
 ### Migration
 
 - Generic `stem` notation now follows the `stem` attribute at its source position, including fixed attributes and include-local changes. `latexmath`, `latex`, and `tex` select LaTeX; other values, empty values, and an unset attribute select AsciiMath. Set `:stem: latexmath` or use explicit `latexmath:[...]` / `[latexmath]` where a document relied on implicit LaTeX. Slides accept LaTeX and diagnose unsupported notation.
-- To use the new slide output with LaTeX or CSL citations, install `@adocweave/slides-helper` 0.2.0. Check any entry selected by `--slides-helper` or `ADOCWEAVE_SLIDES_HELPER` as well. Native 0.61.0 and the helper must use protocol 2.
+- To use the new slide output with LaTeX or CSL citations, install `@adocweave/slides-helper` 0.2.0. Check any entry selected by `--slides-helper` or `ADOCWEAVE_SLIDES_HELPER` as well. Native 0.61.0 and the helper must use protocol 3 with the required `extensions` array; protocols 1 and 2 are rejected.
 
 ## [0.58.0] - 2026-09-20
 

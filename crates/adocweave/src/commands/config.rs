@@ -71,6 +71,9 @@ pub(crate) fn run_project(snapshot: &adocweave_project::ProjectConfigSnapshot) -
                 "finalNewline": format.final_newline,
                 "maxConsecutiveBlankLines": format.max_consecutive_blank_lines,
             },
+            "math": {
+                "extensions": config.math_extensions(),
+            },
             "html": {
                 "complete": config.html_policy().document_mode == HtmlDocumentMode::Complete,
                 "stylesheetFiles": config.stylesheet_files().iter().map(|value| path(value)).collect::<Vec<_>>(),

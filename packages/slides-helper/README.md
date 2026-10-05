@@ -49,7 +49,8 @@ Windowsでもこの方法を使えます。
 
 ```json
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
+  "extensions": [],
   "eqnums": "none",
   "scopes": {
     "body": { "equations": [], "citations": [] },
@@ -79,11 +80,18 @@ MathJaxのlicense、引用の通知にはciteprocの帰属表示とCPAL本文を
 
 各式は`{ key, tex, display, footnote? }`で指定します。
 `footnote: true`の式はinlineだけを許可し、数式番号とlabelの定義を禁止します。同じ掲載範囲の脚注外で定義した式番号への`ref`・`eqref`は使用できます。`eqnums`は要求全体に共通で、`none`、`ams`、`all`を受け付けます。
+
+`extensions`は必須の配列です。`color`、`cancel`、`mathtools`だけを指定でき、重複は許可しません。
+空配列は追加拡張なしを表します。入力順にかかわらず、この順で有効にします。
+`base`、`ams`、`newcommand`、`configmacros`は常に有効で、配列には指定しません。
+`mathtools`が使うAMSの機能と、式番号・参照はこの基本機能で処理します。
+拡張は同梱したMathJaxから読み込み、原稿から任意の拡張を取得しません。
+
+`color`の色はSVGの`fill`・`stroke`へ出力します。`rgb`、`RGB`、`gray`による色定義はMathJaxがHEX表記へ変換します。受信側は色名やHEX表記を有限に検査し、URLなどを拒否する必要があります。`\colorbox`の背景色と`\fcolorbox`の枠色・背景色にも同じ制約が適用されます。MathJax内部の`data-bgcolor`属性と、枠の図形に重複する`border`スタイルは除去し、背景の矩形と枠の多角形は保持します。
 番号を自動付与するかどうかはMathJaxの規則に従います。両掲載範囲の番号は別々に1から始まります。
 成功時には、ブラウザーでMathJaxを実行する必要のない静的`svg`を返します。
 SVGのglyph pathを各式に含め、IDと内部リンクに掲載範囲・keyを反映します。
 
-MathJaxの`base`、`ams`、`newcommand`、`configmacros`を使用します。
 `label`、前方の`ref`・`eqref`、`tag`、`notag`、AMS環境、macro定義を処理します。
 未定義のmacro、重複label、番号のある参照先がない式参照はerrorです。
 TeXの`require`、拡張機能の自動取得、任意HTMLの埋込みは受け付けません。

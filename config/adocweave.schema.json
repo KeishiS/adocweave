@@ -225,6 +225,25 @@
       },
       "type": "object"
     },
+    "math": {
+      "additionalProperties": false,
+      "properties": {
+        "extensions": {
+          "default": [],
+          "items": {
+            "enum": [
+              "color",
+              "cancel",
+              "mathtools"
+            ],
+            "type": "string"
+          },
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "type": "object"
+    },
     "resources": {
       "additionalProperties": false,
       "properties": {

@@ -1,5 +1,6 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
+  "extensions": [],
   "eqnums": "ams",
   "macros": [
     {

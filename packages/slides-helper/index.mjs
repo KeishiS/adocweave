@@ -19,7 +19,7 @@ export async function processRequest(input) {
     if (equations.length) {
       try {
         const { renderEquations } = await import("./math.mjs");
-        const result = await renderEquations(scope, equations, request.eqnums, request.macros ?? []);
+        const result = await renderEquations(scope, equations, request.eqnums, request.macros ?? [], request.extensions);
         response.scopes[scope].equations = result.results;
         response.diagnostics.push(...result.diagnostics);
       } catch (error) {

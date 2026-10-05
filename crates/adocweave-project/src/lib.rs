@@ -43,7 +43,7 @@ pub use bundle::{
     BundleError, BundleFile, BundleManifest, BundleManifestFile, BundleMediaType, BundleSnapshot,
     ManagedBundleReader, open_managed_bundle, save_managed_bundle,
 };
-pub use config::{ProjectConfig, TerminalColor, TerminalSettings, TerminalTheme};
+pub use config::{MathExtension, ProjectConfig, TerminalColor, TerminalSettings, TerminalTheme};
 pub use process::{process, resolve_config};
 
 /// Resolves `path` against `root` without touching the filesystem.
@@ -1059,6 +1059,7 @@ pub enum ProjectConfigErrorCode {
     InvalidPath,
     InvalidRole,
     InvalidTerminalRole,
+    InvalidMathExtension,
 }
 
 /// Failure while reading or validating project configuration.
@@ -1084,6 +1085,7 @@ impl ProjectConfigError {
             ConfigErrorCode::InvalidPath => ProjectConfigErrorCode::InvalidPath,
             ConfigErrorCode::InvalidRole => ProjectConfigErrorCode::InvalidRole,
             ConfigErrorCode::InvalidTerminalRole => ProjectConfigErrorCode::InvalidTerminalRole,
+            ConfigErrorCode::InvalidMathExtension => ProjectConfigErrorCode::InvalidMathExtension,
         };
         Self {
             code,
@@ -1242,6 +1244,10 @@ impl ProjectConfig {
     }
     pub fn stylesheet_urls(&self) -> &[String] {
         &self.html.stylesheet_urls
+    }
+    /// Returns the additional bundled TeX extensions in deterministic order.
+    pub fn math_extensions(&self) -> &[MathExtension] {
+        &self.math_extensions
     }
     pub fn terminal(&self) -> &TerminalSettings {
         &self.terminal

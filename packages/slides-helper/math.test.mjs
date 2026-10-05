@@ -6,7 +6,7 @@ import { processRequest } from "./index.mjs";
 import { fixture, researchRequest } from "./fixtures.mjs";
 
 function mathRequest(equations, eqnums = "ams") {
-  return { schemaVersion: 2, eqnums, scopes: { body: { equations, citations: [] }, notes: { equations: [], citations: [] } } };
+  return { schemaVersion: 3, extensions: [], eqnums, scopes: { body: { equations, citations: [] }, notes: { equations: [], citations: [] } } };
 }
 
 function svgNodes(svg, predicate) {
@@ -164,4 +164,54 @@ test("footnote equations are inline and cannot define numbers or labels, includi
     { key: "footnote", tex: "y+\\eqref{body}", display: false, footnote: true },
   ], "ams"));
   assert.equal(reference.status, "ok", JSON.stringify(reference.diagnostics));
+});
+
+test("selected color, cancel, and mathtools extensions produce finite SVG and preserve AMS references", async () => {
+  const request = mathRequest([
+    { key: "background", tex: String.raw`dX_t = \colorbox{pink}{$f(t,X_t)$}\,dt + \colorbox{lightblue}{$g(t)$}\,dB_t`, display: true },
+    { key: "rgb", tex: String.raw`\definecolor{sample}{RGB}{255,128,64}\colorbox{sample}{$x$}`, display: false },
+    { key: "frame", tex: String.raw`\definecolor{accent}{RGB}{255,128,64}\fcolorbox{accent}{lightblue}{$x^2+1$}`, display: true },
+    { key: "decimal", tex: String.raw`\definecolor{sample}{rgb}{1,.5,0}\textcolor{sample}{x}`, display: false },
+    { key: "gray", tex: String.raw`\definecolor{sample}{gray}{.5}\textcolor{sample}{x}`, display: false },
+    { key: "cancel", tex: String.raw`\cancel{x}+\bcancel{y}+\xcancel{z}+\cancelto{0}{x}`, display: true },
+    { key: "colon", tex: String.raw`a\coloneqq b\eqqcolon c`, display: false },
+    { key: "paired", tex: String.raw`\DeclarePairedDelimiter{\abs}{\lvert}{\rvert}\abs*{x}`, display: false },
+    { key: "equation", tex: String.raw`\begin{equation}x=1\label{target}\end{equation}`, display: true },
+    { key: "reference", tex: String.raw`\eqref{target}`, display: false },
+  ]);
+  request.extensions = ["mathtools", "cancel", "color"];
+  const result = await processRequest(request);
+  assert.deepEqual(result.diagnostics, []);
+  assert.equal(result.status, "ok");
+  const outputs = Object.fromEntries(result.scopes.body.equations.map(({ key, svg }) => [key, svg]));
+  const fills = key => svgNodes(outputs[key], node => attribute(node, "fill")).map(node => attribute(node, "fill"));
+  assert.ok(fills("background").includes("pink"));
+  assert.ok(fills("background").includes("lightblue"));
+  assert.ok(fills("rgb").includes("#ff8040"));
+  assert.ok(svgNodes(outputs.frame, node => node.nodeName === "rect" && attribute(node, "fill") === "lightblue").length > 0);
+  assert.equal(svgNodes(outputs.frame, node => node.nodeName === "polygon" && attribute(node, "fill") === "#ff8040").length, 4);
+  assert.doesNotMatch(outputs.frame, /border\s*:/);
+  assert.ok(fills("decimal").includes("#ff7f00"));
+  assert.ok(fills("gray").includes("#7f7f7f"));
+  assert.ok(svgNodes(outputs.cancel, node => node.nodeName === "line").length >= 4);
+  assert.ok(svgKind(outputs.colon, "mo").length >= 2);
+  assert.equal(labelText(outputs.reference), "(1)");
+  for (const svg of Object.values(outputs)) assert.doesNotMatch(svg, /data-bgcolor/);
+  request.extensions = ["color", "cancel", "mathtools"];
+  assert.deepEqual(await processRequest(request), result, "selected extension order must not affect rendering");
+});
+
+test("extensions are explicitly selected and do not leak across requests", async () => {
+  for (const [extension, tex] of [
+    ["color", String.raw`\colorbox{pink}{$x$}`],
+    ["cancel", String.raw`\cancelto{0}{x}`],
+    ["mathtools", String.raw`a\coloneqq b\eqqcolon c`],
+  ]) {
+    const request = mathRequest([{ key: "sample", tex, display: false }]);
+    assert.equal((await processRequest(request)).status, "failed", extension);
+    request.extensions = [extension];
+    assert.equal((await processRequest(request)).status, "ok", extension);
+    request.extensions = [];
+    assert.equal((await processRequest(request)).status, "failed", extension);
+  }
 });

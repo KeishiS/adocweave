@@ -4,8 +4,58 @@ mod helper;
 
 #[test]
 fn protocol_schema_rejects_unknown_fields() {
-    let json = r#"{"schemaVersion":2,"eqnums":"none","scopes":{"body":{"equations":[],"citations":[]},"notes":{"equations":[],"citations":[]}},"extra":true}"#;
+    let json = r#"{"schemaVersion":3,"extensions":[],"eqnums":"none","scopes":{"body":{"equations":[],"citations":[]},"notes":{"equations":[],"citations":[]}},"extra":true}"#;
     assert!(serde_json::from_str::<helper::protocol::Request>(json).is_err());
+}
+
+#[test]
+fn protocol_requires_a_finite_unique_extension_list() {
+    let original = serde_json::to_value(fixture().request()).unwrap();
+    for extensions in [
+        serde_json::json!([]),
+        serde_json::json!(["color"]),
+        serde_json::json!(["mathtools", "color", "cancel"]),
+    ] {
+        let mut request = original.clone();
+        request["extensions"] = extensions;
+        serde_json::from_value::<protocol::Request>(request)
+            .unwrap()
+            .validate()
+            .unwrap();
+    }
+    for extensions in [
+        serde_json::json!(null),
+        serde_json::json!("color"),
+        serde_json::json!(["require"]),
+        serde_json::json!(["base"]),
+        serde_json::json!(["color", "color"]),
+        serde_json::json!(["color", "cancel", "mathtools", "color"]),
+    ] {
+        let mut request = original.clone();
+        request["extensions"] = extensions;
+        assert!(
+            !serde_json::from_value::<protocol::Request>(request)
+                .is_ok_and(|request| request.validate().is_ok())
+        );
+    }
+    let mut missing = original.clone();
+    missing.as_object_mut().unwrap().remove("extensions");
+    assert!(serde_json::from_value::<protocol::Request>(missing).is_err());
+    for version in [1, 2] {
+        let mut request = original.clone();
+        request["schemaVersion"] = version.into();
+        assert!(
+            serde_json::from_value::<protocol::Request>(request)
+                .unwrap()
+                .validate()
+                .is_err()
+        );
+        let mut old_response = response();
+        old_response["schemaVersion"] = version.into();
+        let error = validate(old_response).unwrap_err();
+        assert!(error.message.contains("requires schemaVersion 3"));
+        assert!(error.message.contains("update the selected helper"));
+    }
 }
 
 use adocweave_core::{
@@ -31,7 +81,7 @@ fn prepare(
     csl: Option<protocol::Csl>,
 ) -> HostResult<Prepared> {
     let selected = helper::selected_content(analysis, body, notes, include_notes)?;
-    helper::prepare(analysis, selected, macros, csl)
+    helper::prepare(analysis, selected, &[], macros, csl)
 }
 fn fixture() -> Prepared {
     let request: protocol::Request =
@@ -115,7 +165,7 @@ fn every_result_key_is_accounted_for() {
 
 #[test]
 fn failed_response_has_only_diagnostics_and_no_rendered_results() {
-    let json = serde_json::json!({"schemaVersion":2,"status":"failed","diagnostics":[{"scope":"body","key":"math1","severity":"error","code":"math-failed","message":"invalid TeX"}]});
+    let json = serde_json::json!({"schemaVersion":3,"status":"failed","diagnostics":[{"scope":"body","key":"math1","severity":"error","code":"math-failed","message":"invalid TeX"}]});
     let accepted = helper::validate_response(
         &fixture(),
         serde_json::from_value(json.clone()).unwrap(),
@@ -209,6 +259,24 @@ fn public_preparation_drops_notes_and_note_only_library_items() {
             .keys()
             .all(|(scope, _)| *scope == Scope::Body)
     );
+}
+
+#[test]
+fn preparation_sends_configured_extensions_in_fixed_order_without_deduplicating() {
+    use adocweave_project::MathExtension::{Cancel, Color, Mathtools};
+    let analysis = Engine::new(AnalysisOptions::default())
+        .analyze("= Deck\n\nlatexmath:[x]\n")
+        .unwrap();
+    let body = Selection {
+        equations: vec![formulas(&analysis)[0].source_range],
+        ..Selection::default()
+    };
+    let select =
+        || helper::selected_content(&analysis, &body, &Selection::default(), false).unwrap();
+    let prepared =
+        helper::prepare(&analysis, select(), &[Mathtools, Color, Cancel], None, None).unwrap();
+    assert_eq!(prepared.request().extensions, [Color, Cancel, Mathtools]);
+    assert!(helper::prepare(&analysis, select(), &[Color, Color], None, None).is_err());
 }
 
 #[test]
@@ -349,7 +417,8 @@ async fn helper_waiting_for_stdin_eof_receives_one_complete_json_request() {
 const chunks = [];
 for await (const chunk of process.stdin) chunks.push(chunk);
 const request = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-if (request.schemaVersion !== 2 || !request.scopes.body.equations.length) process.exit(2);
+if (request.schemaVersion !== 3 || !request.scopes.body.equations.length) process.exit(2);
+if (!Array.isArray(request.extensions) || request.extensions.length !== 0) process.exit(2);
 process.stdout.write(readFileSync(new URL('./response.json', import.meta.url)));
 "#,
     )
@@ -552,27 +621,29 @@ setInterval(() => {}, 1000);
 #[cfg(unix)]
 #[tokio::test]
 async fn obsolete_helper_schema_reports_the_required_helper_version() {
-    for exit in [0, 1] {
-        let (_directory, path) = fake_helper(&format!(
-            "cat >/dev/null\nprintf '%s\\n' '{{\"schemaVersion\":1,\"scopes\":{{}},\"diagnostics\":[],\"notices\":{{}}}}'\nexit {exit}"
-        ));
-        let error = helper::execute(
-            &fixture(),
-            Some(&path),
-            &NeverCancel,
-            helper::ProcessLimits::default(),
-            &BTreeSet::new(),
-        )
-        .await
-        .unwrap_err();
-        assert_eq!(error.code, "slides-helper-protocol");
-        let message = error.to_string();
-        assert!(message.contains("requires schemaVersion 2"), "{message}");
-        assert!(
-            message.contains("@adocweave/slides-helper 0.2.0"),
-            "{message}"
-        );
-        assert!(!message.contains("missing field"), "{message}");
+    for version in [1, 2] {
+        for exit in [0, 1] {
+            let (_directory, path) = fake_helper(&format!(
+                "cat >/dev/null\nprintf '%s\\n' '{{\"schemaVersion\":{version},\"scopes\":{{}},\"diagnostics\":[],\"notices\":{{}}}}'\nexit {exit}"
+            ));
+            let error = helper::execute(
+                &fixture(),
+                Some(&path),
+                &NeverCancel,
+                helper::ProcessLimits::default(),
+                &BTreeSet::new(),
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(error.code, "slides-helper-protocol");
+            let message = error.to_string();
+            assert!(message.contains("requires schemaVersion 3"), "{message}");
+            assert!(
+                message.contains("@adocweave/slides-helper 0.2.0"),
+                "{message}"
+            );
+            assert!(!message.contains("missing field"), "{message}");
+        }
     }
 }
 

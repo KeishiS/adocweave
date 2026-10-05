@@ -665,18 +665,23 @@ pub(crate) fn build(
             }
         }
     }
-    let prepared =
-        match super::helper::prepare(analysis, selected, data_inputs.macros, data_inputs.csl) {
-            Ok(prepared) => prepared,
-            Err(error) => {
-                host_error(error, &mut diagnostics, &observations)?;
-                return Ok(GeneratedBundle {
-                    files: Vec::new(),
-                    diagnostics,
-                    observations,
-                });
-            }
-        };
+    let prepared = match super::helper::prepare(
+        analysis,
+        selected,
+        target.config.config.math_extensions(),
+        data_inputs.macros,
+        data_inputs.csl,
+    ) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            host_error(error, &mut diagnostics, &observations)?;
+            return Ok(GeneratedBundle {
+                files: Vec::new(),
+                diagnostics,
+                observations,
+            });
+        }
+    };
     for diagnostic in &prepared.diagnostics {
         if let Some(range) = diagnostic.range {
             problem(

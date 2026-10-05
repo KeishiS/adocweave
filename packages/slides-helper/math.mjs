@@ -7,6 +7,9 @@ import "@mathjax/src/js/util/asyncLoad/esm.js";
 import "@mathjax/src/js/input/tex/ams/AmsConfiguration.js";
 import "@mathjax/src/js/input/tex/newcommand/NewcommandConfiguration.js";
 import "@mathjax/src/js/input/tex/configmacros/ConfigMacrosConfiguration.js";
+import "@mathjax/src/js/input/tex/color/ColorConfiguration.js";
+import "@mathjax/src/js/input/tex/cancel/CancelConfiguration.js";
+import "@mathjax/src/js/input/tex/mathtools/MathtoolsConfiguration.js";
 
 import { diagnostic } from "./protocol.mjs";
 import { equationReferences, prepareMathTree, finishSvg, localFragment } from "./mathjax-output.mjs";
@@ -20,7 +23,7 @@ function visitDom(node, action) {
   for (const child of adaptor.childNodes(node)) visitDom(child, action);
 }
 
-export async function renderEquations(scope, equations, eqnums, macros) {
+export async function renderEquations(scope, equations, eqnums, macros, extensions) {
   const diagnostics = [];
   const failures = new Set();
   const keys = new WeakMap();
@@ -31,7 +34,7 @@ export async function renderEquations(scope, equations, eqnums, macros) {
     }
   };
   const tex = new TeX({
-    packages: ["base", "ams", "newcommand", "configmacros"],
+    packages: ["base", "ams", "newcommand", "configmacros", ...["color", "cancel", "mathtools"].filter(name => extensions.includes(name))],
     tags: eqnums,
     // MathJax's own macro expansion and buffer limits remain enabled.
     macros: Object.fromEntries(macros.map((macro) => [macro.name, macro.default === undefined

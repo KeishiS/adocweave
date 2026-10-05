@@ -68,6 +68,9 @@ newline = "lf"
 final-newline = true
 max-consecutive-blank-lines = 1
 
+[math]
+extensions = ["color", "cancel", "mathtools"]
+
 [html]
 complete = true
 stylesheet-files = ["styles/manual.css"]
@@ -160,6 +163,10 @@ roles = ["definition", "theorem"]
 |1以上の整数（既定値: 1）
 |整形後に連続できる空行の上限を指定します。
 
+|``math.extensions``
+|``color``、``cancel``、``mathtools``の配列（既定値: 空の配列）
+|スライドのLaTeX数式で使う追加拡張を指定します。重複は指定できません。
+
 |``html.complete``
 |``true``または``false``（既定値は``false``）
 |完全なHTML文書を出力するかを指定します。
@@ -184,6 +191,26 @@ roles = ["definition", "theorem"]
 |端末の基本色の名前または``default``
 |``view``で``<ROLE>``に使う色を指定します。``<ROLE>``には``heading``や``link``のような、文字列の役割を表す名前を指定します。
 |===
+
+[#math-extensions]
+=== スライドの数式拡張
+
+``math.extensions``は、``convert --to revealjs``と``preview --to revealjs``で処理するLaTeX数式へ適用します。
+次の例は、色、取消線、追加の数学記号と配置を有効にします。
+
+[source,toml]
+----
+schema-version = 2
+
+[math]
+extensions = ["color", "cancel", "mathtools"]
+----
+
+省略または空配列は追加拡張なしです。未知の名前、重複、基本機能の内部名を指定すると、設定のエラーにします。
+``base``、``ams``、``newcommand``、``configmacros``は常に有効で、この配列には指定しません。
+入力順にかかわらず、追加拡張は``color``、``cancel``、``mathtools``の順で有効にします。
+スライドのプレビューでは、設定ファイルの変更も反映します。
+具体的な記法と制約はxref:slides.adoc#slides-math-extensions[数式の色と追加記法]を参照してください。
 
 [#terminal-colors]
 === 端末表示の配色

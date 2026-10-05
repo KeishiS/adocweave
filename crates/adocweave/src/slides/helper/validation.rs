@@ -42,7 +42,7 @@ pub fn validate_response(
             true,
         ),
     };
-    protocol::check(schema_version == 2, "unsupported response schemaVersion")?;
+    protocol::require_response_version(u64::from(schema_version))?;
     protocol::check(
         helper_diagnostics.len() <= protocol::ITEMS * 8,
         "helper diagnostic count limit exceeded",

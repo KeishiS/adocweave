@@ -2,6 +2,7 @@
 
 use super::{HostError, HostResult};
 use adocweave_core::output::html::RichInline;
+use adocweave_project::MathExtension;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -9,6 +10,16 @@ pub const INPUT_BYTES: usize = 4 * 1024 * 1024;
 pub const OUTPUT_BYTES: usize = 32 * 1024 * 1024;
 pub const ITEMS: usize = 1024;
 pub const BIBLIOGRAPHY_ITEMS: usize = 4096;
+pub const SCHEMA_VERSION: u8 = 3;
+
+pub fn require_response_version(version: u64) -> HostResult<()> {
+    if version == u64::from(SCHEMA_VERSION) {
+        return Ok(());
+    }
+    Err(HostError::protocol(format!(
+        "unsupported slide helper response schemaVersion {version}; this CLI requires schemaVersion {SCHEMA_VERSION} and @adocweave/slides-helper 0.2.0 (or a compatible version); update the selected helper"
+    )))
+}
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -125,6 +136,7 @@ pub struct Csl {
 pub struct Request {
     pub schema_version: u8,
     pub eqnums: Eqnums,
+    pub extensions: Vec<MathExtension>,
     pub scopes: Scopes<ScopeInput>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub macros: Option<Vec<Macro>>,
@@ -140,8 +152,16 @@ impl Request {
     }
     pub fn validate(&self) -> HostResult<()> {
         check(
-            self.schema_version == 2,
+            self.schema_version == SCHEMA_VERSION,
             "unsupported request schemaVersion",
+        )?;
+        check(self.extensions.len() <= 3, "extension count limit exceeded")?;
+        let mut extensions = BTreeSet::new();
+        check(
+            self.extensions
+                .iter()
+                .all(|extension| extensions.insert(extension)),
+            "duplicate math extension",
         )?;
         let mut equations = 0;
         let mut citations = 0;
