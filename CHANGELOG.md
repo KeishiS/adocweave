@@ -8,6 +8,12 @@ separate changelogs for the
 [VS Code extension](https://github.com/KeishiS/adocweave/blob/main/editors/vscode/CHANGELOG.md), and
 [Zed extension](https://github.com/KeishiS/adocweave/blob/main/editors/zed/CHANGELOG.md).
 
+## [0.59.1] - 2026-10-05
+
+### Fixed
+
+- Reveal.js slides use a refreshed 16:9 theme with larger cover titles, left-aligned body content, and consistent spacing for equations, figures, tables, and references. System fonts keep slides available offline, and local stylesheets can customize the accent color and body font size through CSS variables.
+
 ## [0.59.0] - 2026-10-04
 
 ### Main changes
@@ -174,6 +180,7 @@ if let Ok(expanded) = analysis.expanded {
 }
 ```
 
+[0.59.1]: https://github.com/KeishiS/adocweave/compare/v0.59.0...v0.59.1
 [0.59.0]: https://github.com/KeishiS/adocweave/compare/v0.58.0...v0.59.0
 [0.58.0]: https://github.com/KeishiS/adocweave/compare/v0.57.0...v0.58.0
 [0.57.0]: https://github.com/KeishiS/adocweave/compare/v0.56.5...v0.57.0

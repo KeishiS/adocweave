@@ -3,17 +3,14 @@
 :stem: latexmath
 :eqnums:
 
-[#method]
+[#method.columns]
 == Method — 手法
 
-The heading reference <<method>> preserves an already visible stage.
-Forward equation reference latexmath:[\eqref{result}].
-Japanese formula latexmath:[\text{日本語の数式}].
-Public citation cite:[zebra, locator="12-15", label=page].
-
-[%step]
-* [[first-step]]First stage — 最初の結果。
-* [[second-step]]Second stage — 次の結果。
+[.column]
+--
+<<method,手法>>の式 latexmath:[\eqref{result}]。
+latexmath:[\text{日本語の数式}]。
+cite:[zebra, locator="12-15", label=page]。
 
 [latexmath]
 ++++
@@ -23,10 +20,16 @@ y&=2\label{result}
 \end{align}
 ++++
 
-footnote:shared[latexmath:[\eqref{i}] latexmath:[\begin{equation}z=3\label{i}\end{equation}], cite:[inside].].
+[%step]
+* [[first-step]]観測値の取得 footnote:shared[latexmath:[\eqref{i}] latexmath:[\begin{equation}z=3\label{i}\end{equation}], cite:[inside].]
+* [[second-step]]結果の推定
+--
 
-.研究の図
-image::result.svg[研究の図,width=220]
+[.column]
+--
+.処理の流れ（模式図）
+image::result.svg[観測から解析を経て結果を得る流れ,width=500]
+--
 
 [.notes]
 --

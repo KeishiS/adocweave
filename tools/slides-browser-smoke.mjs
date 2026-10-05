@@ -227,7 +227,7 @@ Return to <<method>>, <<first-step>>, or <<second-step>>;
           notesReferences: [...document.querySelectorAll('.bibliography-anchor[id^="slides-notes-bib-"]')].map(node => node.id),
           privateText: document.body.textContent.includes('PRIVATE_BIBLIOGRAPHY'),
           imageReady: [...document.images].every(image => image.complete && image.naturalWidth > 0),
-          customSize: getComputedStyle(document.querySelector('.reveal')).fontSize,
+          customAccent: getComputedStyle(document.querySelector('.reveal .controls')).color,
           creditsVisible: rectangle.width > 0 && rectangle.height > 0 && rectangle.bottom <= innerHeight + 1,
           credits: credits.textContent,
           browserMathJax: [...document.scripts].some(script => /mathjax|citeproc/i.test(script.src)),
@@ -255,7 +255,38 @@ Return to <<method>>, <<first-step>>, or <<second-step>>;
         assert.equal(content.notesResult, "(2)");
       }
       assert.equal(content.imageReady, true);
-      assert.equal(content.customSize, "24px");
+      assert.equal(content.customAccent, "rgb(18, 107, 120)");
+      const layouts = await page.evaluate(`(() => {
+        const layouts = [];
+        for (const [h, v] of [[0,0], [1,0], [2,0], [2,1], [3,0], [4,0]]) {
+          Reveal.slide(h, v, 1);
+          const slide = Reveal.getCurrentSlide();
+          const bounds = slide.getBoundingClientRect();
+          const style = getComputedStyle(slide);
+          const scale = Reveal.getScale();
+          const content = {
+            left: bounds.left + parseFloat(style.paddingLeft) * scale,
+            right: bounds.right - parseFloat(style.paddingRight) * scale,
+            top: bounds.top + parseFloat(style.paddingTop) * scale,
+            bottom: bounds.bottom - parseFloat(style.paddingBottom) * scale,
+          };
+          const outside = [...slide.querySelectorAll('h1,h2,h3,p,li,figure,table,[data-math-display="block"]')]
+            .filter(node => !node.closest('aside.notes'))
+            .map(node => ({ tag: node.tagName, bounds: node.getBoundingClientRect() }))
+            .filter(({ bounds: box }) => box.width > 0 && box.height > 0 &&
+              (box.left < content.left - 1 || box.right > content.right + 1 ||
+               box.top < content.top - 1 || box.bottom > content.bottom + 1))
+            .map(({ tag }) => tag);
+          layouts.push({ slide: slide.id, outside, alignment: style.textAlign });
+        }
+        Reveal.slide(1, 0, 1);
+        return { aspect: Reveal.getConfig().width / Reveal.getConfig().height, slides: layouts };
+      })()`);
+      assert.equal(layouts.aspect, 16 / 9);
+      for (const layout of layouts.slides) {
+        assert.equal(layout.alignment, "left", layout.slide);
+        assert.deepEqual(layout.outside, [], layout.slide);
+      }
       assert.equal(content.creditsVisible, true);
       assert.match(content.credits, /Frank Bennett/);
       assert.match(content.credits, /citeproc-js implements the Citation Style Language/);
@@ -358,7 +389,7 @@ Return to <<method>>, <<first-step>>, or <<second-step>>;
   await update(oneFragment, "REMOVED_FRAGMENT");
   const fragmentFallback = await page.evaluate("Reveal.getIndices()");
   assert.deepEqual(fragmentFallback, { h: 1, v: 0, f: 0 });
-  const removedHeading = oneFragment.replace("[#method]", "[#changed-method]").replaceAll("<<method>>", "method");
+  const removedHeading = oneFragment.replace(/^\[#method(?=[.\]])/m, "[#changed-method").replace(/<<method(?:,[^>]*)?>>/g, "method");
   await update(removedHeading, "REMOVED_HEADING");
   const headingFallback = await page.evaluate("Reveal.getIndices()");
   assert.deepEqual(headingFallback, { h: 0, v: 0 });
