@@ -13,6 +13,7 @@ separate changelogs for the
 ### Main changes
 
 - `convert --to revealjs` produces a local reveal.js slide directory. The existing CLI also previews manuscripts and serves generated directories; no separate build command or executable is required.
+- `convert --to revealjs --single-file` writes a self-contained public presentation to standard output. Redirect it to an HTML file to distribute scripts, styles, validated images, and dependency notices together. It excludes presenter notes, supports browser PDF export, and cannot be combined with `--output` or `--audience presenter`.
 - Slides support horizontal and vertical groups, two columns, fragments, images, cross-references, and presenter notes. Public output removes notes before collecting resources or processing their equations and citations. Body content and presenter notes have independent equation, footnote, and citation scopes.
 - LaTeX equations render to static SVG with original TeX retained. CSL citations and bibliographies use the independently versioned `@adocweave/slides-helper` 0.2.0 and helper protocol 2. Documents without LaTeX or CSL citations do not start the helper. Browsers do not load MathJax or a citation processor.
 - CSL citations need only `--bibliography`: the CLI embeds a numeric citation style and the full CSL `en-US` locale. `--csl-style` and `--csl-locale` override these defaults independently; invalid explicit files remain errors. CSL inputs and visible hand-written bibliography entries cannot be combined.

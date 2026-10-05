@@ -68,6 +68,7 @@ pub(crate) enum CommandOptions {
         css: Vec<StylesheetArgument>,
         target: ConvertTarget,
         output: Option<PathBuf>,
+        single_file: bool,
         audience: crate::slides::Audience,
         slides_helper: Option<PathBuf>,
         data: SlidesData,
@@ -305,9 +306,13 @@ struct ConvertArgs {
     #[arg(long = "to", value_name = "FORMAT", value_enum, default_value_t)]
     target: ConvertTarget,
 
-    /// Dedicated output directory; required for revealjs.
-    #[arg(long, value_name = "DIR", value_hint = ValueHint::DirPath, required_if_eq("target", "revealjs"))]
+    /// Dedicated output directory; required for revealjs unless --single-file is used.
+    #[arg(long, value_name = "DIR", value_hint = ValueHint::DirPath)]
     output: Option<PathBuf>,
+
+    /// Write one self-contained public revealjs HTML document to standard output.
+    #[arg(long)]
+    single_file: bool,
 
     /// Content to publish with revealjs; defaults to public.
     #[arg(long, value_name = "AUDIENCE", value_enum)]
@@ -695,6 +700,22 @@ fn run_action(arguments: Arguments) -> Result<Action, CliError> {
 fn convert_action(command: ConvertArgs, matches: &clap::ArgMatches) -> Result<Action, CliError> {
     let css = stylesheet_arguments(matches);
     if command.target == ConvertTarget::Revealjs {
+        if command.single_file {
+            if command.output.is_some() {
+                return Err(CliError::Usage(
+                    "--single-file cannot be combined with --output".to_owned(),
+                ));
+            }
+            if command.audience == Some(crate::slides::Audience::Presenter) {
+                return Err(CliError::Usage(
+                    "--single-file requires --audience public".to_owned(),
+                ));
+            }
+        } else if command.output.is_none() {
+            return Err(CliError::Usage(
+                "--to revealjs requires --output DIR or --single-file".to_owned(),
+            ));
+        }
         if command.complete
             || css
                 .iter()
@@ -714,6 +735,7 @@ fn convert_action(command: ConvertArgs, matches: &clap::ArgMatches) -> Result<Ac
             ));
         }
     } else if command.output.is_some()
+        || command.single_file
         || command.audience.is_some()
         || command.slides_helper.is_some()
         || command.data.specified()
@@ -728,6 +750,7 @@ fn convert_action(command: ConvertArgs, matches: &clap::ArgMatches) -> Result<Ac
             css,
             target: command.target,
             output: command.output,
+            single_file: command.single_file,
             audience: command.audience.unwrap_or_default(),
             slides_helper: command.slides_helper,
             data: command.data,

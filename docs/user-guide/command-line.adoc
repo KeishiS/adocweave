@@ -380,7 +380,8 @@ symlinkのCSSファイル、安全でない内容、許可されていないURL�
 [#revealjs-slides]
 == reveal.jsスライド
 
-AsciiDocの本文から、ローカルで開けるスライド一式を生成します。生成先の``index.html``をブラウザーで開くと、
+AsciiDocの本文から、ローカルで開けるスライド一式を生成します。
+既定のディレクトリ出力では、生成先の``index.html``をブラウザーで開くと、
 同梱したreveal.jsとCSSで表示します。表示時に外部のJavaScriptやフォントを取得しません。
 ``public``出力をファイルとして開く動作は、固定したChromiumで検証しています。
 発表者画面は、以下の``preview``または``serve``によるローカルHTTP配信を使ってください。
@@ -394,13 +395,31 @@ adocweave convert talk.adoc --to revealjs --output dist/talk
 adocweave convert talk.adoc --to revealjs --output dist/talk --audience presenter
 ----
 
-``--output``は必須です。``--complete``と``--css-url``は併用できません。
+ディレクトリ出力では``--output``が必須です。``--complete``と``--css-url``は併用できません。
 通常の``convert``は引き続きHTML fragmentを標準出力へ書き出します。
+
+配布する資料を1つのHTMLにまとめるには、``--single-file``を指定します。
+通常HTMLと同じく標準出力へ書き出すため、次のように保存してください。診断は標準エラー出力へ表示します。
+
+[source,console]
+----
+adocweave convert talk.adoc --to revealjs --single-file > talk.html
+----
+
+``talk.html``だけを移動・配布し、ブラウザーで直接開けます。JavaScript、CSS、本文の画像と依存物の通知を
+HTMLへ含め、表示に必要な別ファイルを読み込みません。数式SVGと引用も通常のスライド出力と同じ内容です。
+利用する数式・引用に応じて、``--slides-helper``や``--bibliography``などを追加できます。
+``--single-file``は``public``の出力に限り、発表者ノートとノート専用の資産を含めません。
+``--output``および``--audience presenter``とは併用できません。``preview``と``serve``では指定できません。
+埋込み後のHTMLは50 MiBまでです。画像のBase64化でサイズが増え、同じ画像を繰り返す場合はその分も増えます。
+システムフォントは同梱しないため、使用する端末のフォントで表示します。
+ライセンス全文は画面左上の``Licenses and notices``から確認できます。全文はPDFの印刷対象には含めません。
 
 CSSを指定しない場合は、実行ファイルに内包したテーマを使います。CSSファイルの準備や外部からの取得は不要です。
 ``--css FILE``とプロジェクト設定の``html.stylesheet-files``には、UTF-8のローカルCSSを指定できます。
 既定のテーマの後に、指定順で適用します。ファイル数と内容の上限は通常のHTML出力と同じです。
 CSS内の``@import``や``url()``が指定する資産は探索・コピーせず、その表示を保証しません。
+単一HTMLでもCSS内の別ファイルを収集しません。CSPによって外部資産の取得を禁止します。
 外部のstylesheet URLを指定した設定は拒否します。
 
 スライドの縦横比は、原稿の文書ヘッダで``slides-aspect-ratio``を指定して選べます。
@@ -586,6 +605,7 @@ adocweave serve dist/talk --port 8080
 ChromeまたはChromiumで、スライドのURLへ``?print-pdf``を付けて開きます。
 PDF保存の自動検証には固定したChromiumを使います。Firefoxの印刷結果は保証しません。
 保存済みの``public``出力の``index.html``を直接開く場合も、``serve``や``preview``で配信する場合も同じです。
+``--single-file``で生成したHTMLも同じ方法で印刷できます。
 例えば、``serve dist/talk --port 8080``で配信したスライドは``http://127.0.0.1:8080/?print-pdf``で開いてください。
 URLに``#``以降のスライド位置がある場合は、``?print-pdf``を``#``より前へ置きます。
 

@@ -60,6 +60,7 @@ pub(crate) fn run(
         CommandOptions::Convert {
             target: ConvertTarget::Revealjs,
             output,
+            single_file,
             audience,
             slides_helper,
             data,
@@ -124,6 +125,22 @@ pub(crate) fn run(
                         acquired.path.display()
                     )));
                 }
+            }
+            if *single_file {
+                let html = crate::slides::single_file::render(
+                    &bundle,
+                    adocweave_core::OutputLimits::default().max_output_bytes,
+                )?;
+                // Generation has reaped its helpers. A full stdout pipe must
+                // now remain interruptible even while write_all is blocked.
+                crate::restore_shutdown_signal_defaults();
+                if cancellation.is_cancelled() {
+                    return Err(CliError::Project(
+                        adocweave_project::ProjectError::Cancelled,
+                    ));
+                }
+                print_output(html)?;
+                return Ok(CliExitCode::Success);
             }
             let directory = absolute_path(
                 &current,
