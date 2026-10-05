@@ -50,7 +50,8 @@ export async function renderEquations(scope, equations, eqnums, macros) {
       return jax.formatError(error);
     },
   });
-  const svg = new SVG({ fontCache: "local", useXlink: false });
+  // Keep each inline equation in one SVG instead of browser line-breaking fragments.
+  const svg = new SVG({ fontCache: "local", useXlink: false, linebreaks: { inline: false } });
   const document = mathjax.document("", {
     InputJax: tex,
     OutputJax: svg,

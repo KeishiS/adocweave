@@ -24,6 +24,31 @@ const labelText = (svg) => svgKind(svg, "mtext").map((node) => svgNodes(node,
   (child) => attribute(child, "data-c") || child.nodeName === "#text")
   .map((child) => child.value ?? String.fromCodePoint(Number.parseInt(attribute(child, "data-c"), 16))).join("")).join("");
 
+test("inline equations retain operators, numbers, and references between visible terms", async () => {
+  const result = await processRequest(mathRequest([
+    { key: "equals", tex: "z=3", display: false },
+    { key: "plus", tex: "z+3", display: false },
+    { key: "reference", tex: "z=\\eqref{target}+3", display: false },
+    { key: "target", tex: "\\begin{equation}x=1\\label{target}\\end{equation}", display: true },
+  ]));
+  assert.deepEqual(result.diagnostics, []);
+  const equations = result.scopes.body.equations;
+  const expected = [
+    ["1D467", "3D", "33"],
+    ["1D467", "2B", "33"],
+    ["1D467", "3D", "28", "31", "29", "2B", "33"],
+  ];
+  for (const [index, glyphs] of expected.entries()) {
+    assert.equal(equations[index].status, "ok");
+    assert.deepEqual(svgNodes(equations[index].svg, node => node.nodeName === "use")
+      .map(node => attribute(node, "data-c")), glyphs);
+  }
+  const reference = svgNodes(equations[2].svg, node => node.nodeName === "a");
+  assert.equal(reference.length, 1);
+  const target = attribute(reference[0], "href").slice(1);
+  assert.ok(svgNodes(equations[3].svg, node => attribute(node, "id") === target).length === 1);
+});
+
 test("the complete scope resolves forward references and emits independent local SVG IDs", async () => {
   const result = await processRequest(researchRequest());
   assert.deepEqual(result.diagnostics, []);
