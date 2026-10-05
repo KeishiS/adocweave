@@ -215,7 +215,7 @@ async function printPdf(page, url, name) {
   const text = inspectPdf(pdfText, ["-enc", "UTF-8", path, "-"]);
   const compact = text.replace(/\s+/gu, "");
   for (const content of ["研究スライドの受入原稿", "Method", "Vertical", "Detail", "Last", "References",
-    "観測値の取得", "結果の推定", "の定義は", "出典", "Doe", "Roe", "FrankBennett"]) {
+    "観測値の取得", "結果の推定", "補助条件として", "を仮定します", "出典", "Doe", "Roe", "FrankBennett"]) {
     assert.ok(compact.includes(content), `Missing printed content (${content}): ${name}`);
   }
   assert.doesNotMatch(text, /PRIVATE_NOTE|PRIVATE_LAST_NOTE|PRIVATE_BIBLIOGRAPHY|PRINT_DIAGNOSTIC_PROBE/);
@@ -354,6 +354,12 @@ Return to <<method>>, <<first-step>>, or <<second-step>>;
           duplicateIds: ids.length - new Set(ids).size, missing,
           footnote: label('#method > .slide-body > .footnotes li .math-rendered'),
           notesFootnote: label('#method aside.notes .footnotes li .math-rendered'),
+          footnoteMath: [...document.querySelectorAll('.footnotes [data-math-display]')].map(node => ({
+            display: node.dataset.mathDisplay,
+            source: node.querySelector('.math-source')?.textContent,
+            numbered: Boolean(node.querySelector('[data-mml-node="mlabeledtr"]')),
+            glyphs: [...node.querySelectorAll('.math-rendered svg use[data-c]')].map(glyph => glyph.getAttribute('data-c')),
+          })),
           notesResult: label(notesMath.find(node => node.closest('#method') &&
             node.querySelector('.math-source')?.textContent.includes('label{result}'))),
           citation: text('#method p .citation'),
@@ -370,23 +376,26 @@ Return to <<method>>, <<first-step>>, or <<second-step>>;
             .map(node => [node.className, node.textContent.replace(/\\s+/g, ' ').trim(), node.querySelector('svg')?.outerHTML ?? '']),
         };
       })()`);
-      assert.equal(content.bodyMath, 10);
-      assert.equal(content.notesMath, presenter ? 6 : 0);
-      assert.equal(content.svg, presenter ? 16 : 10);
+      assert.equal(content.bodyMath, 8);
+      assert.equal(content.notesMath, presenter ? 4 : 0);
+      assert.equal(content.svg, presenter ? 12 : 8);
       assert.equal(content.sourcesHidden, true);
       assert.equal(content.matrix, 2);
       assert.equal(content.tableMath, 1);
       assert.equal(content.tableCitation, 1);
       assert.equal(content.duplicateIds, 0);
       assert.deepEqual(content.missing, []);
-      assert.equal(content.footnote, "(2)");
+      assert.equal(content.footnote, "");
+      assert.deepEqual(content.footnoteMath,
+        Array.from({ length: presenter ? 4 : 2 }, () => ({ display: "inline", source: "z=3", numbered: false,
+          glyphs: ["1D467", "3D", "33"] })));
       assert.equal(content.citation, "(Doe2024b,pp.12–15)↗");
       assert.equal(content.bodyReferences.length, 3);
       assert.equal(content.notesReferences.length, presenter ? 2 : 0);
       assert.equal(content.privateText, presenter);
       if (presenter) {
-        assert.equal(content.notesFootnote, "(1)");
-        assert.equal(content.notesResult, "(2)");
+        assert.equal(content.notesFootnote, "");
+        assert.equal(content.notesResult, "(1)");
       }
       assert.equal(content.imageReady, true);
       assert.equal(content.customAccent, "rgb(18, 107, 120)");
@@ -414,14 +423,13 @@ Return to <<method>>, <<first-step>>, or <<second-step>>;
           const footnotes = slide.querySelector(':scope > .slide-body > .footnotes');
           const footnoteBounds = footnotes?.getBoundingClientRect();
           const bodyBounds = slide.querySelector(':scope > .slide-body > .slide-content').getBoundingClientRect();
-          const numberedEquation = [...(footnotes?.querySelectorAll('.math-rendered') ?? [])]
-            .find(node => node.querySelector('.math-source')?.textContent.includes('begin{equation}'))
-            ?.querySelector('svg').getBoundingClientRect();
+          const inlineEquation = footnotes?.querySelector('[data-math-display="inline"] .math-rendered > svg')
+            ?.getBoundingClientRect();
           layouts.push({ slide: slide.id, outside, alignment: style.textAlign,
             footnote: footnoteBounds && {
               bottomDifference: Math.abs(footnoteBounds.bottom - content.bottom),
               contentGap: footnoteBounds.top - bodyBounds.bottom,
-              equationWidth: numberedEquation?.width,
+              equationWidth: inlineEquation?.width,
               width: footnoteBounds.width,
             },
           });
@@ -436,10 +444,8 @@ Return to <<method>>, <<first-step>>, or <<second-step>>;
         if (layout.footnote) {
           assert.ok(layout.footnote.bottomDifference <= 1, `Footnotes must align to the slide bottom: ${layout.slide}`);
           assert.ok(layout.footnote.contentGap >= 0, `Footnotes overlap slide content: ${layout.slide}`);
-          if (layout.footnote.equationWidth !== undefined) {
-            assert.ok(layout.footnote.equationWidth > 0 && layout.footnote.equationWidth < layout.footnote.width / 2,
-              `Inline footnote equation occupies the slide width: ${layout.slide}`);
-          }
+          assert.ok(layout.footnote.equationWidth > 0 && layout.footnote.equationWidth < layout.footnote.width / 2,
+            `Inline footnote equation is missing or occupies the slide width: ${layout.slide}`);
         }
       }
       assert.equal(content.creditsVisible, true);

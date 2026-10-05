@@ -24,7 +24,7 @@ y&=2\label{result}
 ++++
 
 [%step]
-* [[first-step]]観測値の取得 footnote:shared[式 latexmath:[\eqref{i}] の定義は latexmath:[\begin{equation}z=3\label{i}\end{equation}] です。出典 cite:[inside]。]
+* [[first-step]]観測値の取得 footnote:shared[この例では、補助条件として latexmath:[z=3] を仮定します。出典 cite:[inside]。]
 * [[second-step]]結果の推定
 --
 
@@ -78,7 +78,7 @@ Return to <<method>>, <<first-step>>, or <<second-step>>;
 <<vertical>>, <<vertical-first>>, or <<vertical-second>>;
 <<detail>>, <<detail-first>>, or <<detail-second>>.
 
-Again footnote:shared[]. External latexmath:[\eqref{i}].
+補助条件は脚注 footnote:shared[] で説明しています。手法の結果は式 latexmath:[\eqref{result}] に示します。
 
 [.notes]
 --
