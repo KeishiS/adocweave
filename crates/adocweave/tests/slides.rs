@@ -26,6 +26,92 @@ fn write(root: &Path, path: &str, content: &str) {
 const SVG: &str = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\"><rect width=\"80\" height=\"80\" fill=\"#123\"/><text x=\"2\" y=\"20\">結果</text></svg>";
 
 #[test]
+fn single_file_writes_public_html_to_stdout_without_a_helper_or_side_files() {
+    let root = tempfile::tempdir().unwrap();
+    let source = "= Talk\n\n== Slide\n\nPUBLIC BODY\n\n[.notes]\n--\nPRIVATE NOTES\n--\n";
+    write(root.path(), "talk.adoc", source);
+    let output = convert(
+        root.path(),
+        &[
+            "--no-config",
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--single-file",
+            "--audience",
+            "public",
+            "--slides-helper",
+            "missing-helper",
+        ],
+    );
+    success(&output);
+    let html = String::from_utf8(output.stdout).unwrap();
+    assert!(html.to_ascii_lowercase().starts_with("<!doctype html>"));
+    assert!(html.contains("PUBLIC BODY"));
+    assert!(!html.contains("PRIVATE NOTES"));
+    assert!(!html.contains("src=\"assets/"));
+    assert!(!html.contains("href=\"assets/"));
+    assert_eq!(
+        fs::read_to_string(root.path().join("talk.adoc")).unwrap(),
+        source
+    );
+    assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
+}
+
+#[test]
+fn single_file_failure_keeps_stdout_empty() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "talk.adoc",
+        "= Talk\n\n== Slide\n\nimage::missing.png[]\n",
+    );
+    let output = convert(
+        root.path(),
+        &[
+            "--no-config",
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--single-file",
+        ],
+    );
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
+}
+
+#[test]
+fn single_file_invalid_options_fail_before_reading_input() {
+    let root = tempfile::tempdir().unwrap();
+    for options in [
+        vec!["missing.adoc", "--single-file"],
+        vec!["missing.adoc", "--to", "revealjs"],
+        vec![
+            "missing.adoc",
+            "--to",
+            "revealjs",
+            "--single-file",
+            "--output",
+            "dist",
+        ],
+        vec![
+            "missing.adoc",
+            "--to",
+            "revealjs",
+            "--single-file",
+            "--audience",
+            "presenter",
+        ],
+    ] {
+        let output = convert(root.path(), &options);
+        assert_eq!(output.status.code(), Some(2), "{options:?}");
+        assert!(output.stdout.is_empty(), "{options:?}");
+    }
+    assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
+}
+
+#[test]
 fn slide_aspect_ratio_defaults_to_auto() {
     for header in [
         "",
@@ -2319,6 +2405,80 @@ fn convert_interrupts_reap_helper_process_groups_before_exiting() {
         }
         assert!(!root.path().join("dist").exists());
         groups.0.clear();
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn single_file_blocked_stdout_remains_interruptible_after_generation() {
+    use std::os::fd::AsRawFd as _;
+    use std::os::unix::process::{CommandExt as _, ExitStatusExt as _};
+    use std::time::{Duration, Instant};
+
+    struct Child(std::process::Child);
+    impl Drop for Child {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "talk.adoc",
+        &format!(
+            "= Talk\n\n== Slide\n\n{}\n",
+            "Visible body.\n".repeat(100_000)
+        ),
+    );
+    for signal in [libc::SIGINT, libc::SIGTERM] {
+        let mut child = Child(
+            Command::new(env!("CARGO_BIN_EXE_adocweave"))
+                .current_dir(root.path())
+                .args([
+                    "convert",
+                    "talk.adoc",
+                    "--no-config",
+                    "--to",
+                    "revealjs",
+                    "--single-file",
+                ])
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .process_group(0)
+                .spawn()
+                .unwrap(),
+        );
+        let mut readable = libc::pollfd {
+            fd: child.0.stdout.as_ref().unwrap().as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // SAFETY: this descriptor belongs to the live child's retained pipe.
+        assert_eq!(unsafe { libc::poll(&mut readable, 1, 15_000) }, 1);
+        assert_ne!(
+            readable.revents & libc::POLLIN,
+            0,
+            "generation produced no HTML"
+        );
+        // Keep the read end open without draining it. The HTML exceeds pipe
+        // capacity, so the writer cannot complete before receiving the signal.
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(child.0.try_wait().unwrap().is_none());
+        // SAFETY: the live child owns its dedicated process group.
+        assert_eq!(unsafe { libc::kill(-(child.0.id() as i32), signal) }, 0);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let status = loop {
+            if let Some(status) = child.0.try_wait().unwrap() {
+                break status;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "signal {signal} did not interrupt blocked stdout"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert_eq!(status.signal(), Some(signal));
     }
 }
 

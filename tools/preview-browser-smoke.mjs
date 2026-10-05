@@ -45,8 +45,9 @@ try {
   const address = await endpoint(server, /AdocWeave preview: (http:\/\/[^\s]+)/);
   const chromium = child(browser, ["--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage", "--disable-background-networking", "--no-first-run", "--no-default-browser-check", "--remote-debugging-port=0", `--user-data-dir=${join(root, "profile")}`, "about:blank"]);
   const browserSocket = await endpoint(chromium, /DevTools listening on (ws:\/\/[^\s]+)/);
-  const targets = await fetch(`http://${new URL(browserSocket).host}/json/list`, { signal: AbortSignal.timeout(5000) }).then(response => response.json());
-  socket = new WebSocket(targets.find(target => target.type === "page").webSocketDebuggerUrl);
+  const targets = () => fetch(`http://${new URL(browserSocket).host}/json/list`, { signal: AbortSignal.timeout(5000) }).then(response => response.json());
+  const pageTarget = (await targets()).find(target => target.type === "page");
+  socket = new WebSocket(pageTarget.webSocketDebuggerUrl);
   let pausedPoll;
   const violations = [];
   const cdp = await connectCdp(socket, { onEvent(event) {
@@ -63,17 +64,30 @@ try {
     return result.result.value;
   };
   const renderedTextIncludes = async text => {
+    // The sandboxed iframe has its own renderer target. Read its laid-out
+    // text directly instead of saving the whole page as MHTML during reload.
+    const target = (await targets()).find(target => target.type === "iframe" &&
+      target.parentId === pageTarget.id && target.url === `${address}document`);
+    if (!target) return false;
+    const frameSocket = new WebSocket(target.webSocketDebuggerUrl);
     try {
-      return (await cdp.call("Page.captureSnapshot", { format: "mhtml" })).data.includes(text);
+      const frame = await connectCdp(frameSocket);
+      const { documents, strings } = await frame.call("DOMSnapshot.captureSnapshot", { computedStyles: [] });
+      return documents.some(document => strings[document.documentURL] === `${address}document` &&
+        document.layout.text.some(index => strings[index]?.includes(text)));
     } catch (error) {
-      // A reload can replace the sandboxed frame during MHTML serialization.
-      // Keep polling the rendered frame; unrelated CDP failures remain fatal.
-      if (["Failed to generate MHTML", "Not attached to an active page"].includes(error.message)) return false;
+      // Only a confirmed frame replacement permits a retry. Timeouts and
+      // failures on a still-present target remain test failures.
+      if (["CDP socket error before opening", "CDP socket closed before opening", "CDP socket closed", "CDP socket error", "Not attached to an active page"].includes(error.message) &&
+          !(await targets()).some(current => current.id === target.id)) return false;
       throw error;
+    } finally {
+      frameSocket.close();
     }
   };
   await cdp.call("Page.navigate", { url: address });
   await poll(() => pausedPoll);
+  await poll(() => renderedTextIncludes("BEFORE_UPDATE"));
   assert.equal(await evaluate('document.querySelector(\'meta[name="adocweave-preview-generation"]\').content'), "1");
   // Rebuild after HTML delivery but before the first poll response: the page
   // must compare against its delivered generation, not accept the new one.

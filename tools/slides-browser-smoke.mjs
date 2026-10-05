@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -49,18 +49,29 @@ async function server(audience) {
   const address = await poll(() => { running.check(); return running.stderr().match(/http:\/\/127\.0\.0\.1:(\d+)\//)?.[1]; });
   return `http://127.0.0.1:${address}`;
 }
-async function connect(target, ports) {
+async function connect(target, ports, onlyFile) {
   const socket = new WebSocket(target.webSocketDebuggerUrl);
   sockets.push(socket);
   const errors = [];
   const blocked = [];
+  function allowedRequest(value) {
+    const url = new URL(value);
+    if (onlyFile) {
+      url.search = "";
+      url.hash = "";
+      return url.href === onlyFile || url.protocol === "data:";
+    }
+    return url.protocol === "file:" || url.protocol === "about:" || (url.protocol === "http:" && url.hostname === "127.0.0.1" && ports.has(url.port));
+  }
   const transport = await connectCdp(socket, { onEvent: async message => {
     if (message.method === "Runtime.exceptionThrown") errors.push(message.params.exceptionDetails);
     else if (message.method === "Log.entryAdded" && message.params.entry.level === "error") errors.push(message.params.entry);
+    else if (onlyFile && message.method === "Network.requestWillBeSent" && !allowedRequest(message.params.request.url)) {
+      blocked.push(message.params.request.url);
+    }
     else if (message.method === "Fetch.requestPaused") {
       const { requestId, request } = message.params;
-      const url = new URL(request.url);
-      const allowed = url.protocol === "file:" || url.protocol === "about:" || (url.protocol === "http:" && url.hostname === "127.0.0.1" && ports.has(url.port));
+      const allowed = allowedRequest(request.url);
       if (!allowed) blocked.push(request.url);
       await transport.call(allowed ? "Fetch.continueRequest" : "Fetch.failRequest", allowed ? { requestId } : { requestId, errorReason: "BlockedByClient" });
     }
@@ -86,6 +97,85 @@ function inspectPdf(tool, arguments_) {
   const result = spawnSync(tool, arguments_, { env: { ...environment, LC_ALL: "C" }, encoding: "utf8" });
   assert.equal(result.status, 0, result.error?.message ?? result.stderr);
   return result.stdout;
+}
+async function singleFile(source, bundle, arguments_ = []) {
+  const conversion = spawnSync(binary, ["convert", source, "--to", "revealjs", "--single-file", ...arguments_],
+    { cwd: root, env: environment, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+  assert.equal(conversion.status, 0, conversion.error?.message ?? conversion.stderr);
+  assert.doesNotMatch(conversion.stdout, /PRIVATE_NOTE|PRIVATE_LAST_NOTE|PRIVATE_BIBLIOGRAPHY/);
+  // This directory contains only the distributed file, with no adjacent assets.
+  const directory = await mkdtemp(join(root, "single-file-"));
+  const path = join(directory, "配布 slides.html");
+  await writeFile(path, conversion.stdout);
+  assert.deepEqual(await readdir(directory), ["配布 slides.html"]);
+  const manifest = JSON.parse(await readFile(join(root, bundle, ".adocweave-manifest.json"), "utf8"));
+  const images = new Map();
+  const notices = [];
+  const mime = { Png: "image/png", Jpeg: "image/jpeg", Gif: "image/gif", Webp: "image/webp", Svg: "image/svg+xml" };
+  for (const file of manifest.files) {
+    if (file.path.startsWith("licenses/")) {
+      notices.push([file.path, await readFile(join(root, bundle, file.path), "utf8")]);
+    } else if (mime[file.mediaType]) {
+      const bytes = await readFile(join(root, bundle, file.path));
+      images.set(`data:${mime[file.mediaType]};base64,${bytes.toString("base64")}`, file.path);
+    }
+  }
+  return { url: pathToFileURL(path).href, images, notices };
+}
+async function singleFileNotices(page, expected) {
+  const content = await page.evaluate(`(() => {
+    const licenses = document.querySelector('.slides-licenses');
+    return {
+      notices: [...licenses.querySelectorAll('section')].map(section => [section.querySelector('h2').textContent, section.querySelector('pre').textContent]),
+      open: licenses.open,
+      embeddedScripts: [...document.scripts].every(script => !script.hasAttribute('src')),
+      embeddedStyles: [...document.querySelectorAll('link[rel="stylesheet"]')].every(link => link.getAttribute('href').startsWith('data:')),
+      embeddedImages: [...document.images].every(image => image.getAttribute('src').startsWith('data:') && image.complete && image.naturalWidth > 0),
+    };
+  })()`);
+  assert.deepEqual(content.notices.map(([path]) => path).sort(), expected.map(([path]) => path).sort(),
+    "Single-file license inventory differs from the bundle");
+  const notices = new Map(content.notices);
+  for (const [path, text] of expected) {
+    assert.ok(notices.get(path) === text, `Single-file license text differs from the bundle: ${path}`);
+  }
+  assert.equal(content.open, false);
+  assert.equal(content.embeddedScripts, true);
+  assert.equal(content.embeddedStyles, true);
+  assert.equal(content.embeddedImages, true);
+  await page.evaluate("document.querySelector('.slides-licenses summary').click()");
+  assert.equal(await page.evaluate("document.querySelector('.slides-licenses').open"), true);
+  await page.evaluate("document.querySelector('.slides-licenses summary').click()");
+  const citations = expected.some(([path]) => path === "licenses/citations-license.txt");
+  assert.equal(await page.evaluate("Boolean(document.querySelector('.slides-attribution a[data-slides-license]'))"), citations);
+  if (citations) {
+    const indices = await page.evaluate("Reveal.getIndices()");
+    const license = await page.evaluate(`(() => {
+      const link = document.querySelector('.slides-attribution a[data-slides-license]');
+      link.click();
+      const notice = document.getElementById(link.getAttribute('href').slice(1));
+      const bounds = notice.getBoundingClientRect();
+      const summary = notice.closest('details').querySelector('summary');
+      const summaryBounds = summary.getBoundingClientRect();
+      const summaryPoint = { x: summaryBounds.left + summaryBounds.width / 2, y: summaryBounds.top + summaryBounds.height / 2 };
+      return { path: notice.closest('section').querySelector('h2').textContent,
+        open: notice.closest('details').open, visible: bounds.width > 0 && bounds.bottom > 0 && bounds.top < innerHeight,
+        summaryPoint, summaryVisible: summaryBounds.width > 0 && summaryBounds.height > 0 && summaryBounds.top >= 0 && summaryBounds.bottom <= innerHeight,
+        summaryReachable: document.elementFromPoint(summaryPoint.x, summaryPoint.y)?.closest('summary') === summary };
+    })()`);
+    assert.equal(license.path, "licenses/citations-license.txt");
+    assert.equal(license.open, true);
+    assert.equal(license.visible, true);
+    assert.equal(license.summaryVisible, true, "License close control scrolled out of the viewport");
+    assert.equal(license.summaryReachable, true, "License close control is covered");
+    assert.deepEqual(await page.evaluate("Reveal.getIndices()"), indices, "Opening a license changed the slide");
+    for (const type of ["mousePressed", "mouseReleased"]) {
+      await page.call("Input.dispatchMouseEvent", { type, ...license.summaryPoint, button: "left", clickCount: 1 });
+    }
+    assert.equal(await page.evaluate("document.querySelector('.slides-licenses').open"), false);
+    assert.deepEqual(await page.evaluate("Reveal.getIndices()"), indices, "Closing a license changed the slide");
+  }
+  assert.deepEqual(await page.evaluate("probeViolations"), []);
 }
 async function screenLayout(page, ratio) {
   const layouts = await page.evaluate(`(() => {
@@ -212,6 +302,8 @@ async function printPdf(page, url, name, ratio = 16 / 9) {
   await page.evaluate(`(() => {
     const diagnostics = document.querySelector('.slides-diagnostics');
     if (diagnostics) { diagnostics.hidden = false; diagnostics.textContent = 'PRINT_DIAGNOSTIC_PROBE'; }
+    const licenses = document.querySelector('.slides-licenses');
+    if (licenses) licenses.open = true;
   })()`);
   // Resolve print styles and layout before capture, including non-16:9 pages.
   await page.call("Emulation.setEmulatedMedia", { media: "print" });
@@ -245,13 +337,16 @@ async function printPdf(page, url, name, ratio = 16 / 9) {
     const topmost = document.elementFromPoint(Math.min(creditBox.right - 4, innerWidth - 4), creditBox.bottom - 3);
     const hiddenFragments = [...document.querySelectorAll('.pdf-page .fragment')]
       .filter(node => getComputedStyle(node).visibility === 'hidden' || getComputedStyle(node).opacity === '0').length;
-    return { pages, hiddenFragments, creditsVisible: topmost?.closest('.slides-attribution') === credits, violations: probeViolations };
+    const licenses = document.querySelector('.slides-licenses');
+    return { pages, hiddenFragments, creditsVisible: topmost?.closest('.slides-attribution') === credits,
+      licensesHidden: !licenses || getComputedStyle(licenses).display === 'none', violations: probeViolations };
   })()`);
   assert.equal(layout.pages.length, await page.evaluate("Reveal.getTotalSlides()"), name);
   assert.equal(await page.evaluate("Reveal.getConfig().pdfSeparateFragments"), false, name);
   assert.equal(layout.hiddenFragments, 0, `Print must show the final fragment state: ${name}`);
   assert.deepEqual(layout.violations, [], name);
   assert.equal(layout.creditsVisible, true, `Attribution is covered by PDF page backgrounds: ${name}`);
+  assert.equal(layout.licensesHidden, true, `License viewer must not add PDF pages: ${name}`);
   for (const slide of layout.pages) {
     assert.equal(slide.withinPage, true, `${name}: ${slide.slide}`);
     assert.equal(slide.fillsPageWidth, true, `Unexpected PDF layout margins: ${name}: ${slide.slide}`);
@@ -307,7 +402,7 @@ async function overflowPdf(page) {
   reports.push({ name: "overflow-print", pages, info });
   await page.call("Emulation.setEmulatedMedia", { media: "screen" });
 }
-async function researchDisplay(page, url, presenter) {
+async function researchDisplay(page, url, presenter, embeddedImages = new Map(), reportName) {
   await page.call("Page.navigate", { url });
   await poll(() => page.evaluate(`location.href.split('#')[0]===${JSON.stringify(url)}&&probeReady`));
   assert.equal(await page.evaluate("Reveal.getTotalSlides()"), helper ? 6 : 5);
@@ -351,6 +446,8 @@ async function researchDisplay(page, url, presenter) {
         notesReferences: [...document.querySelectorAll('.bibliography-anchor[id^="slides-notes-bib-"]')].map(node => node.id),
         privateText: document.body.textContent.includes('PRIVATE_BIBLIOGRAPHY'),
         imageReady: [...document.images].every(image => image.complete && image.naturalWidth > 0),
+        images: [...document.querySelectorAll('.reveal img')].filter(image => !image.closest('aside.notes'))
+          .map(image => [...image.attributes].map(attribute => [attribute.name, attribute.value])),
         accent: getComputedStyle(document.querySelector('.reveal .controls')).color,
         creditsVisible: rectangle.width > 0 && rectangle.height > 0 && rectangle.bottom <= innerHeight + 1,
         credits: credits.textContent,
@@ -389,8 +486,14 @@ async function researchDisplay(page, url, presenter) {
     assert.match(content.credits, /citeproc-js implements the Citation Style Language/);
     assert.ok(content.credits.includes("https://citationstyles.org/"));
     assert.equal(content.browserMathJax, false);
-    if (publicBody) assert.deepEqual(content.body, publicBody);
-    else publicBody = content.body;
+    const images = content.images.map(attributes => attributes.map(([name, value]) => {
+      if (name !== "src" || !value.startsWith("data:")) return [name, value];
+      assert.ok(embeddedImages.has(value), "Embedded image differs from the verified bundle asset");
+      return [name, embeddedImages.get(value)];
+    }));
+    const body = { content: content.body, images };
+    if (publicBody) assert.deepEqual(body, publicBody);
+    else publicBody = body;
     await page.evaluate("document.querySelector('#method .citation-link').click()");
     assert.deepEqual(await page.evaluate("Reveal.getIndices()"), { h: 4, v: 0 });
     await page.evaluate("document.querySelector('#slides-body-bib-zebra').closest('li').querySelector('.bibliography-backref').click()");
@@ -422,7 +525,7 @@ async function researchDisplay(page, url, presenter) {
           `Missing system Mincho glyphs in ${kind}: ${JSON.stringify(fonts[kind])}`);
       }
     }
-    const name = url.startsWith("file:") ? "public-file" : presenter ? "presenter-http" : "public-http";
+    const name = reportName ?? (url.startsWith("file:") ? "public-file" : presenter ? "presenter-http" : "public-http");
     const screenshot = await page.call("Page.captureScreenshot", { format: "png" });
     await writeFile(join(artifacts, `${name}.png`), Buffer.from(screenshot.data, "base64"));
     reports.push({ name, content, fonts });
@@ -629,12 +732,12 @@ try {
   });
   const targets = async () => (await fetch(`http://127.0.0.1:${debuggingPort}/json/list`, { signal: AbortSignal.timeout(20_000) })).json();
   const failures = [];
-  async function runCase(name, callback) {
+  async function runCase(name, callback, onlyFile) {
     const previousTargets = new Set((await targets()).map(target => target.id));
     const connections = [];
     try {
       const target = await fetch(`http://127.0.0.1:${debuggingPort}/json/new?about:blank`, { method: "PUT", signal: AbortSignal.timeout(20_000) }).then(response => response.json());
-      const page = await connect(target, ports);
+      const page = await connect(target, ports, onlyFile);
       connections.push(page);
       await callback(page, connections);
       for (const connection of connections) {
@@ -662,9 +765,22 @@ try {
   for (const [name, url] of [["file", pathToFileURL(join(root, "navigation", "index.html")).href], ["http", `${navigationServer}/`]]) {
     await runCase(`navigation-${name}`, page => navigation(page, url));
   }
+  const singleNavigation = await singleFile("navigation.adoc", "navigation");
+  await runCase("navigation-single-file", async page => {
+    await navigation(page, singleNavigation.url);
+    await singleFileNotices(page, singleNavigation.notices);
+  }, singleNavigation.url);
   for (const [name, url, presenter] of [["public-file", pathToFileURL(join(root, "public", "index.html")).href, false],
     ["public-http", `${publicServer}/`, false], ["presenter-http", `${presenterServer}/`, true]]) {
     await runCase(`research-${name}`, page => researchDisplay(page, url, presenter));
+  }
+  if (helper) {
+    const singleResearch = await singleFile("research.adoc", "public", researchArguments);
+    await runCase("research-single-file", async page => {
+      await researchDisplay(page, singleResearch.url, false, singleResearch.images, "public-single-file");
+      await singleFileNotices(page, singleResearch.notices);
+      await printPdf(page, singleResearch.url, "public-single-file-print");
+    }, singleResearch.url);
   }
   await runCase("speaker-notes", (page, connections) => speakerNotes(page, ports, targets, connections, `${presenterServer}/`));
   const autoSource = await readFile(join(root, helper ? "research.adoc" : "navigation.adoc"), "utf8");
@@ -691,7 +807,7 @@ try {
   await runCase("live-preview", page => livePreview(page, ports));
   if (helper) await writeFile(join(artifacts, "research.json"), `${JSON.stringify(reports, null, 2)}\n`);
   if (failures.length) throw new AggregateError(failures, "Slides browser cases failed");
-  console.log("slides browser smoke passed: file/managed HTTP, target fragment stages, reload, notes, CSP, offline");
+  console.log("slides browser smoke passed: single file/managed HTTP, target fragment stages, reload, notes, CSP, offline");
 } finally {
   for (const socket of sockets) socket.close();
   for (const process_ of children.reverse()) {

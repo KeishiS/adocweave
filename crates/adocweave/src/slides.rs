@@ -22,6 +22,7 @@ use adocweave_core::text::TextRange;
 pub(crate) mod bundle;
 mod data;
 pub(crate) mod helper;
+pub(crate) mod single_file;
 mod styles;
 mod svg;
 

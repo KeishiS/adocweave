@@ -47,6 +47,19 @@ fn install_shutdown_signal_handlers() {
 #[cfg(not(unix))]
 fn install_shutdown_signal_handlers() {}
 
+#[cfg(unix)]
+fn restore_shutdown_signal_defaults() {
+    // SAFETY: these are the standard termination dispositions. Call only once
+    // helper processes have been reaped and cooperative cleanup is complete.
+    unsafe {
+        libc::signal(libc::SIGINT, libc::SIG_DFL);
+        libc::signal(libc::SIGTERM, libc::SIG_DFL);
+    }
+}
+
+#[cfg(not(unix))]
+fn restore_shutdown_signal_defaults() {}
+
 #[cfg(test)]
 use commands::format::Options as FormatOptions;
 const DEFAULT_PREVIEW_PORT: u16 = 4000;
@@ -472,6 +485,55 @@ mod tests {
                 ..
             } if bind == "0.0.0.0".parse::<std::net::IpAddr>().expect("address")
         ));
+    }
+
+    #[test]
+    fn single_file_slides_require_public_conversion_without_output_directory() {
+        let Action::Run(parsed) = parse_arguments(arguments(&[
+            "convert",
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--single-file",
+        ]))
+        .unwrap() else {
+            panic!("convert action");
+        };
+        assert!(matches!(
+            parsed.command,
+            CommandOptions::Convert {
+                single_file: true,
+                output: None,
+                audience: super::slides::Audience::Public,
+                ..
+            }
+        ));
+        for options in [
+            vec!["convert", "talk.adoc", "--single-file"],
+            vec!["convert", "talk.adoc", "--to", "revealjs"],
+            vec![
+                "convert",
+                "talk.adoc",
+                "--to",
+                "revealjs",
+                "--single-file",
+                "--output",
+                "dist",
+            ],
+            vec![
+                "convert",
+                "talk.adoc",
+                "--to",
+                "revealjs",
+                "--single-file",
+                "--audience",
+                "presenter",
+            ],
+            vec!["preview", "talk.adoc", "--to", "revealjs", "--single-file"],
+            vec!["serve", "bundle", "--single-file"],
+        ] {
+            assert!(parse_arguments(arguments(&options)).is_err(), "{options:?}");
+        }
     }
 
     #[test]
