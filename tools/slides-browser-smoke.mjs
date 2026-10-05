@@ -237,6 +237,7 @@ async function printPdf(page, url, name, ratio = 16 / 9) {
       const footnotes = slide.querySelector(':scope > .slide-body > .footnotes');
       // Reveal shortens each PDF page wrapper by 1px to avoid extra blank pages.
       return { slide: slide.id, outside, withinPage: box.top >= bounds.top - 1 && box.bottom <= bounds.bottom + 1,
+        fillsPageWidth: Math.abs(box.left - bounds.left) <= 1 && Math.abs(box.right - bounds.right) <= 1,
         footnotesAtBottom: !footnotes || Math.abs(rectangle(footnotes).bottom - content.bottom) <= 1 };
     });
     const credits = document.querySelector('.slides-attribution');
@@ -253,6 +254,7 @@ async function printPdf(page, url, name, ratio = 16 / 9) {
   assert.equal(layout.creditsVisible, true, `Attribution is covered by PDF page backgrounds: ${name}`);
   for (const slide of layout.pages) {
     assert.equal(slide.withinPage, true, `${name}: ${slide.slide}`);
+    assert.equal(slide.fillsPageWidth, true, `Unexpected PDF layout margins: ${name}: ${slide.slide}`);
     assert.deepEqual(slide.outside, [], `${name}: ${slide.slide}`);
     assert.equal(slide.footnotesAtBottom, true, `${name}: ${slide.slide}`);
   }
@@ -274,6 +276,35 @@ async function printPdf(page, url, name, ratio = 16 / 9) {
   assert.doesNotMatch(text, /PRIVATE_NOTE|PRIVATE_LAST_NOTE|PRIVATE_BIBLIOGRAPHY|PRINT_DIAGNOSTIC_PROBE/);
   await writeFile(join(artifacts, `${name}.txt`), text);
   reports.push({ name, ...layout, info });
+  await page.call("Emulation.setEmulatedMedia", { media: "screen" });
+}
+async function overflowPdf(page) {
+  const markers = Array.from({ length: 60 }, (_, index) => `OVERFLOW_PARAGRAPH_${index + 1}_END`);
+  await writeFile(join(root, "overflow.adoc"), "= Overflow\n:slides-aspect-ratio: 16:9\n\n== Long slide\n\n" +
+    markers.join("\n\n") + "\n\n[%step]\n* FINAL_FRAGMENT_MARKER\n\n[.notes]\n--\nPRIVATE_OVERFLOW_NOTE\n--\n");
+  const conversion = spawnSync(binary, ["convert", "overflow.adoc", "--to", "revealjs", "--output", "overflow", "--audience", "presenter"],
+    { cwd: root, env: environment, encoding: "utf8" });
+  assert.equal(conversion.status, 0, conversion.stderr);
+  const url = `${pathToFileURL(join(root, "overflow", "index.html")).href}?print-pdf`;
+  await page.call("Page.navigate", { url });
+  await poll(() => page.evaluate(`location.href.split('#')[0] === ${JSON.stringify(url)} &&
+    probeReady && document.querySelectorAll('.pdf-page').length === 2`));
+  await page.call("Emulation.setEmulatedMedia", { media: "print" });
+  const path = join(artifacts, "overflow-print.pdf");
+  const pdf = await page.call("Page.printToPDF", { printBackground: true, preferCSSPageSize: true,
+    displayHeaderFooter: false, marginTop: 0, marginBottom: 0, marginLeft: 0, marginRight: 0 });
+  await writeFile(path, Buffer.from(pdf.data, "base64"));
+  const info = inspectPdf(pdfInfo, [path]);
+  const pages = Number(info.match(/^Pages:\s+(\d+)/m)?.[1]);
+  assert.ok(pages > 2, `Long slide must continue across PDF pages: ${info}`);
+  const text = inspectPdf(pdfText, ["-enc", "UTF-8", path, "-"]);
+  for (const marker of [...markers, "FINAL_FRAGMENT_MARKER"]) {
+    assert.equal(text.split(marker).length - 1, 1, `Overflow content missing or duplicated: ${marker}`);
+  }
+  assert.doesNotMatch(text, /PRIVATE_OVERFLOW_NOTE/);
+  assert.deepEqual(await page.evaluate("probeViolations"), []);
+  await writeFile(join(artifacts, "overflow-print.txt"), text);
+  reports.push({ name: "overflow-print", pages, info });
   await page.call("Emulation.setEmulatedMedia", { media: "screen" });
 }
 async function researchDisplay(page, url, presenter) {
@@ -454,8 +485,12 @@ async function defaultCitationStyle(page) {
   reports.push({ name: "default-citation-style", content });
 }
 async function speakerNotes(page, ports, targets, connections, url) {
+  await page.call("Emulation.setDeviceMetricsOverride", {
+    width: 1200, height: 800, screenWidth: 1920, screenHeight: 1200, deviceScaleFactor: 1, mobile: false,
+  });
   await page.call("Page.navigate", { url });
   await poll(() => page.evaluate(`location.href.split('#')[0]===${JSON.stringify(url)}&&probeReady`));
+  const dimensions = await page.evaluate("[Reveal.getConfig().width, Reveal.getConfig().height]");
   await page.evaluate("Reveal.slide(1,0,1)");
   const existingTargets = new Set((await targets()).map(target => target.id));
   await page.evaluate("Reveal.getPlugin('notes').open()", true);
@@ -463,6 +498,25 @@ async function speakerNotes(page, ports, targets, connections, url) {
   const popup = await connect(popupTarget, ports);
   connections.push(popup);
   await poll(() => popup.evaluate("document.body?.textContent.includes('PRIVATE_NOTE')&&[...document.querySelectorAll('iframe')].length===2&&[...document.querySelectorAll('iframe')].every(frame=>frame.contentWindow.Reveal?.isReady())"));
+  // Moving the speaker window must not choose a different canvas on iframe reload.
+  await popup.call("Emulation.setDeviceMetricsOverride", {
+    width: 1200, height: 800, screenWidth: 1600, screenHeight: 1200, deviceScaleFactor: 1, mobile: false,
+  });
+  await popup.evaluate("[...document.querySelectorAll('iframe')].forEach(frame => { frame.contentWindow.reloadMarker = true; frame.contentWindow.location.reload(); })");
+  await poll(() => popup.evaluate("[...document.querySelectorAll('iframe')].every(frame=>!frame.contentWindow.reloadMarker&&frame.contentWindow.Reveal?.isReady())"));
+  const previews = await popup.evaluate(`Array.from(document.querySelectorAll('iframe'), frame => {
+    const view = frame.contentWindow;
+    const config = view.Reveal.getConfig();
+    const box = view.document.querySelector('.reveal .slides').getBoundingClientRect();
+    return { dimensions: [config.width, config.height], screen: [view.screen.width, view.screen.height], ratio: box.width / box.height };
+  })`);
+  for (const preview of previews) {
+    assert.deepEqual(preview.screen, [1600, 1200]);
+    assert.deepEqual(preview.dimensions, dimensions, "Speaker previews changed the presenting deck dimensions");
+    assert.ok(Math.abs(preview.ratio - dimensions[0] / dimensions[1]) < 1e-6, "Speaker preview layout changed aspect ratio");
+  }
+  assert.deepEqual(await page.evaluate("[Reveal.getConfig().width, Reveal.getConfig().height]"), dimensions);
+  reports.push({ name: "speaker-dimensions", dimensions, previews });
   assert.deepEqual(await popup.evaluate("probeViolations"), []);
   if (helper) {
     // Notes arrive through innerHTML; iframe readiness does not wait for their CSS.
@@ -613,6 +667,14 @@ try {
     await runCase(`research-${name}`, page => researchDisplay(page, url, presenter));
   }
   await runCase("speaker-notes", (page, connections) => speakerNotes(page, ports, targets, connections, `${presenterServer}/`));
+  const autoSource = await readFile(join(root, helper ? "research.adoc" : "navigation.adoc"), "utf8");
+  await writeFile(join(root, "presenter-auto.adoc"), autoSource.replace(/^:slides-aspect-ratio:.*$/m, ""));
+  const autoConversion = spawnSync(binary, ["convert", "presenter-auto.adoc", "--to", "revealjs", "--output", "presenter-auto", "--audience", "presenter", ...researchArguments],
+    { cwd: root, env: environment, encoding: "utf8" });
+  assert.equal(autoConversion.status, 0, autoConversion.stderr);
+  const autoServer = await server("presenter-auto");
+  ports.add(new URL(autoServer).port);
+  await runCase("speaker-notes-auto", (page, connections) => speakerNotes(page, ports, targets, connections, `${autoServer}/`));
   if (helper) {
     await runCase("default-citation-style", page => defaultCitationStyle(page));
     await runCase("pdf-file", page => printPdf(page, pathToFileURL(join(root, "public", "index.html")).href, "public-file-print"));
@@ -624,6 +686,7 @@ try {
       await printPdf(page, `http://127.0.0.1:${port}/`, "preview-print");
     });
     await runCase("aspect-ratios", page => aspectRatios(page, researchArguments));
+    await runCase("pdf-overflow", page => overflowPdf(page));
   }
   await runCase("live-preview", page => livePreview(page, ports));
   if (helper) await writeFile(join(artifacts, "research.json"), `${JSON.stringify(reports, null, 2)}\n`);

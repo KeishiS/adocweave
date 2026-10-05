@@ -248,9 +248,20 @@ fn resolve_aspect_ratio(
     analysis: &adocweave_core::Analysis,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<Option<String>, CliError> {
+    let header_end = analysis.document().header().end;
+    for attribute in analysis.document_attribute_occurrences() {
+        if attribute.name == "slides-aspect-ratio" && attribute.range.start() >= header_end {
+            problem(
+                diagnostics,
+                "slides-misplaced-aspect-ratio",
+                "slides-aspect-ratio must be set or unset in the document header, before the first blank line",
+                attribute.range,
+            );
+        }
+    }
     let Some(attribute) = analysis
         .attribute_environment()
-        .resolve_at("slides-aspect-ratio", analysis.document().header().end)
+        .resolve_at("slides-aspect-ratio", header_end)
     else {
         return Ok(None);
     };

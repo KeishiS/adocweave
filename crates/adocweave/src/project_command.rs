@@ -22,7 +22,10 @@ use crate::exit_code::CliExitCode;
 use crate::file_workflow::{PendingWrite, WriteOutcome, apply_file_writes, colorize_lines};
 use crate::finish_output;
 
-pub(crate) fn run(arguments: &Arguments) -> Result<CliExitCode, CliError> {
+pub(crate) fn run(
+    arguments: &Arguments,
+    cancellation: &dyn adocweave_core::CancellationCheck,
+) -> Result<CliExitCode, CliError> {
     let current = env::current_dir().map_err(|source| CliError::Read {
         source_name: "current directory".to_owned(),
         source,
@@ -37,7 +40,7 @@ pub(crate) fn run(arguments: &Arguments) -> Result<CliExitCode, CliError> {
     let request = request(arguments, &current)?;
     let authority = request.authority.clone();
     let limits = request.limits;
-    let mut result = process(request, &NeverCancel).map_err(CliError::Project)?;
+    let mut result = process(request, cancellation).map_err(CliError::Project)?;
     if result.targets.is_empty() {
         return Err(CliError::Path(
             "no AsciiDoc files matched the input paths".to_owned(),
@@ -90,6 +93,9 @@ pub(crate) fn run(arguments: &Arguments) -> Result<CliExitCode, CliError> {
                     .min(limits.resources.max_total_bytes)
                     .saturating_sub(result.usage.read_bytes),
             };
+            // No helper exists during input acquisition. Keep default signal
+            // handling there so a blocking stdin read remains interruptible.
+            crate::install_shutdown_signal_handlers();
             let bundle = crate::slides::bundle::build(
                 &analysis.preprocessed,
                 target,
@@ -97,7 +103,7 @@ pub(crate) fn run(arguments: &Arguments) -> Result<CliExitCode, CliError> {
                 &primary_base,
                 crate::slides::bundle::Options::convert(*audience, slides_helper.as_deref(), data),
                 remaining_resources,
-                &NeverCancel,
+                cancellation,
             )?;
             let sources = diagnostic_sources(target, &current)?;
             let diagnostics = commands::convert::render_diagnostics(
@@ -143,7 +149,7 @@ pub(crate) fn run(arguments: &Arguments) -> Result<CliExitCode, CliError> {
                 &protected,
                 &bundle.files,
                 limits,
-                &NeverCancel,
+                cancellation,
             )
             .map_err(CliError::Bundle)?;
             eprintln!(

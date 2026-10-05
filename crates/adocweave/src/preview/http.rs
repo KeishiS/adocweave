@@ -573,7 +573,7 @@ fn write_until(stream: &mut TcpStream, mut bytes: &[u8], deadline: Instant) -> i
 
 fn content_security_policy(style_origins: &BTreeSet<String>) -> String {
     format!(
-        "default-src 'none'; script-src 'self'; frame-src 'self'; style-src 'unsafe-inline'{}",
+        "default-src 'none'; connect-src 'self'; script-src 'self'; frame-src 'self'; style-src 'unsafe-inline'{}",
         style_origins
             .iter()
             .map(|origin| format!(" {origin}"))

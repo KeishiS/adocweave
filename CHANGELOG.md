@@ -10,94 +10,38 @@ separate changelogs for the
 
 ## [0.61.0] - 2026-10-05
 
-### Added
-
-- Slides with CSL citations need only `--bibliography`: the CLI embeds a numeric citation style and the full CSL `en-US` locale. `--csl-style` and `--csl-locale` independently override these defaults; invalid explicit files remain errors. The built-in Mincho theme applies without `--css`.
-
-### Breaking changes
-
-- Slide footnotes support unnumbered inline math; equation numbers and label definitions in footnotes are rejected. References to equations defined in the same scope's main content remain supported. Presenter notes require their own footnote definitions instead of reusing body footnotes.
-- CSL options and visible hand-written bibliography entries are mutually exclusive, including unused entries and entries with different citation keys. Supported CSL formatting is documented explicitly.
-- Browser PDF output prints all fragment stages together on one page per slide. The existing automatic aspect ratio and authored override remain available.
-- Slides require helper protocol version 2, provided by `@adocweave/slides-helper` 0.2.0. Helper responses contain either complete results or failure diagnostics.
-- Serving saved slides requires explicit slide metadata. Regenerate older slide bundles from their manuscripts. The Rust `HtmlSlideRegions` API groups regions and footnotes by source slide.
-
-### Fixed
-
-- Live preview detects regeneration between the initial HTML response and the first update notification. Notifications carry their matching diagnostics; failed rebuilds retain the last successful slides.
-- Selected math and citations are reused when preparing helper requests, and validated SVG identity spans replace repeated XML parsing for footnote placement. Preview artifacts own their content once.
-- Browser checks enforce request deadlines and isolate navigation, presenter notes, research content, PDF, and preview updates. Research content is checked at representative aspect ratios.
-
-### Migration
-
-- Update the CLI and slides helper together. Native 0.61.0 requires helper 0.2.0; update any entry pinned by `--slides-helper` or `ADOCWEAVE_SLIDES_HELPER` as well.
-- Move numbered equations and labels out of footnotes, define separate named footnotes in presenter notes, and choose either hand-written bibliography entries or CSL options for the visible content.
-- Regenerate saved slide directories with the original audience, CSS, bibliography, and other input options, then restart `serve`. Existing HTML contains its own browser assets, so updating the CLI alone does not change its PDF behavior, including when opening `index.html` directly.
-
-## [0.60.0] - 2026-10-05
-
-### Added
-
-- Slides use the screen's aspect ratio on initial page load by default, with a 16:9 fallback when screen dimensions are unavailable or invalid. The document-header attribute `slides-aspect-ratio` accepts `auto` or a fixed positive-integer `WIDTH:HEIGHT` ratio between 1:4 and 4:1. An explicit ratio takes precedence over the screen, and normal presentation and browser PDF output use the same ratio.
-- Browser PDF instructions cover Firefox's built-in Save to PDF alongside Chrome and Chromium, and distinguish browser PDF output from system PDF printers.
-
-## [0.59.3] - 2026-10-05
-
-### Fixed
-
-- Reveal.js slides opened with `?print-pdf` retain their layout, equations, figures, and footnotes when saved as PDF from Chrome or Chromium. Browser printing works with local public output and HTTP-served slides, and preserves reveal.js's default separate pages for fragment stages.
-
-## [0.59.2] - 2026-10-05
-
-### Fixed
-
-- Slides and presenter notes use locally installed Japanese Mincho fonts by default. The `--adocweave-font-family` CSS variable customizes body text and Japanese text inside equation SVGs without downloading fonts.
-- Footnotes align to the bottom of each slide without overlapping body content. Numbered equations in inline footnotes retain their natural width instead of filling the entire slide.
-
-## [0.59.1] - 2026-10-05
-
-### Fixed
-
-- Reveal.js slides use a refreshed 16:9 theme with larger cover titles, left-aligned body content, and consistent spacing for equations, figures, tables, and references. System fonts keep slides available offline, and local stylesheets can customize the accent color and body font size through CSS variables.
-
-## [0.59.0] - 2026-10-04
-
 ### Main changes
 
-- `convert --to revealjs` produces a local reveal.js slide directory. The existing CLI also provides slide preview and serves generated directories; no separate build command or executable is required.
-- Slides reuse the AsciiDoc analysis for headings, vertical groups, two columns, fragments, images, cross-references, and presenter notes. Public output excludes presenter notes before collecting their resources and processing their formulas or citations.
-- LaTeX equations are rendered to static SVG, and CSL citations and bibliographies are rendered as finite inline content by the independently versioned `@adocweave/slides-helper` package. The CLI validates helper results and preserves original source positions for diagnostics. Documents without LaTeX equations or CSL-formatted citations do not start the helper.
-- The slide body and all presenter notes use two independent numbering and citation scopes. Generated body references occupy one final slide; note references appear once in the final slide's presenter notes.
-- Slide outputs use managed directories and a manifest shared by saving and serving. Updates reject unknown or modified files, remove obsolete managed assets, and remove presenter-only content when switching to public output.
-- Generated slides use bundled reveal.js assets and system fonts. Dependency attribution and license texts accompany the output; browser pages do not load MathJax or a citation processor.
-
-### Breaking changes
-
-- Generic `stem` notation follows the `stem` attribute at its source position, including fixed attributes and include-local changes. `latexmath`, `latex`, and `tex` select LaTeX; other values, empty values, and an unset attribute select AsciiMath. Ordinary HTML output now identifies implicit formulas as AsciiMath when no LaTeX notation is selected.
+- `convert --to revealjs` produces a local reveal.js slide directory. The existing CLI also previews manuscripts and serves generated directories; no separate build command or executable is required.
+- Slides support horizontal and vertical groups, two columns, fragments, images, cross-references, and presenter notes. Public output removes notes before collecting resources or processing their equations and citations. Body content and presenter notes have independent equation, footnote, and citation scopes.
+- LaTeX equations render to static SVG with original TeX retained. CSL citations and bibliographies use the independently versioned `@adocweave/slides-helper` 0.2.0 and helper protocol 2. Documents without LaTeX or CSL citations do not start the helper. Browsers do not load MathJax or a citation processor.
+- CSL citations need only `--bibliography`: the CLI embeds a numeric citation style and the full CSL `en-US` locale. `--csl-style` and `--csl-locale` override these defaults independently; invalid explicit files remain errors. CSL inputs and visible hand-written bibliography entries cannot be combined.
+- Slides include an offline theme with locally installed Japanese Mincho fonts, bottom-aligned footnotes, and consistent equation, figure, table, and reference styling. Local CSS can customize the theme. Footnote equations are unnumbered inline math; references to equations outside footnotes remain supported within the same scope.
+- Slides use the initial screen aspect ratio by default, with a 16:9 fallback. The document-header attribute `slides-aspect-ratio` selects `auto` or a fixed positive-integer `WIDTH:HEIGHT` ratio between 1:4 and 4:1. Presenter previews use the main presentation's dimensions. A fixed ratio keeps distributed slides consistent across screens.
+- Slides opened with `?print-pdf` support Chrome/Chromium's built-in PDF export. All fragment stages appear together; content exceeding the slide height can continue across multiple pages. Browser printing uses the slide aspect ratio and retains backgrounds, equations, figures, and footnotes.
+- Saved slides include bundled browser assets, dependency notices, and a manifest. Updates protect unknown or modified files and remove obsolete managed assets, including notes when switching to public output. Serving verifies registered files and never serves unregistered files.
 
 ### Fixed
 
-- `convert` now reports HTML rendering diagnostics on standard error, mapped back to the original document or include file. Rendering errors produce exit code 1; warning-only output succeeds.
+- Ordinary HTML preview permits same-origin update polling under its Content Security Policy. Preview also detects regeneration between the initial HTML response and first notification; diagnostics match their generation, and failed slide rebuilds retain the last successful output.
+- On Unix, interrupting slide conversion cancels its helper and reaps its process group through the existing cancellation path. Incompatible helper responses identify the required protocol and helper version.
+- `convert` reports HTML rendering diagnostics on standard error at the original document or include position. Rendering errors produce exit code 1; warning-only output succeeds.
 - Math block styles can share a metadata line with an ID, role, or option. Explicit `asciimath` notation is recognized alongside `latexmath`.
-- Original TeX in rendered slide equations remains hidden before stylesheets load. Native archives and Nix packages include the bundled browser assets' license texts.
-- Slides reject unsupported note forms and reveal.js presentation attributes instead of silently publishing their contents or ignoring their intended appearance. Empty and note-only decks are rejected; notes preceding the first body slide attach to that slide.
-- Slide page titles use resolved heading text, and generated reference IDs follow visible occurrences without disclosing private note sizes. Ordinary HTML ID generation is unchanged.
-- Helper execution drops `NODE_*` variables and relative `PATH` entries, uses the selected entry's directory, and invokes standard npm JavaScript entries directly with an absolute Node executable. Helper startup validates the required Node version, and failures retain bounded exit status and stderr details.
-- Managed output errors identify the affected path and explain how to preserve the directory and regenerate into a new or empty output directory.
+- Slides diagnose unsupported note forms, unsupported reveal.js attributes, and misplaced `slides-aspect-ratio` attributes. Empty and note-only decks are rejected. Page titles use resolved heading text; generated footnote and citation IDs do not disclose private note sizes.
 
 ### Rust API
 
-- `MathLanguage` adds `AsciiMath`. `InlineFormula` adds `uses_stem_attribute`, and math block `range` includes preceding metadata while `content_range` identifies the formula text.
+- `MathLanguage` adds `AsciiMath`. `InlineFormula` adds `uses_stem_attribute`, and math block `range` includes preceding metadata while `content_range` identifies the formula text. Update exhaustive matches and struct literals accordingly.
 - Validated SVG and finite citation content can be passed through output inputs. Validation rejects unsupported XML, external references, missing or duplicated helper results, and processing-limit violations before rendering.
-- `render_regions`, `render_slide_regions`, `HtmlRegions`, `HtmlRegionSelection`, `HtmlRegionError`, `HtmlSlideScope`, `HtmlSlideSelections`, and `HtmlSlideRegions` expose selected body-region rendering. They preserve the existing HTML escaping and URL policy while slide numbering separates body and presenter-note references.
-- `RenderInputDomain` adds `Math` and `RichCitation`.
-- `output::projection::heading_text(&Heading)` exposes resolved plain heading text using the existing inline-text rules; it does not run host math or citation processing. The public document model and WASM schema are unchanged by this helper.
+- `render_regions`, `render_slide_regions`, `HtmlRegions`, `HtmlRegionSelection`, `HtmlRegionError`, `HtmlSlideScope`, `HtmlSlideSelections`, and `HtmlSlideRegions` expose selected body-region rendering. Slide regions group rendered content and footnotes by source slide, preserving the existing escaping and URL policy while separating body and presenter-note references.
+- `RenderInputDomain` adds `Math` and `RichCitation`; update exhaustive matches.
+- `adocweave_project::ProjectObservationKind` adds `BinaryContentsNoSymlinks` for bounded local resource reads; update exhaustive matches.
+- `output::projection::heading_text(&Heading)` exposes resolved plain heading text using the existing inline-text rules. It does not run host math or citation processing.
 
 ### Migration
 
-- Set `:stem: latexmath` or use explicit `latexmath:[...]` / `[latexmath]` where a document relied on implicit LaTeX. Slides accept LaTeX equations and report unsupported math notation.
-- Update exhaustive `MathLanguage` matches for `AsciiMath` and supply `uses_stem_attribute` when constructing `InlineFormula` with a struct literal.
-- Add `Math` and `RichCitation` cases to exhaustive `RenderInputDomain` matches.
+- Generic `stem` notation now follows the `stem` attribute at its source position, including fixed attributes and include-local changes. `latexmath`, `latex`, and `tex` select LaTeX; other values, empty values, and an unset attribute select AsciiMath. Set `:stem: latexmath` or use explicit `latexmath:[...]` / `[latexmath]` where a document relied on implicit LaTeX. Slides accept LaTeX and diagnose unsupported notation.
+- To use the new slide output with LaTeX or CSL citations, install `@adocweave/slides-helper` 0.2.0. Check any entry selected by `--slides-helper` or `ADOCWEAVE_SLIDES_HELPER` as well. Native 0.61.0 and the helper must use protocol 2.
 
 ## [0.58.0] - 2026-09-20
 
@@ -226,12 +170,7 @@ if let Ok(expanded) = analysis.expanded {
 }
 ```
 
-[0.61.0]: https://github.com/KeishiS/adocweave/compare/v0.60.0...v0.61.0
-[0.60.0]: https://github.com/KeishiS/adocweave/compare/v0.59.3...v0.60.0
-[0.59.3]: https://github.com/KeishiS/adocweave/compare/v0.59.2...v0.59.3
-[0.59.2]: https://github.com/KeishiS/adocweave/compare/v0.59.1...v0.59.2
-[0.59.1]: https://github.com/KeishiS/adocweave/compare/v0.59.0...v0.59.1
-[0.59.0]: https://github.com/KeishiS/adocweave/compare/v0.58.0...v0.59.0
+[0.61.0]: https://github.com/KeishiS/adocweave/compare/v0.58.0...v0.61.0
 [0.58.0]: https://github.com/KeishiS/adocweave/compare/v0.57.0...v0.58.0
 [0.57.0]: https://github.com/KeishiS/adocweave/compare/v0.56.5...v0.57.0
 [0.56.5]: https://github.com/KeishiS/adocweave/compare/v0.56.4...v0.56.5

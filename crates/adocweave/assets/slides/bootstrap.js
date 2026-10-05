@@ -2,13 +2,23 @@
 (() => {
   "use strict";
   const presenter = document.body.dataset.audience === "presenter";
-  const dimensions = document.body.dataset.aspectRatio?.split(":").map(Number) ?? [screen.width, screen.height];
+  const parameters = new URLSearchParams(location.search);
+  let dimensions = document.body.dataset.aspectRatio?.split(":").map(Number) ?? [screen.width, screen.height];
+  // Notes previews must retain the presenting deck's ratio on another monitor.
+  if (parameters.has("receiver") && window.parent !== window) {
+    try {
+      const config = window.parent.opener?.Reveal?.getConfig();
+      if (config) dimensions = [config.width, config.height];
+    } catch {
+      // A standalone or cross-origin receiver uses its own document settings.
+    }
+  }
   const detectedRatio = dimensions[0] / dimensions[1];
   const aspectRatio = dimensions.every(value => value > 0) && detectedRatio >= .25 && detectedRatio <= 4 ? detectedRatio : 16 / 9;
   const deck = new Reveal(document.querySelector(".reveal"), {
     width: 1280,
     height: 1280 / aspectRatio,
-    margin: new URLSearchParams(location.search).has("print-pdf") ? 0 : .04,
+    margin: parameters.has("print-pdf") ? 0 : .04,
     hash: true,
     fragmentInURL: true,
     pdfSeparateFragments: false,

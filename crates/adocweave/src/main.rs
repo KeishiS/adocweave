@@ -21,19 +21,19 @@ mod slides;
 mod terminal;
 mod theme;
 
-static PREVIEW_SHUTDOWN: AtomicBool = AtomicBool::new(false);
+static COMMAND_SHUTDOWN: AtomicBool = AtomicBool::new(false);
 struct ShutdownCheck;
 impl adocweave_core::CancellationCheck for ShutdownCheck {
     fn is_cancelled(&self) -> bool {
-        PREVIEW_SHUTDOWN.load(std::sync::atomic::Ordering::Acquire)
+        COMMAND_SHUTDOWN.load(std::sync::atomic::Ordering::Acquire)
     }
 }
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[cfg(unix)]
-fn install_preview_signal_handlers() {
+fn install_shutdown_signal_handlers() {
     extern "C" fn shutdown(_: libc::c_int) {
-        PREVIEW_SHUTDOWN.store(true, std::sync::atomic::Ordering::Release);
+        COMMAND_SHUTDOWN.store(true, std::sync::atomic::Ordering::Release);
     }
     // SAFETY: the handler performs only a lock-free atomic store, and the
     // process retains the static flag for its entire lifetime.
@@ -45,7 +45,7 @@ fn install_preview_signal_handlers() {
 }
 
 #[cfg(not(unix))]
-fn install_preview_signal_handlers() {}
+fn install_shutdown_signal_handlers() {}
 
 #[cfg(test)]
 use commands::format::Options as FormatOptions;
@@ -141,8 +141,8 @@ async fn run() -> Result<CliExitCode, CliError> {
             bind,
             port,
         } => {
-            PREVIEW_SHUTDOWN.store(false, std::sync::atomic::Ordering::Release);
-            install_preview_signal_handlers();
+            COMMAND_SHUTDOWN.store(false, std::sync::atomic::Ordering::Release);
+            install_shutdown_signal_handlers();
             let directory = if directory.is_absolute() {
                 directory
             } else {
@@ -171,14 +171,26 @@ async fn run() -> Result<CliExitCode, CliError> {
                 },
                 bundle,
                 audience,
-                &PREVIEW_SHUTDOWN,
+                &COMMAND_SHUTDOWN,
             )
             .map_err(CliError::Preview)?;
             Ok(CliExitCode::Success)
         }
         Action::Run(arguments) => {
             if !matches!(arguments.command, CommandOptions::Preview { .. }) {
-                return project_command::run(&arguments);
+                let cancellation: &dyn adocweave_core::CancellationCheck = if matches!(
+                    arguments.command,
+                    CommandOptions::Convert {
+                        target: arguments::ConvertTarget::Revealjs,
+                        ..
+                    }
+                ) {
+                    COMMAND_SHUTDOWN.store(false, std::sync::atomic::Ordering::Release);
+                    &ShutdownCheck
+                } else {
+                    &adocweave_core::NeverCancel
+                };
+                return project_command::run(&arguments, cancellation);
             }
             if let CommandOptions::Preview { css, .. } = &arguments.command {
                 commands::html_policy::validate_argument_count(css)
@@ -206,8 +218,8 @@ async fn run() -> Result<CliExitCode, CliError> {
                 debounce_ms,
             } = &arguments.command
             {
-                PREVIEW_SHUTDOWN.store(false, std::sync::atomic::Ordering::Release);
-                install_preview_signal_handlers();
+                COMMAND_SHUTDOWN.store(false, std::sync::atomic::Ordering::Release);
+                install_shutdown_signal_handlers();
                 commands::preview::run(
                     commands::preview::RunRequest {
                         project,
@@ -226,7 +238,7 @@ async fn run() -> Result<CliExitCode, CliError> {
                             debounce_ms: *debounce_ms,
                         },
                     },
-                    &PREVIEW_SHUTDOWN,
+                    &COMMAND_SHUTDOWN,
                 )
                 .map_err(preview_error)?;
                 return Ok(CliExitCode::Success);
