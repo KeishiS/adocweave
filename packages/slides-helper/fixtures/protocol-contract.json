@@ -1,0 +1,240 @@
+{
+  "requests": [
+    {
+      "name": "empty",
+      "valid": true,
+      "request": {
+        "schemaVersion": 2,
+        "eqnums": "none",
+        "scopes": {
+          "body": {
+            "equations": [],
+            "citations": []
+          },
+          "notes": {
+            "equations": [],
+            "citations": []
+          }
+        }
+      }
+    },
+    {
+      "name": "previous schema",
+      "valid": false,
+      "request": {
+        "schemaVersion": 1,
+        "eqnums": "none",
+        "scopes": {
+          "body": {
+            "equations": [],
+            "citations": []
+          },
+          "notes": {
+            "equations": [],
+            "citations": []
+          }
+        }
+      }
+    },
+    {
+      "name": "empty CSL style",
+      "valid": false,
+      "request": {
+        "schemaVersion": 2,
+        "eqnums": "none",
+        "scopes": {
+          "body": {
+            "equations": [],
+            "citations": []
+          },
+          "notes": {
+            "equations": [],
+            "citations": []
+          }
+        },
+        "csl": {
+          "items": [],
+          "style": "",
+          "locale": "locale"
+        }
+      }
+    },
+    {
+      "name": "empty CSL locale",
+      "valid": false,
+      "request": {
+        "schemaVersion": 2,
+        "eqnums": "none",
+        "scopes": {
+          "body": {
+            "equations": [],
+            "citations": []
+          },
+          "notes": {
+            "equations": [],
+            "citations": []
+          }
+        },
+        "csl": {
+          "items": [],
+          "style": "style",
+          "locale": ""
+        }
+      }
+    },
+    {
+      "name": "inline footnote",
+      "valid": true,
+      "request": {
+        "schemaVersion": 2,
+        "eqnums": "none",
+        "scopes": {
+          "body": {
+            "equations": [
+              {
+                "key": "f",
+                "tex": "x",
+                "display": false,
+                "footnote": true
+              }
+            ],
+            "citations": []
+          },
+          "notes": {
+            "equations": [],
+            "citations": []
+          }
+        }
+      }
+    },
+    {
+      "name": "display footnote",
+      "valid": false,
+      "request": {
+        "schemaVersion": 2,
+        "eqnums": "none",
+        "scopes": {
+          "body": {
+            "equations": [
+              {
+                "key": "f",
+                "tex": "x",
+                "display": true,
+                "footnote": true
+              }
+            ],
+            "citations": []
+          },
+          "notes": {
+            "equations": [],
+            "citations": []
+          }
+        }
+      }
+    },
+    {
+      "name": "reserved CSL object key",
+      "valid": false,
+      "request": {
+        "schemaVersion": 2,
+        "eqnums": "none",
+        "scopes": {
+          "body": {
+            "equations": [],
+            "citations": []
+          },
+          "notes": {
+            "equations": [],
+            "citations": []
+          }
+        },
+        "csl": {
+          "items": [
+            {
+              "id": "x",
+              "constructor": "bad"
+            }
+          ],
+          "style": "style",
+          "locale": "locale"
+        }
+      }
+    }
+  ],
+  "richInlines": [
+    {
+      "emphasisCount": 2048,
+      "valid": true
+    },
+    {
+      "emphasisCount": 2049,
+      "valid": false
+    },
+    {
+      "emphasisCount": 2050,
+      "valid": false
+    }
+  ],
+  "richBytes": [
+    {
+      "kind": "text",
+      "character": "<",
+      "count": 70000,
+      "valid": true
+    },
+    {
+      "kind": "text",
+      "character": "\"",
+      "count": 262144,
+      "valid": true
+    },
+    {
+      "kind": "emphasis",
+      "character": "\"",
+      "count": 262144,
+      "valid": false
+    },
+    {
+      "kind": "strong",
+      "character": "\"",
+      "count": 262141,
+      "valid": true
+    },
+    {
+      "kind": "strong",
+      "character": "\"",
+      "count": 262142,
+      "valid": false
+    },
+    {
+      "kind": "text",
+      "character": "é",
+      "count": 131072,
+      "valid": true
+    },
+    {
+      "kind": "text",
+      "character": "é",
+      "count": 131073,
+      "valid": false
+    },
+    {
+      "kind": "links",
+      "hrefBytes": 4096,
+      "count": 382,
+      "valid": true
+    },
+    {
+      "kind": "links",
+      "hrefBytes": 4096,
+      "count": 383,
+      "valid": false
+    },
+    {
+      "kind": "links",
+      "hrefBytes": 4097,
+      "count": 1,
+      "valid": false
+    }
+  ]
+}

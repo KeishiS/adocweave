@@ -37,18 +37,18 @@ image::result.svg[観測から解析を経て結果を得る流れ,width=500]
 [.notes]
 --
 PRIVATE_NOTE cite:[secret].
-Notes footnote:shared[].
+補足 footnote:note-condition[この発表者用の補足は、共有用のスライドには含めません。]。
 Notes formula latexmath:[\begin{equation}n=4\label{result}\end{equation}] and latexmath:[\eqref{result}].
 --
 
 [#vertical]
 == Vertical — 行列
 
-The heading reference <<vertical>> preserves an already visible stage.
+観測値の関係を、次の行列で表します。
 
 [%step]
-* [[vertical-first]]First vertical stage.
-* [[vertical-second]]Second vertical stage.
+* [[vertical-first]]各行に観測値を並べる
+* [[vertical-second]]各列の関係を調べる
 
 [latexmath]
 ++++
@@ -58,11 +58,11 @@ A=\begin{pmatrix}1&2\\3&4\end{pmatrix}
 [#detail]
 === Detail — 表
 
-The heading reference <<detail>> preserves an already visible stage.
+解析に使う量と参考文献を整理します。
 
 [%step]
-* [[detail-first]]First detail stage.
-* [[detail-second]]Second detail stage.
+* [[detail-first]]数式の定義を確認する
+* [[detail-second]]参考文献と照合する
 
 [cols="1,1",options="header"]
 |===
@@ -74,13 +74,11 @@ The heading reference <<detail>> preserves an already visible stage.
 [#last]
 == Last — 参照
 
-Return to <<method>>, <<first-step>>, or <<second-step>>;
-<<vertical>>, <<vertical-first>>, or <<vertical-second>>;
-<<detail>>, <<detail-first>>, or <<detail-second>>.
+<<method,手法>>で観測値から結果を推定し、<<vertical,行列>>と<<detail,表>>で関係を整理しました。
 
 補助条件は脚注 footnote:shared[] で説明しています。手法の結果は式 latexmath:[\eqref{result}] に示します。
 
 [.notes]
 --
-PRIVATE_LAST_NOTE. Again footnote:shared[].
+PRIVATE_LAST_NOTE. 補足の再確認 footnote:note-condition[]。
 --

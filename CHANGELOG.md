@@ -8,6 +8,28 @@ separate changelogs for the
 [VS Code extension](https://github.com/KeishiS/adocweave/blob/main/editors/vscode/CHANGELOG.md), and
 [Zed extension](https://github.com/KeishiS/adocweave/blob/main/editors/zed/CHANGELOG.md).
 
+## [0.61.0] - 2026-10-05
+
+### Breaking changes
+
+- Slide footnotes support unnumbered inline math; equation numbers and label definitions in footnotes are rejected. References to equations defined in the same scope's main content remain supported. Presenter notes require their own footnote definitions instead of reusing body footnotes.
+- CSL options and visible hand-written bibliography entries are mutually exclusive, including unused entries and entries with different citation keys. Supported CSL formatting is documented explicitly.
+- Browser PDF output prints all fragment stages together on one page per slide. The existing automatic aspect ratio and authored override remain available.
+- Slides require helper protocol version 2, provided by `@adocweave/slides-helper` 0.2.0. Helper responses contain either complete results or failure diagnostics.
+- Serving saved slides requires explicit slide metadata. Regenerate older slide bundles from their manuscripts. The Rust `HtmlSlideRegions` API groups regions and footnotes by source slide.
+
+### Fixed
+
+- Live preview detects regeneration between the initial HTML response and the first update notification. Notifications carry their matching diagnostics; failed rebuilds retain the last successful slides.
+- Selected math and citations are reused when preparing helper requests, and validated SVG identity spans replace repeated XML parsing for footnote placement. Preview artifacts own their content once.
+- Browser checks enforce request deadlines and isolate navigation, presenter notes, research content, PDF, and preview updates. Research content is checked at representative aspect ratios.
+
+### Migration
+
+- Update the CLI and slides helper together. Native 0.61.0 requires helper 0.2.0; update any entry pinned by `--slides-helper` or `ADOCWEAVE_SLIDES_HELPER` as well.
+- Move numbered equations and labels out of footnotes, define separate named footnotes in presenter notes, and choose either hand-written bibliography entries or CSL options for the visible content.
+- Regenerate saved slide directories with the original audience, CSS, bibliography, and other input options, then restart `serve`. Existing HTML contains its own browser assets, so updating the CLI alone does not change its PDF behavior, including when opening `index.html` directly.
+
 ## [0.60.0] - 2026-10-05
 
 ### Added
@@ -200,6 +222,7 @@ if let Ok(expanded) = analysis.expanded {
 }
 ```
 
+[0.61.0]: https://github.com/KeishiS/adocweave/compare/v0.60.0...v0.61.0
 [0.60.0]: https://github.com/KeishiS/adocweave/compare/v0.59.3...v0.60.0
 [0.59.3]: https://github.com/KeishiS/adocweave/compare/v0.59.2...v0.59.3
 [0.59.2]: https://github.com/KeishiS/adocweave/compare/v0.59.1...v0.59.2

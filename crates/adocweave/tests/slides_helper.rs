@@ -4,7 +4,7 @@ mod helper;
 
 #[test]
 fn protocol_schema_rejects_unknown_fields() {
-    let json = r#"{"schemaVersion":1,"eqnums":"none","scopes":{"body":{"equations":[],"citations":[]},"notes":{"equations":[],"citations":[]}},"extra":true}"#;
+    let json = r#"{"schemaVersion":2,"eqnums":"none","scopes":{"body":{"equations":[],"citations":[]},"notes":{"equations":[],"citations":[]}},"extra":true}"#;
     assert!(serde_json::from_str::<helper::protocol::Request>(json).is_err());
 }
 
@@ -15,12 +15,23 @@ use adocweave_core::{
 };
 use helper::{
     HostResult, Prepared, Selection,
-    protocol::{self, Scope, Severity},
+    protocol::{self, Scope},
 };
 use std::collections::BTreeSet;
 
 fn range(start: usize, end: usize) -> TextRange {
     TextRange::new(TextSize::new(start).unwrap(), TextSize::new(end).unwrap()).unwrap()
+}
+fn prepare(
+    analysis: &adocweave_core::Analysis,
+    body: &Selection,
+    notes: &Selection,
+    include_notes: bool,
+    macros: Option<Vec<protocol::Macro>>,
+    csl: Option<protocol::Csl>,
+) -> HostResult<Prepared> {
+    let selected = helper::selected_content(analysis, body, notes, include_notes)?;
+    helper::prepare(analysis, selected, macros, csl)
 }
 fn fixture() -> Prepared {
     let request: protocol::Request =
@@ -38,11 +49,7 @@ fn fixture() -> Prepared {
             offset += 2;
         }
     }
-    Prepared {
-        request,
-        sources,
-        diagnostics: Vec::new(),
-    }
+    Prepared::new(request, sources, Vec::new()).unwrap()
 }
 fn response() -> serde_json::Value {
     serde_json::from_str(include_str!("fixtures/slides-helper/response.json")).unwrap()
@@ -107,14 +114,15 @@ fn every_result_key_is_accounted_for() {
 }
 
 #[test]
-fn failed_results_require_matching_error_diagnostics_and_exit_status() {
-    let mut json = response();
-    json["scopes"]["body"]["equations"][0] = serde_json::json!({"key":"math1","status":"failed"});
-    let parsed: protocol::Response = serde_json::from_value(json.clone()).unwrap();
-    assert!(helper::validate_response(&fixture(), parsed, 1, &BTreeSet::new()).is_err());
-    json["diagnostics"] = serde_json::json!([{"scope":"body","key":"math1","severity":"error","code":"math-failed","message":"invalid TeX"}]);
-    let parsed: protocol::Response = serde_json::from_value(json.clone()).unwrap();
-    let accepted = helper::validate_response(&fixture(), parsed, 1, &BTreeSet::new()).unwrap();
+fn failed_response_has_only_diagnostics_and_no_rendered_results() {
+    let json = serde_json::json!({"schemaVersion":2,"status":"failed","diagnostics":[{"scope":"body","key":"math1","severity":"error","code":"math-failed","message":"invalid TeX"}]});
+    let accepted = helper::validate_response(
+        &fixture(),
+        serde_json::from_value(json.clone()).unwrap(),
+        1,
+        &BTreeSet::new(),
+    )
+    .unwrap();
     assert_eq!(
         accepted.diagnostics[0].range,
         fixture()
@@ -122,16 +130,19 @@ fn failed_results_require_matching_error_diagnostics_and_exit_status() {
             .get(&(Scope::Body, "math1".into()))
             .copied()
     );
-    assert_eq!(accepted.diagnostics[0].severity, Severity::Error);
+    assert!(accepted.inputs.body.math().is_empty());
     assert!(
         helper::validate_response(
             &fixture(),
-            serde_json::from_value(json).unwrap(),
+            serde_json::from_value(json.clone()).unwrap(),
             0,
             &BTreeSet::new()
         )
         .is_err()
     );
+    let mut mixed = json;
+    mixed["scopes"] = response()["scopes"].clone();
+    assert!(serde_json::from_value::<protocol::Response>(mixed).is_err());
 }
 
 #[test]
@@ -185,11 +196,11 @@ fn public_preparation_drops_notes_and_note_only_library_items() {
         style: "style".into(),
         locale: "locale".into(),
     };
-    let prepared = helper::prepare(&analysis, &body, &notes, false, None, Some(csl)).unwrap();
-    assert!(prepared.request.scopes.notes.equations.is_empty());
-    assert!(prepared.request.scopes.notes.citations.is_empty());
-    assert!(matches!(prepared.request.eqnums, protocol::Eqnums::Ams));
-    let encoded = serde_json::to_string(&prepared.request).unwrap();
+    let prepared = prepare(&analysis, &body, &notes, false, None, Some(csl)).unwrap();
+    assert!(prepared.request().scopes.notes.equations.is_empty());
+    assert!(prepared.request().scopes.notes.citations.is_empty());
+    assert!(matches!(prepared.request().eqnums, protocol::Eqnums::Ams));
+    let encoded = serde_json::to_string(&prepared.request()).unwrap();
     assert!(!encoded.contains("private"));
     assert!(!encoded.contains("sourceRange"));
     assert!(
@@ -213,7 +224,7 @@ fn unsupported_notation_is_diagnosed_at_the_source_and_explicit_latex_still_runs
         citations: Vec::new(),
         footnotes: Vec::new(),
     };
-    let prepared = helper::prepare(
+    let prepared = prepare(
         &analysis,
         &selection,
         &Selection::default(),
@@ -229,7 +240,7 @@ fn unsupported_notation_is_diagnosed_at_the_source_and_explicit_latex_still_runs
         prepared.diagnostics[0].range,
         Some(equations[0].source_range)
     );
-    assert_eq!(prepared.request.scopes.body.equations[0].tex, "z");
+    assert_eq!(prepared.request().scopes.body.equations[0].tex, "z");
 }
 
 #[test]
@@ -244,7 +255,7 @@ fn numbering_defaults_and_invalid_values_are_explicit() {
         let analysis = Engine::new(AnalysisOptions::default())
             .analyze(&format!("= Deck\n{attribute}\nlatexmath:[x]\n"))
             .unwrap();
-        let prepared = helper::prepare(
+        let prepared = prepare(
             &analysis,
             &Selection::default(),
             &Selection::default(),
@@ -254,7 +265,7 @@ fn numbering_defaults_and_invalid_values_are_explicit() {
         )
         .unwrap();
         assert_eq!(
-            serde_json::to_value(prepared.request.eqnums).unwrap(),
+            serde_json::to_value(prepared.request().eqnums).unwrap(),
             expected
         );
     }
@@ -262,7 +273,7 @@ fn numbering_defaults_and_invalid_values_are_explicit() {
         .analyze("= Deck\n:eqnums: broken\n\nlatexmath:[x]\n")
         .unwrap();
     assert_eq!(
-        helper::prepare(
+        prepare(
             &analysis,
             &Selection::default(),
             &Selection::default(),
@@ -278,15 +289,15 @@ fn numbering_defaults_and_invalid_values_are_explicit() {
 
 #[test]
 fn request_limits_and_cross_category_duplicate_keys_are_rejected() {
-    let mut prepared = fixture();
-    prepared.request.scopes.body.citations[0].key = "math1".into();
-    assert!(prepared.request.validate().is_err());
-    let mut prepared = fixture();
-    prepared.request.scopes.body.equations[0].tex = "x".repeat(16 * 1024 + 1);
-    assert!(prepared.request.validate().is_err());
-    let mut prepared = fixture();
-    prepared.request.macros.as_mut().unwrap()[0].arguments = Some(10);
-    assert!(prepared.request.validate().is_err());
+    let mut request = fixture().request().clone();
+    request.scopes.body.citations[0].key = "math1".into();
+    assert!(request.validate().is_err());
+    let mut request = fixture().request().clone();
+    request.scopes.body.equations[0].tex = "x".repeat(16 * 1024 + 1);
+    assert!(request.validate().is_err());
+    let mut request = fixture().request().clone();
+    request.macros.as_mut().unwrap()[0].arguments = Some(10);
+    assert!(request.validate().is_err());
 }
 
 #[tokio::test]
@@ -294,7 +305,7 @@ async fn no_math_or_citations_requires_no_executable() {
     let analysis = Engine::new(AnalysisOptions::default())
         .analyze("Hello.\n")
         .unwrap();
-    let prepared = helper::prepare(
+    let prepared = prepare(
         &analysis,
         &Selection::default(),
         &Selection::default(),
@@ -338,7 +349,7 @@ async fn helper_waiting_for_stdin_eof_receives_one_complete_json_request() {
 const chunks = [];
 for await (const chunk of process.stdin) chunks.push(chunk);
 const request = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-if (request.schemaVersion !== 1 || !request.scopes.body.equations.length) process.exit(2);
+if (request.schemaVersion !== 2 || !request.scopes.body.equations.length) process.exit(2);
 process.stdout.write(readFileSync(new URL('./response.json', import.meta.url)));
 "#,
     )
@@ -368,10 +379,12 @@ process.stdout.write(readFileSync(new URL('./response.json', import.meta.url)));
 async fn early_helper_exit_retains_stderr_and_status_even_when_stdin_breaks() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("bin.mjs");
-    let mut prepared = fixture();
-    for equation in &mut prepared.request.scopes.body.equations {
+    let original = fixture();
+    let mut request = original.request().clone();
+    for equation in &mut request.scopes.body.equations {
         equation.tex = "x".repeat(16 * 1024);
     }
+    let prepared = Prepared::new(request, original.sources, Vec::new()).unwrap();
     for exit in [0, 1, 9] {
         std::fs::write(&path, format!(
             "import {{ closeSync }} from 'node:fs';\ncloseSync(0);\nprocess.stderr.write('helper exploded\\n\\u001b[31munsafe terminal sequence\\n');\nsetTimeout(() => process.exit({exit}), 20);\n"
@@ -645,13 +658,14 @@ async fn cancellation_and_timeout_reap_the_child() {
 fn actual_node_fatal_response_retains_the_original_diagnostic() {
     let parsed =
         serde_json::from_str(include_str!("fixtures/slides-helper/fatal-response.json")).unwrap();
-    let error = helper::validate_response(&fixture(), parsed, 1, &BTreeSet::new()).unwrap_err();
-    assert_eq!(error.code, "slides-helper-failed");
-    assert!(
-        error
-            .message
-            .contains("invalid-request: request.schemaVersion is required.")
+    let result = helper::validate_response(&fixture(), parsed, 1, &BTreeSet::new()).unwrap();
+    assert_eq!(result.diagnostics.len(), 1);
+    assert_eq!(result.diagnostics[0].code, "invalid-request");
+    assert_eq!(
+        result.diagnostics[0].message,
+        "request.schemaVersion is required."
     );
+    assert!(result.inputs.body.math().is_empty());
 }
 
 #[test]
@@ -698,7 +712,7 @@ fn helper_sources_remain_projectable_to_included_files() {
         style: "style".into(),
         locale: "locale".into(),
     };
-    let prepared = helper::prepare(
+    let prepared = prepare(
         &processed.analysis,
         &selection,
         &Selection::default(),
@@ -728,11 +742,7 @@ fn representative_ams_mathjax_shapes_match_the_finite_profile() {
             offset += 2;
         }
     }
-    let prepared = Prepared {
-        request,
-        sources,
-        diagnostics: Vec::new(),
-    };
+    let prepared = Prepared::new(request, sources, Vec::new()).unwrap();
     let response =
         serde_json::from_str(include_str!("fixtures/slides-helper/shapes-response.json")).unwrap();
     let results = helper::validate_response(&prepared, response, 0, &BTreeSet::new()).unwrap();
@@ -756,8 +766,7 @@ fn diagnostics_require_explicit_nullable_scope_and_key() {
 fn notices_are_required_bounded_text_and_match_the_included_dependencies() {
     let json = response();
     let parsed: protocol::Response = serde_json::from_value(json.clone()).unwrap();
-    assert!(parsed.notices.math.is_some());
-    assert!(parsed.notices.citations.is_some());
+    assert!(matches!(parsed, protocol::Response::Ok { .. }));
     let results = validate(json.clone()).unwrap();
     assert!(results.notices.math.is_some());
     let mut missing = json.clone();
@@ -814,7 +823,7 @@ fn footnote_stem_uses_the_definition_attribute_position_and_explicit_notation_wi
         assert_eq!(selected.body.equations.len(), 2);
         assert_eq!(selected.body.equations[0].language, language, "{attribute}");
         assert_eq!(selected.body.equations[1].language, MathLanguage::Latex);
-        let prepared = helper::prepare(
+        let prepared = prepare(
             &analysis,
             &selection,
             &Selection::default(),
@@ -831,19 +840,28 @@ fn footnote_stem_uses_the_definition_attribute_position_and_explicit_notation_wi
             assert!(prepared.diagnostics[0].message.contains("stem=unknown"));
         }
         assert_eq!(
-            prepared.request.scopes.body.equations.last().unwrap().tex,
+            prepared.request().scopes.body.equations.last().unwrap().tex,
             "y"
+        );
+        assert!(
+            prepared
+                .request()
+                .scopes
+                .body
+                .equations
+                .iter()
+                .all(|equation| equation.footnote && !equation.display)
         );
     }
 }
 
 #[test]
-fn footnote_helper_sources_keep_include_origins_and_shared_scopes_are_the_only_reuse() {
+fn footnote_definitions_cannot_be_reused_across_scopes() {
     use adocweave_core::{
         SourceId,
         preprocess::{
-            EffectiveProcessingOptions, ExpandedRange, PreprocessInputs, PreprocessOptions,
-            ResourceDocument, ResourceSnapshot,
+            EffectiveProcessingOptions, PreprocessInputs, PreprocessOptions, ResourceDocument,
+            ResourceSnapshot,
         },
         semantic::StandardMacroKind,
     };
@@ -884,24 +902,12 @@ fn footnote_helper_sources_keep_include_origins_and_shared_scopes_are_the_only_r
         style: "style".into(),
         locale: "locale".into(),
     };
-    let prepared =
-        helper::prepare(&processed.analysis, &body, &notes, true, None, Some(csl)).unwrap();
-    assert_eq!(prepared.request.scopes.body.equations.len(), 1);
-    assert_eq!(prepared.request.scopes.notes.equations.len(), 1);
-    assert_eq!(
-        prepared.sources[&(Scope::Body, "m0".into())],
-        prepared.sources[&(Scope::Notes, "m0".into())]
-    );
-    for source in prepared.sources.values() {
-        let origins = processed
-            .document
-            .origins_for_range(ExpandedRange::new(*source));
-        assert_eq!(origins[0].source_id, Some(SourceId::new("part")));
-    }
+    let error = prepare(&processed.analysis, &body, &notes, true, None, Some(csl)).unwrap_err();
+    assert_eq!(error.code, "slides-footnote-outside-scope");
     assert!(helper::selected_content(&processed.analysis, &body, &body, true).is_err());
-    let public = helper::prepare(&processed.analysis, &body, &notes, false, None, None).unwrap();
-    assert!(public.request.scopes.notes.equations.is_empty());
-    assert!(public.request.scopes.notes.citations.is_empty());
+    let public = prepare(&processed.analysis, &body, &notes, false, None, None).unwrap();
+    assert!(public.request().scopes.notes.equations.is_empty());
+    assert!(public.request().scopes.notes.citations.is_empty());
 }
 
 #[test]
@@ -932,7 +938,7 @@ fn footnote_stem_unsetting_does_not_change_an_earlier_shared_definition() {
             MathLanguage::AsciiMath
         ]
     );
-    let prepared = helper::prepare(
+    let prepared = prepare(
         &analysis,
         &selection,
         &Selection::default(),
@@ -941,7 +947,7 @@ fn footnote_stem_unsetting_does_not_change_an_earlier_shared_definition() {
         None,
     )
     .unwrap();
-    assert_eq!(prepared.request.scopes.body.equations.len(), 1);
+    assert_eq!(prepared.request().scopes.body.equations.len(), 1);
     assert_eq!(prepared.diagnostics.len(), 2);
     assert!(!prepared.diagnostics[0].message.contains("stem="));
     assert!(prepared.diagnostics[1].message.contains("stem=unknown"));
@@ -960,7 +966,7 @@ fn absence_of_external_csl_never_sends_manual_citations_to_the_helper() {
             .collect(),
         ..Default::default()
     };
-    let prepared = helper::prepare(
+    let prepared = prepare(
         &analysis,
         &selection,
         &Selection::default(),
@@ -969,7 +975,7 @@ fn absence_of_external_csl_never_sends_manual_citations_to_the_helper() {
         None,
     )
     .unwrap();
-    assert!(prepared.request.scopes.body.citations.is_empty());
+    assert!(prepared.request().scopes.body.citations.is_empty());
     let output = helper::execute_sync(
         &prepared,
         Some(std::path::Path::new("/missing/helper")),
@@ -979,4 +985,64 @@ fn absence_of_external_csl_never_sends_manual_citations_to_the_helper() {
     )
     .unwrap();
     assert!(output.inputs.body.rich_citations().is_empty());
+}
+
+#[test]
+fn shared_node_and_rust_contract_cases() {
+    use adocweave_core::output::html::{RichInline, ValidatedRichText};
+    let contract: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../packages/slides-helper/fixtures/protocol-contract.json"
+    ))
+    .unwrap();
+    for case in contract["requests"].as_array().unwrap() {
+        let accepted = serde_json::from_value::<protocol::Request>(case["request"].clone())
+            .is_ok_and(|request| request.validate().is_ok());
+        assert_eq!(
+            accepted,
+            case["valid"].as_bool().unwrap(),
+            "{}",
+            case["name"]
+        );
+    }
+    for case in contract["richBytes"].as_array().unwrap() {
+        let count = case["count"].as_u64().unwrap() as usize;
+        let nodes = if case["kind"] == "links" {
+            let base = "https://example.org/";
+            let href = format!(
+                "{base}{}",
+                "x".repeat(case["hrefBytes"].as_u64().unwrap() as usize - base.len())
+            );
+            (0..count)
+                .map(|_| RichInline::Link {
+                    href: href.clone(),
+                    children: Vec::new(),
+                })
+                .collect()
+        } else {
+            let children = vec![RichInline::Text {
+                text: case["character"].as_str().unwrap().repeat(count),
+            }];
+            match case["kind"].as_str().unwrap() {
+                "emphasis" => vec![RichInline::Emphasis { children }],
+                "strong" => vec![RichInline::Strong { children }],
+                _ => children,
+            }
+        };
+        assert_eq!(
+            ValidatedRichText::validate(nodes).is_ok(),
+            case["valid"].as_bool().unwrap(),
+            "{case}"
+        );
+    }
+    for case in contract["richInlines"].as_array().unwrap() {
+        let nodes = (0..case["emphasisCount"].as_u64().unwrap())
+            .map(|_| RichInline::Emphasis {
+                children: vec![RichInline::Text { text: "x".into() }],
+            })
+            .collect();
+        assert_eq!(
+            ValidatedRichText::validate(nodes).is_ok(),
+            case["valid"].as_bool().unwrap()
+        );
+    }
 }

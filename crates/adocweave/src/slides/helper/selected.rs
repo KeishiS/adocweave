@@ -1,4 +1,4 @@
-//! Selected source content, with the only reuse exception restricted to footnotes.
+//! Audience-selected source content and footnotes confined to their own scope.
 
 use super::{HostError, HostResult, Selection, protocol::Scopes};
 use adocweave_core::{
@@ -9,11 +9,12 @@ use adocweave_core::{
 };
 use std::collections::BTreeSet;
 
-#[derive(Default)]
+#[derive(Clone, Debug, Default)]
 pub struct SelectedContent {
     pub equations: Vec<FormulaProjection>,
     pub citations: Vec<Citation>,
     pub stem_ranges: BTreeSet<TextRange>,
+    pub footnote_equations: BTreeSet<TextRange>,
 }
 
 /// Adds a referenced footnote at its first occurrence in each fixed scope.
@@ -42,10 +43,11 @@ pub fn selected_content(
             }
         }
     }
-    let collect = |selection: &Selection, allow_body: bool| -> HostResult<SelectedContent> {
+    let collect = |selection: &Selection| -> HostResult<SelectedContent> {
         let mut equations = Vec::new();
         let mut cited = Vec::new();
         let mut stem_ranges = BTreeSet::new();
+        let mut footnote_equations = BTreeSet::new();
         for range in &selection.equations {
             let formula = projections
                 .iter()
@@ -75,9 +77,7 @@ pub fn selected_content(
                 .ok_or_else(|| {
                     HostError::protocol("unknown footnote reference range").at(Some(range))
                 })?;
-            if !selection.footnotes.contains(&footnote.definition_range)
-                && !(allow_body && body.footnotes.contains(&footnote.definition_range))
-            {
+            if !selection.footnotes.contains(&footnote.definition_range) {
                 return Err(HostError::new(
                     "slides-footnote-outside-scope",
                     "footnote definition is outside the allowed slide scope",
@@ -102,6 +102,7 @@ pub fn selected_content(
                     unsupported_anchor.get_or_insert(node.range);
                 }
                 SemanticNode::Inline(Inline::Formula(formula)) => {
+                    footnote_equations.insert(formula.range);
                     if formula.uses_stem_attribute {
                         stem_ranges.insert(formula.range);
                     }
@@ -165,10 +166,11 @@ pub fn selected_content(
                 })
                 .collect(),
             stem_ranges,
+            footnote_equations,
         })
     };
     Ok(Scopes {
-        body: collect(body, false)?,
-        notes: collect(notes, true)?,
+        body: collect(body)?,
+        notes: collect(notes)?,
     })
 }

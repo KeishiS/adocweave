@@ -9,7 +9,7 @@ import { processRequest } from "./index.mjs";
 import { LIMITS, emptyResponse, encodeResponse } from "./protocol.mjs";
 import { researchRequest } from "./fixtures.mjs";
 
-const empty = () => ({ schemaVersion: 1, eqnums: "none", scopes: { body: { equations: [], citations: [] }, notes: { equations: [], citations: [] } } });
+const empty = () => ({ schemaVersion: 2, eqnums: "none", scopes: { body: { equations: [], citations: [] }, notes: { equations: [], citations: [] } } });
 const run = (input) => spawnSync(process.execPath, [new URL("./bin.mjs", import.meta.url).pathname], { input, encoding: "utf8", maxBuffer: LIMITS.outputBytes + 1024 });
 
 test("the executable reports the installed engine requirement before loading processing libraries", () => {
@@ -24,7 +24,7 @@ test("the executable reports the installed engine requirement before loading pro
       assert.match(output.stderr, /release-installation\.adoc/);
     } else {
       assert.equal(output.status, 0, output.stderr);
-      assert.equal(JSON.parse(output.stdout).schemaVersion, 1);
+      assert.equal(JSON.parse(output.stdout).schemaVersion, 2);
     }
   }
 });
@@ -48,13 +48,13 @@ test("an empty request is one complete JSON response with no stdout or stderr lo
   const output = run(JSON.stringify(empty()));
   assert.equal(output.status, 0);
   assert.equal(output.stderr, "");
-  assert.deepEqual(JSON.parse(output.stdout), { schemaVersion: 1, notices: { math: null, citations: null }, scopes: { body: { equations: [], citations: [], bibliography: [] }, notes: { equations: [], citations: [], bibliography: [] } }, diagnostics: [] });
+  assert.deepEqual(JSON.parse(output.stdout), { schemaVersion: 2, status: "ok", notices: { math: null, citations: null }, scopes: { body: { equations: [], citations: [], bibliography: [] }, notes: { equations: [], citations: [], bibliography: [] } }, diagnostics: [] });
   assert.equal(output.stdout.split("\n").length, 2);
 });
 
 test("invalid schema, unknown fields, key collisions, and count limits are rejected before libraries run", async () => {
   const cases = [];
-  cases.push({ ...empty(), schemaVersion: 2 }, { ...empty(), path: "/etc/passwd" });
+  cases.push({ ...empty(), schemaVersion: 1 }, { ...empty(), path: "/etc/passwd" });
   const duplicate = empty();
   duplicate.scopes.body.equations.push({ key: "same", tex: "x", display: false });
   duplicate.scopes.body.citations.push({ key: "same", items: [{ id: "x" }] });
@@ -67,7 +67,8 @@ test("invalid schema, unknown fields, key collisions, and count limits are rejec
   cases.push(oversized);
   for (const request of cases) {
     const response = await processRequest(request);
-    assert.deepEqual(response.scopes.body.equations, []);
+    assert.equal(response.status, "failed");
+    assert.equal(response.scopes, undefined);
     assert.equal(response.diagnostics[0].severity, "error");
     assert.equal(response.diagnostics[0].key, null);
   }
@@ -82,14 +83,15 @@ test("the executable rejects invalid UTF-8, multiple JSON documents, and oversiz
   }
 });
 
-test("processing errors retain every scope key and result/error correspondence", () => {
+test("processing errors return diagnostics without partial results", () => {
   const request = empty();
   request.scopes.body.equations.push({ key: "bad", tex: "\\unknown", display: false });
   const output = run(JSON.stringify(request));
   assert.equal(output.status, 1);
   assert.equal(output.stderr, "");
   const response = JSON.parse(output.stdout);
-  assert.deepEqual(response.scopes.body.equations, [{ key: "bad", status: "failed" }]);
+  assert.equal(response.status, "failed");
+  assert.equal(response.scopes, undefined);
   assert.ok(response.diagnostics.some(({ key, scope, severity }) => key === "bad" && scope === "body" && severity === "error"));
 });
 

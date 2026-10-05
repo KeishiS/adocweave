@@ -804,14 +804,11 @@ fn preview_non_privileged_child_recovers_after_include_permission_returns() {
     std::fs::set_permissions(&dependency, std::fs::Permissions::from_mode(0o000)).expect("deny");
     let mut denied_generation = None;
     for _ in 0..200 {
-        let diagnostics = preview_get(address, "/diagnostics");
-        if diagnostics.contains("permission") {
-            let events = preview_get(address, "/events");
-            denied_generation = events
-                .split("\"generation\":")
-                .nth(1)
-                .and_then(|value| value.split('}').next())
-                .and_then(|value| value.parse::<u64>().ok());
+        let response = preview_get(address, "/events");
+        let (_, body) = response.split_once("\r\n\r\n").expect("HTTP response");
+        let event: serde_json::Value = serde_json::from_str(body).expect("preview event");
+        if event["diagnostics"].to_string().contains("permission") {
+            denied_generation = event["generation"].as_u64();
             break;
         }
         std::thread::sleep(Duration::from_millis(10));
@@ -823,12 +820,11 @@ fn preview_non_privileged_child_recovers_after_include_permission_returns() {
     std::fs::write(&dependency, "VISIBLE_TWO\n").expect("update restored include");
     for _ in 0..200 {
         let document = preview_get(address, "/document");
-        let events = preview_get(address, "/events");
-        let advanced = events
-            .split("\"generation\":")
-            .nth(1)
-            .and_then(|value| value.split('}').next())
-            .and_then(|value| value.parse::<u64>().ok())
+        let response = preview_get(address, "/events");
+        let (_, body) = response.split_once("\r\n\r\n").expect("HTTP response");
+        let event: serde_json::Value = serde_json::from_str(body).expect("preview event");
+        let advanced = event["generation"]
+            .as_u64()
             .is_some_and(|generation| generation > denied_generation);
         if advanced && document.contains("VISIBLE_TWO") {
             stop_preview(&mut child);
@@ -912,7 +908,7 @@ fn preview_serves_and_recovers_from_an_initial_include_read_failure() {
         "{initial_document}"
     );
     assert!(!initial_document.contains("RECOVERED_INCLUDE"));
-    let diagnostics = preview_get(address, "/diagnostics");
+    let diagnostics = preview_get(address, "/events");
     assert!(diagnostics.contains("part.adoc"), "{diagnostics}");
     assert!(child.try_wait().expect("child state").is_none());
     std::fs::write(&include, "RECOVERED_INCLUDE\n").expect("create include");

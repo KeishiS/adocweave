@@ -205,18 +205,17 @@ pub async fn execute(
     limits: ProcessLimits,
     reserved_ids: &BTreeSet<String>,
 ) -> HostResult<ValidatedResults> {
-    prepared.request.validate()?;
-    if prepared.request.is_empty() {
+    if prepared.request().is_empty() {
         return validate_response(
             prepared,
-            Response {
-                schema_version: 1,
+            Response::Ok {
+                schema_version: 2,
                 scopes: Scopes {
                     body: ScopeOutput::default(),
                     notes: ScopeOutput::default(),
                 },
                 diagnostics: Vec::new(),
-                notices: protocol::Notices::default(),
+                notices: Box::default(),
             },
             0,
             reserved_ids,
@@ -232,7 +231,7 @@ pub async fn execute(
         bytes: Vec::new(),
         limit: limits.input_bytes.min(protocol::INPUT_BYTES),
     };
-    serde_json::to_writer(&mut input, &prepared.request)
+    serde_json::to_writer(&mut input, prepared.request())
         .map_err(|e| HostError::new("slides-helper-input-limit", e.to_string()))?;
     let executable = resolve_executable(explicit)?;
     let path = std::env::join_paths(

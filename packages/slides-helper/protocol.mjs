@@ -61,7 +61,7 @@ function boundedJson(value, depth = 0) {
 
 export function validateRequest(request) {
   object(request, "request", ["schemaVersion", "eqnums", "scopes", "macros", "csl"], ["schemaVersion", "eqnums", "scopes"]);
-  requireCondition(request.schemaVersion === 1, "Unsupported schemaVersion; expected 1.");
+  requireCondition(request.schemaVersion === 2, "Unsupported schemaVersion; expected 2.");
   requireCondition(["none", "ams", "all"].includes(request.eqnums), "eqnums must be none, ams, or all.");
   object(request.scopes, "scopes", SCOPES);
   let equationCount = 0;
@@ -80,10 +80,12 @@ export function validateRequest(request) {
       keys.add(value);
     };
     for (const equation of input.equations) {
-      object(equation, "equation", ["key", "tex", "display"]);
+      object(equation, "equation", ["key", "tex", "display", "footnote"], ["key", "tex", "display"]);
       key(equation.key);
       text(equation.tex, "equation.tex", LIMITS.texBytes);
       requireCondition(typeof equation.display === "boolean", "equation.display must be a boolean.");
+      requireCondition(equation.footnote === undefined || typeof equation.footnote === "boolean", "equation.footnote must be a boolean.");
+      requireCondition(!equation.footnote || !equation.display, "Footnote equations must be inline.");
     }
     for (const citation of input.citations) {
       object(citation, "citation", ["key", "items"]);
@@ -139,7 +141,8 @@ export function validateRequest(request) {
 
 export function emptyResponse() {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    status: "ok",
     notices: { math: null, citations: null },
     scopes: Object.fromEntries(SCOPES.map((scope) => [scope, { equations: [], citations: [], bibliography: [] }])),
     diagnostics: [],
@@ -150,12 +153,20 @@ export function diagnostic(scope, key, code, message, severity = "error") {
   return { scope, key, severity, code, message };
 }
 
+export function finishResponse(response) {
+  if (response.diagnostics.some(({ severity }) => severity === "error")) {
+    return { schemaVersion: 2, status: "failed", diagnostics: response.diagnostics };
+  }
+  return response;
+}
+
 export function encodeResponse(response) {
+  response = finishResponse(response);
   let json = JSON.stringify(response);
   if (Buffer.byteLength(json) > LIMITS.outputBytes) {
     response = emptyResponse();
     response.diagnostics.push(diagnostic(null, null, "output-limit", "The response exceeds the output byte limit."));
-    json = JSON.stringify(response);
+    json = JSON.stringify(finishResponse(response));
   }
   return { json, failed: response.diagnostics.some(({ severity }) => severity === "error") };
 }

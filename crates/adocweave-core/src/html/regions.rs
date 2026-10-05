@@ -43,16 +43,22 @@ pub struct HtmlRegions {
 
 /// Slide output fragments. The host appends each footnote fragment once after
 /// that slide's regions and places the bibliography once at the scope's end.
-/// `regions` retains the flattened selection order; `footnotes` has one entry
-/// per real source slide, including empty entries. IDs include validated math
+/// `slides` retains the source slide order, including empty entries.
+/// Each slide owns its selected regions and footnotes. IDs include validated math
 /// and the bibliography container ID the host must emit for `Body`.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct HtmlSlideRegions {
-    pub regions: Vec<String>,
-    pub footnotes: Vec<String>,
+    pub slides: Vec<HtmlSlideContent>,
     pub bibliography: Option<String>,
     pub generated_ids: BTreeSet<String>,
     pub diagnostics: Vec<Diagnostic>,
+}
+
+/// Body regions and local footnotes belonging to one source slide.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct HtmlSlideContent {
+    pub regions: Vec<String>,
+    pub footnotes: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -216,7 +222,11 @@ pub fn render_regions(
 ) -> Result<HtmlRegions, HtmlRegionError> {
     let output = render_selected(document, policy, inputs, selections, limits, None)?;
     Ok(HtmlRegions {
-        regions: output.regions,
+        regions: output
+            .slides
+            .into_iter()
+            .flat_map(|slide| slide.regions)
+            .collect(),
         diagnostics: output.diagnostics,
     })
 }
@@ -411,9 +421,11 @@ fn render_selected(
         slide_catalogs.as_ref(),
     );
     let mut usage = inputs.track_usage();
-    let mut regions = Vec::with_capacity(selections.len());
+    let slide_count = slides
+        .as_ref()
+        .map_or(1, |request| request.selections.groups(request.scope).len());
+    let mut rendered_slides = vec![HtmlSlideContent::default(); slide_count];
     let mut total = 0usize;
-    let mut footnotes = Vec::new();
     let mut bibliography_html = None;
     {
         let mut context = InlineRenderContext {
@@ -465,16 +477,16 @@ fn render_selected(
                 check_output_limit(total, html.len(), limits)?;
             }
             total += html.len();
-            regions.push(html);
+            rendered_slides[context.slide].regions.push(html);
         }
         if let (Some(catalogs), Some(request)) = (&slide_catalogs, &slides) {
             context.region = None;
-            for slide in 0..request.selections.groups(request.scope).len() {
+            for (slide, rendered) in rendered_slides.iter_mut().enumerate() {
                 context.slide = slide;
                 let html =
                     catalogs.render_footnotes(slide, document, &mut context, total, limits)?;
                 total += html.len();
-                footnotes.push(html);
+                rendered.footnotes = html;
             }
             if let Some(bibliography) = &bibliography {
                 let mut html = String::new();
@@ -514,8 +526,7 @@ fn render_selected(
     }
     crate::diagnostic::sort_diagnostics(&mut diagnostics);
     Ok(HtmlSlideRegions {
-        regions,
-        footnotes,
+        slides: rendered_slides,
         bibliography: bibliography_html,
         generated_ids: slide_catalogs
             .map(|catalogs| catalogs.generated_ids)

@@ -8,6 +8,7 @@ Node.js 24.19.0以降を使用します。実行入口は`adocweave-slides-helpe
 ## 導入
 
 npm Registryの配布版は、版を指定して導入します。
+CLIに対応する補助のバージョンは、[ネイティブ版の変更履歴](https://github.com/KeishiS/adocweave/blob/main/CHANGELOG.md)で確認してください。
 
 ```console
 npm install --global --ignore-scripts @adocweave/slides-helper@X.Y.Z
@@ -48,7 +49,7 @@ Windowsでもこの方法を使えます。
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "eqnums": "none",
   "scopes": {
     "body": { "equations": [], "citations": [] },
@@ -63,21 +64,21 @@ Windowsでもこの方法を使えます。
 
 `key`は呼出し側が生成し、同じ掲載範囲の式・引用を通じて一意にします。
 先頭をASCII英字とし、英数字、`_`、`-`からなる64文字以内の識別子を使います。
-応答は入力順を維持し、各keyに`status: "ok"`または`"failed"`を返します。
-`failed`には同じ掲載範囲・keyのerror診断を必ず含めます。
-呼出し側は不明なkey、結果の欠落・重複、失敗に対応しない診断を検査してください。
-要求自体の不正と出力上限の失敗では、空の二掲載範囲と全体のerror診断を返します。
+応答の`status`は`ok`または`failed`です。成功時は入力順を維持し、各keyに結果を一つ返します。
+失敗時は`diagnostics`だけを返し、部分的な成果物と通知は含めません。
+呼出し側は成功結果の不明なkey、欠落・重複、および診断のkeyを検査してください。
 原稿のファイル名や位置は呼出し側で保持します。
 
 `notices.math`と`notices.citations`には、使用した数式・引用の配布通知本文を返します。
 それぞれ式・引用の入力がなければ`null`です。数式の通知にはフォントの著作権表示、GUST Font License、LPPL、
 MathJaxのlicense、引用の通知にはciteprocの帰属表示とCPAL本文を含めます。パッケージ自身の固定同梱ファイルだけを読みます。
 呼出し側は各本文64 KiB・合計256 KiB以内のUTF-8文字列として検査し、固定filenameのテキスト資産へ保存してください。
-要求全体の失敗では両方`null`です。公開用の生成では、発表者ノートだけが使う通知も除去してください。
+失敗応答には`notices`を含めません。公開用の生成では、発表者ノートだけが使う通知も除去してください。
 
 ## 数式
 
-各式は`{ key, tex, display }`で指定します。`eqnums`は要求全体に共通で、`none`、`ams`、`all`を受け付けます。
+各式は`{ key, tex, display, footnote? }`で指定します。
+`footnote: true`の式はinlineだけを許可し、数式番号とlabelの定義を禁止します。同じ掲載範囲の脚注外で定義した式番号への`ref`・`eqref`は使用できます。`eqnums`は要求全体に共通で、`none`、`ams`、`all`を受け付けます。
 番号を自動付与するかどうかはMathJaxの規則に従います。両掲載範囲の番号は別々に1から始まります。
 成功時には、ブラウザーでMathJaxを実行する必要のない静的`svg`を返します。
 SVGのglyph pathを各式に含め、IDと内部リンクに掲載範囲・keyを反映します。
@@ -107,6 +108,8 @@ citeprocで掲載範囲全体を文書順に処理します。後の引用によ
 `superscript`、`subscript`、`smallcaps`、`underline`、`normal-emphasis`、`normal-strong`、
 `normal-smallcaps`、`link`を使います。`normal-*`は外側から引き継いだ同種の装飾を解除します。
 リンクは資格情報のないHTTP・HTTPSだけを受け付けます。
+対応するCSL styleはこの有限表現へ変換できるものに限られ、任意のCSL styleの表示を保証しません。
+段落、インデント、左右の列配置は保持せず、既知のwrapperを文字の区切りへ変換します。
 任意HTML、未対応の装飾、複数itemを一つにまとめる参考文献項目はerrorです。
 citeprocが生成する既知の参考文献wrapperを除去し、番号と本文の間の区切りを保持します。
 
@@ -122,6 +125,9 @@ citeprocが生成する既知の参考文献wrapperを除去し、番号と本�
 | 書誌item | 4096件 |
 | 共通macro | 64個、定義一つ4 KiB |
 | CSL style・locale | それぞれ512 KiB |
+| 引用・参考文献一つのinline tree | 4096ノード、深さ32 |
+| 引用・参考文献一つの文字列 | 合計256 KiB |
+| 引用・参考文献一つのHTML表現 | escapeと装飾を含め1.5 MiB、URL一つ4 KiB |
 | 通知本文 | 一つ64 KiB、合計256 KiB |
 
 MathJaxのbuffer上限など、使用するライブラリの上限も適用されます。
