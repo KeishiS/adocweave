@@ -475,6 +475,35 @@ fn length(value: &str) -> bool {
             .iter()
             .any(|suffix| value.strip_suffix(suffix).is_some_and(numeric))
 }
+fn paint(value: &str) -> bool {
+    if let Some(hex) = value.strip_prefix('#') {
+        return matches!(hex.len(), 3 | 4 | 6 | 8) && hex.bytes().all(|b| b.is_ascii_hexdigit());
+    }
+    // CSS named colors, plus SVG's no-paint and inherited-color values.
+    // Keep this finite: MathJax also passes authored url(...) and CSS functions through.
+    // https://www.w3.org/TR/css-color-4/#named-colors
+    const NAMES: &str = "aliceblue antiquewhite aqua aquamarine azure beige bisque black \
+        blanchedalmond blue blueviolet brown burlywood cadetblue chartreuse chocolate coral \
+        cornflowerblue cornsilk crimson cyan darkblue darkcyan darkgoldenrod darkgray darkgreen \
+        darkgrey darkkhaki darkmagenta darkolivegreen darkorange darkorchid darkred darksalmon \
+        darkseagreen darkslateblue darkslategray darkslategrey darkturquoise darkviolet deeppink \
+        deepskyblue dimgray dimgrey dodgerblue firebrick floralwhite forestgreen fuchsia gainsboro \
+        ghostwhite gold goldenrod gray green greenyellow grey honeydew hotpink indianred indigo \
+        ivory khaki lavender lavenderblush lawngreen lemonchiffon lightblue lightcoral lightcyan \
+        lightgoldenrodyellow lightgray lightgreen lightgrey lightpink lightsalmon lightseagreen \
+        lightskyblue lightslategray lightslategrey lightsteelblue lightyellow lime limegreen linen \
+        magenta maroon mediumaquamarine mediumblue mediumorchid mediumpurple mediumseagreen \
+        mediumslateblue mediumspringgreen mediumturquoise mediumvioletred midnightblue mintcream \
+        mistyrose moccasin navajowhite navy oldlace olive olivedrab orange orangered orchid \
+        palegoldenrod palegreen paleturquoise palevioletred papayawhip peachpuff peru pink plum \
+        powderblue purple rebeccapurple red rosybrown royalblue saddlebrown salmon sandybrown \
+        seagreen seashell sienna silver skyblue slateblue slategray slategrey snow springgreen \
+        steelblue tan teal thistle tomato turquoise violet wheat white whitesmoke yellow \
+        yellowgreen transparent currentcolor none";
+    NAMES
+        .split_ascii_whitespace()
+        .any(|name| value.eq_ignore_ascii_case(name))
+}
 fn tokens(value: &str) -> bool {
     value.len() <= 256
         && value
@@ -531,7 +560,7 @@ fn allowed_attribute(name: &str, value: &str) -> bool {
                 || b.is_ascii_whitespace()
                 || b"MmZzLlHhVvCcSsQqTtAaEe.,+-".contains(&b)
         }),
-        "stroke" | "fill" => matches!(value, "currentColor" | "none"),
+        "stroke" | "fill" => paint(value),
         "stroke-width" | "opacity" => numeric(value),
         "stroke-linecap" => matches!(value, "round" | "butt" | "square"),
         "role" => value == "img",
@@ -601,6 +630,60 @@ mod tests {
         assert!(!first.ids().iter().any(|id| second.ids().contains(id)));
     }
     const SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="1ex" height="2ex" viewBox="0 0 1 2" aria-hidden="true"><defs><path id="body-m0-i0" d="M0 0L1 2Z"/></defs><g transform="scale(1,-1)"><use href="#body-m0-i0"/></g></svg>"##;
+    #[test]
+    fn math_paints_accept_only_named_colors_and_hexadecimal_colors() {
+        for attribute in ["fill", "stroke"] {
+            for color in [
+                "pink",
+                "lightblue",
+                "RebeccaPurple",
+                "transparent",
+                "currentColor",
+                "none",
+                "#abc",
+                "#AbC8",
+                "#ff8040",
+                "#1234AB80",
+            ] {
+                let svg = SVG.replace("<g ", &format!("<g {attribute}=\"{color}\" "));
+                let validated = ValidatedMath::validate("body", "m0", &svg).unwrap();
+                assert!(
+                    validated
+                        .svg()
+                        .contains(&format!("{attribute}=\"{color}\""))
+                );
+            }
+            for color in [
+                "",
+                "unknown",
+                "inherit",
+                "context-fill",
+                "CanvasText",
+                "pink red",
+                " pink",
+                "#",
+                "#ab",
+                "#abcde",
+                "#1234567",
+                "#xyz",
+                "#123456789",
+                "rgb(1,2,3)",
+                "var(--paint)",
+                "url(#body-m0-i0)",
+                "url(https://example.org/paint.svg)",
+                "URL(https://example.org/paint.svg)",
+                "url(&#35;body-m0-i0)",
+                "u&#114;l(https://example.org/paint.svg)",
+                "pink;opacity:0",
+            ] {
+                let svg = SVG.replace("<g ", &format!("<g {attribute}=\"{color}\" "));
+                assert!(
+                    ValidatedMath::validate("body", "m0", &svg).is_err(),
+                    "accepted {svg}"
+                );
+            }
+        }
+    }
     #[test]
     fn math_is_reconstructed_from_decoded_xml_and_has_private_markup() {
         let svg = SVG.replace("</svg>", "<text>&#x3B1;&lt;2</text></svg>");

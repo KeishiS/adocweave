@@ -655,6 +655,70 @@ async function speakerNotes(page, ports, targets, connections, url) {
     console.log(`research slides verified: static SVG/TeX, citations, footnotes, tables, CJK DOM/SVG; artifacts: ${artifacts}`);
   }
 }
+async function mathExtensionLayout(page, name) {
+  const layout = await page.evaluate(`(() => {
+    const slide = document.querySelector('#extensions');
+    const box = node => { const r = node.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; };
+    const visible = node => { const r = node.getBoundingClientRect(), style = getComputedStyle(node);
+      return r.width > 0 && r.height > 0 && style.visibility === 'visible' && style.display !== 'none' && style.opacity !== '0'; };
+    return {
+      equations: [...slide.querySelectorAll('.math-rendered > svg')].map(node => ({ visible: visible(node), box: box(node) })),
+      backgrounds: [...slide.querySelectorAll('rect[fill="pink"],rect[fill="lightblue"]')]
+        .map(node => ({ fill: getComputedStyle(node).fill, visible: visible(node), box: box(node) })),
+      cancellations: [...slide.querySelectorAll('[data-mml-node="menclose"] > line, [data-mml-node="menclose"] > path')].map(node => ({ visible: visible(node), box: box(node) })),
+      violations: probeViolations,
+    };
+  })()`);
+  assert.equal(layout.equations.length, 2, name);
+  assert.ok(layout.equations.every(item => item.visible), name);
+  assert.deepEqual(layout.backgrounds.map(item => item.fill).sort(), ["rgb(173, 216, 230)", "rgb(255, 192, 203)"], name);
+  assert.ok(layout.backgrounds.every(item => item.visible), name);
+  assert.ok(layout.cancellations.length > 0 && layout.cancellations.every(item => item.visible), name);
+  assert.deepEqual(layout.violations, [], name);
+  reports.push({ name, ...layout });
+}
+async function mathExtensionsDisplay(page, url, name) {
+  for (const print of [false, true]) {
+    const address = `${url}${print ? '?print-pdf' : ''}`;
+    await page.call("Page.navigate", { url: address });
+    await poll(() => page.evaluate(`location.href.split('#')[0]===${JSON.stringify(address)}&&probeReady&&Reveal.isReady()`));
+    if (print) {
+      await poll(() => page.evaluate("document.querySelectorAll('.pdf-page').length===2"));
+      await page.call("Emulation.setEmulatedMedia", { media: "print" });
+    } else {
+      await page.evaluate("Reveal.slide(1)");
+    }
+    await mathExtensionLayout(page, `${name}-${print ? 'print' : 'screen'}`);
+    if (!print) {
+      const screenshot = await page.call("Page.captureScreenshot", { format: "png" });
+      await writeFile(join(artifacts, `${name}.png`), Buffer.from(screenshot.data, "base64"));
+    }
+    if (print) {
+      const pdf = await page.call("Page.printToPDF", { printBackground: true, preferCSSPageSize: true });
+      const path = join(artifacts, `${name}.pdf`);
+      await writeFile(path, Buffer.from(pdf.data, "base64"));
+      assert.equal(Number(inspectPdf(pdfInfo, [path]).match(/^Pages:\s+(\d+)/m)?.[1]), 2, name);
+      await page.call("Emulation.setEmulatedMedia", { media: "screen" });
+    }
+  }
+}
+async function mathExtensionsPreview(page, ports, config) {
+  await writeFile(join(root, "math-extensions", ".adocweave.toml"), "schema-version = 2\n[math]\nextensions = []\n");
+  const preview = child(binary, ["preview", "math-extensions/talk.adoc", "--to", "revealjs", "--port", "0", "--slides-helper", helper]);
+  const port = await poll(() => { preview.check(); return preview.stderr().match(/http:\/\/127\.0\.0\.1:(\d+)\//)?.[1]; });
+  ports.add(port);
+  const url = `http://127.0.0.1:${port}/`;
+  await page.call("Page.navigate", { url });
+  await poll(() => page.evaluate("document.querySelector('.slides-diagnostics')?.textContent.includes('invalid-tex')"));
+  assert.equal(await page.evaluate("document.querySelectorAll('.math-rendered > svg').length"), 0);
+  // Only configuration changes; the manuscript and helper remain identical.
+  await writeFile(join(root, "math-extensions", ".adocweave.toml"), config);
+  await poll(() => page.evaluate("probeReady&&window.Reveal?.isReady()&&document.querySelectorAll('.math-rendered > svg').length===2"));
+  await page.evaluate("Reveal.slide(1)");
+  await mathExtensionLayout(page, "math-extensions-preview-recovery");
+  assert.equal(await page.evaluate("document.querySelector('.slides-diagnostics')?.textContent.trim() ?? ''"), "");
+}
+
 async function livePreview(page, ports) {
   // Live reload restores the Reveal hash; it does not retain a separate position model.
   const preview = child(binary, ["preview", "navigation.adoc", "--to", "revealjs", "--port", "0"]);
@@ -792,6 +856,18 @@ try {
   ports.add(new URL(autoServer).port);
   await runCase("speaker-notes-auto", (page, connections) => speakerNotes(page, ports, targets, connections, `${autoServer}/`));
   if (helper) {
+    const extensionRoot = join(root, "math-extensions");
+    await mkdir(extensionRoot);
+    const extensionConfig = await readFile(new URL("../fixtures/slides-browser/math-extensions.toml", import.meta.url), "utf8");
+    await writeFile(join(extensionRoot, ".adocweave.toml"), extensionConfig);
+    await writeFile(join(extensionRoot, "talk.adoc"), await readFile(new URL("../fixtures/slides-browser/math-extensions.adoc", import.meta.url)));
+    const extensions = spawnSync(binary, ["convert", "math-extensions/talk.adoc", "--to", "revealjs", "--output", "math-extensions/bundle", "--slides-helper", helper],
+      { cwd: root, env: environment, encoding: "utf8" });
+    assert.equal(extensions.status, 0, extensions.stderr);
+    await runCase("math-extensions-file", page => mathExtensionsDisplay(page, pathToFileURL(join(extensionRoot, "bundle", "index.html")).href, "math-extensions-file"));
+    const singleExtensions = await singleFile("math-extensions/talk.adoc", "math-extensions/bundle", ["--slides-helper", helper]);
+    await runCase("math-extensions-single-file", page => mathExtensionsDisplay(page, singleExtensions.url, "math-extensions-single-file"), singleExtensions.url);
+    await runCase("math-extensions-preview", page => mathExtensionsPreview(page, ports, extensionConfig));
     await runCase("default-citation-style", page => defaultCitationStyle(page));
     await runCase("pdf-file", page => printPdf(page, pathToFileURL(join(root, "public", "index.html")).href, "public-file-print"));
     await runCase("pdf-http", page => printPdf(page, `${publicServer}/`, "public-http-print"));

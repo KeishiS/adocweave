@@ -11,6 +11,7 @@ use adocweave_core::{
     semantic::{Block, Inline, MathLanguage, SemanticNode, walk},
     text::TextRange,
 };
+use adocweave_project::MathExtension;
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, Default)]
@@ -49,6 +50,7 @@ impl Prepared {
 pub fn prepare(
     analysis: &Analysis,
     selected: Scopes<super::selected::SelectedContent>,
+    extensions: &[MathExtension],
     macros: Option<Vec<Macro>>,
     mut csl: Option<Csl>,
 ) -> HostResult<Prepared> {
@@ -203,9 +205,12 @@ pub fn prepare(
             .at(eqnums_range));
         }
     };
+    let mut extensions = extensions.to_vec();
+    extensions.sort();
     let request = Request {
-        schema_version: 2,
+        schema_version: super::protocol::SCHEMA_VERSION,
         eqnums,
+        extensions,
         scopes: inputs,
         macros,
         csl,

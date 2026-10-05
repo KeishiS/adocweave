@@ -1,5 +1,6 @@
 export type Scope = "body" | "notes";
 export type Eqnums = "none" | "ams" | "all";
+export type Extension = "color" | "cancel" | "mathtools";
 
 export type Equation = {
   key: string;
@@ -28,7 +29,8 @@ export type Macro = {
 };
 export type CslItem = { id: string; [field: string]: unknown };
 export type Request = {
-  schemaVersion: 2;
+  schemaVersion: 3;
+  extensions: Extension[];
   eqnums: Eqnums;
   scopes: { body: ScopeInput; notes: ScopeInput };
   macros?: Macro[];
@@ -69,5 +71,5 @@ export type Notices = {
   citations: null | { attribution: string; license: string };
 };
 export type Response =
-  | { schemaVersion: 2; status: "ok"; notices: Notices; scopes: { body: ScopeOutput; notes: ScopeOutput }; diagnostics: Diagnostic[] }
-  | { schemaVersion: 2; status: "failed"; diagnostics: Diagnostic[] };
+  | { schemaVersion: 3; status: "ok"; notices: Notices; scopes: { body: ScopeOutput; notes: ScopeOutput }; diagnostics: Diagnostic[] }
+  | { schemaVersion: 3; status: "failed"; diagnostics: Diagnostic[] };

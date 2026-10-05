@@ -209,7 +209,7 @@ pub async fn execute(
         return validate_response(
             prepared,
             Response::Ok {
-                schema_version: 2,
+                schema_version: protocol::SCHEMA_VERSION,
                 scopes: Scopes {
                     body: ScopeOutput::default(),
                     notes: ScopeOutput::default(),
@@ -376,10 +376,10 @@ pub async fn execute(
     let response = Response::deserialize(&mut parser).map_err(|e| {
         if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&stdout)
             && let Some(version) = value.get("schemaVersion").and_then(serde_json::Value::as_u64)
-            && version != 2
+            && let Err(error) = protocol::require_response_version(version)
         {
             return HostError::protocol(with_stderr(
-                &format!("unsupported slide helper response schemaVersion {version}; this CLI requires schemaVersion 2 and @adocweave/slides-helper 0.2.0 (or a compatible version); update the selected helper"),
+                &error.message,
                 &stderr,
             ));
         }

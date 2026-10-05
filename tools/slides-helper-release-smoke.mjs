@@ -43,7 +43,7 @@ export async function verifyInstalledHelper(archive, { published = false } = {})
     const run = (request) => JSON.parse(execFileSync(process.execPath, [join(installed, "bin.mjs")], {
       input: JSON.stringify(request), encoding: "utf8", timeout: 30_000, maxBuffer: 32 * 1024 * 1024,
     }));
-    const empty = run({ schemaVersion: 2, eqnums: "none", scopes: {
+    const empty = run({ schemaVersion: 3, extensions: [], eqnums: "none", scopes: {
       body: { equations: [], citations: [] }, notes: { equations: [], citations: [] },
     } });
     assert.deepEqual(empty.diagnostics, []);
@@ -61,6 +61,16 @@ export async function verifyInstalledHelper(archive, { published = false } = {})
     }
     assert.match(result.notices.math.fontAttribution, /Tsolomitis/);
     assert.match(result.notices.citations.license, /Exhibit B/);
+    const extended = structuredClone(fixture);
+    extended.extensions = ["color", "cancel", "mathtools"];
+    extended.scopes.body.equations.push({ key: "extensions", display: true,
+      tex: String.raw`\definecolor{accent}{RGB}{255,128,64}\fcolorbox{accent}{lightblue}{$x$} + \cancelto{0}{y} \coloneqq z` });
+    const extendedResult = run(extended);
+    assert.deepEqual(extendedResult.diagnostics, []);
+    const extensionSvg = extendedResult.scopes.body.equations.find(({ key }) => key === "extensions").svg;
+    assert.match(extensionSvg, /fill="lightblue"/);
+    assert.match(extensionSvg, /fill="#ff8040"/);
+    assert.doesNotMatch(extensionSvg, /data-bgcolor|border\s*:/);
     if (published) {
       const report = JSON.parse(execFileSync("npm", ["audit", "signatures", "--json", "--include-attestations", "--prefix", temporary, "--cache", cache], {
         encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],

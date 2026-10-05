@@ -218,6 +218,63 @@ LaTeX数式は静的SVGに変換し、原TeXも保持します。原TeXは表示
 各要素の``name``と``definition``は必須で、引数を使う場合は``arguments``、既定の引数は``default``で指定します。
 本文とノートはそれぞれ別に処理し、その間のLaTeX参照の解決は保証しません。
 
+[#slides-math-extensions]
+=== 数式の色と追加記法
+
+数式へ色、取消線、追加の数学記号を使う場合は、プロジェクト設定で必要な拡張を選びます。
+次の内容を``math-extensions.toml``へ保存してください。
+
+[source,toml]
+----
+schema-version = 2
+
+[math]
+extensions = ["color", "cancel", "mathtools"]
+----
+
+[cols="1,3",options="header"]
+|===
+|拡張 |用途と記法の例
+|``color`` |文字色や背景色の指定。``\textcolor``、``\colorbox``、``\fcolorbox``
+|``cancel`` |数式の取消線。``\cancel``、``\cancelto``
+|``mathtools`` |追加の数学記号や配置。定義を表す``\coloneqq``など
+|===
+
+例えば、``math.adoc``へ次の数式ブロックを加えます。
+
+[source,asciidoc]
+----
+[latexmath]
+++++
+\colorbox{pink}{$x+y$} \qquad \cancelto{0}{x} \qquad x \coloneqq y
+++++
+----
+
+設定ファイルを指定して、プレビューを起動します。
+
+[source,console]
+----
+adocweave preview math.adoc --to revealjs --config math-extensions.toml --css theme.css
+----
+
+原稿と同じディレクトリの``.adocweave.toml``へ設定を追加した場合は、``--config``を省略できます。
+設定の探索範囲はxref:project-configuration.adoc#configuration-selection[設定ファイルの選択]を参照してください。
+スライドのプレビュー中に設定を変更すると、数式も生成し直します。
+リポジトリには、link:../../fixtures/slides-browser/math-extensions.adoc[拡張を使う原稿]と
+link:../../fixtures/slides-browser/math-extensions.toml[対応する設定]もあります。これらを試す場合も、設定は``--config``で指定します。
+
+``math.extensions``の省略または空配列は、追加拡張なしを表します。
+指定できるのは上の3つだけで、重複や未知の名前はエラーにします。
+基本の数式、式番号と参照、マクロに必要な``base``、``ams``、``newcommand``、``configmacros``は常に有効です。
+これらの内部名は設定へ書かず、追加拡張だけを指定してください。
+指定順に関係なく``color``、``cancel``、``mathtools``の順で有効にします。
+``\require``などによる任意の拡張の読込みや、外部からの追加取得には対応しません。
+
+数式SVGの色には、CSS標準の148色名、``#``に続く3・4・6・8桁の16進数、
+``transparent``、``currentColor``、``none``を使えます。色名の大文字と小文字は区別しません。
+TeXの``\definecolor``で指定する``rgb``、``RGB``、``gray``は、MathJaxが16進数の色へ変換します。
+任意のCSS関数や``url()``による外部参照を、色として指定することはできません。
+
 === 文献データを使う引用
 
 引用には、原稿中のキーと対応する文献データが必要です。

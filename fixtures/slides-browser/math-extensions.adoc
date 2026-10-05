@@ -1,0 +1,16 @@
+= TeX拡張の表示
+:stem: latexmath
+:slides-aspect-ratio: 16:9
+
+[#extensions]
+== 色、取消線、定義記号
+
+[latexmath]
+++++
+\colorbox{pink}{$x+y$} \qquad \fcolorbox{blue}{lightblue}{$a+b$}
+++++
+
+[latexmath]
+++++
+\cancelto{0}{x} \qquad x \coloneqq y
+++++

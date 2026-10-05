@@ -1550,6 +1550,145 @@ fn helper_bin() -> String {
         .into_owned()
 }
 
+#[test]
+fn configured_math_extensions_reach_directory_single_file_and_presenter_output() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        ".adocweave.toml",
+        "schema-version = 2\n[math]\nextensions = [\"mathtools\", \"cancel\", \"color\"]\n",
+    );
+    write(
+        root.path(),
+        "talk.adoc",
+        r"= Extensions
+:stem: latexmath
+:eqnums:
+
+== Process
+
+[stem]
+++++
+\begin{equation}
+dX_t = \colorbox{pink}{$f(t,X_t)$}\,dt + \colorbox{lightblue}{$g(t)$}\,dB_t
+\label{process}
+\end{equation}
+++++
+
+Cancellation: latexmath:[\cancel{x}+\cancelto{0}{y}].
+Definition: latexmath:[a\coloneqq b\eqqcolon c].
+Reference: latexmath:[\eqref{process}].
+Framed: latexmath:[\definecolor{accent}{RGB}{255,128,64}\fcolorbox{accent}{lightblue}{$x^2+1$}].
+
+[.notes]
+--
+latexmath:[\textcolor{red}{z}]
+--
+",
+    );
+    let helper = helper_bin();
+    for mode in ["directory", "single", "presenter"] {
+        let mut args = vec!["talk.adoc", "--to", "revealjs", "--slides-helper", &helper];
+        if mode == "single" {
+            args.push("--single-file");
+        } else {
+            args.extend(["--output", mode]);
+        }
+        if mode == "presenter" {
+            args.extend(["--audience", "presenter"]);
+        }
+        let output = convert(root.path(), &args);
+        success(&output);
+        let html = if mode == "single" {
+            String::from_utf8(output.stdout).unwrap()
+        } else {
+            fs::read_to_string(root.path().join(mode).join("index.html")).unwrap()
+        };
+        assert!(
+            html.contains("fill=\"pink\""),
+            "{mode}: missing pink highlight"
+        );
+        assert!(
+            html.contains("fill=\"lightblue\""),
+            "{mode}: missing blue highlight"
+        );
+        assert_eq!(html.contains("fill=\"red\""), mode == "presenter");
+        assert!(html.contains("fill=\"#ff8040\""));
+        assert!(!html.contains("data-bgcolor"));
+        check_fragment_targets(&html);
+    }
+}
+
+#[test]
+fn omitted_and_empty_math_extensions_keep_ams_but_reject_extension_commands() {
+    let root = tempfile::tempdir().unwrap();
+    let helper = helper_bin();
+    for config in [
+        "schema-version = 2\n",
+        "schema-version = 2\n[math]\nextensions = []\n",
+    ] {
+        write(root.path(), ".adocweave.toml", config);
+        write(
+            root.path(),
+            "talk.adoc",
+            "= Talk\n:stem: latexmath\n:eqnums:\n\n== Formula\n\n[stem]\n++++\n\\begin{equation}x=1\\label{x}\\end{equation}\n++++\n\nlatexmath:[\\eqref{x}]\n",
+        );
+        let args = [
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--single-file",
+            "--slides-helper",
+            &helper,
+        ];
+        let output = convert(root.path(), &args);
+        success(&output);
+        check_fragment_targets(&String::from_utf8(output.stdout).unwrap());
+        write(
+            root.path(),
+            "talk.adoc",
+            "= Talk\n\n== Formula\n\nlatexmath:[\\colorbox{pink}{$x$}]\n",
+        );
+        let output = convert(root.path(), &args);
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("invalid-tex"));
+    }
+}
+
+#[test]
+fn math_color_does_not_permit_remote_paints_through_the_real_helper() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        ".adocweave.toml",
+        "schema-version = 2\n[math]\nextensions = [\"color\"]\n",
+    );
+    write(
+        root.path(),
+        "talk.adoc",
+        "= Talk\n\n== Formula\n\nlatexmath:[\\textcolor{url(https://example.invalid/paint.svg)}{x}]\n",
+    );
+    let output = convert(
+        root.path(),
+        &[
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--single-file",
+            "--slides-helper",
+            &helper_bin(),
+        ],
+    );
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unsupported math SVG attribute"),
+        "{stderr}"
+    );
+}
+
 fn check_fragment_targets(html: &str) {
     let ids = html
         .split("id=\"")

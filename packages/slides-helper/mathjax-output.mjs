@@ -27,6 +27,17 @@ export function finishSvg(adaptor, root, visit) {
   // MathJax normally supplies these rules in its page stylesheet. Keep SVG
   // self-contained, including nested viewports and array frame lines.
   visit(root, (node) => {
+    // Background rectangles retain their paint; this MathJax marker is not needed for display.
+    adaptor.removeAttribute(node, "data-bgcolor");
+    // fcolorbox already draws its frame as polygons; the mpadded CSS border is redundant.
+    if (adaptor.kind(node) === "g" && adaptor.getAttribute(node, "data-mml-node") === "mpadded") {
+      const style = adaptor.getAttribute(node, "style");
+      if (style) {
+        const retained = style.split(";").filter(part => part.trim() && !/^\s*border\s*:/.test(part)).join(";");
+        if (retained) adaptor.setAttribute(node, "style", retained);
+        else adaptor.removeAttribute(node, "style");
+      }
+    }
     if (adaptor.kind(node) === "svg") adaptor.setStyle(node, "overflow", "visible");
     if (adaptor.getAttribute(node, "data-line") || adaptor.getAttribute(node, "data-frame")) {
       adaptor.setAttribute(node, "stroke-width", "70");

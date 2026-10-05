@@ -4,7 +4,7 @@
       "name": "empty",
       "valid": true,
       "request": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "eqnums": "none",
         "scopes": {
           "body": {
@@ -15,7 +15,8 @@
             "equations": [],
             "citations": []
           }
-        }
+        },
+        "extensions": []
       }
     },
     {
@@ -33,14 +34,15 @@
             "equations": [],
             "citations": []
           }
-        }
+        },
+        "extensions": []
       }
     },
     {
       "name": "empty CSL style",
       "valid": false,
       "request": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "eqnums": "none",
         "scopes": {
           "body": {
@@ -56,14 +58,15 @@
           "items": [],
           "style": "",
           "locale": "locale"
-        }
+        },
+        "extensions": []
       }
     },
     {
       "name": "empty CSL locale",
       "valid": false,
       "request": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "eqnums": "none",
         "scopes": {
           "body": {
@@ -79,14 +82,15 @@
           "items": [],
           "style": "style",
           "locale": ""
-        }
+        },
+        "extensions": []
       }
     },
     {
       "name": "inline footnote",
       "valid": true,
       "request": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "eqnums": "none",
         "scopes": {
           "body": {
@@ -104,14 +108,15 @@
             "equations": [],
             "citations": []
           }
-        }
+        },
+        "extensions": []
       }
     },
     {
       "name": "display footnote",
       "valid": false,
       "request": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "eqnums": "none",
         "scopes": {
           "body": {
@@ -129,14 +134,15 @@
             "equations": [],
             "citations": []
           }
-        }
+        },
+        "extensions": []
       }
     },
     {
       "name": "reserved CSL object key",
       "valid": false,
       "request": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "eqnums": "none",
         "scopes": {
           "body": {
@@ -157,7 +163,237 @@
           ],
           "style": "style",
           "locale": "locale"
+        },
+        "extensions": []
+      }
+    },
+    {
+      "name": "empty extensions",
+      "valid": true,
+      "request": {
+        "schemaVersion": 3,
+        "eqnums": "none",
+        "scopes": {
+          "body": {
+            "equations": [],
+            "citations": []
+          },
+          "notes": {
+            "equations": [],
+            "citations": []
+          }
+        },
+        "extensions": []
+      }
+    },
+    {
+      "name": "selected extensions",
+      "valid": true,
+      "request": {
+        "schemaVersion": 3,
+        "eqnums": "none",
+        "scopes": {
+          "body": {
+            "equations": [],
+            "citations": []
+          },
+          "notes": {
+            "equations": [],
+            "citations": []
+          }
+        },
+        "extensions": [
+          "color",
+          "cancel",
+          "mathtools"
+        ]
+      }
+    },
+    {
+      "name": "reordered extensions",
+      "valid": true,
+      "request": {
+        "schemaVersion": 3,
+        "eqnums": "none",
+        "scopes": {
+          "body": {
+            "equations": [],
+            "citations": []
+          },
+          "notes": {
+            "equations": [],
+            "citations": []
+          }
+        },
+        "extensions": [
+          "mathtools",
+          "color"
+        ]
+      }
+    },
+    {
+      "name": "unknown extension",
+      "valid": false,
+      "request": {
+        "schemaVersion": 3,
+        "eqnums": "none",
+        "scopes": {
+          "body": {
+            "equations": [],
+            "citations": []
+          },
+          "notes": {
+            "equations": [],
+            "citations": []
+          }
+        },
+        "extensions": [
+          "autoload"
+        ]
+      }
+    },
+    {
+      "name": "mandatory extension selected",
+      "valid": false,
+      "request": {
+        "schemaVersion": 3,
+        "eqnums": "none",
+        "scopes": {
+          "body": {
+            "equations": [],
+            "citations": []
+          },
+          "notes": {
+            "equations": [],
+            "citations": []
+          }
+        },
+        "extensions": [
+          "ams"
+        ]
+      }
+    },
+    {
+      "name": "duplicate extension",
+      "valid": false,
+      "request": {
+        "schemaVersion": 3,
+        "eqnums": "none",
+        "scopes": {
+          "body": {
+            "equations": [],
+            "citations": []
+          },
+          "notes": {
+            "equations": [],
+            "citations": []
+          }
+        },
+        "extensions": [
+          "color",
+          "color"
+        ]
+      }
+    },
+    {
+      "name": "too many extensions",
+      "valid": false,
+      "request": {
+        "schemaVersion": 3,
+        "eqnums": "none",
+        "scopes": {
+          "body": {
+            "equations": [],
+            "citations": []
+          },
+          "notes": {
+            "equations": [],
+            "citations": []
+          }
+        },
+        "extensions": [
+          "color",
+          "cancel",
+          "mathtools",
+          "color"
+        ]
+      }
+    },
+    {
+      "name": "non-array extensions",
+      "valid": false,
+      "request": {
+        "schemaVersion": 3,
+        "eqnums": "none",
+        "scopes": {
+          "body": {
+            "equations": [],
+            "citations": []
+          },
+          "notes": {
+            "equations": [],
+            "citations": []
+          }
+        },
+        "extensions": "color"
+      }
+    },
+    {
+      "name": "non-string extension",
+      "valid": false,
+      "request": {
+        "schemaVersion": 3,
+        "eqnums": "none",
+        "scopes": {
+          "body": {
+            "equations": [],
+            "citations": []
+          },
+          "notes": {
+            "equations": [],
+            "citations": []
+          }
+        },
+        "extensions": [
+          null
+        ]
+      }
+    },
+    {
+      "name": "missing extensions",
+      "valid": false,
+      "request": {
+        "schemaVersion": 3,
+        "eqnums": "none",
+        "scopes": {
+          "body": {
+            "equations": [],
+            "citations": []
+          },
+          "notes": {
+            "equations": [],
+            "citations": []
+          }
         }
+      }
+    },
+    {
+      "name": "schema 2",
+      "valid": false,
+      "request": {
+        "schemaVersion": 2,
+        "eqnums": "none",
+        "scopes": {
+          "body": {
+            "equations": [],
+            "citations": []
+          },
+          "notes": {
+            "equations": [],
+            "citations": []
+          }
+        },
+        "extensions": []
       }
     }
   ],
