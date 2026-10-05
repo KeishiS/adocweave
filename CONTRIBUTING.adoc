@@ -193,6 +193,7 @@ popup scriptを検査します。資産の更新時には、取得archiveと保�
 
 既定のCSLロケールは``crates/adocweave/assets/slides/NOTICE.csl-locales.txt``に記載した上流commitから取得します。
 更新時は翻訳者を含むXMLのmetadataを保持し、出典、ライセンス本文およびnative配布物の通知を確認します。
+通知のSHA-256も更新し、``verify``で同梱XMLとの一致を検査します。
 
 ビルド専用のnpm依存は配布runtimeの脆弱性・license検査へ含めません。lockfileに固定し、``npm ci --ignore-scripts``が
 取得時にintegrityを検証します。観測したビルド依存のlicense集合を別の目録として保守しません。
@@ -293,6 +294,13 @@ nix develop .#ci-browser -c node tools/slides-browser-smoke.mjs \
 この測定はファイルの保存完了から新しいDOMとRevealの準備完了までを対象にし、HTTPへの生成物採用時間と区別します。
 結果の時間を合否の閾値には使いません。helperを省略すると、Node補助なしのスライド生成・配信を確認します。
 
+通常HTMLのプレビューは、以下の検査でCSP下の更新通知、保存後の表示と診断からの回復を確認します。
+
+[source,console]
+----
+nix develop .#ci-browser -c node tools/preview-browser-smoke.mjs target/debug/adocweave chromium
+----
+
 ブランチ保護では、GitHub Actionsが表示する``verify``だけをrequired status checkに設定します。
 従来の集約jobも同じ表示名だったため、``verify``だけを要求しているrulesetの変更は不要です。旧構成の
 ``quality``配下のcheckを個別に要求している環境では、新しい``verify``が``main``で成功したことを確認してから、
@@ -368,6 +376,8 @@ CLI引数、Language Server protocol、設定schemaなど、外部から利用�
 rootの``CHANGELOG.md``へ記載します。利用者の作業が必要な場合は``Migration``、Rustの公開APIに互換性のない変更が
 ある場合は``Rust API``へ記載します。
 前の版と比較していない仕様を「変更していません」と機械生成しません。
+公開前は直近の公開済みtagとの差分を一つの項目へまとめ、開発中だけの変更を利用者向けの移行操作として記載しません。
+``dist plan --tag=vX.Y.Z --output-format=json``の``announcement_github_body``で、必要な移行説明が含まれることを確認します。
 
 ``tools/native-release-version.mjs``はnative版の固定された3ファイルだけを変更し、rootの``CHANGELOG.md``は読み取るだけです。
 Changelogの見出し、本文、日付および参照先は人が記載します。cargo-distは対象版の項目をGitHub Release Notesへ直接取り込むため、
@@ -488,6 +498,7 @@ Node.jsおよび実ブラウザーでの動作を確認します。修正が必�
 ``CHANGELOG.md``を正本とします。native版とは独立して更新します。実行時の全推移依存は
 ``package-lock.json``から導入し、npmの``bundleDependencies``でarchiveへ収録します。
 監査した依存と配布通知を保ち、導入時の依存版の再選択を避けます。
+未公開の変更は現在の項目へまとめ、初回公開では開発中のバージョン間の比較ではなく提供する機能を記載します。
 
 公開候補は次のコマンドで作成します。``target/distrib``へ保存したarchiveを別の場所へ導入し、
 空のnpm cacheを使ったoffline導入、依存の版、実行入口、空要求、数式・引用および通知を検査します。

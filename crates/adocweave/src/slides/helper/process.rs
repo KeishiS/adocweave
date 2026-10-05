@@ -374,6 +374,15 @@ pub async fn execute(
     let mut parser = serde_json::Deserializer::from_slice(&stdout);
     use serde::Deserialize;
     let response = Response::deserialize(&mut parser).map_err(|e| {
+        if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&stdout)
+            && let Some(version) = value.get("schemaVersion").and_then(serde_json::Value::as_u64)
+            && version != 2
+        {
+            return HostError::protocol(with_stderr(
+                &format!("unsupported slide helper response schemaVersion {version}; this CLI requires schemaVersion 2 and @adocweave/slides-helper 0.2.0 (or a compatible version); update the selected helper"),
+                &stderr,
+            ));
+        }
         HostError::new(
             if exit == 1 { "slides-helper-exit" } else { "slides-helper-protocol" },
             with_stderr(&format!(

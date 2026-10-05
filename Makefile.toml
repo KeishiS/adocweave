@@ -785,11 +785,12 @@ dependencies = [
 
 [tasks.test-slides-browser]
 private = true
-description = "Exercise research slides in the fixed browser with local files, managed HTTP, notes, and live preview"
+description = "Exercise HTML preview and research slides in the fixed browser"
 dependencies = ["build-adoc-check", "slides-helper-install"]
 script_runner = "@shell"
 script = '''
 node tools/slides-browser-smoke.mjs target/debug/adocweave "${ADOCWEAVE_BROWSER:-chromium}" packages/slides-helper/bin.mjs
+node tools/preview-browser-smoke.mjs target/debug/adocweave "${ADOCWEAVE_BROWSER:-chromium}"
 '''
 
 [tasks.main-gate]

@@ -26,7 +26,7 @@ fn write(root: &Path, path: &str, content: &str) {
 const SVG: &str = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\"><rect width=\"80\" height=\"80\" fill=\"#123\"/><text x=\"2\" y=\"20\">結果</text></svg>";
 
 #[test]
-fn slide_aspect_ratio_defaults_to_auto_and_uses_only_header_attributes() {
+fn slide_aspect_ratio_defaults_to_auto() {
     for header in [
         "",
         ":slides-aspect-ratio: auto\n",
@@ -36,7 +36,7 @@ fn slide_aspect_ratio_defaults_to_auto_and_uses_only_header_attributes() {
         write(
             root.path(),
             "talk.adoc",
-            &format!("= Talk\n{header}\n:slides-aspect-ratio: invalid\n\n== Slide\n\nBody.\n"),
+            &format!("= Talk\n{header}\n== Slide\n\nBody.\n"),
         );
         success(&convert(
             root.path(),
@@ -68,7 +68,7 @@ fn slide_aspect_ratio_accepts_fixed_and_referenced_header_values() {
         write(
             root.path(),
             "talk.adoc",
-            &format!("= Talk\n{header}\n:slides-aspect-ratio: invalid\n\n== Slide\n\nBody.\n"),
+            &format!("= Talk\n{header}\n== Slide\n\nBody.\n"),
         );
         success(&convert(
             root.path(),
@@ -86,6 +86,44 @@ fn slide_aspect_ratio_accepts_fixed_and_referenced_header_values() {
             html.contains(&format!("data-aspect-ratio=\"{expected}\"")),
             "{html}"
         );
+    }
+}
+
+#[test]
+fn misplaced_slide_aspect_ratio_has_original_source_and_preserves_output() {
+    let root = tempfile::tempdir().unwrap();
+    write(root.path(), "talk.adoc", "= Talk\n\n== Slide\n\nBody.\n");
+    let arguments = [
+        "--no-config",
+        "talk.adoc",
+        "--to",
+        "revealjs",
+        "--output",
+        "dist",
+    ];
+    success(&convert(root.path(), &arguments));
+    let files = ["index.html", ".adocweave-manifest.json"]
+        .map(|file| (file, fs::read(root.path().join("dist").join(file)).unwrap()));
+    for attribute in [
+        ":slides-aspect-ratio: 4:3",
+        ":slides-aspect-ratio: invalid",
+        ":slides-aspect-ratio!:",
+    ] {
+        for (source, location) in [
+            (format!("= Talk\n\n{attribute}\n\n== Slide\n\nBody.\n"), "talk.adoc:3:"),
+            ("= Talk\n:slides-aspect-ratio: 16:9\n\n== Slide\n\ninclude::settings.adoc[]\n\nBody.\n".to_owned(), "settings.adoc:1:"),
+        ] {
+            write(root.path(), "talk.adoc", &source);
+            write(root.path(), "settings.adoc", &format!("{attribute}\n"));
+            let output = convert(root.path(), &arguments);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(!output.status.success(), "{stderr}");
+            assert!(stderr.contains("error[slides-misplaced-aspect-ratio]"), "{stderr}");
+            assert!(stderr.contains(location), "{stderr}");
+            for (file, original) in &files {
+                assert_eq!(fs::read(root.path().join("dist").join(file)).unwrap(), *original);
+            }
+        }
     }
 }
 
@@ -2170,4 +2208,158 @@ fn csl_explicit_missing_or_invalid_overrides_do_not_fall_back_to_defaults() {
         );
         assert!(!root.path().join("dist").exists());
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn convert_interrupts_reap_helper_process_groups_before_exiting() {
+    use std::os::unix::{fs::PermissionsExt as _, process::CommandExt as _};
+    use std::time::{Duration, Instant};
+    struct Groups(Vec<i32>);
+    impl Drop for Groups {
+        fn drop(&mut self) {
+            for &group in &self.0 {
+                // SAFETY: these groups belong only to processes started by this test.
+                unsafe {
+                    libc::kill(-group, libc::SIGKILL);
+                }
+            }
+        }
+    }
+    fn running(pid: i32) -> bool {
+        let output = Command::new("ps")
+            .args(["-o", "stat=", "-p", &pid.to_string()])
+            .output()
+            .unwrap();
+        output.status.success()
+            && String::from_utf8_lossy(&output.stdout)
+                .trim()
+                .chars()
+                .next()
+                .is_some_and(|state| state != 'Z')
+    }
+    for signal in [libc::SIGINT, libc::SIGTERM] {
+        let root = tempfile::tempdir().unwrap();
+        write(
+            root.path(),
+            "talk.adoc",
+            "= Talk\n\n== Slide\n\nlatexmath:[x].\n",
+        );
+        write(
+            root.path(),
+            "helper",
+            "#!/bin/sh\nsleep 60 &\nchild=$!\nprintf '%s %s\\n' \"$$\" \"$child\" > \"$HELPER_PIDS\"\nwait\n",
+        );
+        let helper = root.path().join("helper");
+        fs::set_permissions(&helper, fs::Permissions::from_mode(0o700)).unwrap();
+        let pids = root.path().join("pids");
+        let mut child = Command::new(env!("CARGO_BIN_EXE_adocweave"))
+            .current_dir(root.path())
+            .args([
+                "convert",
+                "talk.adoc",
+                "--to",
+                "revealjs",
+                "--output",
+                "dist",
+                "--slides-helper",
+            ])
+            .arg(&helper)
+            .env("HELPER_PIDS", &pids)
+            .process_group(0)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut groups = Groups(vec![child.id() as i32]);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let processes = loop {
+            if let Ok(text) = fs::read_to_string(&pids) {
+                let ids = text
+                    .split_whitespace()
+                    .map(|id| id.parse::<i32>().unwrap())
+                    .collect::<Vec<_>>();
+                if ids.len() == 2 {
+                    break ids;
+                }
+            }
+            assert!(Instant::now() < deadline, "helper did not start");
+            assert!(
+                child.try_wait().unwrap().is_none(),
+                "convert exited before helper startup"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        groups.0.push(processes[0]);
+        // SAFETY: the child is live in its own group, emulating a terminal signal.
+        assert_eq!(unsafe { libc::kill(-(child.id() as i32), signal) }, 0);
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "convert did not finish cancellation"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert!(!status.success());
+        assert!(
+            status.code().is_some(),
+            "convert must handle the signal and run cleanup"
+        );
+        for pid in processes {
+            while running(pid) && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert!(
+                !running(pid),
+                "helper process {pid} survived signal {signal}"
+            );
+        }
+        assert!(!root.path().join("dist").exists());
+        groups.0.clear();
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn convert_stdin_wait_remains_interruptible_before_helper_startup() {
+    use std::io::Write as _;
+    use std::os::unix::process::{CommandExt as _, ExitStatusExt as _};
+    use std::time::{Duration, Instant};
+    let root = tempfile::tempdir().unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_adocweave"))
+        .current_dir(root.path())
+        .args(["convert", "-", "--to", "revealjs", "--output", "dist"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"= Waiting for more input\n")
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(child.try_wait().unwrap().is_none());
+    // SAFETY: the child is live in the dedicated group created above.
+    assert_eq!(unsafe { libc::kill(-(child.id() as i32), libc::SIGINT) }, 0);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            child.kill().unwrap();
+            child.wait().unwrap();
+            panic!("SIGINT did not interrupt stdin acquisition");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    assert_eq!(status.signal(), Some(libc::SIGINT));
+    assert!(!root.path().join("dist").exists());
 }

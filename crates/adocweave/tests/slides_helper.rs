@@ -551,6 +551,33 @@ setInterval(() => {}, 1000);
 
 #[cfg(unix)]
 #[tokio::test]
+async fn obsolete_helper_schema_reports_the_required_helper_version() {
+    for exit in [0, 1] {
+        let (_directory, path) = fake_helper(&format!(
+            "cat >/dev/null\nprintf '%s\\n' '{{\"schemaVersion\":1,\"scopes\":{{}},\"diagnostics\":[],\"notices\":{{}}}}'\nexit {exit}"
+        ));
+        let error = helper::execute(
+            &fixture(),
+            Some(&path),
+            &NeverCancel,
+            helper::ProcessLimits::default(),
+            &BTreeSet::new(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, "slides-helper-protocol");
+        let message = error.to_string();
+        assert!(message.contains("requires schemaVersion 2"), "{message}");
+        assert!(
+            message.contains("@adocweave/slides-helper 0.2.0"),
+            "{message}"
+        );
+        assert!(!message.contains("missing field"), "{message}");
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn stdout_logs_extra_json_and_stream_limits_are_rejected() {
     for (script, code) in [
         ("printf 'log\\n{}'", "slides-helper-protocol"),

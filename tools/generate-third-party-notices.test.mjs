@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -56,6 +57,10 @@ test("native noticeは埋め込むブラウザー資産とCSLロケールの出�
     }
     assert.match(notice, /https:\/\/github\.com\/citation-style-language\/locales/);
     assert.match(notice, /https:\/\/creativecommons\.org\/licenses\/by-sa\/3\.0/);
+    const locale = readFileSync(new URL("locale-en-US.xml", cslDirectory));
+    const localeNotice = readFileSync(new URL("NOTICE.csl-locales.txt", cslDirectory), "utf8");
+    const recordedHash = /^SHA-256: ([a-f0-9]{64})$/m.exec(localeNotice)?.[1];
+    assert.equal(recordedHash, createHash("sha256").update(locale).digest("hex"));
     assert.doesNotMatch(notice, /@mathjax\/src|citeproc/);
   } finally {
     rmSync(temporary, { recursive: true, force: true });
