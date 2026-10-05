@@ -895,7 +895,16 @@ impl<'document> Deck<'document> {
             }
             for slide in &group.slides {
                 debug_assert!(semantic::is_valid_anchor_id(&slide.id));
-                writeln!(output, "<section id=\"{}\">", slide.id)
+                let title_class = if slide.heading.is_some_and(|id| {
+                    matches!(self.document.block(id), Some(Block::Heading(heading))
+                        if heading.kind == HeadingKind::DocumentTitle)
+                }) && !slide.hide_title
+                {
+                    " class=\"title-slide\""
+                } else {
+                    ""
+                };
+                writeln!(output, "<section id=\"{}\"{title_class}>", slide.id)
                     .expect("writing to a String cannot fail");
                 output.push_str(
                     body_regions
@@ -1165,6 +1174,7 @@ mod tests {
         assert!(deck.diagnostics.is_empty(), "{:?}", deck.diagnostics);
         let output = render(&deck, Audience::Public);
         assert_eq!(output.html.matches("<h1").count(), 1);
+        assert_eq!(output.html.matches("class=\"title-slide\"").count(), 1);
         assert_eq!(output.html.matches("<h2").count(), 2);
         assert!(output.html.contains("<h3 id=\"_detail\">Detail</h3>"));
         assert!(output.html.contains(

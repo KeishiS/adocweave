@@ -3,6 +3,8 @@
   "use strict";
   const presenter = document.body.dataset.audience === "presenter";
   const deck = new Reveal(document.querySelector(".reveal"), {
+    width: 1280,
+    height: 720,
     hash: true,
     fragmentInURL: true,
     history: false,
