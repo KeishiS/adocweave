@@ -25,7 +25,18 @@ pub(crate) mod helper;
 mod styles;
 mod svg;
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, clap::ValueEnum)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Eq,
+    PartialEq,
+    clap::ValueEnum,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+#[serde(rename_all = "lowercase")]
 pub(crate) enum Audience {
     #[default]
     Public,
@@ -873,10 +884,6 @@ impl<'document> Deck<'document> {
             Default::default()
         };
         let mut output = String::from("<div class=\"reveal\">\n<div class=\"slides\">\n");
-        let mut body_regions = body.regions.iter();
-        let mut note_regions = notes.regions.iter();
-        let mut body_footnotes = body.footnotes.iter();
-        let mut note_footnotes = notes.footnotes.iter();
         let slide_count = self
             .groups
             .iter()
@@ -894,6 +901,7 @@ impl<'document> Deck<'document> {
                 .expect("writing to a String cannot fail");
             }
             for slide in &group.slides {
+                let content = &body.slides[slide_index];
                 debug_assert!(semantic::is_valid_anchor_id(&slide.id));
                 let title_class = if slide.heading.is_some_and(|id| {
                     matches!(self.document.block(id), Some(Block::Heading(heading))
@@ -907,43 +915,34 @@ impl<'document> Deck<'document> {
                 writeln!(output, "<section id=\"{}\"{title_class}>", slide.id)
                     .expect("writing to a String cannot fail");
                 output.push_str("<div class=\"slide-body\">\n<div class=\"slide-content\">\n");
-                output.push_str(
-                    body_regions
-                        .next()
-                        .expect("every slide has one body region"),
-                );
+                output.push_str(&content.regions[0]);
                 if slide.columns.is_some() {
                     output.push_str("<div class=\"columns\">\n");
-                    for _ in 0..2 {
+                    for column in &content.regions[1..] {
                         output.push_str("<div class=\"column\">\n");
-                        output.push_str(
-                            body_regions
-                                .next()
-                                .expect("every column has one body region"),
-                        );
+                        output.push_str(column);
                         output.push_str("</div>\n");
                     }
                     output.push_str("</div>\n");
                 }
                 output.push_str("</div>\n");
-                output.push_str(
-                    body_footnotes
-                        .next()
-                        .expect("one footnote region per slide"),
-                );
+                output.push_str(&content.footnotes);
                 output.push_str("</div>\n");
-                let note = note_regions.next().map(String::as_str).unwrap_or("");
-                let footnotes = note_footnotes.next().map(String::as_str).unwrap_or("");
+                let note = notes.slides.get(slide_index);
+                let note_html = note
+                    .map(|content| content.regions.concat())
+                    .unwrap_or_default();
+                let footnotes = note.map(|content| content.footnotes.as_str()).unwrap_or("");
                 let bibliography = (slide_index + 1 == slide_count)
                     .then_some(notes.bibliography.as_deref())
                     .flatten()
                     .unwrap_or("");
-                if !note.is_empty() || !footnotes.is_empty() || !bibliography.is_empty() {
+                if !note_html.is_empty() || !footnotes.is_empty() || !bibliography.is_empty() {
                     output.push_str("<aside class=\"notes\">\n");
                     // The stock notes plugin copies this finite content into
                     // its independent popup, which does not load our theme.
                     output.push_str("<link rel=\"stylesheet\" href=\"assets/content.css\">\n");
-                    output.push_str(note);
+                    output.push_str(&note_html);
                     output.push_str(footnotes);
                     output.push_str(bibliography);
                     output.push_str("</aside>\n");

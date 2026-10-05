@@ -1,6 +1,6 @@
 {
   "name": "@adocweave/slides-helper",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Static MathJax and CSL processing for AdocWeave HTML slides",
   "type": "module",
   "bin": {
@@ -17,6 +17,7 @@
     "index.mjs",
     "protocol.mjs",
     "math.mjs",
+    "mathjax-output.mjs",
     "citations.mjs",
     "inline.mjs",
     "notices.mjs",

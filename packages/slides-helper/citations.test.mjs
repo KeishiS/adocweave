@@ -49,12 +49,12 @@ test("CSL formatting resets and safe links are represented by finite inline kind
   assert.equal(result.scopes.body.bibliography[0].inlines.find((node) => node.kind === "link").href, "https://example.org/zebra?x=1&y=2");
 });
 
-test("missing items fail the corresponding key while other citations remain usable", async () => {
+test("missing items fail the request with a keyed diagnostic", async () => {
   const request = citationsRequest();
   request.scopes.body.citations[0].items[0].id = "absent";
   const result = await processRequest(request);
-  assert.equal(result.scopes.body.citations[0].status, "failed");
-  assert.equal(result.scopes.body.citations[1].status, "ok");
+  assert.equal(result.status, "failed");
+  assert.equal(result.scopes, undefined);
   assert.ok(result.diagnostics.some(({ key, code }) => key === "cite1" && code === "missing-csl-item"));
 });
 
@@ -97,4 +97,9 @@ test("a later processor update cannot revive a citation with a retained error", 
   } finally {
     CSL.Engine = original;
   }
+});
+
+test("normalized rich inline output respects the host node limit", () => {
+  assert.equal(parseInlines("<em>x</em>".repeat(2048)).length, 2048);
+  assert.throws(() => parseInlines("<em>x</em>".repeat(2050)), /inline tree limit/);
 });

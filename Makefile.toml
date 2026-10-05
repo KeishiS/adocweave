@@ -215,7 +215,7 @@ private = true
 description = "Check static math, scoped citations, and the one-request JSON executable"
 dependencies = ["slides-helper-install"]
 command = "node"
-args = ["--test", "packages/slides-helper/math.test.mjs", "packages/slides-helper/citations.test.mjs", "packages/slides-helper/protocol.test.mjs"]
+args = ["--test", "packages/slides-helper/math.test.mjs", "packages/slides-helper/citations.test.mjs", "packages/slides-helper/protocol.test.mjs", "packages/slides-helper/contract.test.mjs"]
 
 [tasks.slides-helper-package]
 private = true
@@ -381,7 +381,7 @@ description = "Run the extracted WebAssembly archive in a non-isolated Chromium 
 dependencies = ["package-wasm-release", "test-wasm-types"]
 script_runner = "@shell"
 script = '''
-node --test tools/process-lifecycle.test.mjs tools/host-executable.test.mjs
+node --test tools/process-lifecycle.test.mjs tools/host-executable.test.mjs tools/browser-cdp.test.mjs tools/slides-preview.test.mjs
 version="$(node --input-type=module -e "import manifest from './packages/wasm/package.json' with { type: 'json' }; process.stdout.write(manifest.version)")"
 node tools/wasm-release-smoke.mjs "target/distrib/adocweave-wasm-$version.tgz" "${ADOCWEAVE_BROWSER:-chromium}"
 '''

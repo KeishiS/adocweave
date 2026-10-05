@@ -14,7 +14,7 @@ mod safe;
 mod slide_catalogs;
 
 pub use regions::{HtmlRegionError, HtmlRegionSelection, HtmlRegions, render_regions};
-pub use regions::{HtmlSlideRegions, render_slide_regions};
+pub use regions::{HtmlSlideContent, HtmlSlideRegions, render_slide_regions};
 pub use slide_catalogs::{HtmlSlideScope, HtmlSlideSelections};
 
 use std::collections::{BTreeMap, BTreeSet};

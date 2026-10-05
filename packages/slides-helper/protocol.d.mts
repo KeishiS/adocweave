@@ -5,6 +5,7 @@ export type Equation = {
   key: string;
   tex: string;
   display: boolean;
+  footnote?: boolean;
 };
 
 export type CitationItem = {
@@ -27,7 +28,7 @@ export type Macro = {
 };
 export type CslItem = { id: string; [field: string]: unknown };
 export type Request = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   eqnums: Eqnums;
   scopes: { body: ScopeInput; notes: ScopeInput };
   macros?: Macro[];
@@ -43,12 +44,8 @@ export type Inline =
     }
   | { kind: "link"; href: string; children: Inline[] };
 
-export type EquationResult =
-  | { key: string; status: "ok"; svg: string }
-  | { key: string; status: "failed" };
-export type CitationResult =
-  | { key: string; status: "ok"; inlines: Inline[] }
-  | { key: string; status: "failed" };
+export type EquationResult = { key: string; svg: string };
+export type CitationResult = { key: string; inlines: Inline[] };
 export type BibliographyEntry = { id: string; inlines: Inline[] };
 export type ScopeOutput = {
   equations: EquationResult[];
@@ -71,14 +68,6 @@ export type Notices = {
   };
   citations: null | { attribution: string; license: string };
 };
-export type Response = {
-  // Every input key appears once, in input order. A failed result has a
-  // scoped/keyed error; a key with an error never returns status "ok".
-  // Request/output-limit failures instead return empty scopes and a global error.
-  schemaVersion: 1;
-  // Fixed bundled UTF-8 text only; no requested paths or downloadable resources.
-  // Nonempty equation/citation input requires its notice; global failure uses null.
-  notices: Notices;
-  scopes: { body: ScopeOutput; notes: ScopeOutput };
-  diagnostics: Diagnostic[];
-};
+export type Response =
+  | { schemaVersion: 2; status: "ok"; notices: Notices; scopes: { body: ScopeOutput; notes: ScopeOutput }; diagnostics: Diagnostic[] }
+  | { schemaVersion: 2; status: "failed"; diagnostics: Diagnostic[] };

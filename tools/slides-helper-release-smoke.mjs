@@ -43,7 +43,7 @@ export async function verifyInstalledHelper(archive, { published = false } = {})
     const run = (request) => JSON.parse(execFileSync(process.execPath, [join(installed, "bin.mjs")], {
       input: JSON.stringify(request), encoding: "utf8", timeout: 30_000, maxBuffer: 32 * 1024 * 1024,
     }));
-    const empty = run({ schemaVersion: 1, eqnums: "none", scopes: {
+    const empty = run({ schemaVersion: 2, eqnums: "none", scopes: {
       body: { equations: [], citations: [] }, notes: { equations: [], citations: [] },
     } });
     assert.deepEqual(empty.diagnostics, []);
@@ -52,11 +52,11 @@ export async function verifyInstalledHelper(archive, { published = false } = {})
     assert.deepEqual(result.diagnostics, []);
     for (const scope of ["body", "notes"]) {
       for (const kind of ["equations", "citations"]) {
-        assert.deepEqual(result.scopes[scope][kind].map(({ key, status }) => ({ key, status })),
-          fixture.scopes[scope][kind].map(({ key }) => ({ key, status: "ok" })));
+        assert.deepEqual(result.scopes[scope][kind].map(({ key }) => key),
+          fixture.scopes[scope][kind].map(({ key }) => key));
       }
       assert.ok(result.scopes[scope].equations.every((equation) => equation.svg.includes("<svg")
-        && Object.keys(equation).sort().join(",") === "key,status,svg"));
+        && Object.keys(equation).sort().join(",") === "key,svg"));
       assert.equal(result.scopes[scope].bibliography.length, fixture.scopes[scope].citations.length);
     }
     assert.match(result.notices.math.fontAttribution, /Tsolomitis/);

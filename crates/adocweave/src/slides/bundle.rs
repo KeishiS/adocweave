@@ -9,7 +9,7 @@ use adocweave_core::resolution::{MediaType, ResolvedResource, ResourcePurpose};
 use adocweave_core::semantic::{self, Inline, ReferenceDestination, SemanticNode};
 use adocweave_core::{CancellationCheck, OutputLimits};
 use adocweave_project::{
-    BundleFile, BundleMediaType, ProjectAuthority, ProjectObservationCandidate,
+    BundleFile, BundleMediaType, BundleSnapshot, ProjectAuthority, ProjectObservationCandidate,
     ProjectResourceLimits, ProjectTargetResult,
 };
 
@@ -17,6 +17,37 @@ use super::{Audience, Deck, problem, unsupported_fragment_name};
 use crate::cli_error::CliError;
 
 const SPEAKER_SCRIPT_HASH: &str = "sha256-GzCveToXhSIzS3M5eQeRm3McVRB7cYneYKwTkzA3wDk=";
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SlideMetadata {
+    schema_version: u32,
+    audience: Audience,
+}
+
+pub(crate) fn audience_from_bundle(bundle: &BundleSnapshot) -> Result<Audience, CliError> {
+    if bundle.file("index.html").is_none_or(|file| {
+        file.media_type != BundleMediaType::Html || std::str::from_utf8(&file.bytes).is_err()
+    }) {
+        return Err(CliError::Slides(
+            "managed slide bundle must contain a UTF-8 index.html page".to_owned(),
+        ));
+    }
+    let file = bundle
+        .file("slides.json")
+        .filter(|file| file.media_type == BundleMediaType::Json)
+        .ok_or_else(|| {
+            CliError::Slides("slide metadata is missing; regenerate the slide bundle".to_owned())
+        })?;
+    let metadata: SlideMetadata = serde_json::from_slice(&file.bytes)
+        .map_err(|error| CliError::Slides(format!("invalid slide metadata: {error}")))?;
+    if metadata.schema_version != 1 {
+        return Err(CliError::Slides(
+            "unsupported slide metadata version; regenerate the slide bundle".to_owned(),
+        ));
+    }
+    Ok(metadata.audience)
+}
 
 pub(crate) struct GeneratedBundle {
     pub(crate) files: Vec<BundleFile>,
@@ -118,6 +149,15 @@ fn static_file(path: &str, media_type: BundleMediaType, bytes: &[u8]) -> BundleF
 
 fn fixed_files(audience: Audience, preview: bool) -> Vec<BundleFile> {
     let mut files = vec![
+        static_file(
+            "slides.json",
+            BundleMediaType::Json,
+            &serde_json::to_vec(&SlideMetadata {
+                schema_version: 1,
+                audience,
+            })
+            .expect("slide metadata contains only serializable fields"),
+        ),
         static_file(
             "assets/reveal.js",
             BundleMediaType::JavaScript,
@@ -488,6 +528,18 @@ pub(crate) fn build(
     };
     let external_csl =
         data.bibliography.is_some() || data.csl_style.is_some() || data.csl_locale.is_some();
+    if external_csl {
+        for entry in analysis.macros().iter().filter(|node| {
+            node.kind == semantic::StandardMacroKind::BibliographyAnchor && visible(node.range)
+        }) {
+            problem(
+                &mut diagnostics,
+                "slides-bibliography-mode-conflict",
+                "hand-written bibliography entries cannot be combined with CSL options; choose one bibliography mode",
+                entry.range,
+            );
+        }
+    }
     for (scope, content) in [
         (super::helper::Scope::Body, &selected.body),
         (super::helper::Scope::Notes, &selected.notes),
@@ -502,14 +554,7 @@ pub(crate) fn build(
                                 && deck.contains_note_range(node.range)))
                 })
             };
-            if external_csl && citation.keys.iter().any(|key| manual(&key.value)) {
-                problem(
-                    &mut diagnostics,
-                    "slides-bibliography-key-conflict",
-                    "an external citation key conflicts with a visible hand-written bibliography entry",
-                    citation.range,
-                );
-            } else if !external_csl
+            if !external_csl
                 && citation.keys.iter().any(|key| {
                     !manual(&key.value)
                         && analysis.macros().iter().any(|node| {
@@ -609,24 +654,18 @@ pub(crate) fn build(
             }
         }
     }
-    let prepared = match super::helper::prepare(
-        analysis,
-        &body_selection,
-        &note_selection,
-        audience == Audience::Presenter,
-        data_inputs.macros,
-        data_inputs.csl,
-    ) {
-        Ok(prepared) => prepared,
-        Err(error) => {
-            host_error(error, &mut diagnostics, &observations)?;
-            return Ok(GeneratedBundle {
-                files: Vec::new(),
-                diagnostics,
-                observations,
-            });
-        }
-    };
+    let prepared =
+        match super::helper::prepare(analysis, selected, data_inputs.macros, data_inputs.csl) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                host_error(error, &mut diagnostics, &observations)?;
+                return Ok(GeneratedBundle {
+                    files: Vec::new(),
+                    diagnostics,
+                    observations,
+                });
+            }
+        };
     for diagnostic in &prepared.diagnostics {
         if let Some(range) = diagnostic.range {
             problem(

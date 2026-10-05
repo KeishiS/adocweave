@@ -157,19 +157,7 @@ async fn run() -> Result<CliExitCode, CliError> {
             .map_err(CliError::Bundle)?;
             let bundle = adocweave_project::BundleSnapshot::from_reader(&reader, &cancellation)
                 .map_err(CliError::Bundle)?;
-            if bundle.file("index.html").is_none_or(|file| {
-                file.media_type != adocweave_project::BundleMediaType::Html
-                    || std::str::from_utf8(&file.bytes).is_err()
-            }) {
-                return Err(CliError::Slides(
-                    "managed slide bundle must contain a UTF-8 index.html page".to_owned(),
-                ));
-            }
-            let audience = if bundle.file("assets/notes.js").is_some() {
-                slides::Audience::Presenter
-            } else {
-                slides::Audience::Public
-            };
+            let audience = slides::bundle::audience_from_bundle(&bundle)?;
             if !bind.is_loopback() {
                 eprintln!(
                     "warning: slide server is exposed on non-loopback address {bind}; rendered content may be visible to other hosts"

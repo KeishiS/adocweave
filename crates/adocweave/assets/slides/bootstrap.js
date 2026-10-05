@@ -11,6 +11,7 @@
     margin: new URLSearchParams(location.search).has("print-pdf") ? 0 : .04,
     hash: true,
     fragmentInURL: true,
+    pdfSeparateFragments: false,
     history: false,
     center: false,
     transition: "none",

@@ -51,8 +51,7 @@ impl HtmlSlideScope {
 
 /// Regions grouped by real source slide, including a heading and any columns.
 ///
-/// Notes may reuse a footnote defined in a selected body region. Body regions
-/// may only use definitions selected in the body. Public hosts leave `notes`
+/// Footnote definitions and occurrences belong to the same scope. Public hosts leave `notes`
 /// empty and render only `Body`.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct HtmlSlideSelections {
@@ -265,8 +264,7 @@ impl<'document> SlideCatalogs<'document> {
             let mut placements = Vec::<FootnotePlacement<'document>>::new();
             let mut placement_by_number = BTreeMap::new();
             for (ordinal, (range, footnote)) in occurrences.into_iter().enumerate() {
-                let definition_selected = plan.selected.contains(&footnote.definition_range)
-                    || plan.shared_body_ranges.contains(&footnote.definition_range);
+                let definition_selected = plan.selected.contains(&footnote.definition_range);
                 if !definition_selected {
                     return Err(HtmlRegionError::FootnoteOutsideScope { range });
                 }
@@ -472,41 +470,18 @@ impl<'document> SlideCatalogs<'document> {
         occupied: &mut BTreeSet<String>,
         limits: crate::OutputLimits,
     ) -> Result<(), HtmlRegionError> {
-        // First placements are canonical targets for equation references in ordinary prose.
-        let mut canonical_ids = BTreeMap::new();
-        let mut seen_definitions = BTreeSet::new();
-        for placements in &self.footnotes {
-            for placement in placements {
-                if !seen_definitions.insert(placement.footnote.definition_range) {
-                    continue;
-                }
-                if let Some(ranges) = footnote_equations.get(&placement.footnote.definition_range) {
-                    for math in inputs
-                        .math()
-                        .iter()
-                        .filter(|math| ranges.contains(&math.source_range))
-                    {
-                        for id in math.value().ids() {
-                            canonical_ids
-                                .insert(id.clone(), format!("{}-{id}", placement.target_id));
-                        }
-                    }
-                }
-            }
-        }
         let mut math_bytes = 0usize;
         for math in inputs.math() {
-            if footnote_equations
-                .values()
-                .any(|ranges| ranges.contains(&math.source_range))
+            if !self.selected.contains(&math.source_range)
+                || footnote_equations
+                    .values()
+                    .any(|ranges| ranges.contains(&math.source_range))
             {
                 continue;
             }
-            let value = math.value().remap_ids(&canonical_ids);
-            if self.selected.contains(&math.source_range) {
-                super::regions::check_output_limit(math_bytes, value.svg().len(), limits)?;
-                math_bytes += value.svg().len();
-            }
+            let value = math.value().clone();
+            super::regions::check_output_limit(math_bytes, value.svg().len(), limits)?;
+            math_bytes += value.svg().len();
             for id in value.ids() {
                 self.insert_id(occupied, id, math.source_range)?;
             }
@@ -520,22 +495,12 @@ impl<'document> SlideCatalogs<'document> {
                 let Some(ranges) = footnote_equations.get(&definition) else {
                     continue;
                 };
-                let mut mapping = canonical_ids.clone();
                 for math in inputs
                     .math()
                     .iter()
                     .filter(|math| ranges.contains(&math.source_range))
                 {
-                    for id in math.value().ids() {
-                        mapping.insert(id.clone(), format!("{target}-{id}"));
-                    }
-                }
-                for math in inputs
-                    .math()
-                    .iter()
-                    .filter(|math| ranges.contains(&math.source_range))
-                {
-                    let value = math.value().remap_ids(&mapping);
+                    let value = math.value().with_id_prefix(&target);
                     super::regions::check_output_limit(math_bytes, value.svg().len(), limits)?;
                     math_bytes += value.svg().len();
                     for id in value.ids() {
@@ -544,6 +509,15 @@ impl<'document> SlideCatalogs<'document> {
                     self.math
                         .insert((Some((slide, definition)), math.source_range), value);
                 }
+            }
+        }
+        for ((_, range), math) in &self.math {
+            if math
+                .references()
+                .iter()
+                .any(|id| !self.generated_ids.contains(id))
+            {
+                return Err(HtmlRegionError::ReferenceOutsideScope { range: *range });
             }
         }
         Ok(())

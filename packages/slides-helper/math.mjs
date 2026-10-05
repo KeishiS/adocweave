@@ -9,6 +9,7 @@ import "@mathjax/src/js/input/tex/newcommand/NewcommandConfiguration.js";
 import "@mathjax/src/js/input/tex/configmacros/ConfigMacrosConfiguration.js";
 
 import { diagnostic } from "./protocol.mjs";
+import { equationReferences, prepareMathTree, finishSvg, localFragment } from "./mathjax-output.mjs";
 
 const adaptor = liteAdaptor({ fontSize: 16 });
 RegisterHTMLHandler(adaptor);
@@ -17,15 +18,6 @@ function visitDom(node, action) {
   if (adaptor.kind(node) === "#text") return;
   action(node);
   for (const child of adaptor.childNodes(node)) visitDom(child, action);
-}
-
-function localFragment(value) {
-  if (typeof value !== "string" || !value.startsWith("#")) return null;
-  try {
-    return decodeURIComponent(value.slice(1));
-  } catch {
-    return null;
-  }
 }
 
 export async function renderEquations(scope, equations, eqnums, macros) {
@@ -77,15 +69,15 @@ export async function renderEquations(scope, equations, eqnums, macros) {
     return math;
   });
   document.processed.set("findMath");
+  const footnotes = new Set(equations.filter(({ footnote }) => footnote).map(({ key }) => key));
   tex.postFilters.add(({ data }) => {
-    data.root.walkTree((node) => {
-      node.attributes?.unset("data-latex");
-      node.attributes?.unset("data-latex-item");
-    });
+    const key = keys.get(data.mathItem);
+    if (prepareMathTree(data, footnotes.has(key))) {
+      report(key, "footnote-equation-numbering", "Footnote equations must not define labels or equation numbers.");
+    }
   });
   await document.renderPromise();
   const ids = new Map();
-  const owners = new Map();
   const roots = items.map((math, index) => {
     const root = adaptor.tags(math.typesetRoot, "svg")[0];
     if (!root) return null;
@@ -94,41 +86,23 @@ export async function renderEquations(scope, equations, eqnums, macros) {
       const original = adaptor.getAttribute(node, "id");
       if (original) {
         ids.set(original, `${scope}-${equations[index].key}-i${id++}`);
-        owners.set(original, equations[index].key);
       }
     });
     return root;
   });
-  const references = [];
   for (const [index, math] of items.entries()) {
     const key = equations[index].key;
-    math.root.walkTree((node) => {
-      if (node.attributes?.get("class") === "MathJax_ref") {
-        const target = localFragment(node.attributes.get("href"));
-        references.push({ key, target });
-        if (!target || !ids.has(target)) {
-          report(key, "unresolved-equation-reference", "Equation reference has no numbered target in this scope.");
-        }
-      }
-    });
-  }
-  // Failed equations are omitted from the response. References to them must
-  // also fail, including a chain of references, instead of leaving dead IDs.
-  let changed;
-  do {
-    changed = false;
-    for (const { key, target } of references) {
-      if (!failures.has(key) && failures.has(owners.get(target))) {
-        report(key, "unresolved-equation-reference", "Equation reference points to a failed equation in this scope.");
-        changed = true;
+    for (const target of equationReferences(math.root)) {
+      if (!target || !ids.has(target)) {
+        report(key, "unresolved-equation-reference", "Equation reference has no numbered target in this scope.");
       }
     }
-  } while (changed);
+  }
   const results = items.map((math, index) => {
     const key = equations[index].key;
     const root = roots[index];
     if (!root && !failures.has(key)) report(key, "math-typeset-error", "MathJax produced no SVG result.");
-    if (failures.has(key)) return { key, status: "failed" };
+    if (failures.has(key)) return null;
     visitDom(root, (node) => {
       const id = adaptor.getAttribute(node, "id");
       if (id) adaptor.setAttribute(node, "id", ids.get(id));
@@ -141,25 +115,9 @@ export async function renderEquations(scope, equations, eqnums, macros) {
         }
       }
     });
-    if (failures.has(key)) return { key, status: "failed" };
-    // MathJax normally supplies these rules in its page stylesheet. Keep the
-    // SVG self-contained, including nested viewports and array frame lines.
-    visitDom(root, (node) => {
-      if (adaptor.kind(node) === "svg") adaptor.setStyle(node, "overflow", "visible");
-      if (adaptor.getAttribute(node, "data-line") || adaptor.getAttribute(node, "data-frame")) {
-        adaptor.setAttribute(node, "stroke-width", "70");
-        adaptor.setAttribute(node, "fill", "none");
-        const classes = adaptor.getAttribute(node, "class") ?? "";
-        if (classes.includes("mjx-dashed")) adaptor.setAttribute(node, "stroke-dasharray", "140");
-        if (classes.includes("mjx-dotted")) {
-          adaptor.setAttribute(node, "stroke-dasharray", "0,140");
-          adaptor.setAttribute(node, "stroke-linecap", "round");
-        }
-      }
-    });
-    adaptor.setStyle(root, "min-height", "1px");
-    adaptor.setAttribute(root, "aria-hidden", "true");
-    return { key, status: "ok", svg: adaptor.outerHTML(root) };
+    if (failures.has(key)) return null;
+    finishSvg(adaptor, root, visitDom);
+    return { key, svg: adaptor.outerHTML(root) };
   });
-  return { results, diagnostics };
+  return { results: results.filter(Boolean), diagnostics };
 }

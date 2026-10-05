@@ -140,7 +140,7 @@ pub mod output {
         pub use crate::generated_bibliography::BibliographyNamespace;
         pub use crate::html::{
             ExternalLinkPresentation, HtmlDocumentMode, HtmlOutput, HtmlRegionError,
-            HtmlRegionSelection, HtmlRegions, HtmlSlideRegions, HtmlSlideScope,
+            HtmlRegionSelection, HtmlRegions, HtmlSlideContent, HtmlSlideRegions, HtmlSlideScope,
             HtmlSlideSelections, MathLanguagePolicy, RenderPolicy, ResourceCapabilities,
             RolePolicy, SourceLanguagePolicy, StylesheetPolicy, StylesheetSource, UnknownRole,
             UnknownSourceLanguage, UnresolvedReferencePresentation, is_role_name, render,

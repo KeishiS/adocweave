@@ -1,21 +1,6 @@
 {
-  "schemaVersion": 1,
-  "notices": {
-    "math": null,
-    "citations": null
-  },
-  "scopes": {
-    "body": {
-      "equations": [],
-      "citations": [],
-      "bibliography": []
-    },
-    "notes": {
-      "equations": [],
-      "citations": [],
-      "bibliography": []
-    }
-  },
+  "schemaVersion": 2,
+  "status": "failed",
   "diagnostics": [
     {
       "scope": null,

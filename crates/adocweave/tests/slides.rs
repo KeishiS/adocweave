@@ -435,6 +435,12 @@ fn presenter_to_public_removes_private_images_plugin_and_manifest_entries() {
             "presenter",
         ],
     ));
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.path().join("dist/slides.json")).unwrap()).unwrap();
+    assert_eq!(
+        metadata,
+        serde_json::json!({"schema_version":1,"audience":"presenter"})
+    );
     let old = adocweave_project::open_managed_bundle(
         &root.path().join("dist").canonicalize().unwrap(),
         Default::default(),
@@ -463,6 +469,12 @@ fn presenter_to_public_removes_private_images_plugin_and_manifest_entries() {
         root.path(),
         &["talk.adoc", "--to", "revealjs", "--output", "dist"],
     ));
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.path().join("dist/slides.json")).unwrap()).unwrap();
+    assert_eq!(
+        metadata,
+        serde_json::json!({"schema_version":1,"audience":"public"})
+    );
     assert!(!root.path().join("dist").join(private_image).exists());
     assert!(!root.path().join("dist/assets/notes.js").exists());
     assert!(!root.path().join("dist/licenses/marked.txt").exists());
@@ -540,7 +552,7 @@ fn helper_failures_and_invalid_local_data_never_save_raw_math() {
 }
 
 #[test]
-fn visible_citations_require_explicit_data_and_reject_manual_key_collisions_first() {
+fn visible_citations_require_explicit_data_and_reject_mixed_bibliography_modes_first() {
     let root = tempfile::tempdir().unwrap();
     write(
         root.path(),
@@ -556,37 +568,41 @@ fn visible_citations_require_explicit_data_and_reject_manual_key_collisions_firs
         String::from_utf8_lossy(&output.stderr)
             .contains("supply --bibliography, --csl-style, and --csl-locale")
     );
-    write(
-        root.path(),
-        "talk.adoc",
-        "= Talk\n\n== Slide\n\ncite:[shared].\n\n[bibliography]\n* [[[shared]]] Hand-written entry.\n",
-    );
-    let output = convert(
-        root.path(),
-        &[
+    for manual_key in ["shared", "unrelated"] {
+        write(
+            root.path(),
             "talk.adoc",
-            "--to",
-            "revealjs",
-            "--output",
-            "dist",
-            "--bibliography",
-            "missing.json",
-            "--csl-style",
-            "missing.xml",
-            "--csl-locale",
-            "missing-locale.xml",
-            "--slides-helper",
-            "/missing/helper",
-        ],
-    );
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("slides-bibliography-key-conflict"),
-        "{stderr}"
-    );
-    assert!(!stderr.contains("cannot open"), "{stderr}");
-    assert!(!root.path().join("dist").exists());
+            &format!(
+                "= Talk\n\n== Slide\n\ncite:[shared].\n\n[bibliography]\n* [[[{manual_key}]]] Hand-written entry.\n"
+            ),
+        );
+        let output = convert(
+            root.path(),
+            &[
+                "talk.adoc",
+                "--to",
+                "revealjs",
+                "--output",
+                "dist",
+                "--bibliography",
+                "missing.json",
+                "--csl-style",
+                "missing.xml",
+                "--csl-locale",
+                "missing-locale.xml",
+                "--slides-helper",
+                "/missing/helper",
+            ],
+        );
+        assert!(!output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("slides-bibliography-mode-conflict"),
+            "{stderr}"
+        );
+        assert!(!stderr.contains("cannot open"), "{stderr}");
+        assert!(!root.path().join("dist").exists());
+    }
 }
 
 #[test]
@@ -659,7 +675,7 @@ fn slide_footnotes_are_per_slide_and_notes_do_not_change_body_numbers() {
     write(
         root.path(),
         "talk.adoc",
-        "= Talk\n\n== First\n\nPublic footnote:shared[Public footnote text].\n\n[.notes]\n--\nPRIVATE_NOTE footnote:private[PRIVATE_FOOTNOTE].\nShared footnote:shared[].\n--\n\n== Last\n\nAgain footnote:shared[].\n",
+        "= Talk\n\n== First\n\nPublic footnote:shared[Public footnote text].\n\n[.notes]\n--\nPRIVATE_NOTE footnote:private[PRIVATE_FOOTNOTE].\nAnother footnote:private_second[PRIVATE_SECOND].\n--\n\n== Last\n\nAgain footnote:shared[].\n",
     );
     let mut body = None;
     for audience in ["public", "presenter"] {
@@ -1077,7 +1093,7 @@ fn hidden_heading_inline_anchors_have_a_specific_source_diagnostic() {
 }
 
 #[test]
-fn private_manual_citations_are_diagnosed_without_preventing_explicit_csl_keys() {
+fn private_manual_citations_are_excluded_from_public_csl_and_reject_presenter_mixing() {
     let root = tempfile::tempdir().unwrap();
     write(
         root.path(),
@@ -1127,7 +1143,7 @@ fn private_manual_citations_are_diagnosed_without_preventing_explicit_csl_keys()
     );
     let helper = helper_bin();
     for audience in ["public", "presenter"] {
-        success(&convert(
+        let output = convert(
             root.path(),
             &[
                 "--no-config",
@@ -1147,7 +1163,18 @@ fn private_manual_citations_are_diagnosed_without_preventing_explicit_csl_keys()
                 "--csl-locale",
                 "locale.xml",
             ],
-        ));
+        );
+        if audience == "presenter" {
+            assert!(!output.status.success());
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                stderr.contains("slides-bibliography-mode-conflict"),
+                "{stderr}"
+            );
+            assert!(!root.path().join(audience).exists());
+            continue;
+        }
+        success(&output);
         let html = fs::read_to_string(root.path().join(audience).join("index.html")).unwrap();
         assert!(html.contains("Public external work"), "{html}");
         assert_eq!(html.matches("<h2>References</h2>").count(), 1, "{html}");
@@ -1430,9 +1457,9 @@ fn shared_footnote_math_and_citations_use_first_reference_order_and_safe_placeme
         "talk.adoc",
         concat!(
             "= Talk\n:eqnums:\n\n== First\n\ncite:[before]. First footnote:shared[]. Then cite:[after].\n\n",
-            "[.notes]\n--\nNotes footnote:shared[].\n--\n\n",
-            "== Last\n\nDefinition footnote:shared[Forward latexmath:[\\eqref{inside}] and latexmath:[\\begin{equation}x=1\\label{inside}\\end{equation}], cite:[inside].]. External latexmath:[\\eqref{inside}].\n\n",
-            "[.notes]\n--\nAgain footnote:shared[].\n--\n"
+            "[.notes]\n--\nNotes footnote:private[latexmath:[y=2], cite:[inside].].\n--\n\n",
+            "== Last\n\nDefinition footnote:shared[Inline latexmath:[x=1], cite:[inside].].\n\n",
+            "[.notes]\n--\nAgain footnote:private[].\n--\n"
         ),
     );
     write(
@@ -1472,17 +1499,17 @@ fn shared_footnote_math_and_citations_use_first_reference_order_and_safe_placeme
     let html = fs::read_to_string(root.path().join("dist/index.html")).unwrap();
     check_fragment_targets(&html);
     assert!(!html.contains("<code class=\"math-latex\""), "{html}");
-    assert_eq!(html.matches("class=\"math-rendered\"").count(), 9, "{html}");
+    assert_eq!(html.matches("class=\"math-rendered\"").count(), 4, "{html}");
     assert!(
-        html.contains("slides-body-s2-footnote-1-body-m1-i"),
+        html.contains("slides-body-s2-footnote-1-body-m0-i"),
         "{html}"
     );
     assert!(
-        html.contains("slides-body-s3-footnote-1-body-m1-i"),
+        html.contains("slides-body-s3-footnote-1-body-m0-i"),
         "{html}"
     );
     assert!(
-        html.contains("slides-notes-s2-footnote-1-notes-m1-i"),
+        html.contains("slides-notes-s2-footnote-1-notes-m0-i"),
         "{html}"
     );
     let bibliography = html.split("id=\"slides-body-references\"").nth(1).unwrap();
@@ -1518,7 +1545,7 @@ fn manual_only_citations_in_shared_footnotes_need_no_helper_or_external_library(
     write(
         root.path(),
         "talk.adoc",
-        "= Talk\n\n== First\n\nFirst footnote:shared[cite:[manual].].\n\n[bibliography]\n==== References\n\n* [[[manual]]] Hand-written entry.\n\n== Last\n\nAgain footnote:shared[].\n\n[.notes]\n--\nNotes footnote:shared[].\n--\n",
+        "= Talk\n\n== First\n\nFirst footnote:shared[cite:[manual].].\n\n[bibliography]\n==== References\n\n* [[[manual]]] Hand-written entry.\n\n== Last\n\nAgain footnote:shared[].\n\n[.notes]\n--\nNotes footnote:private[cite:[manual].].\n--\n",
     );
     success(&convert(
         root.path(),
@@ -1690,7 +1717,7 @@ fn footnote_citation_errors_are_checked_before_library_reads_and_save() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!output.status.success());
     assert!(
-        stderr.contains("slides-bibliography-key-conflict"),
+        stderr.contains("slides-bibliography-mode-conflict"),
         "{stderr}"
     );
     assert!(!stderr.contains("cannot open"), "{stderr}");
@@ -1813,4 +1840,212 @@ fn authored_anchor_definitions_inside_footnotes_fail_before_helper_or_data_acqui
     assert!(stderr.contains("talk.adoc:5:"), "{stderr}");
     assert!(!stderr.contains("missing.json"), "{stderr}");
     assert!(!root.path().join("dist").exists());
+}
+
+#[test]
+fn presenter_notes_cannot_reuse_body_footnotes_and_public_output_excludes_the_reference() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "talk.adoc",
+        "= Talk\n\n== Slide\n\nBody footnote:shared[Public detail].\n\n[.notes]\n--\nNotes footnote:shared[].\n--\n",
+    );
+    success(&convert(
+        root.path(),
+        &[
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--output",
+            "public",
+            "--slides-helper",
+            "/missing/helper",
+        ],
+    ));
+    let output = convert(
+        root.path(),
+        &[
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--output",
+            "presenter",
+            "--audience",
+            "presenter",
+            "--slides-helper",
+            "/missing/helper",
+        ],
+    );
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("slides-footnote-outside-scope"), "{stderr}");
+    assert!(!stderr.contains("slides-helper-not-found"), "{stderr}");
+    assert!(!root.path().join("presenter").exists());
+}
+
+#[test]
+fn numbered_or_labeled_footnote_math_is_rejected_at_its_included_source() {
+    let root = tempfile::tempdir().unwrap();
+    let helper = helper_bin();
+    write(
+        root.path(),
+        "talk.adoc",
+        "= Talk\n:eqnums:\n\n== Slide\n\ninclude::part.adoc[]\n",
+    );
+    for tex in [
+        r"x\label{inside}",
+        r"\begin{equation}x\end{equation}",
+        r"\begin{equation}x\tag{A}\end{equation}",
+        r"\newcommand{\named}{x\label{hidden}}\named",
+    ] {
+        write(
+            root.path(),
+            "part.adoc",
+            &format!("A footnote:[latexmath:[{tex}]].\n"),
+        );
+        let output = convert(
+            root.path(),
+            &[
+                "talk.adoc",
+                "--to",
+                "revealjs",
+                "--output",
+                "dist",
+                "--slides-helper",
+                &helper,
+            ],
+        );
+        assert!(!output.status.success(), "{tex}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("footnote-equation-numbering"),
+            "{tex}: {stderr}"
+        );
+        assert!(stderr.contains("part.adoc:1:"), "{stderr}");
+        assert!(!root.path().join("dist").exists());
+    }
+}
+
+fn managed_slide_fixture(root: &Path, metadata: Option<&str>, notes_plugin: bool) {
+    use adocweave_core::NeverCancel;
+    use adocweave_project::{BundleFile, BundleMediaType, ProjectLimits, save_managed_bundle};
+    // Resolve macOS /var symlinks and Windows short-name temporary paths,
+    // matching the CLI's canonical working directory before calling the save API.
+    let root = root.canonicalize().unwrap();
+    let mut files = vec![BundleFile {
+        path: "index.html".to_owned(),
+        media_type: BundleMediaType::Html,
+        bytes:
+            b"<!doctype html><html><head><title>Slides</title></head><body>FIXTURE</body></html>"
+                .to_vec(),
+    }];
+    if let Some(metadata) = metadata {
+        files.push(BundleFile {
+            path: "slides.json".to_owned(),
+            media_type: BundleMediaType::Json,
+            bytes: metadata.as_bytes().to_vec(),
+        });
+    }
+    if notes_plugin {
+        files.push(BundleFile {
+            path: "assets/notes.js".to_owned(),
+            media_type: BundleMediaType::JavaScript,
+            bytes: b"/* fixture */".to_vec(),
+        });
+    }
+    save_managed_bundle(
+        &root.join("dist"),
+        &[],
+        &files,
+        ProjectLimits::default(),
+        &NeverCancel,
+    )
+    .unwrap();
+}
+
+#[test]
+fn serve_rejects_missing_invalid_and_unsupported_slide_metadata_before_binding() {
+    for (metadata, error) in [
+        (None, "slide metadata is missing"),
+        (
+            Some(r#"{"schema_version":2,"audience":"public"}"#),
+            "unsupported slide metadata version",
+        ),
+        (
+            Some(r#"{"schema_version":1,"audience":"unknown"}"#),
+            "invalid slide metadata",
+        ),
+        (Some(r#"{"schema_version":1}"#), "invalid slide metadata"),
+        (Some("{invalid"), "invalid slide metadata"),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        managed_slide_fixture(root.path(), metadata, true);
+        let output = Command::new(env!("CARGO_BIN_EXE_adocweave"))
+            .current_dir(root.path())
+            .args(["serve", "dist", "--port", "0"])
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{metadata:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(error), "{metadata:?}: {stderr}");
+        assert!(!stderr.contains("AdocWeave slides:"), "{stderr}");
+    }
+}
+
+#[test]
+fn serve_uses_explicit_audience_instead_of_inferring_it_from_notes_plugin_files() {
+    use std::io::{BufRead as _, Read as _, Write as _};
+    use std::net::TcpStream;
+    use std::process::Stdio;
+    use std::time::Duration;
+    struct Server(std::process::Child);
+    impl Drop for Server {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    for (audience, notes_plugin) in [("public", true), ("presenter", false)] {
+        let root = tempfile::tempdir().unwrap();
+        managed_slide_fixture(
+            root.path(),
+            Some(&format!(
+                r#"{{"schema_version":1,"audience":"{audience}"}}"#
+            )),
+            notes_plugin,
+        );
+        let mut child = Server(
+            Command::new(env!("CARGO_BIN_EXE_adocweave"))
+                .current_dir(root.path())
+                .args(["serve", "dist", "--port", "0"])
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap(),
+        );
+        let mut message = String::new();
+        std::io::BufReader::new(child.0.stderr.take().unwrap())
+            .read_line(&mut message)
+            .unwrap();
+        let address = message
+            .trim()
+            .strip_prefix("AdocWeave slides: http://")
+            .and_then(|url| url.strip_suffix('/'))
+            .unwrap_or_else(|| panic!("server did not start: {message}"));
+        let mut stream = TcpStream::connect(address).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        write!(stream, "GET / HTTP/1.1\r\nHost: {address}\r\n\r\n").unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+        assert!(response.contains("FIXTURE"));
+        assert_eq!(
+            response.contains("script-src 'self' 'sha256-"),
+            audience == "presenter",
+            "{response}"
+        );
+        assert!(!response.contains("adocweave-preview-generation"));
+    }
 }
