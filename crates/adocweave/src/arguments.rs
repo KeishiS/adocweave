@@ -101,10 +101,10 @@ pub(crate) struct SlidesData {
     /// CSL JSON bibliography array; used only when slides include citations.
     #[arg(long, value_name = "FILE", value_hint = ValueHint::FilePath)]
     pub(crate) bibliography: Option<PathBuf>,
-    /// Local CSL citation style; used only when slides include citations.
+    /// Local CSL citation style; defaults to the bundled numeric style.
     #[arg(long, value_name = "FILE", value_hint = ValueHint::FilePath)]
     pub(crate) csl_style: Option<PathBuf>,
-    /// Local CSL locale XML; used only when slides include citations.
+    /// Local CSL locale XML; defaults to the bundled en-US locale.
     #[arg(long, value_name = "FILE", value_hint = ValueHint::FilePath)]
     pub(crate) csl_locale: Option<PathBuf>,
     /// JSON array of common LaTeX macros; used only when slides include equations.

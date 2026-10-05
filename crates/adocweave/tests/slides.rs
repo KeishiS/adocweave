@@ -564,10 +564,7 @@ fn visible_citations_require_explicit_data_and_reject_mixed_bibliography_modes_f
         &["talk.adoc", "--to", "revealjs", "--output", "dist"],
     );
     assert!(!output.status.success());
-    assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("supply --bibliography, --csl-style, and --csl-locale")
-    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("supply --bibliography"));
     for manual_key in ["shared", "unrelated"] {
         write(
             root.path(),
@@ -2047,5 +2044,130 @@ fn serve_uses_explicit_audience_instead_of_inferring_it_from_notes_plugin_files(
             "{response}"
         );
         assert!(!response.contains("adocweave-preview-generation"));
+    }
+}
+
+#[test]
+fn csl_defaults_allow_independent_overrides_and_preserve_explicit_style_and_locale() {
+    let root = tempfile::tempdir().unwrap();
+    let helper = helper_bin();
+    write(
+        root.path(),
+        "talk.adoc",
+        "= Talk\n\n== Slide\n\ncite:[work,locator=7,label=page].\n",
+    );
+    write(
+        root.path(),
+        "references.json",
+        r#"[{"id":"work","type":"book","title":"Default bibliography work","author":[{"family":"Researcher","given":"Ada"}],"issued":{"date-parts":[[2024]]}}]"#,
+    );
+    write(
+        root.path(),
+        "style.csl",
+        r#"<style xmlns="http://purl.org/net/xbiblio/csl" version="1.0" class="in-text" default-locale="en-US"><info><title>Override test</title><id>urn:adocweave:test:override</id></info><citation><layout><text value="CUSTOM_STYLE "/><text term="page" form="short"/><text variable="locator" prefix=" "/></layout></citation><bibliography><layout><text variable="title"/></layout></bibliography></style>"#,
+    );
+    write(
+        root.path(),
+        "locale.xml",
+        &include_str!("../assets/slides/locale-en-US.xml")
+            .replace("xml:lang=\"en-US\"", "xml:lang=\"ja-JP\"")
+            .replace("<single>p.</single>", "<single>CUSTOM_PAGE</single>"),
+    );
+    for (style, locale, directory) in [
+        (false, false, "default"),
+        (true, false, "style"),
+        (false, true, "locale"),
+        (true, true, "both"),
+    ] {
+        let mut args = vec![
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--output",
+            directory,
+            "--slides-helper",
+            &helper,
+            "--bibliography",
+            "references.json",
+        ];
+        if style {
+            args.extend(["--csl-style", "style.csl"]);
+        }
+        if locale {
+            args.extend(["--csl-locale", "locale.xml"]);
+        }
+        success(&convert(root.path(), &args));
+        let html = fs::read_to_string(root.path().join(directory).join("index.html")).unwrap();
+        assert!(
+            html.contains("Default bibliography work"),
+            "{directory}: {html}"
+        );
+        assert_eq!(html.contains("CUSTOM_STYLE"), style, "{directory}: {html}");
+        assert_eq!(html.contains("CUSTOM_PAGE"), locale, "{directory}: {html}");
+        assert!(html.contains("assets/theme.css"));
+        assert!(html.contains("assets/content.css"));
+        check_fragment_targets(&html);
+    }
+}
+
+#[test]
+fn csl_explicit_missing_or_invalid_overrides_do_not_fall_back_to_defaults() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "talk.adoc",
+        "= Talk\n\n== Slide\n\ncite:[work].\n",
+    );
+    write(
+        root.path(),
+        "references.json",
+        r#"[{"id":"work","title":"Work"}]"#,
+    );
+    write(root.path(), "invalid.xml", "<invalid");
+    for option in ["--csl-style", "--csl-locale"] {
+        for path in ["missing.xml", "invalid.xml"] {
+            let output = convert(
+                root.path(),
+                &[
+                    "talk.adoc",
+                    "--to",
+                    "revealjs",
+                    "--output",
+                    "dist",
+                    "--bibliography",
+                    "references.json",
+                    option,
+                    path,
+                    "--slides-helper",
+                    "/missing/helper",
+                ],
+            );
+            assert!(!output.status.success(), "{option} {path}");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(stderr.contains(path), "{stderr}");
+            assert!(!stderr.contains("slides-helper-not-found"), "{stderr}");
+            assert!(!root.path().join("dist").exists());
+        }
+        let output = convert(
+            root.path(),
+            &[
+                "talk.adoc",
+                "--to",
+                "revealjs",
+                "--output",
+                "dist",
+                option,
+                "missing.xml",
+                "--slides-helper",
+                "/missing/helper",
+            ],
+        );
+        assert!(!output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("visible slide citations require --bibliography FILE"),
+            "{stderr}"
+        );
+        assert!(!root.path().join("dist").exists());
     }
 }

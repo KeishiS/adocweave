@@ -320,7 +320,7 @@ async function researchDisplay(page, url, presenter) {
         notesReferences: [...document.querySelectorAll('.bibliography-anchor[id^="slides-notes-bib-"]')].map(node => node.id),
         privateText: document.body.textContent.includes('PRIVATE_BIBLIOGRAPHY'),
         imageReady: [...document.images].every(image => image.complete && image.naturalWidth > 0),
-        customAccent: getComputedStyle(document.querySelector('.reveal .controls')).color,
+        accent: getComputedStyle(document.querySelector('.reveal .controls')).color,
         creditsVisible: rectangle.width > 0 && rectangle.height > 0 && rectangle.bottom <= innerHeight + 1,
         credits: credits.textContent,
         browserMathJax: [...document.scripts].some(script => /mathjax|citeproc/i.test(script.src)),
@@ -351,7 +351,7 @@ async function researchDisplay(page, url, presenter) {
       assert.equal(content.notesResult, "(1)");
     }
     assert.equal(content.imageReady, true);
-    assert.equal(content.customAccent, "rgb(18, 107, 120)");
+    assert.equal(content.accent, "rgb(15, 118, 110)");
     await screenLayout(page, 16 / 9);
     assert.equal(content.creditsVisible, true);
     assert.match(content.credits, /Frank Bennett/);
@@ -396,6 +396,62 @@ async function researchDisplay(page, url, presenter) {
     await writeFile(join(artifacts, `${name}.png`), Buffer.from(screenshot.data, "base64"));
     reports.push({ name, content, fonts });
   }
+}
+async function defaultCitationStyle(page) {
+  const conversion = spawnSync(binary, ["convert", "research.adoc", "--to", "revealjs", "--output", "defaults",
+    "--slides-helper", helper, "--bibliography", "references.json"],
+    { cwd: root, env: environment, encoding: "utf8" });
+  assert.equal(conversion.status, 0, conversion.stderr);
+  const url = pathToFileURL(join(root, "defaults", "index.html")).href;
+  await page.call("Page.navigate", { url });
+  await poll(() => page.evaluate(`location.href.split('#')[0]===${JSON.stringify(url)}&&probeReady`));
+  const content = await page.evaluate(`(() => {
+    const citationText = selector => {
+      const citation = document.querySelector(selector).cloneNode(true);
+      citation.querySelectorAll('.citation-link').forEach(node => node.remove());
+      return citation.textContent.trim();
+    };
+    const references = document.getElementById('slides-body-references');
+    const { h, v } = Reveal.getIndices(references);
+    Reveal.slide(h, v);
+    const credits = document.querySelector('.slides-attribution');
+    const bounds = credits.getBoundingClientRect();
+    return {
+      firstCitation: citationText('#method p .citation'),
+      citation: citationText('#detail td .citation'),
+      referencesHeading: references.querySelector('h2').textContent,
+      references: [...references.querySelectorAll('li')].map(node => node.textContent),
+      referencesVisible: references.getBoundingClientRect().width > 0 && Reveal.getCurrentSlide() === references,
+      privateText: document.body.textContent.includes('PRIVATE_BIBLIOGRAPHY'),
+      accent: getComputedStyle(document.querySelector('.reveal .controls')).color,
+      stylesheets: [...document.querySelectorAll('link[rel="stylesheet"]')].map(node => node.getAttribute('href')),
+      credits: credits.textContent,
+      creditsVisible: bounds.width > 0 && bounds.height > 0 && bounds.bottom <= innerHeight + 1,
+      violations: probeViolations,
+    };
+  })()`);
+  // The table cites the third source, following the main citation and its footnote.
+  assert.equal(content.citation, "[3]");
+  assert.match(content.firstCitation, /^\[1\b/);
+  assert.match(content.firstCitation, /12[–-]15/);
+  assert.equal(content.referencesHeading, "References");
+  assert.equal(content.references.length, 3);
+  for (const title of ["Zebra public result", "Inside footnote result", "Alpha public result"]) {
+    assert.ok(content.references.some(reference => reference.includes(title)), title);
+  }
+  assert.equal(content.referencesVisible, true);
+  assert.equal(content.privateText, false);
+  assert.equal(content.accent, "rgb(15, 118, 110)");
+  assert.deepEqual(content.stylesheets, ["assets/reset.css", "assets/reveal.css", "assets/theme.css", "assets/content.css"]);
+  assert.match(content.credits, /Frank Bennett/);
+  assert.match(content.credits, /citeproc-js implements the Citation Style Language/);
+  assert.ok(content.credits.includes("https://citationstyles.org/"));
+  assert.equal(content.creditsVisible, true);
+  assert.deepEqual(content.violations, []);
+  await screenLayout(page, 16 / 9);
+  const screenshot = await page.call("Page.captureScreenshot", { format: "png" });
+  await writeFile(join(artifacts, "default-citation-style.png"), Buffer.from(screenshot.data, "base64"));
+  reports.push({ name: "default-citation-style", content });
 }
 async function speakerNotes(page, ports, targets, connections, url) {
   await page.call("Page.navigate", { url });
@@ -487,7 +543,7 @@ try {
 
   const researchArguments = [];
   if (helper) {
-    for (const file of ["research.adoc", "references.json", "result.svg", "research.css", "research.csl"]) {
+    for (const file of ["research.adoc", "references.json", "result.svg", "research.csl"]) {
       await writeFile(join(root, file),
         await readFile(new URL(`../fixtures/slides-browser/${file}`, import.meta.url)));
     }
@@ -495,7 +551,7 @@ try {
       await writeFile(join(root, destination), await readFile(new URL(`../packages/slides-helper/fixtures/${source}`, import.meta.url)));
     }
     researchArguments.push("--slides-helper", helper, "--bibliography", "references.json", "--csl-style", "research.csl",
-      "--csl-locale", "locale.xml", "--css", "research.css");
+      "--csl-locale", "locale.xml");
     await mkdir(artifacts, { recursive: true });
   }
   for (const audience of ["public", "presenter"]) {
@@ -558,6 +614,7 @@ try {
   }
   await runCase("speaker-notes", (page, connections) => speakerNotes(page, ports, targets, connections, `${presenterServer}/`));
   if (helper) {
+    await runCase("default-citation-style", page => defaultCitationStyle(page));
     await runCase("pdf-file", page => printPdf(page, pathToFileURL(join(root, "public", "index.html")).href, "public-file-print"));
     await runCase("pdf-http", page => printPdf(page, `${publicServer}/`, "public-http-print"));
     await runCase("pdf-preview", async page => {

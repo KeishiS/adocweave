@@ -191,6 +191,9 @@ npm audit入力を生成し、別の恒久的な依存一覧を作りません�
 popup scriptを検査します。資産の更新時には、取得archiveと保存した資産の対応も
 ``node tools/verify-slides-assets.mjs ARCHIVE_DIRECTORY``で検査します。
 
+既定のCSLロケールは``crates/adocweave/assets/slides/NOTICE.csl-locales.txt``に記載した上流commitから取得します。
+更新時は翻訳者を含むXMLのmetadataを保持し、出典、ライセンス本文およびnative配布物の通知を確認します。
+
 ビルド専用のnpm依存は配布runtimeの脆弱性・license検査へ含めません。lockfileに固定し、``npm ci --ignore-scripts``が
 取得時にintegrityを検証します。観測したビルド依存のlicense集合を別の目録として保守しません。
 

@@ -1,4 +1,4 @@
-//! Explicit local data files for the optional slides helper.
+//! Local helper input files and bundled CSL defaults.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -9,6 +9,9 @@ use adocweave_project::{ProjectAuthority, ProjectBinaryResource, ProjectResource
 use super::helper::{Csl, Macro};
 use crate::arguments::SlidesData;
 use crate::cli_error::CliError;
+
+const DEFAULT_CSL_STYLE: &str = include_str!("../../assets/slides/default.csl");
+const DEFAULT_CSL_LOCALE: &str = include_str!("../../assets/slides/locale-en-US.xml");
 
 pub(super) struct DataInputs {
     pub(super) macros: Option<Vec<Macro>>,
@@ -104,22 +107,24 @@ pub(super) fn load(
     let current = authority.project_root();
     let resolve =
         |path: &Path| adocweave_project::absolute_path(current, path).map_err(CliError::Project);
-    let citation_file = |path: &Option<PathBuf>, name: &str| {
-        path.as_deref()
-            .ok_or_else(|| {
-                CliError::Usage(format!("visible slide citations require --{name} FILE"))
-            })
-            .and_then(resolve)
+    let bibliography = if citations {
+        let path = options.bibliography.as_deref().ok_or_else(|| {
+            CliError::Usage("visible slide citations require --bibliography FILE".to_owned())
+        })?;
+        Some(resolve(path)?)
+    } else {
+        None
     };
-    let bibliography = citations
-        .then(|| citation_file(&options.bibliography, "bibliography"))
-        .transpose()?;
-    let style = citations
-        .then(|| citation_file(&options.csl_style, "csl-style"))
-        .transpose()?;
-    let locale = citations
-        .then(|| citation_file(&options.csl_locale, "csl-locale"))
-        .transpose()?;
+    let style = if citations {
+        options.csl_style.as_deref().map(resolve).transpose()?
+    } else {
+        None
+    };
+    let locale = if citations {
+        options.csl_locale.as_deref().map(resolve).transpose()?
+    } else {
+        None
+    };
     let macro_file = if math {
         options.math_macros.as_deref().map(resolve).transpose()?
     } else {
@@ -147,12 +152,17 @@ pub(super) fn load(
         .as_ref()
         .map(|path| json(by_path[path], "math macro"))
         .transpose()?;
-    let csl = if let (Some(bibliography), Some(style), Some(locale)) = (bibliography, style, locale)
-    {
+    let csl = if let Some(bibliography) = bibliography {
         Some(Csl {
             items: json(by_path[&bibliography], "bibliography")?,
-            style: xml(by_path[&style], "style")?,
-            locale: xml(by_path[&locale], "locale")?,
+            style: match style {
+                Some(path) => xml(by_path[&path], "style")?,
+                None => DEFAULT_CSL_STYLE.to_owned(),
+            },
+            locale: match locale {
+                Some(path) => xml(by_path[&path], "locale")?,
+                None => DEFAULT_CSL_LOCALE.to_owned(),
+            },
         })
     } else {
         None
