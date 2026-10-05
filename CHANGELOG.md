@@ -25,6 +25,7 @@ separate changelogs for the
 
 ### Fixed
 
+- Slide equations preserve clipping for stretched braces and delimiters while retaining overflow needed by equation bodies and numbers.
 - The default slide theme emphasizes definition-list terms and places each description on the following line with a one-em indent.
 - Ordinary HTML preview permits same-origin update polling under its Content Security Policy. Preview also detects regeneration between the initial HTML response and first notification; diagnostics match their generation, and failed slide rebuilds retain the last successful output.
 - On Unix, interrupting slide conversion cancels its helper and reaps its process group through the existing cancellation path. Incompatible helper responses identify the required protocol and helper version.

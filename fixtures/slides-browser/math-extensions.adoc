@@ -1,5 +1,6 @@
 = TeX拡張の表示
 :stem: latexmath
+:eqnums: AMS
 :slides-aspect-ratio: 16:9
 
 [#extensions]
@@ -13,4 +14,38 @@
 [latexmath]
 ++++
 \cancelto{0}{x} \qquad x \coloneqq y
+++++
+
+[#stretch-horizontal]
+== 長い上下の括弧
+
+[latexmath]
+++++
+\colorbox{pink}{$\underbrace{a_1+a_2+a_3+a_4+a_5+a_6+a_7+a_8}_{n}$}
+++++
+
+[latexmath]
+++++
+\overbrace{a_1+a_2+a_3+a_4+a_5+a_6+a_7+a_8}^{n}
+++++
+
+[#stretch-vertical]
+== 縦の括弧と短い下括弧
+
+[latexmath]
+++++
+\left\{\begin{matrix}a\\b\\c\end{matrix}\right\}
+++++
+
+[latexmath]
+++++
+\colorbox{pink}{$\underbrace{x+y}_{n}$}
+++++
+
+[#table-overflow]
+== 番号付き数式の表示範囲
+
+[latexmath]
+++++
+\begin{equation}\smash{\frac{1}{x}}\end{equation}
 ++++

@@ -677,13 +677,57 @@ async function mathExtensionLayout(page, name) {
   assert.deepEqual(layout.violations, [], name);
   reports.push({ name, ...layout });
 }
+async function mathViewportLayout(page, print, name) {
+  for (const id of ["stretch-horizontal", "stretch-vertical", "table-overflow"]) {
+    if (!print) await page.evaluate(`Reveal.slide(Reveal.getIndices(document.getElementById(${JSON.stringify(id)})).h)`);
+    const layout = await page.evaluate(`(() => {
+      const slide = document.getElementById(${JSON.stringify(id)});
+      const roots = [...slide.querySelectorAll('.math-rendered > svg')];
+      const visible = node => { const r = node.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(node).visibility === 'visible'; };
+      return {
+        roots: roots.map(node => ({ visible: visible(node), overflow: getComputedStyle(node).overflow })),
+        nested: roots.map(root => [...root.querySelectorAll('svg')].map(node => ({
+          table: node.matches('g[data-mml-node="mtable"] > g > svg'), overflow: getComputedStyle(node).overflow,
+        }))),
+        labels: [...slide.querySelectorAll('use[data-c="1D45B"]')].filter(visible).length,
+        background: [...slide.querySelectorAll('rect[fill="pink"]')].some(node => visible(node) && getComputedStyle(node).fill === 'rgb(255, 192, 203)'),
+        fraction: Boolean(slide.querySelector('[data-mml-node="mfrac"]')),
+        fractionGlyphs: [...slide.querySelectorAll('[data-mml-node="mfrac"] use')].filter(visible).length,
+      };
+    })()`);
+    assert.ok(layout.roots.length > 0 && layout.roots.every(node => node.visible && node.overflow === "visible"), `${name}: ${id} outer viewport`);
+    for (const viewport of layout.nested.flat()) {
+      assert.equal(viewport.overflow, viewport.table ? "visible" : "hidden", `${name}: ${id} nested viewport`);
+    }
+    if (id === "stretch-horizontal") {
+      assert.equal(layout.roots.length, 2);
+      assert.ok(layout.nested.every(nodes => nodes.filter(node => !node.table).length > 0), "Both long braces must exercise clipping viewports");
+      assert.equal(layout.labels, 2, "Long braces must retain their annotations");
+      assert.equal(layout.background, true, "Long brace must retain its colorbox background");
+    } else if (id === "stretch-vertical") {
+      assert.ok(layout.nested[0].some(node => !node.table), "Tall delimiters must exercise clipping viewports");
+      assert.equal(layout.background, true, "Short brace must retain its colorbox background");
+      assert.equal(layout.labels, 1, "Short brace must retain its annotation");
+    } else {
+      assert.ok(layout.nested.flat().some(node => node.table), "Numbered smash must exercise an unclipped table viewport");
+      assert.equal(layout.fraction, true);
+      assert.equal(layout.fractionGlyphs, 2, "Numbered smash must retain numerator and denominator");
+    }
+    reports.push({ name: `${name}-${id}`, ...layout });
+    if (!print) {
+      const screenshot = await page.call("Page.captureScreenshot", { format: "png" });
+      await writeFile(join(artifacts, `${name}-${id}.png`), Buffer.from(screenshot.data, "base64"));
+    }
+  }
+}
+
 async function mathExtensionsDisplay(page, url, name) {
   for (const print of [false, true]) {
     const address = `${url}${print ? '?print-pdf' : ''}`;
     await page.call("Page.navigate", { url: address });
     await poll(() => page.evaluate(`location.href.split('#')[0]===${JSON.stringify(address)}&&probeReady&&Reveal.isReady()`));
     if (print) {
-      await poll(() => page.evaluate("document.querySelectorAll('.pdf-page').length===2"));
+      await poll(() => page.evaluate("document.querySelectorAll('.pdf-page').length===5"));
       await page.call("Emulation.setEmulatedMedia", { media: "print" });
     } else {
       await page.evaluate("Reveal.slide(1)");
@@ -693,11 +737,12 @@ async function mathExtensionsDisplay(page, url, name) {
       const screenshot = await page.call("Page.captureScreenshot", { format: "png" });
       await writeFile(join(artifacts, `${name}.png`), Buffer.from(screenshot.data, "base64"));
     }
+    await mathViewportLayout(page, print, `${name}-${print ? 'print' : 'screen'}`);
     if (print) {
       const pdf = await page.call("Page.printToPDF", { printBackground: true, preferCSSPageSize: true });
       const path = join(artifacts, `${name}.pdf`);
       await writeFile(path, Buffer.from(pdf.data, "base64"));
-      assert.equal(Number(inspectPdf(pdfInfo, [path]).match(/^Pages:\s+(\d+)/m)?.[1]), 2, name);
+      assert.equal(Number(inspectPdf(pdfInfo, [path]).match(/^Pages:\s+(\d+)/m)?.[1]), 5, name);
       await page.call("Emulation.setEmulatedMedia", { media: "screen" });
     }
   }
@@ -713,10 +758,11 @@ async function mathExtensionsPreview(page, ports, config) {
   assert.equal(await page.evaluate("document.querySelectorAll('.math-rendered > svg').length"), 0);
   // Only configuration changes; the manuscript and helper remain identical.
   await writeFile(join(root, "math-extensions", ".adocweave.toml"), config);
-  await poll(() => page.evaluate("probeReady&&window.Reveal?.isReady()&&document.querySelectorAll('.math-rendered > svg').length===2"));
+  await poll(() => page.evaluate("probeReady&&window.Reveal?.isReady()&&document.querySelectorAll('.math-rendered > svg').length===7"));
   await page.evaluate("Reveal.slide(1)");
   await mathExtensionLayout(page, "math-extensions-preview-recovery");
   assert.equal(await page.evaluate("document.querySelector('.slides-diagnostics')?.textContent.trim() ?? ''"), "");
+  await mathExtensionsDisplay(page, url, "math-extensions-preview");
 }
 
 async function livePreview(page, ports) {
