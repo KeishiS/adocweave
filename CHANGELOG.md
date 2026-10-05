@@ -24,6 +24,7 @@ separate changelogs for the
 
 ### Fixed
 
+- The default slide theme emphasizes definition-list terms and places each description on the following line with a one-em indent.
 - Ordinary HTML preview permits same-origin update polling under its Content Security Policy. Preview also detects regeneration between the initial HTML response and first notification; diagnostics match their generation, and failed slide rebuilds retain the last successful output.
 - On Unix, interrupting slide conversion cancels its helper and reaps its process group through the existing cancellation path. Incompatible helper responses identify the required protocol and helper version.
 - `convert` reports HTML rendering diagnostics on standard error at the original document or include position. Rendering errors produce exit code 1; warning-only output succeeds.
