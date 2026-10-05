@@ -142,6 +142,7 @@ html, body, .reveal-viewport { background: var(--adocweave-background); color: v
 }
 .reveal .footnotes ol { margin-top: 0; margin-bottom: 0; }
 .reveal .footnotes li { margin: .2em 0; }
+.reveal .footnote-ref { margin-left: .12em; font-size: .65em; line-height: 0; vertical-align: super; }
 .reveal #slides-body-references > div > ul,
 .reveal #slides-body-references > div > ol { font-size: .8em; line-height: 1.5; }
 .reveal #slides-body-references li { margin-bottom: .75em; }
