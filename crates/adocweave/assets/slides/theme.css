@@ -81,6 +81,12 @@ html, body, .reveal-viewport { background: var(--adocweave-background); color: v
 .reveal li { padding-left: .15em; margin: .3em 0; }
 .reveal li::marker { color: var(--adocweave-accent); }
 .reveal li > p { margin: .3em 0; }
+.reveal dl { margin: .6em 0; }
+.reveal dt, .reveal dd { min-width: 0; overflow-wrap: anywhere; }
+.reveal dt { color: var(--adocweave-accent); font-weight: 700; }
+.reveal dd { margin: .25em 0 .65em 1em; }
+.reveal dd > :first-child { margin-top: 0; }
+.reveal dd > :last-child { margin-bottom: 0; }
 .reveal blockquote {
   box-sizing: border-box;
   width: 100%;
