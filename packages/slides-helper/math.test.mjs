@@ -201,6 +201,63 @@ test("selected color, cancel, and mathtools extensions produce finite SVG and pr
   assert.deepEqual(await processRequest(request), result, "selected extension order must not affect rendering");
 });
 
+test("stretching braces and delimiters preserve their nested SVG clipping viewports", async () => {
+  const request = mathRequest([
+    { key: "under", tex: String.raw`\underbrace{x+x+x+x+x+x+x+x}_{a}`, display: true },
+    { key: "over", tex: String.raw`\overbrace{x+x+x+x+x+x+x+x}^{a}`, display: true },
+    { key: "vertical", tex: String.raw`\left(\frac{\frac{\frac{1}{x}}{y}}{z}\right)`, display: true },
+    { key: "short", tex: String.raw`\underbrace{x}_{a}`, display: false },
+    { key: "background", tex: String.raw`\colorbox{pink}{$\underbrace{x+x+x+x+x+x+x+x}_{a}$}`, display: true },
+  ], "none");
+  request.extensions = ["color"];
+  const result = await processRequest(request);
+  assert.deepEqual(result.diagnostics, []);
+  assert.equal(result.status, "ok");
+  for (const { key, svg } of result.scopes.body.equations) {
+    const [root, ...nested] = svgNodes(svg, node => node.nodeName === "svg");
+    assert.match(attribute(root, "style"), /overflow:\s*visible/);
+    if (key === "short") assert.equal(nested.length, 0);
+    else assert.ok(nested.length > 0, `${key}: expected stretching viewports`);
+    for (const viewport of nested) {
+      assert.equal(attribute(viewport.parentNode, "data-mml-node"), "mo");
+      assert.ok(attribute(viewport, "viewBox"));
+      assert.ok(svgNodes(viewport, node => node.nodeName === "use").length > 0);
+      assert.doesNotMatch(attribute(viewport, "style") ?? "", /overflow\s*:/, key);
+    }
+    if (key === "background") {
+      assert.ok(svgNodes(svg, node => node.nodeName === "rect" && attribute(node, "fill") === "pink").length > 0);
+    }
+  }
+});
+
+test("numbered tables retain overflow for smashed content and labels without disabling brace clipping", async () => {
+  const result = await processRequest(mathRequest([
+    { key: "smash", tex: String.raw`\begin{equation}\smash{\frac{1}{x}}\end{equation}`, display: true },
+    { key: "aligned", tex: String.raw`\begin{equation}\begin{aligned}x&=\underbrace{x+x+x+x+x+x+x+x}_{a}\\y&=2\end{aligned}\end{equation}`, display: true },
+  ]));
+  assert.deepEqual(result.diagnostics, []);
+  assert.equal(result.status, "ok");
+  for (const [index, { key, svg }] of result.scopes.body.equations.entries()) {
+    const [root, ...nested] = svgNodes(svg, node => node.nodeName === "svg");
+    assert.match(attribute(root, "style"), /overflow:\s*visible/);
+    const tables = nested.filter(node => attribute(node, "data-table"));
+    const labels = nested.filter(node => attribute(node, "data-labels"));
+    assert.equal(tables.length, 1);
+    assert.equal(labels.length, 1);
+    for (const viewport of [...tables, ...labels]) {
+      assert.match(attribute(viewport, "style"), /overflow:\s*visible/);
+      assert.equal(attribute(viewport.parentNode.parentNode, "data-mml-node"), "mtable");
+    }
+    assert.equal(labelText(svg), `(${index + 1})`);
+    if (key === "smash") assert.equal(svgKind(svg, "mfrac").length, 1);
+    else {
+      const stretching = nested.filter(node => attribute(node.parentNode, "data-mml-node") === "mo");
+      assert.ok(stretching.length > 0);
+      for (const viewport of stretching) assert.doesNotMatch(attribute(viewport, "style") ?? "", /overflow\s*:/);
+    }
+  }
+});
+
 test("extensions are explicitly selected and do not leak across requests", async () => {
   for (const [extension, tex] of [
     ["color", String.raw`\colorbox{pink}{$x$}`],

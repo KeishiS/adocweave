@@ -38,7 +38,17 @@ export function finishSvg(adaptor, root, visit) {
         else adaptor.removeAttribute(node, "style");
       }
     }
-    if (adaptor.kind(node) === "svg") adaptor.setStyle(node, "overflow", "visible");
+    if (adaptor.kind(node) === "svg") {
+      const parent = adaptor.parent(node);
+      const grandparent = parent && adaptor.parent(parent);
+      // Match MathJax's root rule and g[data-mml-node="mtable"] > g > svg.
+      // Stretching glyph viewports must keep clipping their oversized pieces.
+      if (node === root || (parent && grandparent
+          && adaptor.kind(parent) === "g" && adaptor.kind(grandparent) === "g"
+          && adaptor.getAttribute(grandparent, "data-mml-node") === "mtable")) {
+        adaptor.setStyle(node, "overflow", "visible");
+      }
+    }
     if (adaptor.getAttribute(node, "data-line") || adaptor.getAttribute(node, "data-frame")) {
       adaptor.setAttribute(node, "stroke-width", "70");
       adaptor.setAttribute(node, "fill", "none");
