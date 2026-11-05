@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 3,
+  "status": "failed",
+  "diagnostics": [
+    {
+      "scope": null,
+      "key": null,
+      "severity": "error",
+      "code": "invalid-request",
+      "message": "request.schemaVersion is required."
+    }
+  ]
+}

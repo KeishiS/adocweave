@@ -2,6 +2,11 @@
 
 use adocweave_core::output::diagnostics as diagnostic;
 
+pub(crate) struct ProjectSourceView<'source> {
+    pub(crate) display_id: String,
+    pub(crate) source: &'source str,
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, clap::ValueEnum)]
 pub(crate) enum DiagnosticFormat {
     #[default]

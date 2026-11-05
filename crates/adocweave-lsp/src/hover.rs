@@ -279,6 +279,7 @@ fn inline_hover(
                     "**{} formula**  \nContent: `{}`",
                     match formula.language {
                         MathLanguage::Latex => "LaTeX",
+                        MathLanguage::AsciiMath => "AsciiMath",
                         MathLanguage::Typst => "Typst",
                     },
                     formula.value
@@ -504,7 +505,7 @@ mod tests {
             HoverPresentation::Markdown,
         )
         .expect("formula hover");
-        assert!(markdown_value(&formula).contains("**LaTeX formula**"));
+        assert!(markdown_value(&formula).contains("**AsciiMath formula**"));
         assert!(markdown_value(&formula).contains("Content: `x+y`"));
     }
 

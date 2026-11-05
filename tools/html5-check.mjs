@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import {
   mkdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -91,6 +92,7 @@ function validateManifest() {
       ![
         "cli-fragment",
         "cli-complete",
+        "cli-slides",
         "conformance-fragment",
         "conformance-complete",
       ].includes(entry.kind)
@@ -221,6 +223,19 @@ function conformanceRequest(name, expectedMode) {
 }
 
 function renderCase(entry) {
+  if (entry.kind === "cli-slides") {
+    // Cargo targets may be linked into an isolated worktree; the managed output
+    // uses the real directory and keeps the product's symlink rejection intact.
+    const destination = resolve(realpathSync(outputDirectory), `${entry.name}.bundle`);
+    const result = run(cli, [
+      "convert", repositoryPath(entry.source, `source for ${entry.name}`),
+      "--to", "revealjs", "--output", destination,
+      "--slides-helper", resolve(root, "packages/slides-helper/bin.mjs"),
+      ...(entry.args ?? []),
+    ]);
+    requireSuccess(result, `rendering ${entry.name}`);
+    return readFileSync(resolve(destination, "index.html"), "utf8");
+  }
   if (entry.kind === "cli-fragment" || entry.kind === "cli-complete") {
     const args = ["convert"];
     if (entry.kind === "cli-complete") {
@@ -268,7 +283,7 @@ function generateDocuments() {
   for (const entry of manifest.cases) {
     const fragment = renderCase(entry);
     const document =
-      entry.kind === "cli-complete" || entry.kind === "conformance-complete"
+      entry.kind === "cli-complete" || entry.kind === "cli-slides" || entry.kind === "conformance-complete"
         ? fragment
         : template.replace(marker, fragment);
     const output = resolve(outputDirectory, `${entry.name}.html`);
