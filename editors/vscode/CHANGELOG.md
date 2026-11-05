@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.56.0] - 2026-11-05
+
+### Changed
+
+- The extension now requires VS Code 1.138.0 or later and uses the matching VS Code API types. Update VS Code or your compatible editor before installing this version.
+
 ## [0.55.2] - 2026-10-04
 
 ### Fixed
