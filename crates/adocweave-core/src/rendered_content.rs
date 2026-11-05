@@ -32,6 +32,8 @@ pub struct ValidatedMath {
     svg: String,
     ids: BTreeSet<String>,
     references: BTreeSet<String>,
+    // Attribute value spans recorded while validating and serializing the XML.
+    identities: Vec<std::ops::Range<usize>>,
 }
 impl ValidatedMath {
     /// Validates the MathJax SVG profile with fixed byte, node and depth limits.
@@ -42,11 +44,13 @@ impl ValidatedMath {
         }
         let mut ids = BTreeSet::new();
         let mut references = BTreeSet::new();
-        let svg = normalize_svg(svg, scope, key, &mut ids, &mut references)?;
+        let mut identities = Vec::new();
+        let svg = normalize_svg(svg, scope, key, &mut ids, &mut references, &mut identities)?;
         Ok(Self {
             svg,
             ids,
             references,
+            identities,
         })
     }
     /// SVG IDs used by the host to reject collisions across output regions.
@@ -60,81 +64,38 @@ impl ValidatedMath {
     pub(crate) fn svg(&self) -> &str {
         &self.svg
     }
-    /// Only slide footnote placement planning may rename already validated IDs.
-    /// The XML tree is serialized again; source markup is never copied verbatim.
-    pub(crate) fn remap_ids(&self, mapping: &BTreeMap<String, String>) -> Self {
-        if !self
-            .ids
-            .iter()
-            .chain(&self.references)
-            .any(|id| mapping.contains_key(id))
-        {
+    /// Gives a copied formula's own IDs a placement prefix. External references stay unchanged.
+    /// Only value spans recorded during XML validation are substituted; replacements are escaped.
+    pub(crate) fn with_id_prefix(&self, prefix: &str) -> Self {
+        if self.ids.is_empty() {
             return self.clone();
         }
-        fn rewrite(source: &str, mapping: &BTreeMap<String, String>) -> String {
-            fn write_node(
-                node: roxmltree::Node<'_, '_>,
-                mapping: &BTreeMap<String, String>,
-                output: &mut String,
-                root: bool,
-            ) {
-                if node.is_text() {
-                    escape(output, node.text().unwrap_or_default());
-                    return;
-                }
-                output.push('<');
-                output.push_str(node.tag_name().name());
-                if root {
-                    output.push_str(" xmlns=\"");
-                    escape(
-                        output,
-                        node.tag_name().namespace().expect("validated namespace"),
-                    );
-                    output.push('"');
-                }
-                for attr in node.attributes() {
-                    output.push(' ');
-                    output.push_str(attr.name());
-                    output.push_str("=\"");
-                    match attr.name() {
-                        "id" => escape(
-                            output,
-                            mapping
-                                .get(attr.value())
-                                .map_or(attr.value(), String::as_str),
-                        ),
-                        "href" => {
-                            output.push('#');
-                            let target = &attr.value()[1..];
-                            escape(output, mapping.get(target).map_or(target, String::as_str));
-                        }
-                        _ => escape(output, attr.value()),
-                    }
-                    output.push('"');
-                }
-                output.push('>');
-                for child in node.children() {
-                    write_node(child, mapping, output, false);
-                }
-                output.push_str("</");
-                output.push_str(node.tag_name().name());
-                output.push('>');
-            }
-            let document = roxmltree::Document::parse(source).expect("private normalized XML");
-            let mut output = String::new();
-            write_node(document.root_element(), mapping, &mut output, true);
-            output
+        let mapping = self
+            .ids
+            .iter()
+            .map(|id| (id.as_str(), format!("{prefix}-{id}")))
+            .collect::<BTreeMap<_, _>>();
+        let mut svg = String::new();
+        let mut identities = Vec::with_capacity(self.identities.len());
+        let mut previous = 0;
+        for span in &self.identities {
+            svg.push_str(&self.svg[previous..span.start]);
+            let value = &self.svg[span.clone()];
+            let start = svg.len();
+            escape(&mut svg, mapping.get(value).map_or(value, String::as_str));
+            identities.push(start..svg.len());
+            previous = span.end;
         }
-        let remap = |values: &BTreeSet<String>| {
-            values
-                .iter()
-                .map(|id| mapping.get(id).unwrap_or(id).clone())
-                .collect()
-        };
+        svg.push_str(&self.svg[previous..]);
         Self {
-            svg: rewrite(&self.svg, mapping),
-            ids: remap(&self.ids),
-            references: remap(&self.references),
+            svg,
+            ids: mapping.values().cloned().collect(),
+            references: self
+                .references
+                .iter()
+                .map(|id| mapping.get(id.as_str()).unwrap_or(id).clone())
+                .collect(),
+            identities,
         }
     }
 }
@@ -352,6 +313,7 @@ fn normalize_svg(
     key: &str,
     ids: &mut BTreeSet<String>,
     refs: &mut BTreeSet<String>,
+    identities: &mut Vec<std::ops::Range<usize>>,
 ) -> Result<String, ContentValidationError> {
     if source.len() > SVG_BYTES {
         return Err(invalid("math SVG byte limit exceeded"));
@@ -380,6 +342,7 @@ fn normalize_svg(
         key,
         ids,
         references: refs,
+        identities,
     }
     .node(element, 0, &mut output)?;
     if output.len() > SVG_BYTES * 6 {
@@ -392,6 +355,7 @@ struct SvgNormalizer<'a> {
     key: &'a str,
     ids: &'a mut BTreeSet<String>,
     references: &'a mut BTreeSet<String>,
+    identities: &'a mut Vec<std::ops::Range<usize>>,
 }
 impl SvgNormalizer<'_> {
     fn node(
@@ -460,7 +424,12 @@ impl SvgNormalizer<'_> {
             output.push(' ');
             output.push_str(name);
             output.push_str("=\"");
+            let value_start = output.len();
             escape(output, value);
+            if matches!(name, "id" | "href") {
+                let start = value_start + usize::from(name == "href");
+                self.identities.push(start..output.len());
+            }
             output.push('"');
         }
         output.push('>');
@@ -505,6 +474,35 @@ fn length(value: &str) -> bool {
         || ["ex", "em", "px", "pt", "%"]
             .iter()
             .any(|suffix| value.strip_suffix(suffix).is_some_and(numeric))
+}
+fn paint(value: &str) -> bool {
+    if let Some(hex) = value.strip_prefix('#') {
+        return matches!(hex.len(), 3 | 4 | 6 | 8) && hex.bytes().all(|b| b.is_ascii_hexdigit());
+    }
+    // CSS named colors, plus SVG's no-paint and inherited-color values.
+    // Keep this finite: MathJax also passes authored url(...) and CSS functions through.
+    // https://www.w3.org/TR/css-color-4/#named-colors
+    const NAMES: &str = "aliceblue antiquewhite aqua aquamarine azure beige bisque black \
+        blanchedalmond blue blueviolet brown burlywood cadetblue chartreuse chocolate coral \
+        cornflowerblue cornsilk crimson cyan darkblue darkcyan darkgoldenrod darkgray darkgreen \
+        darkgrey darkkhaki darkmagenta darkolivegreen darkorange darkorchid darkred darksalmon \
+        darkseagreen darkslateblue darkslategray darkslategrey darkturquoise darkviolet deeppink \
+        deepskyblue dimgray dimgrey dodgerblue firebrick floralwhite forestgreen fuchsia gainsboro \
+        ghostwhite gold goldenrod gray green greenyellow grey honeydew hotpink indianred indigo \
+        ivory khaki lavender lavenderblush lawngreen lemonchiffon lightblue lightcoral lightcyan \
+        lightgoldenrodyellow lightgray lightgreen lightgrey lightpink lightsalmon lightseagreen \
+        lightskyblue lightslategray lightslategrey lightsteelblue lightyellow lime limegreen linen \
+        magenta maroon mediumaquamarine mediumblue mediumorchid mediumpurple mediumseagreen \
+        mediumslateblue mediumspringgreen mediumturquoise mediumvioletred midnightblue mintcream \
+        mistyrose moccasin navajowhite navy oldlace olive olivedrab orange orangered orchid \
+        palegoldenrod palegreen paleturquoise palevioletred papayawhip peachpuff peru pink plum \
+        powderblue purple rebeccapurple red rosybrown royalblue saddlebrown salmon sandybrown \
+        seagreen seashell sienna silver skyblue slateblue slategray slategrey snow springgreen \
+        steelblue tan teal thistle tomato turquoise violet wheat white whitesmoke yellow \
+        yellowgreen transparent currentcolor none";
+    NAMES
+        .split_ascii_whitespace()
+        .any(|name| value.eq_ignore_ascii_case(name))
 }
 fn tokens(value: &str) -> bool {
     value.len() <= 256
@@ -562,7 +560,7 @@ fn allowed_attribute(name: &str, value: &str) -> bool {
                 || b.is_ascii_whitespace()
                 || b"MmZzLlHhVvCcSsQqTtAaEe.,+-".contains(&b)
         }),
-        "stroke" | "fill" => matches!(value, "currentColor" | "none"),
+        "stroke" | "fill" => paint(value),
         "stroke-width" | "opacity" => numeric(value),
         "stroke-linecap" => matches!(value, "round" | "butt" | "square"),
         "role" => value == "img",
@@ -599,7 +597,93 @@ pub(crate) fn escape(output: &mut String, value: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn copied_math_changes_only_validated_identity_attributes() {
+        let source = r##"<svg xmlns="http://www.w3.org/2000/svg"><defs><path id="body-m1-i0" d="M0 0"></path></defs><use href="#body-m1-i0"></use><a href="#body-m2-i0"><text>日本語 &amp; body-m1-i0</text></a></svg>"##;
+        let original = ValidatedMath::validate("body", "m1", source).unwrap();
+        let first = original.with_id_prefix("slides-body-s1-footnote-1");
+        let second = original.with_id_prefix("slides-body-s2-footnote-1");
+        for (value, prefix) in [
+            (&first, "slides-body-s1-footnote-1"),
+            (&second, "slides-body-s2-footnote-1"),
+        ] {
+            let document = roxmltree::Document::parse(value.svg()).unwrap();
+            assert!(
+                document
+                    .descendants()
+                    .any(|node| node.attribute("id") == Some(&format!("{prefix}-body-m1-i0")))
+            );
+            assert!(
+                document
+                    .descendants()
+                    .any(|node| node.attribute("href") == Some(&format!("#{prefix}-body-m1-i0")))
+            );
+            assert!(
+                document
+                    .descendants()
+                    .any(|node| node.attribute("href") == Some("#body-m2-i0"))
+            );
+            assert!(value.svg().contains("日本語 &amp; body-m1-i0"));
+        }
+        assert_eq!(original.ids(), &BTreeSet::from(["body-m1-i0".to_owned()]));
+        assert!(!first.ids().iter().any(|id| second.ids().contains(id)));
+    }
     const SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="1ex" height="2ex" viewBox="0 0 1 2" aria-hidden="true"><defs><path id="body-m0-i0" d="M0 0L1 2Z"/></defs><g transform="scale(1,-1)"><use href="#body-m0-i0"/></g></svg>"##;
+    #[test]
+    fn math_paints_accept_only_named_colors_and_hexadecimal_colors() {
+        for attribute in ["fill", "stroke"] {
+            for color in [
+                "pink",
+                "lightblue",
+                "RebeccaPurple",
+                "transparent",
+                "currentColor",
+                "none",
+                "#abc",
+                "#AbC8",
+                "#ff8040",
+                "#1234AB80",
+            ] {
+                let svg = SVG.replace("<g ", &format!("<g {attribute}=\"{color}\" "));
+                let validated = ValidatedMath::validate("body", "m0", &svg).unwrap();
+                assert!(
+                    validated
+                        .svg()
+                        .contains(&format!("{attribute}=\"{color}\""))
+                );
+            }
+            for color in [
+                "",
+                "unknown",
+                "inherit",
+                "context-fill",
+                "CanvasText",
+                "pink red",
+                " pink",
+                "#",
+                "#ab",
+                "#abcde",
+                "#1234567",
+                "#xyz",
+                "#123456789",
+                "rgb(1,2,3)",
+                "var(--paint)",
+                "url(#body-m0-i0)",
+                "url(https://example.org/paint.svg)",
+                "URL(https://example.org/paint.svg)",
+                "url(&#35;body-m0-i0)",
+                "u&#114;l(https://example.org/paint.svg)",
+                "pink;opacity:0",
+            ] {
+                let svg = SVG.replace("<g ", &format!("<g {attribute}=\"{color}\" "));
+                assert!(
+                    ValidatedMath::validate("body", "m0", &svg).is_err(),
+                    "accepted {svg}"
+                );
+            }
+        }
+    }
     #[test]
     fn math_is_reconstructed_from_decoded_xml_and_has_private_markup() {
         let svg = SVG.replace("</svg>", "<text>&#x3B1;&lt;2</text></svg>");

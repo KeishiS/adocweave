@@ -199,6 +199,17 @@ fn generated_schema() -> Value {
     object_at(&mut schema, "/properties/html/properties/stylesheet-files")
         .insert("default".into(), json!([]));
 
+    replace(
+        &mut schema,
+        "/properties/math/properties/extensions",
+        json!({
+            "type": "array",
+            "items": { "type": "string", "enum": ["color", "cancel", "mathtools"] },
+            "uniqueItems": true,
+            "default": []
+        }),
+    );
+
     schema
 }
 
@@ -243,6 +254,26 @@ fn generated_schema_covers_the_configuration_contract() {
         .expect("compile generated schema");
     let shared_cases = vec![
         ("minimal", json!({ "schema-version": SCHEMA_VERSION }), true),
+        (
+            "math extensions",
+            json!({"schema-version": SCHEMA_VERSION, "math": {"extensions": ["mathtools", "color"]}}),
+            true,
+        ),
+        (
+            "empty math extensions",
+            json!({"schema-version": SCHEMA_VERSION, "math": {"extensions": []}}),
+            true,
+        ),
+        (
+            "unknown math extension",
+            json!({"schema-version": SCHEMA_VERSION, "math": {"extensions": ["ams"]}}),
+            false,
+        ),
+        (
+            "duplicate math extension",
+            json!({"schema-version": SCHEMA_VERSION, "math": {"extensions": ["color", "color"]}}),
+            false,
+        ),
         (
             "resource roots",
             json!({ "schema-version": SCHEMA_VERSION, "resources": { "roots": ["docs", "docs/api"] } }),

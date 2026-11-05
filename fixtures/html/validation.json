@@ -40,6 +40,11 @@
       "source": "fixtures/html/validation.adoc"
     },
     {
+      "name": "block-titles",
+      "kind": "cli-fragment",
+      "source": "fixtures/html/block-titles.adoc"
+    },
+    {
       "name": "complete-document",
       "kind": "cli-complete",
       "source": "fixtures/html/validation.adoc"

@@ -1,0 +1,148 @@
+= Block titles
+:product: AdocWeave
+:listing-caption: Listing
+
+.Paragraph *title* for {product} footnote:paragraph-note[Paragraph title note.]
+[#paragraph.lead]
+Paragraph body.
+
+.Unordered title with xref:#paragraph[paragraph link]
+[#unordered]
+* First item
+* Second item
+
+.Ordered title
+[#ordered]
+. First item
+. Second item
+
+.Description title
+[#description]
+Term:: Definition.
+
+.Checklist title
+* [ ] Pending item
+* [x] Finished item
+
+.Outer list title
+* Parent item
++
+.Nested list title
+[#nested]
+. Nested first
+. Nested second
+
+.Source _title_ footnote:source-note[Source title note.]
+[#source]
+[source,rust]
+----
+let value = 1; // <1>
+----
+.Callout title
+[#callouts]
+<1> Binding.
+
+.Listing title
+[#listing]
+----
+plain <text>
+----
+
+.Literal block title
+[#literal-block]
+....
+literal *text*
+....
+
+.Literal paragraph title
+[#literal-paragraph]
+  indented <text>
+
+.Container title
+[#container]
+____
+Container body.
+____
+
+.Quote *title*
+[#quote]
+[quote,Author,Source]
+____
+Quoted body.
+____
+
+.Verse title
+[#verse]
+[verse,Poet,Collection]
+____
+First line.
+Second line.
+____
+
+.Short warning title
+[#short-warning]
+WARNING: Short warning body.
+
+.Long note title
+[#long-note]
+[NOTE]
+====
+First note paragraph.
+
+Second note paragraph.
+====
+
+.Example title
+[#example]
+====
+Example body.
+====
+
+.Sidebar title
+[#sidebar]
+****
+Sidebar body.
+****
+
+.Open title
+[#open]
+--
+Open body.
+--
+
+.Disclosure title
+[#disclosure%collapsible%open]
+====
+Disclosure body.
+====
+
+.Table title footnote:table-note[Table title note.]
+[#table]
+|===
+|Cell one |Cell two
+|===
+
+// Without host resolution, the image falls back to its alt text and retains its title.
+.Image title
+[#image]
+image::https://example.com/diagram.png[Diagram]
+
+.Math title with latexmath:[y < 2]
+[#math]
+[latexmath]
+++++
+x < y
+++++
+
+.Passthrough title
+[#passthrough]
+++++
+<strong>Escaped body.</strong>
+++++
+
+.Hidden comment title
+////
+Hidden comment body.
+////
+
+Untitled paragraph with <<paragraph>>, <<nested>>, <<source>>, <<table>>, and <<image>>.

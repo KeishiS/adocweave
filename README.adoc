@@ -75,13 +75,14 @@ adocweave format --write docs
 全オプション、標準入力および``include::``の扱いは、
 xref:docs/user-guide/command-line.adoc[コマンドライン]を参照してください。
 研究スライドのLaTeX数式やCSLによる引用整形には、Node.jsと別配布の補助プログラムが必要です。
-導入方法と原稿の書き方は、xref:docs/user-guide/command-line.adoc#revealjs-slides[reveal.jsスライド]を参照してください。
+原稿作成、CSSによるデザイン調整と配布の手順は、xref:docs/user-guide/slides.adoc[スライドの作成]を参照してください。
 
 == ドキュメント
 
 * xref:docs/README.adoc[ドキュメントの案内]
 * xref:docs/user-guide/syntax-support.adoc[対応している書式]
 * xref:docs/user-guide/command-line.adoc[コマンドライン]
+* xref:docs/user-guide/slides.adoc[スライドの作成とデザイン調整]
 * xref:docs/user-guide/project-configuration.adoc[プロジェクト設定]
 * xref:docs/user-guide/compatibility.adoc[AsciiDocとの互換性]
 * https://github.com/KeishiS/adocweave/releases[リリース情報]

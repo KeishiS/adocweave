@@ -9,7 +9,7 @@ use adocweave_core::resolution::{MediaType, ResolvedResource, ResourcePurpose};
 use adocweave_core::semantic::{self, Inline, ReferenceDestination, SemanticNode};
 use adocweave_core::{CancellationCheck, OutputLimits};
 use adocweave_project::{
-    BundleFile, BundleMediaType, ProjectAuthority, ProjectObservationCandidate,
+    BundleFile, BundleMediaType, BundleSnapshot, ProjectAuthority, ProjectObservationCandidate,
     ProjectResourceLimits, ProjectTargetResult,
 };
 
@@ -17,6 +17,37 @@ use super::{Audience, Deck, problem, unsupported_fragment_name};
 use crate::cli_error::CliError;
 
 const SPEAKER_SCRIPT_HASH: &str = "sha256-GzCveToXhSIzS3M5eQeRm3McVRB7cYneYKwTkzA3wDk=";
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SlideMetadata {
+    schema_version: u32,
+    audience: Audience,
+}
+
+pub(crate) fn audience_from_bundle(bundle: &BundleSnapshot) -> Result<Audience, CliError> {
+    if bundle.file("index.html").is_none_or(|file| {
+        file.media_type != BundleMediaType::Html || std::str::from_utf8(&file.bytes).is_err()
+    }) {
+        return Err(CliError::Slides(
+            "managed slide bundle must contain a UTF-8 index.html page".to_owned(),
+        ));
+    }
+    let file = bundle
+        .file("slides.json")
+        .filter(|file| file.media_type == BundleMediaType::Json)
+        .ok_or_else(|| {
+            CliError::Slides("slide metadata is missing; regenerate the slide bundle".to_owned())
+        })?;
+    let metadata: SlideMetadata = serde_json::from_slice(&file.bytes)
+        .map_err(|error| CliError::Slides(format!("invalid slide metadata: {error}")))?;
+    if metadata.schema_version != 1 {
+        return Err(CliError::Slides(
+            "unsupported slide metadata version; regenerate the slide bundle".to_owned(),
+        ));
+    }
+    Ok(metadata.audience)
+}
 
 pub(crate) struct GeneratedBundle {
     pub(crate) files: Vec<BundleFile>,
@@ -119,6 +150,15 @@ fn static_file(path: &str, media_type: BundleMediaType, bytes: &[u8]) -> BundleF
 fn fixed_files(audience: Audience, preview: bool) -> Vec<BundleFile> {
     let mut files = vec![
         static_file(
+            "slides.json",
+            BundleMediaType::Json,
+            &serde_json::to_vec(&SlideMetadata {
+                schema_version: 1,
+                audience,
+            })
+            .expect("slide metadata contains only serializable fields"),
+        ),
+        static_file(
             "assets/reveal.js",
             BundleMediaType::JavaScript,
             include_bytes!("../../assets/revealjs/reveal.js"),
@@ -190,16 +230,90 @@ fn fixed_files(audience: Audience, preview: bool) -> Vec<BundleFile> {
     files
 }
 
+fn parse_aspect_ratio(value: &str) -> Option<String> {
+    let (width, height) = value.trim().split_once(':')?;
+    let width = width.trim().parse::<u32>().ok()?;
+    let height = height.trim().parse::<u32>().ok()?;
+    if width == 0 || height == 0 || !(0.25..=4.0).contains(&(width as f64 / height as f64)) {
+        return None;
+    }
+    let (mut divisor, mut remainder) = (width, height);
+    while remainder != 0 {
+        (divisor, remainder) = (remainder, divisor % remainder);
+    }
+    Some(format!("{}:{}", width / divisor, height / divisor))
+}
+
+fn resolve_aspect_ratio(
+    analysis: &adocweave_core::Analysis,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<Option<String>, CliError> {
+    let header_end = analysis.document().header().end;
+    for attribute in analysis.document_attribute_occurrences() {
+        if attribute.name == "slides-aspect-ratio" && attribute.range.start() >= header_end {
+            problem(
+                diagnostics,
+                "slides-misplaced-aspect-ratio",
+                "slides-aspect-ratio must be set or unset in the document header, before the first blank line",
+                attribute.range,
+            );
+        }
+    }
+    let Some(attribute) = analysis
+        .attribute_environment()
+        .resolve_at("slides-aspect-ratio", header_end)
+    else {
+        return Ok(None);
+    };
+    if matches!(attribute.value, Ok(None)) {
+        return Ok(None);
+    }
+    if let Ok(Some(value)) = attribute.value {
+        if value.trim() == "auto" {
+            return Ok(None);
+        }
+        if let Some(ratio) = parse_aspect_ratio(value) {
+            return Ok(Some(ratio));
+        }
+    }
+    let message = "slides-aspect-ratio must be auto or WIDTH:HEIGHT, using positive integers and a ratio between 1:4 and 4:1";
+    if let Some(binding) = attribute.binding {
+        problem(
+            diagnostics,
+            "slides-invalid-aspect-ratio",
+            message,
+            binding.occurrence().range,
+        );
+        Ok(None)
+    } else {
+        Err(CliError::Usage(message.to_owned()))
+    }
+}
+
+struct PageOptions<'a> {
+    audience: Audience,
+    language: &'a str,
+    aspect_ratio: Option<&'a str>,
+    preview: bool,
+}
+
 fn page(
     deck: &Deck<'_>,
     html: &str,
-    audience: Audience,
-    language: &str,
+    options: PageOptions<'_>,
     attribution: Option<&str>,
     styles: &[String],
-    preview: bool,
 ) -> String {
+    let PageOptions {
+        audience,
+        language,
+        aspect_ratio,
+        preview,
+    } = options;
     let language = escape(language);
+    let aspect_ratio = aspect_ratio.map_or_else(String::new, |ratio| {
+        format!(" data-aspect-ratio=\"{}\"", escape(ratio))
+    });
     let title = deck
         .groups
         .iter()
@@ -240,7 +354,7 @@ fn page(
         ""
     };
     format!(
-        "<!doctype html>\n<html lang=\"{language}\">\n<head>\n<meta charset=\"utf-8\">\n<meta http-equiv=\"Content-Security-Policy\" content=\"{}\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>{}</title>\n<link rel=\"stylesheet\" href=\"assets/reset.css\">\n<link rel=\"stylesheet\" href=\"assets/reveal.css\">\n<link rel=\"stylesheet\" href=\"assets/theme.css\">\n<link rel=\"stylesheet\" href=\"assets/content.css\">\n{styles}</head>\n<body data-audience=\"{audience_name}\"{citations}{preview_body}>\n{html}{attribution}<script src=\"assets/reveal.js\"></script>\n{notes}<script src=\"assets/bootstrap.js\"></script>\n{preview_script}</body>\n</html>\n",
+        "<!doctype html>\n<html lang=\"{language}\">\n<head>\n<meta charset=\"utf-8\">\n<meta http-equiv=\"Content-Security-Policy\" content=\"{}\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>{}</title>\n<link rel=\"stylesheet\" href=\"assets/reset.css\">\n<link rel=\"stylesheet\" href=\"assets/reveal.css\">\n<link rel=\"stylesheet\" href=\"assets/theme.css\">\n<link rel=\"stylesheet\" href=\"assets/content.css\">\n{styles}</head>\n<body data-audience=\"{audience_name}\"{aspect_ratio}{citations}{preview_body}>\n{html}{attribution}<script src=\"assets/reveal.js\"></script>\n{notes}<script src=\"assets/bootstrap.js\"></script>\n{preview_script}</body>\n</html>\n",
         escape(&content_security_policy(audience)),
         escape(title)
     )
@@ -307,6 +421,7 @@ pub(crate) fn build(
         .unwrap_or("");
     let deck = Deck::compile(analysis.document());
     let mut diagnostics = analysis.diagnostics().to_vec();
+    let aspect_ratio = resolve_aspect_ratio(analysis, &mut diagnostics)?;
     let mut observations = Vec::new();
     diagnostics.extend(deck.diagnostics.clone());
     if let Some(name) = target
@@ -424,6 +539,18 @@ pub(crate) fn build(
     };
     let external_csl =
         data.bibliography.is_some() || data.csl_style.is_some() || data.csl_locale.is_some();
+    if external_csl {
+        for entry in analysis.macros().iter().filter(|node| {
+            node.kind == semantic::StandardMacroKind::BibliographyAnchor && visible(node.range)
+        }) {
+            problem(
+                &mut diagnostics,
+                "slides-bibliography-mode-conflict",
+                "hand-written bibliography entries cannot be combined with CSL options; choose one bibliography mode",
+                entry.range,
+            );
+        }
+    }
     for (scope, content) in [
         (super::helper::Scope::Body, &selected.body),
         (super::helper::Scope::Notes, &selected.notes),
@@ -438,14 +565,7 @@ pub(crate) fn build(
                                 && deck.contains_note_range(node.range)))
                 })
             };
-            if external_csl && citation.keys.iter().any(|key| manual(&key.value)) {
-                problem(
-                    &mut diagnostics,
-                    "slides-bibliography-key-conflict",
-                    "an external citation key conflicts with a visible hand-written bibliography entry",
-                    citation.range,
-                );
-            } else if !external_csl
+            if !external_csl
                 && citation.keys.iter().any(|key| {
                     !manual(&key.value)
                         && analysis.macros().iter().any(|node| {
@@ -465,7 +585,7 @@ pub(crate) fn build(
                 problem(
                     &mut diagnostics,
                     "slides-citation-data-required",
-                    "unresolved citation key: supply --bibliography, --csl-style, and --csl-locale to use CSL citations",
+                    "unresolved citation key: supply --bibliography to use CSL citations",
                     citation.range,
                 );
             }
@@ -547,9 +667,8 @@ pub(crate) fn build(
     }
     let prepared = match super::helper::prepare(
         analysis,
-        &body_selection,
-        &note_selection,
-        audience == Audience::Presenter,
+        selected,
+        target.config.config.math_extensions(),
         data_inputs.macros,
         data_inputs.csl,
     ) {
@@ -830,15 +949,18 @@ pub(crate) fn build(
     let page = page(
         &deck,
         &rendered.html,
-        audience,
-        language,
+        PageOptions {
+            audience,
+            language,
+            aspect_ratio: aspect_ratio.as_deref(),
+            preview,
+        },
         helper
             .notices
             .citations
             .as_ref()
             .map(|notices| notices.attribution.as_str()),
         &styles.links,
-        preview,
     );
     let limit = OutputLimits::default().max_output_bytes;
     if page.len() > limit as usize {
@@ -872,11 +994,14 @@ mod tests {
         let html = page(
             &deck,
             "<div class=\"reveal\"><div class=\"slides\"></div></div>",
-            Audience::Public,
-            "ja",
+            PageOptions {
+                audience: Audience::Public,
+                language: "ja",
+                aspect_ratio: None,
+                preview: false,
+            },
             Some("<script>Copyright & citation</script>"),
             &[],
-            false,
         );
         assert!(html.contains("&lt;script&gt;Copyright &amp; citation&lt;/script&gt;"));
         assert!(html.contains("href=\"https://citationstyles.org/\""));
@@ -901,7 +1026,18 @@ mod tests {
             )
             .unwrap();
         for audience in [Audience::Public, Audience::Presenter] {
-            let html = page(&deck, &rendered.html, audience, "", None, &[], false);
+            let html = page(
+                &deck,
+                &rendered.html,
+                PageOptions {
+                    audience,
+                    language: "",
+                    aspect_ratio: Some("16:9"),
+                    preview: false,
+                },
+                None,
+                &[],
+            );
             assert!(
                 html.find("Content-Security-Policy").unwrap() < html.find("stylesheet").unwrap()
             );

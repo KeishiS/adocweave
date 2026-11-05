@@ -21,19 +21,19 @@ mod slides;
 mod terminal;
 mod theme;
 
-static PREVIEW_SHUTDOWN: AtomicBool = AtomicBool::new(false);
+static COMMAND_SHUTDOWN: AtomicBool = AtomicBool::new(false);
 struct ShutdownCheck;
 impl adocweave_core::CancellationCheck for ShutdownCheck {
     fn is_cancelled(&self) -> bool {
-        PREVIEW_SHUTDOWN.load(std::sync::atomic::Ordering::Acquire)
+        COMMAND_SHUTDOWN.load(std::sync::atomic::Ordering::Acquire)
     }
 }
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[cfg(unix)]
-fn install_preview_signal_handlers() {
+fn install_shutdown_signal_handlers() {
     extern "C" fn shutdown(_: libc::c_int) {
-        PREVIEW_SHUTDOWN.store(true, std::sync::atomic::Ordering::Release);
+        COMMAND_SHUTDOWN.store(true, std::sync::atomic::Ordering::Release);
     }
     // SAFETY: the handler performs only a lock-free atomic store, and the
     // process retains the static flag for its entire lifetime.
@@ -45,7 +45,20 @@ fn install_preview_signal_handlers() {
 }
 
 #[cfg(not(unix))]
-fn install_preview_signal_handlers() {}
+fn install_shutdown_signal_handlers() {}
+
+#[cfg(unix)]
+fn restore_shutdown_signal_defaults() {
+    // SAFETY: these are the standard termination dispositions. Call only once
+    // helper processes have been reaped and cooperative cleanup is complete.
+    unsafe {
+        libc::signal(libc::SIGINT, libc::SIG_DFL);
+        libc::signal(libc::SIGTERM, libc::SIG_DFL);
+    }
+}
+
+#[cfg(not(unix))]
+fn restore_shutdown_signal_defaults() {}
 
 #[cfg(test)]
 use commands::format::Options as FormatOptions;
@@ -141,8 +154,8 @@ async fn run() -> Result<CliExitCode, CliError> {
             bind,
             port,
         } => {
-            PREVIEW_SHUTDOWN.store(false, std::sync::atomic::Ordering::Release);
-            install_preview_signal_handlers();
+            COMMAND_SHUTDOWN.store(false, std::sync::atomic::Ordering::Release);
+            install_shutdown_signal_handlers();
             let directory = if directory.is_absolute() {
                 directory
             } else {
@@ -157,19 +170,7 @@ async fn run() -> Result<CliExitCode, CliError> {
             .map_err(CliError::Bundle)?;
             let bundle = adocweave_project::BundleSnapshot::from_reader(&reader, &cancellation)
                 .map_err(CliError::Bundle)?;
-            if bundle.file("index.html").is_none_or(|file| {
-                file.media_type != adocweave_project::BundleMediaType::Html
-                    || std::str::from_utf8(&file.bytes).is_err()
-            }) {
-                return Err(CliError::Slides(
-                    "managed slide bundle must contain a UTF-8 index.html page".to_owned(),
-                ));
-            }
-            let audience = if bundle.file("assets/notes.js").is_some() {
-                slides::Audience::Presenter
-            } else {
-                slides::Audience::Public
-            };
+            let audience = slides::bundle::audience_from_bundle(&bundle)?;
             if !bind.is_loopback() {
                 eprintln!(
                     "warning: slide server is exposed on non-loopback address {bind}; rendered content may be visible to other hosts"
@@ -183,14 +184,26 @@ async fn run() -> Result<CliExitCode, CliError> {
                 },
                 bundle,
                 audience,
-                &PREVIEW_SHUTDOWN,
+                &COMMAND_SHUTDOWN,
             )
             .map_err(CliError::Preview)?;
             Ok(CliExitCode::Success)
         }
         Action::Run(arguments) => {
             if !matches!(arguments.command, CommandOptions::Preview { .. }) {
-                return project_command::run(&arguments);
+                let cancellation: &dyn adocweave_core::CancellationCheck = if matches!(
+                    arguments.command,
+                    CommandOptions::Convert {
+                        target: arguments::ConvertTarget::Revealjs,
+                        ..
+                    }
+                ) {
+                    COMMAND_SHUTDOWN.store(false, std::sync::atomic::Ordering::Release);
+                    &ShutdownCheck
+                } else {
+                    &adocweave_core::NeverCancel
+                };
+                return project_command::run(&arguments, cancellation);
             }
             if let CommandOptions::Preview { css, .. } = &arguments.command {
                 commands::html_policy::validate_argument_count(css)
@@ -218,8 +231,8 @@ async fn run() -> Result<CliExitCode, CliError> {
                 debounce_ms,
             } = &arguments.command
             {
-                PREVIEW_SHUTDOWN.store(false, std::sync::atomic::Ordering::Release);
-                install_preview_signal_handlers();
+                COMMAND_SHUTDOWN.store(false, std::sync::atomic::Ordering::Release);
+                install_shutdown_signal_handlers();
                 commands::preview::run(
                     commands::preview::RunRequest {
                         project,
@@ -238,7 +251,7 @@ async fn run() -> Result<CliExitCode, CliError> {
                             debounce_ms: *debounce_ms,
                         },
                     },
-                    &PREVIEW_SHUTDOWN,
+                    &COMMAND_SHUTDOWN,
                 )
                 .map_err(preview_error)?;
                 return Ok(CliExitCode::Success);
@@ -472,6 +485,55 @@ mod tests {
                 ..
             } if bind == "0.0.0.0".parse::<std::net::IpAddr>().expect("address")
         ));
+    }
+
+    #[test]
+    fn single_file_slides_require_public_conversion_without_output_directory() {
+        let Action::Run(parsed) = parse_arguments(arguments(&[
+            "convert",
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--single-file",
+        ]))
+        .unwrap() else {
+            panic!("convert action");
+        };
+        assert!(matches!(
+            parsed.command,
+            CommandOptions::Convert {
+                single_file: true,
+                output: None,
+                audience: super::slides::Audience::Public,
+                ..
+            }
+        ));
+        for options in [
+            vec!["convert", "talk.adoc", "--single-file"],
+            vec!["convert", "talk.adoc", "--to", "revealjs"],
+            vec![
+                "convert",
+                "talk.adoc",
+                "--to",
+                "revealjs",
+                "--single-file",
+                "--output",
+                "dist",
+            ],
+            vec![
+                "convert",
+                "talk.adoc",
+                "--to",
+                "revealjs",
+                "--single-file",
+                "--audience",
+                "presenter",
+            ],
+            vec!["preview", "talk.adoc", "--to", "revealjs", "--single-file"],
+            vec!["serve", "bundle", "--single-file"],
+        ] {
+            assert!(parse_arguments(arguments(&options)).is_err(), "{options:?}");
+        }
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use super::*;
 use crate::generated_bibliography::{GeneratedBibliography, GeneratedBibliographyEntry};
-use crate::html::{self, HtmlSlideRegions, RenderPolicy, render_slide_regions};
+use crate::html::{self, RenderPolicy, render_slide_regions};
 use crate::{AnalysisOptions, Engine, OutputLimits};
 
 fn region(document: &Document, roots: &[usize]) -> HtmlRegionSelection {
@@ -13,13 +13,21 @@ fn region(document: &Document, roots: &[usize]) -> HtmlRegionSelection {
     }
 }
 
+struct Rendered {
+    regions: Vec<String>,
+    footnotes: Vec<String>,
+    bibliography: Option<String>,
+    generated_ids: BTreeSet<String>,
+    diagnostics: Vec<crate::diagnostic::Diagnostic>,
+}
+
 fn render(
     document: &Document,
     inputs: &RenderInputs,
     selections: &HtmlSlideSelections,
     scope: HtmlSlideScope,
-) -> HtmlSlideRegions {
-    render_slide_regions(
+) -> Rendered {
+    let output = render_slide_regions(
         document,
         &RenderPolicy::default(),
         inputs,
@@ -28,7 +36,26 @@ fn render(
         &BTreeSet::new(),
         OutputLimits::default(),
     )
-    .unwrap()
+    .unwrap();
+    assert_eq!(output.slides.len(), selections.groups(scope).len());
+    for (slide, selection) in output.slides.iter().zip(selections.groups(scope)) {
+        assert_eq!(slide.regions.len(), selection.len());
+    }
+    Rendered {
+        regions: output
+            .slides
+            .iter()
+            .flat_map(|slide| slide.regions.iter().cloned())
+            .collect(),
+        footnotes: output
+            .slides
+            .into_iter()
+            .map(|slide| slide.footnotes)
+            .collect(),
+        bibliography: output.bibliography,
+        generated_ids: output.generated_ids,
+        diagnostics: output.diagnostics,
+    }
 }
 
 fn bibliography(scope: HtmlSlideScope, keys: &[&str]) -> RenderInputs {
@@ -143,13 +170,13 @@ fn captions_keep_family_prefix_and_disabled_numbering_at_the_source_position() {
 }
 
 #[test]
-fn footnotes_are_once_per_slide_across_columns_and_shared_content_is_copied_to_notes() {
+fn footnotes_are_once_per_slide_across_columns_with_independent_note_definitions() {
     let analysis = Engine::new(AnalysisOptions::default())
         .analyze(concat!(
             "First footnote:shared[Public *detail*].\n\n",
             "Another footnote:[Other content].\n\n",
             "Again footnote:shared[].\n\n",
-            "[.notes]\n--\nNotes footnote:shared[] and footnote:[Private detail].\n--\n"
+            "[.notes]\n--\nNotes footnote:[Note *detail*] and footnote:[Private detail].\n--\n"
         ))
         .unwrap();
     let doc = analysis.document();
@@ -193,7 +220,8 @@ fn footnotes_are_once_per_slide_across_columns_and_shared_content_is_copied_to_n
     assert!(!body.footnotes.concat().contains("Private detail"));
     assert!(notes.footnotes[0].is_empty());
     assert!(notes.footnotes[1].contains("id=\"slides-notes-s2-footnote-1\" value=\"1\""));
-    assert!(notes.footnotes[1].contains("Public <strong>detail</strong>"));
+    assert!(notes.footnotes[1].contains("Note <strong>detail</strong>"));
+    assert!(!notes.footnotes[1].contains("Public"));
     assert!(notes.footnotes[1].contains("id=\"slides-notes-s2-footnote-2\" value=\"2\""));
     assert!(notes.footnotes[1].contains("Private detail"));
     // Local backrefs never jump to another slide's placement of the same note.
@@ -202,6 +230,37 @@ fn footnotes_are_once_per_slide_across_columns_and_shared_content_is_copied_to_n
     let normal = html::render(doc, &RenderPolicy::default()).html;
     assert_eq!(normal.matches("id=\"_footnote_1\"").count(), 1);
     assert!(normal.contains("id=\"_footnote_3\""));
+}
+
+#[test]
+fn notes_cannot_reuse_a_body_footnote_definition() {
+    let analysis = Engine::new(AnalysisOptions::default())
+        .analyze("Body footnote:shared[Body only].\n\n[.notes]\n--\nNotes footnote:shared[].\n--\n")
+        .unwrap();
+    let document = analysis.document();
+    let selections = HtmlSlideSelections {
+        body: vec![vec![region(document, &[0])]],
+        notes: vec![vec![region(document, &[1])]],
+    };
+    assert!(matches!(
+        render_slide_regions(
+            document,
+            &RenderPolicy::default(),
+            &RenderInputs::default(),
+            &selections,
+            HtmlSlideScope::Notes,
+            &BTreeSet::new(),
+            OutputLimits::default()
+        ),
+        Err(HtmlRegionError::FootnoteOutsideScope { .. })
+    ));
+    let body = render(
+        document,
+        &RenderInputs::default(),
+        &selections,
+        HtmlSlideScope::Body,
+    );
+    assert!(body.footnotes[0].contains("Body only"));
 }
 
 #[test]
@@ -694,7 +753,54 @@ fn rich_citation_links_have_fixed_accessible_targets_without_nested_anchors() {
 }
 
 #[test]
-fn repeated_footnote_math_uses_local_copy_targets_and_prose_uses_the_first_placement() {
+fn omitted_math_cannot_define_or_invalidate_visible_reference_targets() {
+    use crate::rendered_content::{ResolvedMath, ValidatedMath};
+    let analysis = Engine::new(AnalysisOptions::default())
+        .analyze("latexmath:[x]\n\nlatexmath:[y]\n")
+        .unwrap();
+    let document = analysis.document();
+    let ranges = crate::projection::formulas(&analysis);
+    let selections = HtmlSlideSelections {
+        body: vec![vec![region(document, &[0])]],
+        notes: vec![],
+    };
+    let equation = |index: usize, target: Option<&str>| {
+        let key = format!("m{index}");
+        let link = target
+            .map(|id| format!("<a href=\"#{id}\"><text>reference</text></a>"))
+            .unwrap_or_default();
+        let svg = format!(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><g id=\"body-{key}-i0\">{link}</g></svg>"
+        );
+        ResolvedMath::new(
+            ranges[index].source_range,
+            ValidatedMath::validate("body", &key, &svg).unwrap(),
+        )
+    };
+    let inputs =
+        RenderInputs::default().with_math(vec![equation(0, Some("body-m1-i0")), equation(1, None)]);
+    assert!(
+        matches!(render_slide_regions(document, &RenderPolicy::default(), &inputs, &selections, HtmlSlideScope::Body, &BTreeSet::new(), OutputLimits::default()), Err(HtmlRegionError::ReferenceOutsideScope { range }) if range == ranges[0].source_range)
+    );
+    let inputs = RenderInputs::default().with_math(vec![
+        equation(0, None),
+        equation(1, Some("body-missing-i0")),
+    ]);
+    let output = render(document, &inputs, &selections, HtmlSlideScope::Body);
+    assert!(!output.generated_ids.contains("body-m1-i0"));
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(
+                |diagnostic| diagnostic.code.as_str() == "unused-render-input"
+                    && diagnostic.range == ranges[1].source_range
+            )
+    );
+}
+
+#[test]
+fn repeated_footnote_math_keeps_local_glyph_ids_and_references_to_body_equations() {
     use crate::rendered_content::{ResolvedMath, ValidatedMath};
     let analysis = Engine::new(AnalysisOptions::default()).analyze("First footnote:shared[latexmath:[x] latexmath:[y]].\n\nAgain footnote:shared[].\n\nExternal latexmath:[z].\n").unwrap();
     let document = analysis.document();
@@ -711,10 +817,10 @@ fn repeated_footnote_math_uses_local_copy_targets_and_prose_uses_the_first_place
         .enumerate()
         .map(|(index, range)| {
             let key = format!("m{index}");
-            let link = if index == 1 {
+            let link = if index == 2 {
                 String::new()
             } else {
-                "<a href=\"#body-m1-i0\"><text>reference</text></a>".into()
+                format!("<use href=\"#body-{key}-i0\"></use><a href=\"#body-m2-i0\"><text>reference</text></a>")
             };
             let svg = format!(
                 "<svg xmlns=\"http://www.w3.org/2000/svg\"><g id=\"body-{key}-i0\">{link}</g></svg>"
@@ -738,7 +844,9 @@ fn repeated_footnote_math_uses_local_copy_targets_and_prose_uses_the_first_place
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
     assert!(output.footnotes[0].contains("href=\"#slides-body-s1-footnote-1-body-m1-i0\""));
     assert!(output.footnotes[1].contains("href=\"#slides-body-s2-footnote-1-body-m1-i0\""));
-    assert!(output.regions[2].contains("href=\"#slides-body-s1-footnote-1-body-m1-i0\""));
+    assert!(output.footnotes[0].contains("href=\"#body-m2-i0\""));
+    assert!(output.footnotes[1].contains("href=\"#body-m2-i0\""));
+    assert!(output.regions[2].contains("id=\"body-m2-i0\""));
     assert_eq!(
         output
             .generated_ids

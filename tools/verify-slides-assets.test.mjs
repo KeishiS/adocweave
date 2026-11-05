@@ -21,7 +21,8 @@ test("cross-slide references expose only the target's own fragment and preserve 
   const context = {
     Reveal: class { getIndices(value) { return value ? value.indices : current; } slide(h, v, f) { calls.push(["slide", h, v, f]); } navigateFragment(f) { calls.push(["fragment", f]); } initialize() { return Promise.resolve(); } layout() {} },
     document: { body: { dataset: { audience: "public" } }, querySelector() { return {}; }, addEventListener(event, callback, capture) { if (event === "click") { assert.equal(capture, true); click = callback; } }, getElementById() { return target; }, images: [] },
-    window: { dispatchEvent() {} }, location: { hash: "#/" }, Event: class {}
+    window: { dispatchEvent() {} }, location: { hash: "#/", search: "" }, Event: class {},
+    screen: { width: 1920, height: 1080 }, URLSearchParams
   };
   vm.runInNewContext(source, context);
   const anchor = { closest() { return this; }, getAttribute() { return "#target"; } };

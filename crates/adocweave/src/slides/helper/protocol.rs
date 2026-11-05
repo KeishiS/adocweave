@@ -2,6 +2,7 @@
 
 use super::{HostError, HostResult};
 use adocweave_core::output::html::RichInline;
+use adocweave_project::MathExtension;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -9,6 +10,16 @@ pub const INPUT_BYTES: usize = 4 * 1024 * 1024;
 pub const OUTPUT_BYTES: usize = 32 * 1024 * 1024;
 pub const ITEMS: usize = 1024;
 pub const BIBLIOGRAPHY_ITEMS: usize = 4096;
+pub const SCHEMA_VERSION: u8 = 3;
+
+pub fn require_response_version(version: u64) -> HostResult<()> {
+    if version == u64::from(SCHEMA_VERSION) {
+        return Ok(());
+    }
+    Err(HostError::protocol(format!(
+        "unsupported slide helper response schemaVersion {version}; this CLI requires schemaVersion {SCHEMA_VERSION} and @adocweave/slides-helper 0.2.0 (or a compatible version); update the selected helper"
+    )))
+}
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -55,6 +66,11 @@ pub struct Equation {
     pub key: String,
     pub tex: String,
     pub display: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub footnote: bool,
+}
+fn is_false(value: &bool) -> bool {
+    !value
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -120,6 +136,7 @@ pub struct Csl {
 pub struct Request {
     pub schema_version: u8,
     pub eqnums: Eqnums,
+    pub extensions: Vec<MathExtension>,
     pub scopes: Scopes<ScopeInput>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub macros: Option<Vec<Macro>>,
@@ -135,8 +152,16 @@ impl Request {
     }
     pub fn validate(&self) -> HostResult<()> {
         check(
-            self.schema_version == 1,
+            self.schema_version == SCHEMA_VERSION,
             "unsupported request schemaVersion",
+        )?;
+        check(self.extensions.len() <= 3, "extension count limit exceeded")?;
+        let mut extensions = BTreeSet::new();
+        check(
+            self.extensions
+                .iter()
+                .all(|extension| extensions.insert(extension)),
+            "duplicate math extension",
         )?;
         let mut equations = 0;
         let mut citations = 0;
@@ -150,6 +175,10 @@ impl Request {
                 check(
                     equation.tex.len() <= 16 * 1024,
                     "equation byte limit exceeded",
+                )?;
+                check(
+                    !equation.footnote || !equation.display,
+                    "footnote equations must be inline",
                 )?;
                 equations += 1;
             }
@@ -215,7 +244,9 @@ impl Request {
         }
         if let Some(csl) = &self.csl {
             check(
-                csl.items.len() <= BIBLIOGRAPHY_ITEMS
+                !csl.style.is_empty()
+                    && !csl.locale.is_empty()
+                    && csl.items.len() <= BIBLIOGRAPHY_ITEMS
                     && csl.style.len() <= 512 * 1024
                     && csl.locale.len() <= 512 * 1024,
                 "CSL input limit exceeded",
@@ -276,41 +307,16 @@ pub fn check(condition: bool, message: &str) -> HostResult<()> {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(tag = "status", rename_all = "lowercase", deny_unknown_fields)]
-pub enum EquationResult {
-    Ok { key: String, svg: String },
-    Failed { key: String },
-}
-impl EquationResult {
-    pub fn key(&self) -> &str {
-        match self {
-            Self::Ok { key, .. } | Self::Failed { key } => key,
-        }
-    }
-    pub fn failed(&self) -> bool {
-        matches!(self, Self::Failed { .. })
-    }
+#[serde(deny_unknown_fields)]
+pub struct EquationResult {
+    pub key: String,
+    pub svg: String,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(tag = "status", rename_all = "lowercase", deny_unknown_fields)]
-pub enum CitationResult {
-    Ok {
-        key: String,
-        inlines: Vec<RichInline>,
-    },
-    Failed {
-        key: String,
-    },
-}
-impl CitationResult {
-    pub fn key(&self) -> &str {
-        match self {
-            Self::Ok { key, .. } | Self::Failed { key } => key,
-        }
-    }
-    pub fn failed(&self) -> bool {
-        matches!(self, Self::Failed { .. })
-    }
+#[serde(deny_unknown_fields)]
+pub struct CitationResult {
+    pub key: String,
+    pub inlines: Vec<RichInline>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -343,12 +349,20 @@ pub struct Diagnostic {
     pub message: String,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct Response {
-    pub schema_version: u8,
-    pub scopes: Scopes<ScopeOutput>,
-    pub diagnostics: Vec<Diagnostic>,
-    pub notices: Notices,
+#[serde(tag = "status", rename_all = "lowercase", deny_unknown_fields)]
+pub enum Response {
+    Ok {
+        #[serde(rename = "schemaVersion")]
+        schema_version: u8,
+        scopes: Scopes<ScopeOutput>,
+        diagnostics: Vec<Diagnostic>,
+        notices: Box<Notices>,
+    },
+    Failed {
+        #[serde(rename = "schemaVersion")]
+        schema_version: u8,
+        diagnostics: Vec<Diagnostic>,
+    },
 }
 
 // Nullable fields in diagnostics are required; absence is a protocol error.
@@ -381,19 +395,17 @@ pub struct Notices {
     pub citations: Option<CitationNotices>,
 }
 impl Notices {
-    pub fn validate(&self, request: &Request, fatal: bool) -> HostResult<()> {
-        let math = !fatal
-            && request
-                .scopes
-                .iter()
-                .iter()
-                .any(|(_, scope)| !scope.equations.is_empty());
-        let citations = !fatal
-            && request
-                .scopes
-                .iter()
-                .iter()
-                .any(|(_, scope)| !scope.citations.is_empty());
+    pub fn validate(&self, request: &Request) -> HostResult<()> {
+        let math = request
+            .scopes
+            .iter()
+            .iter()
+            .any(|(_, scope)| !scope.equations.is_empty());
+        let citations = request
+            .scopes
+            .iter()
+            .iter()
+            .any(|(_, scope)| !scope.citations.is_empty());
         check(
             self.math.is_some() == math && self.citations.is_some() == citations,
             "helper notices do not match the included dependencies",

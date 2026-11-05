@@ -4,11 +4,12 @@ version = 4
 
 [[package]]
 name = "adocweave"
-version = "0.59.0"
+version = "0.62.0"
 dependencies = [
  "adocweave-core",
  "adocweave-lsp",
  "adocweave-project",
+ "base64",
  "clap",
  "clap_complete",
  "libc",
@@ -26,7 +27,7 @@ dependencies = [
 
 [[package]]
 name = "adocweave-core"
-version = "0.59.0"
+version = "0.62.0"
 dependencies = [
  "roxmltree",
  "serde",
@@ -36,7 +37,7 @@ dependencies = [
 
 [[package]]
 name = "adocweave-lsp"
-version = "0.59.0"
+version = "0.62.0"
 dependencies = [
  "adocweave-core",
  "adocweave-project",
@@ -52,7 +53,7 @@ dependencies = [
 
 [[package]]
 name = "adocweave-project"
-version = "0.59.0"
+version = "0.62.0"
 dependencies = [
  "adocweave-core",
  "glob",
@@ -68,7 +69,7 @@ dependencies = [
 
 [[package]]
 name = "adocweave-textlint"
-version = "0.59.0"
+version = "0.62.0"
 dependencies = [
  "adocweave-core",
  "serde",
@@ -79,7 +80,7 @@ dependencies = [
 
 [[package]]
 name = "adocweave-wasm"
-version = "0.59.0"
+version = "0.62.0"
 dependencies = [
  "adocweave-core",
  "js-sys",
@@ -150,6 +151,12 @@ name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
+
+[[package]]
+name = "base64"
+version = "0.22.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "bit-set"
@@ -1357,9 +1364,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.53.1"
+version = "1.53.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "202caea871b69668250d242070849eb495be178ed697a3e98aebce5bc81a0bed"
+checksum = "ce3335fa71841cda333a58d7615b03901380ecf09d59b3296d21f8bbac0dde4e"
 dependencies = [
  "bytes",
  "libc",

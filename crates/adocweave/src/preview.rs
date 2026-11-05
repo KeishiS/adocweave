@@ -74,14 +74,64 @@ pub struct Options {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum Artifact {
+    Html {
+        html: String,
+        style_origins: BTreeSet<String>,
+    },
+    Slides {
+        bundle: Arc<BundleSnapshot>,
+        audience: Audience,
+    },
+    SlideError {
+        html: String,
+        audience: Audience,
+    },
+}
+
+impl Artifact {
+    fn html(&self) -> &str {
+        match self {
+            Self::Html { html, .. } | Self::SlideError { html, .. } => html,
+            Self::Slides { bundle, .. } => {
+                std::str::from_utf8(&bundle.file("index.html").expect("slide page exists").bytes)
+                    .expect("slide page is UTF-8")
+            }
+        }
+    }
+    fn audience(&self) -> Option<Audience> {
+        match self {
+            Self::Html { .. } => None,
+            Self::Slides { audience, .. } | Self::SlideError { audience, .. } => Some(*audience),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum BuildOutcome {
+    Ready(Artifact),
+    Failed(Artifact),
+}
+
+impl BuildOutcome {
+    #[cfg(test)]
+    fn artifact(&self) -> &Artifact {
+        match self {
+            Self::Ready(artifact) | Self::Failed(artifact) => artifact,
+        }
+    }
+    fn into_artifact(self) -> Artifact {
+        match self {
+            Self::Ready(artifact) | Self::Failed(artifact) => artifact,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Build {
-    pub html: String,
+    outcome: BuildOutcome,
     pub diagnostics: String,
     dependencies: BTreeMap<Dependency, Fingerprint>,
-    style_origins: BTreeSet<String>,
-    retain_previous_dependencies: bool,
-    bundle: Option<Arc<BundleSnapshot>>,
-    audience: Option<Audience>,
 }
 
 impl Build {
@@ -91,48 +141,64 @@ impl Build {
         dependencies: BTreeMap<Dependency, Fingerprint>,
     ) -> Self {
         Self {
-            html,
+            outcome: BuildOutcome::Ready(Artifact::Html {
+                html,
+                style_origins: BTreeSet::new(),
+            }),
             diagnostics,
             dependencies,
-            style_origins: BTreeSet::new(),
-            retain_previous_dependencies: false,
-            bundle: None,
-            audience: None,
         }
     }
-
     pub fn failure(message: String, dependencies: BTreeMap<Dependency, Fingerprint>) -> Self {
-        let diagnostics = failure_diagnostics(&message);
         Self {
-            retain_previous_dependencies: true,
-            ..Self::new(error_document(&message), diagnostics, dependencies)
+            outcome: BuildOutcome::Failed(Artifact::Html {
+                html: error_document(&message),
+                style_origins: BTreeSet::new(),
+            }),
+            diagnostics: failure_diagnostics(&message),
+            dependencies,
         }
     }
-
     pub fn with_style_origins(mut self, origins: BTreeSet<String>) -> Self {
-        self.style_origins = origins;
+        if let BuildOutcome::Ready(Artifact::Html { style_origins, .. }) = &mut self.outcome {
+            *style_origins = origins;
+        }
         self
     }
-
-    pub(crate) fn with_slides(mut self, bundle: BundleSnapshot, audience: Audience) -> Self {
-        self.bundle = Some(Arc::new(bundle));
-        self.audience = Some(audience);
-        self
+    pub(crate) fn slides(
+        bundle: BundleSnapshot,
+        audience: Audience,
+        diagnostics: String,
+        dependencies: BTreeMap<Dependency, Fingerprint>,
+    ) -> Self {
+        Self {
+            outcome: BuildOutcome::Ready(Artifact::Slides {
+                bundle: Arc::new(bundle),
+                audience,
+            }),
+            diagnostics,
+            dependencies,
+        }
     }
-
     pub(crate) fn slide_failure(
         message: String,
         dependencies: BTreeMap<Dependency, Fingerprint>,
         audience: Audience,
     ) -> Self {
-        let mut build = Self::failure(message.clone(), dependencies);
-        build.html = format!(
+        let html = format!(
             "<!doctype html><html><head><meta charset=\"utf-8\"><meta http-equiv=\"Content-Security-Policy\" content=\"{}\"><title>Preview error</title></head><body data-preview=\"true\"><h1>Preview error</h1><pre class=\"slides-diagnostics\" aria-live=\"polite\">{}</pre><script src=\"assets/preview.js\"></script></body></html>\n",
             escape_html(&crate::slides::bundle::content_security_policy(audience)),
             escape_html(&message)
         );
-        build.audience = Some(audience);
-        build
+        Self {
+            outcome: BuildOutcome::Failed(Artifact::SlideError { html, audience }),
+            diagnostics: failure_diagnostics(&message),
+            dependencies,
+        }
+    }
+    #[cfg(test)]
+    pub(crate) fn html(&self) -> &str {
+        self.outcome.artifact().html()
     }
 
     #[cfg(test)]
@@ -155,7 +221,7 @@ impl Build {
     }
 
     fn retain_dependencies_from(&mut self, previous: &BTreeMap<Dependency, Fingerprint>) {
-        if self.retain_previous_dependencies {
+        if matches!(self.outcome, BuildOutcome::Failed(_)) {
             for (dependency, fingerprint) in previous {
                 self.dependencies
                     .entry(dependency.clone())
@@ -200,28 +266,25 @@ struct State {
 
 impl State {
     fn from_build(generation: u64, build: Build) -> Self {
-        let mut http = HttpSnapshot::new(
-            generation,
-            build.html,
-            build.diagnostics,
-            build.style_origins,
-        );
-        if let Some(audience) = build.audience {
-            http = http.with_slides(build.bundle, audience, true);
-        }
         Self {
-            http: Arc::new(http),
+            http: Arc::new(HttpSnapshot::from_artifact(
+                generation,
+                build.outcome.into_artifact(),
+                build.diagnostics,
+                true,
+            )),
             dependencies: build.dependencies,
         }
     }
-
-    fn adopt(&mut self, generation: u64, build: Build) {
-        if build.audience.is_some() && build.retain_previous_dependencies {
-            self.http = Arc::new(self.http.failure(generation, build.html, build.diagnostics));
-            self.dependencies = build.dependencies;
-        } else {
-            *self = Self::from_build(generation, build);
+    fn adopt(&mut self, generation: u64, mut build: Build) {
+        // Only complete slides survive a failed rebuild; initial error pages
+        // remain replaceable so subsequent failures show the current message.
+        if matches!(build.outcome, BuildOutcome::Failed(_))
+            && matches!(self.http.artifact(), Artifact::Slides { .. })
+        {
+            build.outcome = BuildOutcome::Failed(self.http.artifact().clone());
         }
+        *self = Self::from_build(generation, build);
     }
 
     fn changed(
@@ -245,11 +308,13 @@ impl State {
         message: &str,
         snapshot: &mut impl FnMut(&[Dependency]) -> BTreeMap<Dependency, Fingerprint>,
     ) {
-        self.http = Arc::new(self.http.failure(
-            generation,
-            error_document(message),
-            failure_diagnostics(message),
-        ));
+        let build = match self.http.artifact().audience() {
+            Some(audience) => {
+                Build::slide_failure(message.to_owned(), self.dependencies.clone(), audience)
+            }
+            None => Build::failure(message.to_owned(), self.dependencies.clone()),
+        };
+        self.adopt(generation, build);
         self.refresh(snapshot);
     }
 }
@@ -483,13 +548,15 @@ pub(crate) fn serve(
     listener.set_nonblocking(true).map_err(Error::Io)?;
     let local = listener.local_addr().map_err(Error::Io)?;
     eprintln!("AdocWeave slides: http://{local}/");
-    let http = Arc::new(
-        HttpSnapshot::new(1, String::new(), String::new(), BTreeSet::new()).with_slides(
-            Some(Arc::new(bundle)),
+    let http = Arc::new(HttpSnapshot::from_artifact(
+        1,
+        Artifact::Slides {
+            bundle: Arc::new(bundle),
             audience,
-            false,
-        ),
-    );
+        },
+        "[]".to_owned(),
+        false,
+    ));
     let workers = HttpWorkers::new().map_err(Error::Io)?;
     while !shutdown.load(Ordering::Acquire) {
         match listener.accept() {

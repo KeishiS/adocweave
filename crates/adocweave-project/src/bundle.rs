@@ -400,6 +400,14 @@ fn verified_files(
             )));
         }
     }
+    verified_manifest_contents(authority, manifest, cancellation)
+}
+
+fn verified_manifest_contents(
+    authority: &RootAuthority,
+    manifest: &BundleManifest,
+    cancellation: &dyn CancellationCheck,
+) -> Result<BTreeMap<String, Vec<u8>>, BundleError> {
     let mut contents = BTreeMap::new();
     for file in &manifest.files {
         cancelled(cancellation)?;
@@ -501,7 +509,7 @@ pub fn open_managed_bundle(
     reject_directory_path(directory, &[])?;
     let authority = open_directory(directory, false)?;
     let (manifest, _) = read_manifest(&authority, limits)?;
-    verified_files(&authority, &manifest, limits, cancellation)?;
+    verified_manifest_contents(&authority, &manifest, cancellation)?;
     Ok(ManagedBundleReader {
         authority,
         manifest,
@@ -797,6 +805,32 @@ mod tests {
                 .unwrap()
                 .contains("private")
         );
+    }
+
+    #[test]
+    fn serving_ignores_unlisted_files_but_saving_preserves_them() {
+        let (_root, path) = root();
+        let output = path.join("talk");
+        save(&output, &[file("index.html", b"body")]).unwrap();
+        fs::write(output.join(".DS_Store"), b"metadata").unwrap();
+        fs::create_dir(output.join("private")).unwrap();
+        fs::write(output.join("private/notes.txt"), b"private").unwrap();
+        let reader = open_managed_bundle(&output, ProjectLimits::default(), &NeverCancel).unwrap();
+        assert_eq!(reader.read_file("index.html").unwrap().1, b"body");
+        let snapshot = BundleSnapshot::from_reader(&reader, &NeverCancel).unwrap();
+        for path in [".DS_Store", "private/notes.txt"] {
+            assert!(reader.read_file(path).is_err());
+            assert!(snapshot.file(path).is_none());
+        }
+        assert!(save(&output, &[file("index.html", b"replacement")]).is_err());
+        assert_eq!(fs::read(output.join("index.html")).unwrap(), b"body");
+        assert_eq!(fs::read(output.join(".DS_Store")).unwrap(), b"metadata");
+        assert_eq!(
+            fs::read(output.join("private/notes.txt")).unwrap(),
+            b"private"
+        );
+        fs::write(output.join("index.html"), b"edited").unwrap();
+        assert!(open_managed_bundle(&output, ProjectLimits::default(), &NeverCancel).is_err());
     }
 
     #[test]
@@ -1109,7 +1143,18 @@ mod tests {
         fs::remove_file(path.join("talk/index.html")).unwrap();
         fs::write(path.join("outside.html"), "outside").unwrap();
         symlink(path.join("outside.html"), path.join("talk/index.html")).unwrap();
+        assert!(
+            open_managed_bundle(&path.join("talk"), ProjectLimits::default(), &NeverCancel)
+                .is_err()
+        );
         assert!(save(&path.join("talk"), &[file("index.html", b"replacement")]).is_err());
         assert_eq!(fs::read(path.join("outside.html")).unwrap(), b"outside");
+        fs::remove_file(path.join("talk/index.html")).unwrap();
+        fs::write(path.join("talk/copy.html"), b"body").unwrap();
+        symlink("copy.html", path.join("talk/index.html")).unwrap();
+        assert!(
+            open_managed_bundle(&path.join("talk"), ProjectLimits::default(), &NeverCancel)
+                .is_err()
+        );
     }
 }

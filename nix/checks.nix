@@ -23,6 +23,11 @@ in
           test -s "$noticeDir/$name"
           grep -F 'Permission is hereby granted, free of charge' "$noticeDir/$name" > /dev/null
         done
+        cslNoticeDir="${package}/share/doc/adocweave/csl"
+        test -s "$cslNoticeDir/locale-en-US.xml"
+        grep -F 'https://github.com/citation-style-language/locales' "$cslNoticeDir/NOTICE.csl-locales.txt" > /dev/null
+        grep -F 'https://creativecommons.org/licenses/by-sa/3.0/' "$cslNoticeDir/NOTICE.csl-locales.txt" > /dev/null
+        test -s "$cslNoticeDir/LICENSE.csl-locales.txt"
         if grep -E '/[^/]*(chromium|nodejs|rust-minimal|rustc|cargo)-' ${runtimeClosure}/store-paths; then
           echo "development or browser tool found in the AdocWeave runtime closure" >&2
           exit 1

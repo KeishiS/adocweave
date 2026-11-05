@@ -333,25 +333,22 @@ fn build_slides(
         failed.diagnostics = preview::serialize_diagnostics(&diagnostics);
         return Ok(failed);
     }
-    let html = built
-        .files
-        .iter()
-        .find(|file| file.path == "index.html")
-        .and_then(|file| std::str::from_utf8(&file.bytes).ok())
-        .ok_or_else(|| "slide generation returned no HTML page".to_owned())?
-        .to_owned();
     let snapshot =
         match adocweave_project::BundleSnapshot::from_files(built.files, limits, cancellation) {
             Ok(snapshot) => snapshot,
             Err(error) if cancellation.is_cancelled() => return Err(error.to_string()),
             Err(error) => return Ok(failure(error.to_string(), dependencies, slides)),
         };
-    Ok(preview::Build::new(
-        html,
+    let audience = match bundle::audience_from_bundle(&snapshot) {
+        Ok(audience) => audience,
+        Err(error) => return Ok(failure(error.to_string(), dependencies, slides)),
+    };
+    Ok(preview::Build::slides(
+        snapshot,
+        audience,
         preview::serialize_diagnostics(&diagnostics),
         dependencies,
-    )
-    .with_slides(snapshot, options.audience))
+    ))
 }
 
 fn merge_observations(
@@ -584,7 +581,7 @@ mod tests {
             std::fs::write(&document, visible).unwrap();
             std::fs::write(&macros, invalid).unwrap();
             let failed = public_slide_build(root.path(), &data);
-            assert!(failed.html.contains("Preview error"), "{}", failed.html);
+            assert!(failed.html().contains("Preview error"), "{}", failed.html());
             assert!(failed.has_dependency(&macros));
             assert!(
                 failed.diagnostics.contains(expected),
@@ -595,8 +592,12 @@ mod tests {
             std::fs::write(&macros, r#"[{"name":"R","definition":"\\mathbb{R}"}]"#).unwrap();
             let repaired = public_slide_build(root.path(), &data);
             assert!(repaired.has_dependency(&macros));
-            assert!(repaired.html.contains("math-rendered"), "{}", repaired.html);
-            assert!(!repaired.html.contains("Preview error"));
+            assert!(
+                repaired.html().contains("math-rendered"),
+                "{}",
+                repaired.html()
+            );
+            assert!(!repaired.html().contains("Preview error"));
 
             std::fs::write(
                 &document,
@@ -605,10 +606,10 @@ mod tests {
             .unwrap();
             std::fs::write(&macros, invalid).unwrap();
             let note_only = public_slide_build(root.path(), &data);
-            assert!(note_only.html.contains("Public."));
-            assert!(!note_only.html.contains("Preview error"));
+            assert!(note_only.html().contains("Public."));
+            assert!(!note_only.html().contains("Preview error"));
             assert!(!note_only.has_dependency(&macros));
-            assert!(!note_only.html.contains("math-rendered"));
+            assert!(!note_only.html().contains("math-rendered"));
         }
     }
 
@@ -645,7 +646,7 @@ mod tests {
             let invalid_path = root.path().join(invalid_file);
             std::fs::write(&invalid_path, "malformed [<").unwrap();
             let failed = public_slide_build(root.path(), &data);
-            assert!(failed.html.contains("Preview error"), "{}", failed.html);
+            assert!(failed.html().contains("Preview error"), "{}", failed.html());
             assert!(failed.has_dependency(&invalid_path));
             assert!(
                 failed.diagnostics.contains(expected),
@@ -661,11 +662,11 @@ mod tests {
             std::fs::write(&invalid_path, valid).unwrap();
             let repaired = public_slide_build(root.path(), &data);
             assert!(
-                !repaired.html.contains("Preview error"),
+                !repaired.html().contains("Preview error"),
                 "{}",
-                repaired.html
+                repaired.html()
             );
-            assert!(repaired.html.contains("slides-body-references"));
+            assert!(repaired.html().contains("slides-body-references"));
             for (file, _) in resources {
                 assert!(repaired.has_dependency(&root.path().join(file)), "{file}");
             }
@@ -680,15 +681,123 @@ mod tests {
             }
             let note_only = public_slide_build(root.path(), &data);
             assert!(
-                !note_only.html.contains("Preview error"),
+                !note_only.html().contains("Preview error"),
                 "{}",
-                note_only.html
+                note_only.html()
             );
-            assert!(note_only.html.contains("Public."));
-            assert!(!note_only.html.contains("slides-body-references"));
+            assert!(note_only.html().contains("Public."));
+            assert!(!note_only.html().contains("slides-body-references"));
             for (file, _) in resources {
                 assert!(!note_only.has_dependency(&root.path().join(file)), "{file}");
             }
+        }
+    }
+
+    #[test]
+    fn csl_defaults_watch_only_bibliography_and_explicit_overrides() {
+        let root = tempfile::tempdir().unwrap();
+        let bibliography = root.path().join("references.json");
+        let style = root.path().join("style.csl");
+        let locale = root.path().join("locale.xml");
+        std::fs::write(
+            root.path().join("talk.adoc"),
+            "= Talk\n\n== Slide\n\ncite:[work].\n",
+        )
+        .unwrap();
+        std::fs::write(&bibliography, r#"[{"id":"work","title":"Visible work"}]"#).unwrap();
+        std::fs::write(&style, include_str!("../../assets/slides/default.csl")).unwrap();
+        std::fs::write(
+            &locale,
+            include_str!("../../assets/slides/locale-en-US.xml"),
+        )
+        .unwrap();
+        for (use_style, use_locale) in [(false, false), (true, false), (false, true), (true, true)]
+        {
+            let data = SlidesData {
+                bibliography: Some(PathBuf::from("references.json")),
+                csl_style: use_style.then(|| PathBuf::from("style.csl")),
+                csl_locale: use_locale.then(|| PathBuf::from("locale.xml")),
+                ..Default::default()
+            };
+            let build = public_slide_build(root.path(), &data);
+            assert!(
+                !build.html().contains("Preview error"),
+                "{}",
+                build.diagnostics
+            );
+            assert!(build.html().contains("Visible work"));
+            assert!(build.has_dependency(&bibliography));
+            assert_eq!(build.has_dependency(&style), use_style);
+            assert_eq!(build.has_dependency(&locale), use_locale);
+        }
+        std::fs::write(
+            root.path().join("talk.adoc"),
+            "= Talk\n\n== Slide\n\nVisible.\n\n[.notes]\n--\ncite:[work].\n--\n",
+        )
+        .unwrap();
+        std::fs::remove_file(&bibliography).unwrap();
+        let data = SlidesData {
+            bibliography: Some(PathBuf::from("references.json")),
+            ..Default::default()
+        };
+        let build = public_slide_build(root.path(), &data);
+        assert!(
+            !build.html().contains("Preview error"),
+            "{}",
+            build.diagnostics
+        );
+        assert!(!build.has_dependency(&bibliography));
+        assert!(!build.html().contains("slides-body-references"));
+    }
+
+    #[test]
+    fn a_missing_single_csl_override_is_watched_until_repaired() {
+        for (filename, xml, style_override) in [
+            (
+                "style.csl",
+                include_str!("../../assets/slides/default.csl"),
+                true,
+            ),
+            (
+                "locale.xml",
+                include_str!("../../assets/slides/locale-en-US.xml"),
+                false,
+            ),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            std::fs::write(
+                root.path().join("talk.adoc"),
+                "= Talk\n\n== Slide\n\ncite:[work].\n",
+            )
+            .unwrap();
+            std::fs::write(
+                root.path().join("references.json"),
+                r#"[{"id":"work","title":"Repaired work"}]"#,
+            )
+            .unwrap();
+            let data = SlidesData {
+                bibliography: Some(PathBuf::from("references.json")),
+                csl_style: style_override.then(|| PathBuf::from(filename)),
+                csl_locale: (!style_override).then(|| PathBuf::from(filename)),
+                ..Default::default()
+            };
+            let path = root.path().join(filename);
+            let missing = public_slide_build(root.path(), &data);
+            assert!(missing.html().contains("Preview error"));
+            assert!(missing.has_dependency(&path));
+            std::fs::write(&path, "<invalid").unwrap();
+            let invalid = public_slide_build(root.path(), &data);
+            assert!(invalid.html().contains("Preview error"));
+            assert!(invalid.has_dependency(&path));
+            std::fs::write(&path, xml).unwrap();
+            let repaired = public_slide_build(root.path(), &data);
+            assert!(
+                !repaired.html().contains("Preview error"),
+                "{}",
+                repaired.diagnostics
+            );
+            assert!(repaired.html().contains("Repaired work"));
+            assert!(repaired.has_dependency(&path));
         }
     }
 
@@ -713,9 +822,9 @@ mod tests {
             &CancellationToken::new(),
         )
         .unwrap();
-        assert!(build.html.contains("Body."), "{}", build.html);
-        assert!(!build.html.contains("private"));
-        assert!(build.html.contains("assets/preview.js"));
+        assert!(build.html().contains("Body."), "{}", build.html());
+        assert!(!build.html().contains("private"));
+        assert!(build.html().contains("assets/preview.js"));
         for path in [
             "private.svg",
             "missing.json",
@@ -748,7 +857,7 @@ mod tests {
             &CancellationToken::new(),
         )
         .unwrap();
-        assert!(failed.html.contains("Preview error"));
+        assert!(failed.html().contains("Preview error"));
         assert!(failed.has_dependency(&root.path().join("figure.svg")));
         std::fs::write(root.path().join("figure.svg"), "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"20\" height=\"20\"><rect width=\"20\" height=\"20\" fill=\"blue\"/></svg>").unwrap();
         let repaired = build_with_slides(
@@ -758,8 +867,8 @@ mod tests {
             &CancellationToken::new(),
         )
         .unwrap();
-        assert!(repaired.html.contains(".svg\""));
-        assert!(!repaired.html.contains("Preview error"));
+        assert!(repaired.html().contains(".svg\""));
+        assert!(!repaired.html().contains("Preview error"));
     }
 
     #[test]
@@ -791,7 +900,7 @@ mod tests {
         )
         .unwrap();
         assert!(failed.has_dependency(&css));
-        assert!(failed.html.contains("must be UTF-8"));
+        assert!(failed.html().contains("must be UTF-8"));
         std::fs::write(&css, ".reveal { color: red; }").unwrap();
         let red = build_with_slides(
             slides_request(root.path()),
@@ -809,8 +918,8 @@ mod tests {
         )
         .unwrap();
         assert!(red.has_dependency(&css) && blue.has_dependency(&css));
-        assert_ne!(red.html, blue.html);
-        assert!(!blue.html.contains("Preview error"));
+        assert_ne!(red.html(), blue.html());
+        assert!(!blue.html().contains("Preview error"));
     }
 
     #[test]
@@ -887,8 +996,8 @@ mod tests {
             limits: ProjectLimits::default(),
         };
         let build = build(request, &[], &CancellationToken::new()).expect("preview build");
-        assert!(build.html.contains("included"), "{}", build.html);
-        assert!(build.html.contains("body{}"), "{}", build.html);
+        assert!(build.html().contains("included"), "{}", build.html());
+        assert!(build.html().contains("body{}"), "{}", build.html());
         assert_eq!(build.dependency_count(), 6);
     }
 
@@ -959,9 +1068,9 @@ mod tests {
             ))
         );
         let build = build(request, &[], &CancellationToken::new()).expect("preview build");
-        assert!(build.html.contains("TRUSTED_INCLUDE"), "{}", build.html);
-        assert!(build.html.contains("TRUSTED_STYLE"), "{}", build.html);
-        assert!(!build.html.contains("OUTSIDE"), "{}", build.html);
+        assert!(build.html().contains("TRUSTED_INCLUDE"), "{}", build.html());
+        assert!(build.html().contains("TRUSTED_STYLE"), "{}", build.html());
+        assert!(!build.html().contains("OUTSIDE"), "{}", build.html());
 
         std::fs::remove_dir_all(&root).expect("remove replacement workspace");
         std::fs::rename(displaced, &root).expect("restore workspace");
@@ -987,7 +1096,7 @@ mod tests {
         };
         let build =
             build(request, &[], &CancellationToken::new()).expect("recoverable preview failure");
-        assert!(build.html.contains("Preview error"));
+        assert!(build.html().contains("Preview error"));
         assert!(build.has_dependency(&config));
     }
 

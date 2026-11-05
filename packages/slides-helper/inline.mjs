@@ -16,13 +16,62 @@ const styles = new Map([
 const wrappers = new Set(["csl-entry", "csl-left-margin", "csl-right-inline", "csl-block", "csl-indent"]);
 
 function safeLink(href) {
-  if (!/^https?:\/\//i.test(href) || /[\u0000-\u0020\u007f]/.test(href)) return false;
+  if (typeof href !== "string" || Buffer.byteLength(href) > 4096 || !/^https?:\/\//i.test(href) || /[\u0000-\u0020\u007f]/.test(href)) return false;
   try {
     const url = new URL(href);
     return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password;
   } catch {
     return false;
   }
+}
+
+// Size the host's finite HTML representation without serializing HTML here.
+// The shared Rust/Node contract cases cover escaping and wrapper overhead.
+const wrapperBytes = new Map([
+  ["emphasis", "<em></em>"], ["strong", "<strong></strong>"],
+  ["superscript", "<sup></sup>"], ["subscript", "<sub></sub>"],
+  ["smallcaps", '<span class="csl-smallcaps"></span>'],
+  ["normal-emphasis", '<span class="csl-normal-emphasis"></span>'],
+  ["normal-strong", '<span class="csl-normal-strong"></span>'],
+  ["normal-smallcaps", '<span class="csl-normal-smallcaps"></span>'],
+  ["underline", "<u></u>"], ["link", '<a href=""></a>'],
+].map(([kind, markup]) => [kind, Buffer.byteLength(markup)]));
+
+function escapedBytes(value) {
+  let bytes = Buffer.byteLength(value);
+  for (const character of value) {
+    switch (character) {
+      case "&": bytes += 4; break;
+      case "<": case ">": bytes += 3; break;
+      case '"': bytes += 5; break;
+      case "'": bytes += 4; break;
+    }
+  }
+  return bytes;
+}
+
+function validateOutput(nodes) {
+  let count = 0;
+  let textBytes = 0;
+  let htmlBytes = 0;
+  const check = (nodes, depth = 0) => {
+    if (depth > 32) throw new InlineError("CSL output exceeds the inline tree limit.");
+    for (const node of nodes) {
+      if (++count > 4096) throw new InlineError("CSL output exceeds the inline tree limit.");
+      if (node.kind === "text") {
+        textBytes += Buffer.byteLength(node.text);
+        htmlBytes += escapedBytes(node.text);
+      } else {
+        htmlBytes += wrapperBytes.get(node.kind);
+        if (node.kind === "link") htmlBytes += escapedBytes(node.href);
+      }
+      if (textBytes > 256 * 1024 || htmlBytes > 6 * 256 * 1024) {
+        throw new InlineError("CSL output exceeds the inline byte limit.");
+      }
+      if (node.children) check(node.children, depth + 1);
+    }
+  };
+  check(nodes);
 }
 
 function normalize(nodes) {
@@ -65,5 +114,7 @@ export function parseInlines(html, bibliography = false) {
     throw new InlineError(`Unsupported CSL HTML element or attributes: ${node.tagName ?? node.nodeName}.`);
   };
   const children = (node, depth) => normalize((node.childNodes ?? []).flatMap((child) => convert(child, depth + 1)));
-  return normalize(convert(parseFragment(html), 0));
+  const result = normalize(convert(parseFragment(html), 0));
+  validateOutput(result);
+  return result;
 }

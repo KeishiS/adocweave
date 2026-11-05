@@ -24,6 +24,7 @@ let
   browserFonts = with pkgs; [
     dejavu_fonts
     noto-fonts-cjk-sans
+    noto-fonts-cjk-serif
   ];
   browserFontConfig = pkgs.makeFontsConf {
     fontDirectories = browserFonts;
@@ -142,6 +143,7 @@ in
     ++ lib.optionals stdenv.isLinux [
       pkgs.chromium
       pkgs.xvfb
+      pkgs.poppler-utils
     ];
   };
 
@@ -159,6 +161,7 @@ in
     extra = lib.optionals stdenv.isLinux [
       pkgs.chromium
       pkgs.xvfb
+      pkgs.poppler-utils
     ];
   };
 
@@ -177,6 +180,7 @@ in
     extra = lib.optionals stdenv.isLinux [
       pkgs.chromium
       pkgs.xvfb
+      pkgs.poppler-utils
     ];
   };
 

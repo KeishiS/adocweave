@@ -13,7 +13,7 @@ use adocweave_core::output::formatter::{FormatConfig, NewlineStyle};
 use adocweave_core::output::html::{HtmlDocumentMode, RenderPolicy};
 use adocweave_core::preprocess::PreprocessOptions;
 use adocweave_core::{AnalysisOptions, SyntaxMode};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 #[cfg(test)]
@@ -46,6 +46,8 @@ pub enum ConfigErrorCode {
     InvalidRole,
     /// Configured terminal color names a role that does not exist.
     InvalidTerminalRole,
+    /// A math extension is unknown or repeated.
+    InvalidMathExtension,
 }
 
 impl ConfigErrorCode {
@@ -61,6 +63,7 @@ impl ConfigErrorCode {
             Self::InvalidPath => "invalid-path",
             Self::InvalidRole => "invalid-role",
             Self::InvalidTerminalRole => "invalid-terminal-role",
+            Self::InvalidMathExtension => "invalid-math-extension",
         }
     }
 }
@@ -225,6 +228,30 @@ pub enum TerminalColor {
     BrightWhite,
 }
 
+/// Optional bundled TeX extensions, in deterministic loading order.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(rename_all = "lowercase")]
+pub enum MathExtension {
+    /// Colored mathematical expressions.
+    Color,
+    /// Cancellation marks.
+    Cancel,
+    /// Additional AMS-compatible mathematical notation.
+    Mathtools,
+}
+
+impl MathExtension {
+    /// Returns the configuration and helper-protocol name.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Color => "color",
+            Self::Cancel => "cancel",
+            Self::Mathtools => "mathtools",
+        }
+    }
+}
+
 /// Fully typed schema-version-2 project configuration.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProjectConfig {
@@ -248,6 +275,8 @@ pub struct ProjectConfig {
     pub(crate) html: HtmlSettings,
     /// Terminal reading settings.
     pub(crate) terminal: TerminalSettings,
+    /// Optional bundled TeX extensions in deterministic order.
+    pub(crate) math_extensions: Vec<MathExtension>,
 }
 
 impl Default for ProjectConfig {
@@ -268,6 +297,7 @@ impl Default for ProjectConfig {
             format_final_newline_explicit: false,
             html: HtmlSettings::default(),
             terminal: TerminalSettings::default(),
+            math_extensions: Vec::new(),
         }
     }
 }
@@ -304,6 +334,8 @@ struct ProjectConfigWire {
     html: HtmlWire,
     #[serde(default)]
     terminal: TerminalWire,
+    #[serde(default)]
+    math: MathWire,
 }
 
 impl ProjectConfigWire {
@@ -347,7 +379,43 @@ impl ProjectConfigWire {
         resolved.format = self.format.resolve()?;
         resolved.html = self.html.resolve(directory)?;
         resolved.terminal = self.terminal.resolve()?;
+        resolved.math_extensions = self.math.resolve()?;
         Ok(resolved)
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+struct MathWire {
+    #[serde(default)]
+    extensions: Vec<String>,
+}
+
+impl MathWire {
+    fn resolve(self) -> Result<Vec<MathExtension>, ConfigError> {
+        let mut extensions = std::collections::BTreeSet::new();
+        for (index, name) in self.extensions.iter().enumerate() {
+            let extension =
+                match name.as_str() {
+                    "color" => MathExtension::Color,
+                    "cancel" => MathExtension::Cancel,
+                    "mathtools" => MathExtension::Mathtools,
+                    _ => return Err(ConfigError::new(
+                        ConfigErrorCode::InvalidMathExtension,
+                        "unknown math extension; supported extensions: color, cancel, mathtools",
+                    )
+                    .at(format!("math.extensions[{index}]"))),
+                };
+            if !extensions.insert(extension) {
+                return Err(ConfigError::new(
+                    ConfigErrorCode::InvalidMathExtension,
+                    "duplicate math extension; supported extensions: color, cancel, mathtools",
+                )
+                .at(format!("math.extensions[{index}]")));
+            }
+        }
+        Ok(extensions.into_iter().collect())
     }
 }
 
@@ -850,6 +918,74 @@ impl ProjectRelativePathWire {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn math_extensions_normalize_and_preserve_empty_defaults() {
+        for source in [
+            "schema-version = 2\n",
+            "schema-version = 2\n[math]\nextensions = []\n",
+        ] {
+            assert!(
+                super::ProjectConfig::parse(source, std::path::Path::new("."))
+                    .unwrap()
+                    .math_extensions()
+                    .is_empty()
+            );
+        }
+        let config = super::ProjectConfig::parse(
+            "schema-version = 2\n[math]\nextensions = [\"mathtools\", \"cancel\", \"color\"]\n",
+            std::path::Path::new("."),
+        )
+        .unwrap();
+        assert_eq!(
+            config.math_extensions(),
+            &[
+                super::MathExtension::Color,
+                super::MathExtension::Cancel,
+                super::MathExtension::Mathtools
+            ]
+        );
+        assert_eq!(
+            serde_json::to_value(config.math_extensions()).unwrap(),
+            serde_json::json!(["color", "cancel", "mathtools"])
+        );
+        for extension in config.math_extensions() {
+            assert_eq!(
+                serde_json::from_value::<super::MathExtension>(serde_json::json!(
+                    extension.as_str()
+                ))
+                .unwrap(),
+                *extension
+            );
+        }
+    }
+
+    #[test]
+    fn math_extension_errors_identify_the_element_and_supported_names() {
+        for (names, index, reason) in [
+            ("\"color\", \"ams\"", 1, "unknown"),
+            ("\"base\"", 0, "unknown"),
+            ("\"unknown\"", 0, "unknown"),
+            ("\"cancel\", \"cancel\"", 1, "duplicate"),
+        ] {
+            let error = super::ProjectConfig::parse(
+                &format!("schema-version = 2\n[math]\nextensions = [{names}]\n"),
+                std::path::Path::new("."),
+            )
+            .unwrap_err();
+            assert_eq!(error.code, super::ConfigErrorCode::InvalidMathExtension);
+            assert_eq!(
+                error.field.as_deref(),
+                Some(format!("math.extensions[{index}]").as_str())
+            );
+            assert!(error.to_string().contains(reason));
+            assert!(
+                error
+                    .to_string()
+                    .contains("supported extensions: color, cancel, mathtools")
+            );
+        }
+    }
+
     use super::*;
     #[test]
     fn strict_project_config_resolves_shared_consumer_options() {

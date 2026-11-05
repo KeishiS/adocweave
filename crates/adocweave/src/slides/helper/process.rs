@@ -205,18 +205,17 @@ pub async fn execute(
     limits: ProcessLimits,
     reserved_ids: &BTreeSet<String>,
 ) -> HostResult<ValidatedResults> {
-    prepared.request.validate()?;
-    if prepared.request.is_empty() {
+    if prepared.request().is_empty() {
         return validate_response(
             prepared,
-            Response {
-                schema_version: 1,
+            Response::Ok {
+                schema_version: protocol::SCHEMA_VERSION,
                 scopes: Scopes {
                     body: ScopeOutput::default(),
                     notes: ScopeOutput::default(),
                 },
                 diagnostics: Vec::new(),
-                notices: protocol::Notices::default(),
+                notices: Box::default(),
             },
             0,
             reserved_ids,
@@ -232,7 +231,7 @@ pub async fn execute(
         bytes: Vec::new(),
         limit: limits.input_bytes.min(protocol::INPUT_BYTES),
     };
-    serde_json::to_writer(&mut input, &prepared.request)
+    serde_json::to_writer(&mut input, prepared.request())
         .map_err(|e| HostError::new("slides-helper-input-limit", e.to_string()))?;
     let executable = resolve_executable(explicit)?;
     let path = std::env::join_paths(
@@ -375,6 +374,15 @@ pub async fn execute(
     let mut parser = serde_json::Deserializer::from_slice(&stdout);
     use serde::Deserialize;
     let response = Response::deserialize(&mut parser).map_err(|e| {
+        if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&stdout)
+            && let Some(version) = value.get("schemaVersion").and_then(serde_json::Value::as_u64)
+            && let Err(error) = protocol::require_response_version(version)
+        {
+            return HostError::protocol(with_stderr(
+                &error.message,
+                &stderr,
+            ));
+        }
         HostError::new(
             if exit == 1 { "slides-helper-exit" } else { "slides-helper-protocol" },
             with_stderr(&format!(

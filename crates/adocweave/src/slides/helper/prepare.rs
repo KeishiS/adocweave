@@ -11,6 +11,7 @@ use adocweave_core::{
     semantic::{Block, Inline, MathLanguage, SemanticNode, walk},
     text::TextRange,
 };
+use adocweave_project::MathExtension;
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, Default)]
@@ -22,17 +23,34 @@ pub struct Selection {
 }
 #[derive(Clone, Debug)]
 pub struct Prepared {
-    pub request: Request,
+    pub(super) request: Request,
     pub sources: SourceMap,
     pub diagnostics: Vec<HostDiagnostic>,
 }
 
-/// Notes are forcibly excluded before requests, diagnostics and CSL items are collected.
+impl Prepared {
+    pub fn new(
+        request: Request,
+        sources: SourceMap,
+        diagnostics: Vec<HostDiagnostic>,
+    ) -> HostResult<Self> {
+        request.validate()?;
+        Ok(Self {
+            request,
+            sources,
+            diagnostics,
+        })
+    }
+    pub fn request(&self) -> &Request {
+        &self.request
+    }
+}
+
+/// Encodes content already selected for the output audience, without repeating selection.
 pub fn prepare(
     analysis: &Analysis,
-    body: &Selection,
-    notes: &Selection,
-    include_notes: bool,
+    selected: Scopes<super::selected::SelectedContent>,
+    extensions: &[MathExtension],
     macros: Option<Vec<Macro>>,
     mut csl: Option<Csl>,
 ) -> HostResult<Prepared> {
@@ -42,7 +60,6 @@ pub fn prepare(
         body: ScopeInput::default(),
         notes: ScopeInput::default(),
     };
-    let selected = super::selected_content(analysis, body, notes, include_notes)?;
     let mut stem_ranges = BTreeSet::new();
     walk(analysis.document(), |node| match node {
         SemanticNode::Inline(Inline::Formula(formula)) if formula.uses_stem_attribute => {
@@ -101,6 +118,7 @@ pub fn prepare(
                 key,
                 tex: formula.source.clone(),
                 display: formula.kind == FormulaKind::Block,
+                footnote: content.footnote_equations.contains(&formula.source_range),
             });
         }
         for citation in &content.citations {
@@ -187,19 +205,17 @@ pub fn prepare(
             .at(eqnums_range));
         }
     };
+    let mut extensions = extensions.to_vec();
+    extensions.sort();
     let request = Request {
-        schema_version: 1,
+        schema_version: super::protocol::SCHEMA_VERSION,
         eqnums,
+        extensions,
         scopes: inputs,
         macros,
         csl,
     };
-    request.validate()?;
-    Ok(Prepared {
-        request,
-        sources,
-        diagnostics,
-    })
+    Prepared::new(request, sources, diagnostics)
 }
 fn boolean(value: &str) -> HostResult<bool> {
     match value {

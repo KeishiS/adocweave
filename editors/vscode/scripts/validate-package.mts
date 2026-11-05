@@ -1,6 +1,10 @@
 import { readFileSync } from "node:fs";
 
-import { type ExtensionManifest, readJson } from "./manifests.mts";
+import {
+  type ExtensionManifest,
+  readJson,
+  validateVSCodeTypesCompatibility,
+} from "./manifests.mts";
 
 // The package manifest is the extension version authority. Validate the identity,
 // changelog, entry point, language contribution, and TextMate grammar together.
@@ -22,6 +26,7 @@ interface Grammar {
 }
 
 const packageJson = readJson<ExtensionManifest>("package.json");
+validateVSCodeTypesCompatibility(packageJson);
 const changelog = readFileSync("CHANGELOG.md", "utf8");
 const language = readJson<LanguageConfiguration>("language-configuration.json");
 const grammar = readJson<Grammar>("syntaxes/asciidoc.tmLanguage.json");

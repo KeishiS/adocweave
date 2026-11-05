@@ -25,6 +25,476 @@ fn write(root: &Path, path: &str, content: &str) {
 
 const SVG: &str = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\"><rect width=\"80\" height=\"80\" fill=\"#123\"/><text x=\"2\" y=\"20\">結果</text></svg>";
 
+#[test]
+fn block_titles_preserve_slide_scopes_fragments_and_footnote_targets() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "talk.adoc",
+        include_str!("../../../fixtures/slides-browser/block-titles.adoc"),
+    );
+    for audience in ["public", "presenter"] {
+        success(&convert(
+            root.path(),
+            &[
+                "--no-config",
+                "talk.adoc",
+                "--to",
+                "revealjs",
+                "--audience",
+                audience,
+                "--output",
+                audience,
+            ],
+        ));
+        let html = fs::read_to_string(root.path().join(audience).join("index.html")).unwrap();
+        assert_block_titles(&html);
+        assert_eq!(html.contains("PRIVATE_NOTE_TITLE"), audience == "presenter");
+        assert_eq!(html.contains("PRIVATE_NOTE_BODY"), audience == "presenter");
+        for private in ["PRIVATE_NOTE_BLOCK_TITLE", "PRIVATE_NOTE_BLOCK_FOOTNOTE"] {
+            assert_eq!(html.contains(private), audience == "presenter");
+        }
+        assert_eq!(
+            html.matches("class=\"footnote-ref\"").count(),
+            if audience == "presenter" { 3 } else { 2 },
+        );
+    }
+    let single = convert(
+        root.path(),
+        &[
+            "--no-config",
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--single-file",
+        ],
+    );
+    success(&single);
+    let html = String::from_utf8(single.stdout).unwrap();
+    assert_block_titles(&html);
+    assert!(!html.contains("PRIVATE_NOTE"));
+    assert_eq!(html.matches("class=\"footnote-ref\"").count(), 2);
+}
+
+fn assert_block_titles(html: &str) {
+    for title in [
+        "Paragraph <strong>title</strong>",
+        "Definition title",
+        "List title",
+        "Quote title",
+        "Left title",
+        "Right title",
+        "Code <strong>title</strong>",
+        "Verse title",
+        "Inner <strong>title</strong>",
+    ] {
+        assert_eq!(html.matches(title).count(), 1, "{title}: {html}");
+    }
+    assert_eq!(html.matches("id=\"paragraph\"").count(), 1);
+    assert_eq!(html.matches("id=\"bare-container\"").count(), 1);
+    assert!(html.contains("<li class=\"fragment\" data-fragment-index=\"0\">"));
+    assert!(html.contains("<div class=\"title\">List title</div>"));
+    assert!(!html.contains("PRIVATE_COMMENT"));
+    assert!(!html.contains("PRIVATE_VERSE_COMMENT"));
+    check_fragment_targets(html);
+}
+
+#[test]
+fn comment_titles_do_not_create_slide_inputs_or_change_body_counters() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "talk.adoc",
+        concat!(
+            "= Talk\n\n== Slide\n\n",
+            ".PRIVATE footnote:[SECRET] cite:[p] latexmath:[x] <<missing>> {counter:count}\n",
+            "////\nPRIVATE_BODY\n////\n\nCounter {counter:count}.\n",
+        ),
+    );
+    for audience in ["public", "presenter"] {
+        let output = convert(
+            root.path(),
+            &[
+                "--no-config",
+                "talk.adoc",
+                "--to",
+                "revealjs",
+                "--audience",
+                audience,
+                "--output",
+                audience,
+                "--slides-helper",
+                "missing-helper",
+            ],
+        );
+        success(&output);
+        let diagnostics = String::from_utf8_lossy(&output.stderr);
+        assert!(!diagnostics.contains("warning["), "{diagnostics}");
+        assert!(!diagnostics.contains("error["), "{diagnostics}");
+        let html = fs::read_to_string(root.path().join(audience).join("index.html")).unwrap();
+        assert!(html.contains("Counter 1."), "{html}");
+        assert!(!html.contains("PRIVATE"));
+        assert!(!html.contains("SECRET"));
+        assert!(!html.contains("class=\"footnote-ref\""));
+    }
+}
+
+#[test]
+fn single_file_writes_public_html_to_stdout_without_a_helper_or_side_files() {
+    let root = tempfile::tempdir().unwrap();
+    let source = "= Talk\n\n== Slide\n\nPUBLIC BODY\n\n[.notes]\n--\nPRIVATE NOTES\n--\n";
+    write(root.path(), "talk.adoc", source);
+    let output = convert(
+        root.path(),
+        &[
+            "--no-config",
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--single-file",
+            "--audience",
+            "public",
+            "--slides-helper",
+            "missing-helper",
+        ],
+    );
+    success(&output);
+    let html = String::from_utf8(output.stdout).unwrap();
+    assert!(html.to_ascii_lowercase().starts_with("<!doctype html>"));
+    assert!(html.contains("PUBLIC BODY"));
+    assert!(!html.contains("PRIVATE NOTES"));
+    assert!(!html.contains("src=\"assets/"));
+    assert!(!html.contains("href=\"assets/"));
+    assert_eq!(
+        fs::read_to_string(root.path().join("talk.adoc")).unwrap(),
+        source
+    );
+    assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
+}
+
+#[test]
+fn single_file_failure_keeps_stdout_empty() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "talk.adoc",
+        "= Talk\n\n== Slide\n\nimage::missing.png[]\n",
+    );
+    let output = convert(
+        root.path(),
+        &[
+            "--no-config",
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--single-file",
+        ],
+    );
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
+}
+
+#[test]
+fn single_file_invalid_options_fail_before_reading_input() {
+    let root = tempfile::tempdir().unwrap();
+    for options in [
+        vec!["missing.adoc", "--single-file"],
+        vec!["missing.adoc", "--to", "revealjs"],
+        vec![
+            "missing.adoc",
+            "--to",
+            "revealjs",
+            "--single-file",
+            "--output",
+            "dist",
+        ],
+        vec![
+            "missing.adoc",
+            "--to",
+            "revealjs",
+            "--single-file",
+            "--audience",
+            "presenter",
+        ],
+    ] {
+        let output = convert(root.path(), &options);
+        assert_eq!(output.status.code(), Some(2), "{options:?}");
+        assert!(output.stdout.is_empty(), "{options:?}");
+    }
+    assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn slide_aspect_ratio_defaults_to_auto() {
+    for header in [
+        "",
+        ":slides-aspect-ratio: auto\n",
+        ":slides-aspect-ratio: 16:9\n:slides-aspect-ratio!:\n",
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        write(
+            root.path(),
+            "talk.adoc",
+            &format!("= Talk\n{header}\n== Slide\n\nBody.\n"),
+        );
+        success(&convert(
+            root.path(),
+            &[
+                "--no-config",
+                "talk.adoc",
+                "--to",
+                "revealjs",
+                "--output",
+                "dist",
+            ],
+        ));
+        let html = fs::read_to_string(root.path().join("dist/index.html")).unwrap();
+        assert!(!html.contains("data-aspect-ratio="), "{html}");
+    }
+}
+
+#[test]
+fn slide_aspect_ratio_accepts_fixed_and_referenced_header_values() {
+    for (header, expected) in [
+        (":slides-aspect-ratio: 16:9\n", "16:9"),
+        (":slides-aspect-ratio: 16:10\n", "8:5"),
+        (":slides-aspect-ratio: 4:3\n", "4:3"),
+        (":ratio: 1920:1080\n:slides-aspect-ratio: {ratio}\n", "16:9"),
+        (":slides-aspect-ratio: 1:4\n", "1:4"),
+        (":slides-aspect-ratio: 4:1\n", "4:1"),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        write(
+            root.path(),
+            "talk.adoc",
+            &format!("= Talk\n{header}\n== Slide\n\nBody.\n"),
+        );
+        success(&convert(
+            root.path(),
+            &[
+                "--no-config",
+                "talk.adoc",
+                "--to",
+                "revealjs",
+                "--output",
+                "dist",
+            ],
+        ));
+        let html = fs::read_to_string(root.path().join("dist/index.html")).unwrap();
+        assert!(
+            html.contains(&format!("data-aspect-ratio=\"{expected}\"")),
+            "{html}"
+        );
+    }
+}
+
+#[test]
+fn misplaced_slide_aspect_ratio_has_original_source_and_preserves_output() {
+    let root = tempfile::tempdir().unwrap();
+    write(root.path(), "talk.adoc", "= Talk\n\n== Slide\n\nBody.\n");
+    let arguments = [
+        "--no-config",
+        "talk.adoc",
+        "--to",
+        "revealjs",
+        "--output",
+        "dist",
+    ];
+    success(&convert(root.path(), &arguments));
+    let files = ["index.html", ".adocweave-manifest.json"]
+        .map(|file| (file, fs::read(root.path().join("dist").join(file)).unwrap()));
+    for attribute in [
+        ":slides-aspect-ratio: 4:3",
+        ":slides-aspect-ratio: invalid",
+        ":slides-aspect-ratio!:",
+    ] {
+        for (source, location) in [
+            (format!("= Talk\n\n{attribute}\n\n== Slide\n\nBody.\n"), "talk.adoc:3:"),
+            ("= Talk\n:slides-aspect-ratio: 16:9\n\n== Slide\n\ninclude::settings.adoc[]\n\nBody.\n".to_owned(), "settings.adoc:1:"),
+        ] {
+            write(root.path(), "talk.adoc", &source);
+            write(root.path(), "settings.adoc", &format!("{attribute}\n"));
+            let output = convert(root.path(), &arguments);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(!output.status.success(), "{stderr}");
+            assert!(stderr.contains("error[slides-misplaced-aspect-ratio]"), "{stderr}");
+            assert!(stderr.contains(location), "{stderr}");
+            for (file, original) in &files {
+                assert_eq!(fs::read(root.path().join("dist").join(file)).unwrap(), *original);
+            }
+        }
+    }
+}
+
+#[test]
+fn configured_slide_aspect_ratio_overrides_header_values_and_unsetting() {
+    for (configuration, header, expected) in [
+        (
+            "value = \"4:3\"",
+            ":slides-aspect-ratio: 16:9\n",
+            Some("4:3"),
+        ),
+        ("value = \"16:10\"", ":slides-aspect-ratio!:\n", Some("8:5")),
+        ("value = \"auto\"", ":slides-aspect-ratio: 16:9\n", None),
+        ("unset = true", ":slides-aspect-ratio: 16:9\n", None),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        write(
+            root.path(),
+            ".adocweave.toml",
+            &format!(
+                "schema-version = 2\n[analysis.attributes.slides-aspect-ratio]\n{configuration}\n"
+            ),
+        );
+        write(
+            root.path(),
+            "talk.adoc",
+            &format!("= Talk\n{header}\n== Slide\n\nBody.\n"),
+        );
+        success(&convert(
+            root.path(),
+            &["talk.adoc", "--to", "revealjs", "--output", "dist"],
+        ));
+        let html = fs::read_to_string(root.path().join("dist/index.html")).unwrap();
+        if let Some(ratio) = expected {
+            assert!(
+                html.contains(&format!("data-aspect-ratio=\"{ratio}\"")),
+                "{html}"
+            );
+        } else {
+            assert!(!html.contains("data-aspect-ratio="), "{html}");
+        }
+    }
+}
+
+#[test]
+fn invalid_slide_aspect_ratio_has_original_source_and_preserves_the_output_directory() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "talk.adoc",
+        "= Talk\n\n== Slide\n\nOriginal.\n",
+    );
+    success(&convert(
+        root.path(),
+        &[
+            "--no-config",
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--output",
+            "dist",
+        ],
+    ));
+    let files = ["index.html", ".adocweave-manifest.json"]
+        .map(|file| (file, fs::read(root.path().join("dist").join(file)).unwrap()));
+    for value in [
+        "",
+        "wide",
+        "0:9",
+        "16:0",
+        "1:5",
+        "5:1",
+        "1.5:1",
+        "16:9:1",
+        "4294967296:1",
+        "\" onload=\"alert(1)",
+    ] {
+        write(
+            root.path(),
+            "talk.adoc",
+            &format!("= Talk\n:slides-aspect-ratio: {value}\n\n== Slide\n\nBody.\n"),
+        );
+        let output = convert(
+            root.path(),
+            &[
+                "--no-config",
+                "talk.adoc",
+                "--to",
+                "revealjs",
+                "--output",
+                "dist",
+            ],
+        );
+        assert!(!output.status.success(), "{value}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("error[slides-invalid-aspect-ratio]"),
+            "{stderr}"
+        );
+        assert!(stderr.contains("talk.adoc:2:"), "{stderr}");
+        for (file, original) in &files {
+            assert_eq!(
+                fs::read(root.path().join("dist").join(file)).unwrap(),
+                *original
+            );
+        }
+    }
+    write(
+        root.path(),
+        "talk.adoc",
+        "= Talk\ninclude::settings.adoc[]\n\n== Slide\n\nBody.\n",
+    );
+    write(
+        root.path(),
+        "settings.adoc",
+        ":slides-aspect-ratio: invalid\n",
+    );
+    let output = convert(
+        root.path(),
+        &[
+            "--no-config",
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--output",
+            "dist",
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(stderr.contains("settings.adoc:1:"), "{stderr}");
+    assert!(
+        stderr.contains("error[slides-invalid-aspect-ratio]"),
+        "{stderr}"
+    );
+    for (file, original) in &files {
+        assert_eq!(
+            fs::read(root.path().join("dist").join(file)).unwrap(),
+            *original
+        );
+    }
+}
+
+#[test]
+fn invalid_configured_slide_aspect_ratio_is_a_usage_error() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        ".adocweave.toml",
+        "schema-version = 2\n[analysis.attributes.slides-aspect-ratio]\nvalue = \"invalid\"\n",
+    );
+    write(
+        root.path(),
+        "talk.adoc",
+        "= Talk\n:slides-aspect-ratio: 16:9\n\n== Slide\n\nBody.\n",
+    );
+    let output = convert(
+        root.path(),
+        &["talk.adoc", "--to", "revealjs", "--output", "dist"],
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains("slides-aspect-ratio"), "{stderr}");
+    assert!(!stderr.contains("talk.adoc:"), "{stderr}");
+    assert!(
+        !stderr.contains("error[slides-invalid-aspect-ratio]"),
+        "{stderr}"
+    );
+    assert!(!root.path().join("dist").exists());
+}
+
 #[cfg(unix)]
 #[test]
 fn helper_execution_does_not_inherit_project_node_loader_or_relative_path_entries() {
@@ -203,6 +673,12 @@ fn presenter_to_public_removes_private_images_plugin_and_manifest_entries() {
             "presenter",
         ],
     ));
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.path().join("dist/slides.json")).unwrap()).unwrap();
+    assert_eq!(
+        metadata,
+        serde_json::json!({"schema_version":1,"audience":"presenter"})
+    );
     let old = adocweave_project::open_managed_bundle(
         &root.path().join("dist").canonicalize().unwrap(),
         Default::default(),
@@ -231,6 +707,12 @@ fn presenter_to_public_removes_private_images_plugin_and_manifest_entries() {
         root.path(),
         &["talk.adoc", "--to", "revealjs", "--output", "dist"],
     ));
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.path().join("dist/slides.json")).unwrap()).unwrap();
+    assert_eq!(
+        metadata,
+        serde_json::json!({"schema_version":1,"audience":"public"})
+    );
     assert!(!root.path().join("dist").join(private_image).exists());
     assert!(!root.path().join("dist/assets/notes.js").exists());
     assert!(!root.path().join("dist/licenses/marked.txt").exists());
@@ -308,7 +790,7 @@ fn helper_failures_and_invalid_local_data_never_save_raw_math() {
 }
 
 #[test]
-fn visible_citations_require_explicit_data_and_reject_manual_key_collisions_first() {
+fn visible_citations_require_explicit_data_and_reject_mixed_bibliography_modes_first() {
     let root = tempfile::tempdir().unwrap();
     write(
         root.path(),
@@ -320,41 +802,42 @@ fn visible_citations_require_explicit_data_and_reject_manual_key_collisions_firs
         &["talk.adoc", "--to", "revealjs", "--output", "dist"],
     );
     assert!(!output.status.success());
-    assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("supply --bibliography, --csl-style, and --csl-locale")
-    );
-    write(
-        root.path(),
-        "talk.adoc",
-        "= Talk\n\n== Slide\n\ncite:[shared].\n\n[bibliography]\n* [[[shared]]] Hand-written entry.\n",
-    );
-    let output = convert(
-        root.path(),
-        &[
+    assert!(String::from_utf8_lossy(&output.stderr).contains("supply --bibliography"));
+    for manual_key in ["shared", "unrelated"] {
+        write(
+            root.path(),
             "talk.adoc",
-            "--to",
-            "revealjs",
-            "--output",
-            "dist",
-            "--bibliography",
-            "missing.json",
-            "--csl-style",
-            "missing.xml",
-            "--csl-locale",
-            "missing-locale.xml",
-            "--slides-helper",
-            "/missing/helper",
-        ],
-    );
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("slides-bibliography-key-conflict"),
-        "{stderr}"
-    );
-    assert!(!stderr.contains("cannot open"), "{stderr}");
-    assert!(!root.path().join("dist").exists());
+            &format!(
+                "= Talk\n\n== Slide\n\ncite:[shared].\n\n[bibliography]\n* [[[{manual_key}]]] Hand-written entry.\n"
+            ),
+        );
+        let output = convert(
+            root.path(),
+            &[
+                "talk.adoc",
+                "--to",
+                "revealjs",
+                "--output",
+                "dist",
+                "--bibliography",
+                "missing.json",
+                "--csl-style",
+                "missing.xml",
+                "--csl-locale",
+                "missing-locale.xml",
+                "--slides-helper",
+                "/missing/helper",
+            ],
+        );
+        assert!(!output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("slides-bibliography-mode-conflict"),
+            "{stderr}"
+        );
+        assert!(!stderr.contains("cannot open"), "{stderr}");
+        assert!(!root.path().join("dist").exists());
+    }
 }
 
 #[test]
@@ -427,7 +910,7 @@ fn slide_footnotes_are_per_slide_and_notes_do_not_change_body_numbers() {
     write(
         root.path(),
         "talk.adoc",
-        "= Talk\n\n== First\n\nPublic footnote:shared[Public footnote text].\n\n[.notes]\n--\nPRIVATE_NOTE footnote:private[PRIVATE_FOOTNOTE].\nShared footnote:shared[].\n--\n\n== Last\n\nAgain footnote:shared[].\n",
+        "= Talk\n\n== First\n\nPublic footnote:shared[Public footnote text].\n\n[.notes]\n--\nPRIVATE_NOTE footnote:private[PRIVATE_FOOTNOTE].\nAnother footnote:private_second[PRIVATE_SECOND].\n--\n\n== Last\n\nAgain footnote:shared[].\n",
     );
     let mut body = None;
     for audience in ["public", "presenter"] {
@@ -845,7 +1328,7 @@ fn hidden_heading_inline_anchors_have_a_specific_source_diagnostic() {
 }
 
 #[test]
-fn private_manual_citations_are_diagnosed_without_preventing_explicit_csl_keys() {
+fn private_manual_citations_are_excluded_from_public_csl_and_reject_presenter_mixing() {
     let root = tempfile::tempdir().unwrap();
     write(
         root.path(),
@@ -895,7 +1378,7 @@ fn private_manual_citations_are_diagnosed_without_preventing_explicit_csl_keys()
     );
     let helper = helper_bin();
     for audience in ["public", "presenter"] {
-        success(&convert(
+        let output = convert(
             root.path(),
             &[
                 "--no-config",
@@ -915,7 +1398,18 @@ fn private_manual_citations_are_diagnosed_without_preventing_explicit_csl_keys()
                 "--csl-locale",
                 "locale.xml",
             ],
-        ));
+        );
+        if audience == "presenter" {
+            assert!(!output.status.success());
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                stderr.contains("slides-bibliography-mode-conflict"),
+                "{stderr}"
+            );
+            assert!(!root.path().join(audience).exists());
+            continue;
+        }
+        success(&output);
         let html = fs::read_to_string(root.path().join(audience).join("index.html")).unwrap();
         assert!(html.contains("Public external work"), "{html}");
         assert_eq!(html.matches("<h2>References</h2>").count(), 1, "{html}");
@@ -1170,6 +1664,145 @@ fn helper_bin() -> String {
         .into_owned()
 }
 
+#[test]
+fn configured_math_extensions_reach_directory_single_file_and_presenter_output() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        ".adocweave.toml",
+        "schema-version = 2\n[math]\nextensions = [\"mathtools\", \"cancel\", \"color\"]\n",
+    );
+    write(
+        root.path(),
+        "talk.adoc",
+        r"= Extensions
+:stem: latexmath
+:eqnums:
+
+== Process
+
+[stem]
+++++
+\begin{equation}
+dX_t = \colorbox{pink}{$f(t,X_t)$}\,dt + \colorbox{lightblue}{$g(t)$}\,dB_t
+\label{process}
+\end{equation}
+++++
+
+Cancellation: latexmath:[\cancel{x}+\cancelto{0}{y}].
+Definition: latexmath:[a\coloneqq b\eqqcolon c].
+Reference: latexmath:[\eqref{process}].
+Framed: latexmath:[\definecolor{accent}{RGB}{255,128,64}\fcolorbox{accent}{lightblue}{$x^2+1$}].
+
+[.notes]
+--
+latexmath:[\textcolor{red}{z}]
+--
+",
+    );
+    let helper = helper_bin();
+    for mode in ["directory", "single", "presenter"] {
+        let mut args = vec!["talk.adoc", "--to", "revealjs", "--slides-helper", &helper];
+        if mode == "single" {
+            args.push("--single-file");
+        } else {
+            args.extend(["--output", mode]);
+        }
+        if mode == "presenter" {
+            args.extend(["--audience", "presenter"]);
+        }
+        let output = convert(root.path(), &args);
+        success(&output);
+        let html = if mode == "single" {
+            String::from_utf8(output.stdout).unwrap()
+        } else {
+            fs::read_to_string(root.path().join(mode).join("index.html")).unwrap()
+        };
+        assert!(
+            html.contains("fill=\"pink\""),
+            "{mode}: missing pink highlight"
+        );
+        assert!(
+            html.contains("fill=\"lightblue\""),
+            "{mode}: missing blue highlight"
+        );
+        assert_eq!(html.contains("fill=\"red\""), mode == "presenter");
+        assert!(html.contains("fill=\"#ff8040\""));
+        assert!(!html.contains("data-bgcolor"));
+        check_fragment_targets(&html);
+    }
+}
+
+#[test]
+fn omitted_and_empty_math_extensions_keep_ams_but_reject_extension_commands() {
+    let root = tempfile::tempdir().unwrap();
+    let helper = helper_bin();
+    for config in [
+        "schema-version = 2\n",
+        "schema-version = 2\n[math]\nextensions = []\n",
+    ] {
+        write(root.path(), ".adocweave.toml", config);
+        write(
+            root.path(),
+            "talk.adoc",
+            "= Talk\n:stem: latexmath\n:eqnums:\n\n== Formula\n\n[stem]\n++++\n\\begin{equation}x=1\\label{x}\\end{equation}\n++++\n\nlatexmath:[\\eqref{x}]\n",
+        );
+        let args = [
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--single-file",
+            "--slides-helper",
+            &helper,
+        ];
+        let output = convert(root.path(), &args);
+        success(&output);
+        check_fragment_targets(&String::from_utf8(output.stdout).unwrap());
+        write(
+            root.path(),
+            "talk.adoc",
+            "= Talk\n\n== Formula\n\nlatexmath:[\\colorbox{pink}{$x$}]\n",
+        );
+        let output = convert(root.path(), &args);
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("invalid-tex"));
+    }
+}
+
+#[test]
+fn math_color_does_not_permit_remote_paints_through_the_real_helper() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        ".adocweave.toml",
+        "schema-version = 2\n[math]\nextensions = [\"color\"]\n",
+    );
+    write(
+        root.path(),
+        "talk.adoc",
+        "= Talk\n\n== Formula\n\nlatexmath:[\\textcolor{url(https://example.invalid/paint.svg)}{x}]\n",
+    );
+    let output = convert(
+        root.path(),
+        &[
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--single-file",
+            "--slides-helper",
+            &helper_bin(),
+        ],
+    );
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unsupported math SVG attribute"),
+        "{stderr}"
+    );
+}
+
 fn check_fragment_targets(html: &str) {
     let ids = html
         .split("id=\"")
@@ -1198,9 +1831,9 @@ fn shared_footnote_math_and_citations_use_first_reference_order_and_safe_placeme
         "talk.adoc",
         concat!(
             "= Talk\n:eqnums:\n\n== First\n\ncite:[before]. First footnote:shared[]. Then cite:[after].\n\n",
-            "[.notes]\n--\nNotes footnote:shared[].\n--\n\n",
-            "== Last\n\nDefinition footnote:shared[Forward latexmath:[\\eqref{inside}] and latexmath:[\\begin{equation}x=1\\label{inside}\\end{equation}], cite:[inside].]. External latexmath:[\\eqref{inside}].\n\n",
-            "[.notes]\n--\nAgain footnote:shared[].\n--\n"
+            "[.notes]\n--\nNotes footnote:private[latexmath:[y=2], cite:[inside].].\n--\n\n",
+            "== Last\n\nDefinition footnote:shared[Inline latexmath:[x=1], cite:[inside].].\n\n",
+            "[.notes]\n--\nAgain footnote:private[].\n--\n"
         ),
     );
     write(
@@ -1240,17 +1873,17 @@ fn shared_footnote_math_and_citations_use_first_reference_order_and_safe_placeme
     let html = fs::read_to_string(root.path().join("dist/index.html")).unwrap();
     check_fragment_targets(&html);
     assert!(!html.contains("<code class=\"math-latex\""), "{html}");
-    assert_eq!(html.matches("class=\"math-rendered\"").count(), 9, "{html}");
+    assert_eq!(html.matches("class=\"math-rendered\"").count(), 4, "{html}");
     assert!(
-        html.contains("slides-body-s2-footnote-1-body-m1-i"),
+        html.contains("slides-body-s2-footnote-1-body-m0-i"),
         "{html}"
     );
     assert!(
-        html.contains("slides-body-s3-footnote-1-body-m1-i"),
+        html.contains("slides-body-s3-footnote-1-body-m0-i"),
         "{html}"
     );
     assert!(
-        html.contains("slides-notes-s2-footnote-1-notes-m1-i"),
+        html.contains("slides-notes-s2-footnote-1-notes-m0-i"),
         "{html}"
     );
     let bibliography = html.split("id=\"slides-body-references\"").nth(1).unwrap();
@@ -1286,7 +1919,7 @@ fn manual_only_citations_in_shared_footnotes_need_no_helper_or_external_library(
     write(
         root.path(),
         "talk.adoc",
-        "= Talk\n\n== First\n\nFirst footnote:shared[cite:[manual].].\n\n[bibliography]\n==== References\n\n* [[[manual]]] Hand-written entry.\n\n== Last\n\nAgain footnote:shared[].\n\n[.notes]\n--\nNotes footnote:shared[].\n--\n",
+        "= Talk\n\n== First\n\nFirst footnote:shared[cite:[manual].].\n\n[bibliography]\n==== References\n\n* [[[manual]]] Hand-written entry.\n\n== Last\n\nAgain footnote:shared[].\n\n[.notes]\n--\nNotes footnote:private[cite:[manual].].\n--\n",
     );
     success(&convert(
         root.path(),
@@ -1458,7 +2091,7 @@ fn footnote_citation_errors_are_checked_before_library_reads_and_save() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!output.status.success());
     assert!(
-        stderr.contains("slides-bibliography-key-conflict"),
+        stderr.contains("slides-bibliography-mode-conflict"),
         "{stderr}"
     );
     assert!(!stderr.contains("cannot open"), "{stderr}");
@@ -1580,5 +2213,586 @@ fn authored_anchor_definitions_inside_footnotes_fail_before_helper_or_data_acqui
     );
     assert!(stderr.contains("talk.adoc:5:"), "{stderr}");
     assert!(!stderr.contains("missing.json"), "{stderr}");
+    assert!(!root.path().join("dist").exists());
+}
+
+#[test]
+fn presenter_notes_cannot_reuse_body_footnotes_and_public_output_excludes_the_reference() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "talk.adoc",
+        "= Talk\n\n== Slide\n\nBody footnote:shared[Public detail].\n\n[.notes]\n--\nNotes footnote:shared[].\n--\n",
+    );
+    success(&convert(
+        root.path(),
+        &[
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--output",
+            "public",
+            "--slides-helper",
+            "/missing/helper",
+        ],
+    ));
+    let output = convert(
+        root.path(),
+        &[
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--output",
+            "presenter",
+            "--audience",
+            "presenter",
+            "--slides-helper",
+            "/missing/helper",
+        ],
+    );
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("slides-footnote-outside-scope"), "{stderr}");
+    assert!(!stderr.contains("slides-helper-not-found"), "{stderr}");
+    assert!(!root.path().join("presenter").exists());
+}
+
+#[test]
+fn numbered_or_labeled_footnote_math_is_rejected_at_its_included_source() {
+    let root = tempfile::tempdir().unwrap();
+    let helper = helper_bin();
+    write(
+        root.path(),
+        "talk.adoc",
+        "= Talk\n:eqnums:\n\n== Slide\n\ninclude::part.adoc[]\n",
+    );
+    for tex in [
+        r"x\label{inside}",
+        r"\begin{equation}x\end{equation}",
+        r"\begin{equation}x\tag{A}\end{equation}",
+        r"\newcommand{\named}{x\label{hidden}}\named",
+    ] {
+        write(
+            root.path(),
+            "part.adoc",
+            &format!("A footnote:[latexmath:[{tex}]].\n"),
+        );
+        let output = convert(
+            root.path(),
+            &[
+                "talk.adoc",
+                "--to",
+                "revealjs",
+                "--output",
+                "dist",
+                "--slides-helper",
+                &helper,
+            ],
+        );
+        assert!(!output.status.success(), "{tex}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("footnote-equation-numbering"),
+            "{tex}: {stderr}"
+        );
+        assert!(stderr.contains("part.adoc:1:"), "{stderr}");
+        assert!(!root.path().join("dist").exists());
+    }
+}
+
+fn managed_slide_fixture(root: &Path, metadata: Option<&str>, notes_plugin: bool) {
+    use adocweave_core::NeverCancel;
+    use adocweave_project::{BundleFile, BundleMediaType, ProjectLimits, save_managed_bundle};
+    // Resolve macOS /var symlinks and Windows short-name temporary paths,
+    // matching the CLI's canonical working directory before calling the save API.
+    let root = root.canonicalize().unwrap();
+    let mut files = vec![BundleFile {
+        path: "index.html".to_owned(),
+        media_type: BundleMediaType::Html,
+        bytes:
+            b"<!doctype html><html><head><title>Slides</title></head><body>FIXTURE</body></html>"
+                .to_vec(),
+    }];
+    if let Some(metadata) = metadata {
+        files.push(BundleFile {
+            path: "slides.json".to_owned(),
+            media_type: BundleMediaType::Json,
+            bytes: metadata.as_bytes().to_vec(),
+        });
+    }
+    if notes_plugin {
+        files.push(BundleFile {
+            path: "assets/notes.js".to_owned(),
+            media_type: BundleMediaType::JavaScript,
+            bytes: b"/* fixture */".to_vec(),
+        });
+    }
+    save_managed_bundle(
+        &root.join("dist"),
+        &[],
+        &files,
+        ProjectLimits::default(),
+        &NeverCancel,
+    )
+    .unwrap();
+}
+
+#[test]
+fn serve_rejects_missing_invalid_and_unsupported_slide_metadata_before_binding() {
+    for (metadata, error) in [
+        (None, "slide metadata is missing"),
+        (
+            Some(r#"{"schema_version":2,"audience":"public"}"#),
+            "unsupported slide metadata version",
+        ),
+        (
+            Some(r#"{"schema_version":1,"audience":"unknown"}"#),
+            "invalid slide metadata",
+        ),
+        (Some(r#"{"schema_version":1}"#), "invalid slide metadata"),
+        (Some("{invalid"), "invalid slide metadata"),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        managed_slide_fixture(root.path(), metadata, true);
+        let output = Command::new(env!("CARGO_BIN_EXE_adocweave"))
+            .current_dir(root.path())
+            .args(["serve", "dist", "--port", "0"])
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{metadata:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(error), "{metadata:?}: {stderr}");
+        assert!(!stderr.contains("AdocWeave slides:"), "{stderr}");
+    }
+}
+
+#[test]
+fn serve_uses_explicit_audience_instead_of_inferring_it_from_notes_plugin_files() {
+    use std::io::{BufRead as _, Read as _, Write as _};
+    use std::net::TcpStream;
+    use std::process::Stdio;
+    use std::time::Duration;
+    struct Server(std::process::Child);
+    impl Drop for Server {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    for (audience, notes_plugin) in [("public", true), ("presenter", false)] {
+        let root = tempfile::tempdir().unwrap();
+        managed_slide_fixture(
+            root.path(),
+            Some(&format!(
+                r#"{{"schema_version":1,"audience":"{audience}"}}"#
+            )),
+            notes_plugin,
+        );
+        let mut child = Server(
+            Command::new(env!("CARGO_BIN_EXE_adocweave"))
+                .current_dir(root.path())
+                .args(["serve", "dist", "--port", "0"])
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap(),
+        );
+        let mut message = String::new();
+        std::io::BufReader::new(child.0.stderr.take().unwrap())
+            .read_line(&mut message)
+            .unwrap();
+        let address = message
+            .trim()
+            .strip_prefix("AdocWeave slides: http://")
+            .and_then(|url| url.strip_suffix('/'))
+            .unwrap_or_else(|| panic!("server did not start: {message}"));
+        let mut stream = TcpStream::connect(address).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        stream
+            .write_all(format!("GET / HTTP/1.1\r\nHost: {address}\r\n\r\n").as_bytes())
+            .unwrap();
+        let mut reader = std::io::BufReader::new(stream);
+        let mut response = String::new();
+        while !response.ends_with("\r\n\r\n") {
+            let received = reader
+                .read_line(&mut response)
+                .unwrap_or_else(|error| panic!("HTTP headers: {error}; received {response:?}"));
+            assert!(received > 0, "incomplete HTTP headers: {response:?}");
+        }
+        let length = response
+            .lines()
+            .find_map(|line| line.strip_prefix("Content-Length: "))
+            .expect("Content-Length")
+            .parse::<usize>()
+            .unwrap();
+        // HTTP frames this response by length; TCP EOF is not part of the payload.
+        let mut body = vec![0; length];
+        reader
+            .read_exact(&mut body)
+            .unwrap_or_else(|error| panic!("HTTP body: {error}; headers {response:?}"));
+        response.push_str(&String::from_utf8(body).unwrap());
+        assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+        assert!(response.contains("FIXTURE"));
+        assert_eq!(
+            response.contains("script-src 'self' 'sha256-"),
+            audience == "presenter",
+            "{response}"
+        );
+        assert!(!response.contains("adocweave-preview-generation"));
+    }
+}
+
+#[test]
+fn csl_defaults_allow_independent_overrides_and_preserve_explicit_style_and_locale() {
+    let root = tempfile::tempdir().unwrap();
+    let helper = helper_bin();
+    write(
+        root.path(),
+        "talk.adoc",
+        "= Talk\n\n== Slide\n\ncite:[work,locator=7,label=page].\n",
+    );
+    write(
+        root.path(),
+        "references.json",
+        r#"[{"id":"work","type":"book","title":"Default bibliography work","author":[{"family":"Researcher","given":"Ada"}],"issued":{"date-parts":[[2024]]}}]"#,
+    );
+    write(
+        root.path(),
+        "style.csl",
+        r#"<style xmlns="http://purl.org/net/xbiblio/csl" version="1.0" class="in-text" default-locale="en-US"><info><title>Override test</title><id>urn:adocweave:test:override</id></info><citation><layout><text value="CUSTOM_STYLE "/><text term="page" form="short"/><text variable="locator" prefix=" "/></layout></citation><bibliography><layout><text variable="title"/></layout></bibliography></style>"#,
+    );
+    write(
+        root.path(),
+        "locale.xml",
+        &include_str!("../assets/slides/locale-en-US.xml")
+            .replace("xml:lang=\"en-US\"", "xml:lang=\"ja-JP\"")
+            .replace("<single>p.</single>", "<single>CUSTOM_PAGE</single>"),
+    );
+    for (style, locale, directory) in [
+        (false, false, "default"),
+        (true, false, "style"),
+        (false, true, "locale"),
+        (true, true, "both"),
+    ] {
+        let mut args = vec![
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--output",
+            directory,
+            "--slides-helper",
+            &helper,
+            "--bibliography",
+            "references.json",
+        ];
+        if style {
+            args.extend(["--csl-style", "style.csl"]);
+        }
+        if locale {
+            args.extend(["--csl-locale", "locale.xml"]);
+        }
+        success(&convert(root.path(), &args));
+        let html = fs::read_to_string(root.path().join(directory).join("index.html")).unwrap();
+        assert!(
+            html.contains("Default bibliography work"),
+            "{directory}: {html}"
+        );
+        assert_eq!(html.contains("CUSTOM_STYLE"), style, "{directory}: {html}");
+        assert_eq!(html.contains("CUSTOM_PAGE"), locale, "{directory}: {html}");
+        assert!(html.contains("assets/theme.css"));
+        assert!(html.contains("assets/content.css"));
+        check_fragment_targets(&html);
+    }
+}
+
+#[test]
+fn csl_explicit_missing_or_invalid_overrides_do_not_fall_back_to_defaults() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "talk.adoc",
+        "= Talk\n\n== Slide\n\ncite:[work].\n",
+    );
+    write(
+        root.path(),
+        "references.json",
+        r#"[{"id":"work","title":"Work"}]"#,
+    );
+    write(root.path(), "invalid.xml", "<invalid");
+    for option in ["--csl-style", "--csl-locale"] {
+        for path in ["missing.xml", "invalid.xml"] {
+            let output = convert(
+                root.path(),
+                &[
+                    "talk.adoc",
+                    "--to",
+                    "revealjs",
+                    "--output",
+                    "dist",
+                    "--bibliography",
+                    "references.json",
+                    option,
+                    path,
+                    "--slides-helper",
+                    "/missing/helper",
+                ],
+            );
+            assert!(!output.status.success(), "{option} {path}");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(stderr.contains(path), "{stderr}");
+            assert!(!stderr.contains("slides-helper-not-found"), "{stderr}");
+            assert!(!root.path().join("dist").exists());
+        }
+        let output = convert(
+            root.path(),
+            &[
+                "talk.adoc",
+                "--to",
+                "revealjs",
+                "--output",
+                "dist",
+                option,
+                "missing.xml",
+                "--slides-helper",
+                "/missing/helper",
+            ],
+        );
+        assert!(!output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("visible slide citations require --bibliography FILE"),
+            "{stderr}"
+        );
+        assert!(!root.path().join("dist").exists());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn convert_interrupts_reap_helper_process_groups_before_exiting() {
+    use std::os::unix::{fs::PermissionsExt as _, process::CommandExt as _};
+    use std::time::{Duration, Instant};
+    struct Groups(Vec<i32>);
+    impl Drop for Groups {
+        fn drop(&mut self) {
+            for &group in &self.0 {
+                // SAFETY: these groups belong only to processes started by this test.
+                unsafe {
+                    libc::kill(-group, libc::SIGKILL);
+                }
+            }
+        }
+    }
+    fn running(pid: i32) -> bool {
+        let output = Command::new("ps")
+            .args(["-o", "stat=", "-p", &pid.to_string()])
+            .output()
+            .unwrap();
+        output.status.success()
+            && String::from_utf8_lossy(&output.stdout)
+                .trim()
+                .chars()
+                .next()
+                .is_some_and(|state| state != 'Z')
+    }
+    for signal in [libc::SIGINT, libc::SIGTERM] {
+        let root = tempfile::tempdir().unwrap();
+        write(
+            root.path(),
+            "talk.adoc",
+            "= Talk\n\n== Slide\n\nlatexmath:[x].\n",
+        );
+        write(
+            root.path(),
+            "helper",
+            "#!/bin/sh\nsleep 60 &\nchild=$!\nprintf '%s %s\\n' \"$$\" \"$child\" > \"$HELPER_PIDS\"\nwait\n",
+        );
+        let helper = root.path().join("helper");
+        fs::set_permissions(&helper, fs::Permissions::from_mode(0o700)).unwrap();
+        let pids = root.path().join("pids");
+        let mut child = Command::new(env!("CARGO_BIN_EXE_adocweave"))
+            .current_dir(root.path())
+            .args([
+                "convert",
+                "talk.adoc",
+                "--to",
+                "revealjs",
+                "--output",
+                "dist",
+                "--slides-helper",
+            ])
+            .arg(&helper)
+            .env("HELPER_PIDS", &pids)
+            .process_group(0)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut groups = Groups(vec![child.id() as i32]);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let processes = loop {
+            if let Ok(text) = fs::read_to_string(&pids) {
+                let ids = text
+                    .split_whitespace()
+                    .map(|id| id.parse::<i32>().unwrap())
+                    .collect::<Vec<_>>();
+                if ids.len() == 2 {
+                    break ids;
+                }
+            }
+            assert!(Instant::now() < deadline, "helper did not start");
+            assert!(
+                child.try_wait().unwrap().is_none(),
+                "convert exited before helper startup"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        groups.0.push(processes[0]);
+        // SAFETY: the child is live in its own group, emulating a terminal signal.
+        assert_eq!(unsafe { libc::kill(-(child.id() as i32), signal) }, 0);
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "convert did not finish cancellation"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert!(!status.success());
+        assert!(
+            status.code().is_some(),
+            "convert must handle the signal and run cleanup"
+        );
+        for pid in processes {
+            while running(pid) && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert!(
+                !running(pid),
+                "helper process {pid} survived signal {signal}"
+            );
+        }
+        assert!(!root.path().join("dist").exists());
+        groups.0.clear();
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn single_file_blocked_stdout_remains_interruptible_after_generation() {
+    use std::os::fd::AsRawFd as _;
+    use std::os::unix::process::{CommandExt as _, ExitStatusExt as _};
+    use std::time::{Duration, Instant};
+
+    struct Child(std::process::Child);
+    impl Drop for Child {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "talk.adoc",
+        &format!(
+            "= Talk\n\n== Slide\n\n{}\n",
+            "Visible body.\n".repeat(100_000)
+        ),
+    );
+    for signal in [libc::SIGINT, libc::SIGTERM] {
+        let mut child = Child(
+            Command::new(env!("CARGO_BIN_EXE_adocweave"))
+                .current_dir(root.path())
+                .args([
+                    "convert",
+                    "talk.adoc",
+                    "--no-config",
+                    "--to",
+                    "revealjs",
+                    "--single-file",
+                ])
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .process_group(0)
+                .spawn()
+                .unwrap(),
+        );
+        let mut readable = libc::pollfd {
+            fd: child.0.stdout.as_ref().unwrap().as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // SAFETY: this descriptor belongs to the live child's retained pipe.
+        assert_eq!(unsafe { libc::poll(&mut readable, 1, 15_000) }, 1);
+        assert_ne!(
+            readable.revents & libc::POLLIN,
+            0,
+            "generation produced no HTML"
+        );
+        // Keep the read end open without draining it. The HTML exceeds pipe
+        // capacity, so the writer cannot complete before receiving the signal.
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(child.0.try_wait().unwrap().is_none());
+        // SAFETY: the live child owns its dedicated process group.
+        assert_eq!(unsafe { libc::kill(-(child.0.id() as i32), signal) }, 0);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let status = loop {
+            if let Some(status) = child.0.try_wait().unwrap() {
+                break status;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "signal {signal} did not interrupt blocked stdout"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert_eq!(status.signal(), Some(signal));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn convert_stdin_wait_remains_interruptible_before_helper_startup() {
+    use std::io::Write as _;
+    use std::os::unix::process::{CommandExt as _, ExitStatusExt as _};
+    use std::time::{Duration, Instant};
+    let root = tempfile::tempdir().unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_adocweave"))
+        .current_dir(root.path())
+        .args(["convert", "-", "--to", "revealjs", "--output", "dist"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"= Waiting for more input\n")
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(child.try_wait().unwrap().is_none());
+    // SAFETY: the child is live in the dedicated group created above.
+    assert_eq!(unsafe { libc::kill(-(child.id() as i32), libc::SIGINT) }, 0);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            child.kill().unwrap();
+            child.wait().unwrap();
+            panic!("SIGINT did not interrupt stdin acquisition");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    assert_eq!(status.signal(), Some(libc::SIGINT));
     assert!(!root.path().join("dist").exists());
 }
