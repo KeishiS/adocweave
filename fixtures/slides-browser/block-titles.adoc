@@ -1,0 +1,81 @@
+= Block titles
+:slides-aspect-ratio: 16:9
+
+.PRIVATE_COMMENT_TITLE footnote:[PRIVATE_COMMENT_NOTE]
+////
+PRIVATE_COMMENT_BODY
+////
+
+[#paragraphs]
+== Paragraphs and definitions
+
+[#paragraph]
+.Paragraph *title* footnote:[Title footnote.]
+Paragraph body.
+
+.Definition title
+Term:: Description.
+
+[.notes]
+.PRIVATE_NOTE_BLOCK_TITLE footnote:[PRIVATE_NOTE_BLOCK_FOOTNOTE]
+--
+.PRIVATE_NOTE_TITLE
+PRIVATE_NOTE_BODY
+--
+
+[#steps]
+== Steps
+
+.List title
+[%step]
+* First item.
+* Second item.
+
+.Quote title
+____
+Quote body. <<bare-container,Container link>>.
+____
+
+[#bare-container]
+____
+Container body.
+____
+
+[#columns.columns]
+== Columns
+
+.Left title
+[.column]
+--
+Left body.
+--
+
+.Right title
+[.column]
+--
+Right body.
+--
+
+[#code]
+== Code
+
+.Code *title* footnote:[Code title footnote.]
+[source,rust]
+----
+fn main() {}
+----
+
+[#verse]
+== Verse
+
+.Verse title
+[verse]
+____
+.Inner *title*
+Line one.
+Line two.
+
+////
+PRIVATE_VERSE_COMMENT
+////
+____

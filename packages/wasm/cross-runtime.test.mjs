@@ -18,6 +18,36 @@ test("conformance artifacts come from the repository target directory", () => {
 
 const cases = [
   {
+    name: "コメントを除いたverseの改行とタイトル",
+    request: {
+      source: {
+        text: "[verse]\n____\n.Stanza *title*\nLine *one*\nLine two\n\n////\nComment\n////\n____\n",
+        id: "verse-comment.adoc",
+      },
+      products: { html: true, diagnostics: true },
+    },
+  },
+  {
+    name: "リストを含むverseのタイトルと本文内の参照",
+    request: {
+      source: {
+        text: "[verse]\n____\n.Stanza *title*\nLine *bold* footnote:[Note]\n\n* item\n____\n",
+        id: "verse.adoc",
+      },
+      products: { html: true, document: true, diagnostics: true },
+    },
+  },
+  {
+    name: "ブロックタイトルの描画とコメント内の副作用の除外",
+    request: {
+      source: {
+        text: ".Hidden footnote:[Secret] {counter:n}\n////\nComment\n////\n\n[#target]\n.Paragraph *title* footnote:[Note]\nCounter {counter:n}.\n\n.List <<target>>\n* Item\n\n.Source _title_\n[source,rust]\n----\nfn main() {}\n----\n",
+        id: "titles.adoc",
+      },
+      products: { html: true, document: true, diagnostics: true, resourceQueries: true },
+    },
+  },
+  {
     name: "要求した全product",
     request: {
       source: { text: "= Title\n\n== Section\n\nText *strong*.\n", id: "main.adoc" },

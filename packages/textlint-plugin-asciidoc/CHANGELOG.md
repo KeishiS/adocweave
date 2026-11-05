@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.54.2] - 2026-11-05
+
+### Fixed
+
+- Titles attached to comment blocks are excluded from prose linting and no longer contribute footnotes, references, or counter changes. Original source and lint-control comment text remain available to the Processor.
+
 ## [0.54.1] - 2026-10-04
 
 ### Fixed

@@ -26,6 +26,120 @@ fn write(root: &Path, path: &str, content: &str) {
 const SVG: &str = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\"><rect width=\"80\" height=\"80\" fill=\"#123\"/><text x=\"2\" y=\"20\">結果</text></svg>";
 
 #[test]
+fn block_titles_preserve_slide_scopes_fragments_and_footnote_targets() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "talk.adoc",
+        include_str!("../../../fixtures/slides-browser/block-titles.adoc"),
+    );
+    for audience in ["public", "presenter"] {
+        success(&convert(
+            root.path(),
+            &[
+                "--no-config",
+                "talk.adoc",
+                "--to",
+                "revealjs",
+                "--audience",
+                audience,
+                "--output",
+                audience,
+            ],
+        ));
+        let html = fs::read_to_string(root.path().join(audience).join("index.html")).unwrap();
+        assert_block_titles(&html);
+        assert_eq!(html.contains("PRIVATE_NOTE_TITLE"), audience == "presenter");
+        assert_eq!(html.contains("PRIVATE_NOTE_BODY"), audience == "presenter");
+        for private in ["PRIVATE_NOTE_BLOCK_TITLE", "PRIVATE_NOTE_BLOCK_FOOTNOTE"] {
+            assert_eq!(html.contains(private), audience == "presenter");
+        }
+        assert_eq!(
+            html.matches("class=\"footnote-ref\"").count(),
+            if audience == "presenter" { 3 } else { 2 },
+        );
+    }
+    let single = convert(
+        root.path(),
+        &[
+            "--no-config",
+            "talk.adoc",
+            "--to",
+            "revealjs",
+            "--single-file",
+        ],
+    );
+    success(&single);
+    let html = String::from_utf8(single.stdout).unwrap();
+    assert_block_titles(&html);
+    assert!(!html.contains("PRIVATE_NOTE"));
+    assert_eq!(html.matches("class=\"footnote-ref\"").count(), 2);
+}
+
+fn assert_block_titles(html: &str) {
+    for title in [
+        "Paragraph <strong>title</strong>",
+        "Definition title",
+        "List title",
+        "Quote title",
+        "Left title",
+        "Right title",
+        "Code <strong>title</strong>",
+        "Verse title",
+        "Inner <strong>title</strong>",
+    ] {
+        assert_eq!(html.matches(title).count(), 1, "{title}: {html}");
+    }
+    assert_eq!(html.matches("id=\"paragraph\"").count(), 1);
+    assert_eq!(html.matches("id=\"bare-container\"").count(), 1);
+    assert!(html.contains("<li class=\"fragment\" data-fragment-index=\"0\">"));
+    assert!(html.contains("<div class=\"title\">List title</div>"));
+    assert!(!html.contains("PRIVATE_COMMENT"));
+    assert!(!html.contains("PRIVATE_VERSE_COMMENT"));
+    check_fragment_targets(html);
+}
+
+#[test]
+fn comment_titles_do_not_create_slide_inputs_or_change_body_counters() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "talk.adoc",
+        concat!(
+            "= Talk\n\n== Slide\n\n",
+            ".PRIVATE footnote:[SECRET] cite:[p] latexmath:[x] <<missing>> {counter:count}\n",
+            "////\nPRIVATE_BODY\n////\n\nCounter {counter:count}.\n",
+        ),
+    );
+    for audience in ["public", "presenter"] {
+        let output = convert(
+            root.path(),
+            &[
+                "--no-config",
+                "talk.adoc",
+                "--to",
+                "revealjs",
+                "--audience",
+                audience,
+                "--output",
+                audience,
+                "--slides-helper",
+                "missing-helper",
+            ],
+        );
+        success(&output);
+        let diagnostics = String::from_utf8_lossy(&output.stderr);
+        assert!(!diagnostics.contains("warning["), "{diagnostics}");
+        assert!(!diagnostics.contains("error["), "{diagnostics}");
+        let html = fs::read_to_string(root.path().join(audience).join("index.html")).unwrap();
+        assert!(html.contains("Counter 1."), "{html}");
+        assert!(!html.contains("PRIVATE"));
+        assert!(!html.contains("SECRET"));
+        assert!(!html.contains("class=\"footnote-ref\""));
+    }
+}
+
+#[test]
 fn single_file_writes_public_html_to_stdout_without_a_helper_or_side_files() {
     let root = tempfile::tempdir().unwrap();
     let source = "= Talk\n\n== Slide\n\nPUBLIC BODY\n\n[.notes]\n--\nPRIVATE NOTES\n--\n";

@@ -73,11 +73,7 @@ pub(super) fn render_block(
     context: &mut InlineRenderContext<'_, '_>,
     scope: RenderScope,
 ) {
-    if context
-        .region
-        .as_ref()
-        .is_some_and(|region| region.omitted.contains(&block.range()))
-    {
+    if context.is_omitted(block.range()) {
         return;
     }
     let step = context
@@ -122,7 +118,12 @@ pub(super) fn render_block(
                     &paragraph.metadata,
                     context,
                 );
-                render_paragraph(output, paragraph, None, context);
+                render_paragraph_content(
+                    output,
+                    paragraph,
+                    &fixed_class_attributes(paragraph_classes(paragraph)),
+                    context,
+                );
                 BlockWriter::end(output, "div");
                 BlockWriter::line_break(output);
             } else if crate::caption::block_image(paragraph).is_some() {
@@ -132,8 +133,23 @@ pub(super) fn render_block(
             }
         }
         AstBlock::LiteralParagraph(paragraph) => {
-            let attributes = block_attributes(explicit_id, &paragraph.metadata, &[], context);
-            render_preformatted(output, &attributes, &paragraph.value);
+            if let Some(title) = &paragraph.metadata.title {
+                let attributes = block_attributes(
+                    explicit_id,
+                    &paragraph.metadata,
+                    &["literal-block"],
+                    context,
+                );
+                BlockWriter::start(output, "figure", &attributes);
+                BlockWriter::line_break(output);
+                render_figure_caption(output, title, paragraph.range, context);
+                render_preformatted(output, &[], &paragraph.value);
+                BlockWriter::end(output, "figure");
+                BlockWriter::line_break(output);
+            } else {
+                let attributes = block_attributes(explicit_id, &paragraph.metadata, &[], context);
+                render_preformatted(output, &attributes, &paragraph.value);
+            }
         }
         AstBlock::Break(block) => render_break(output, block, explicit_id, context),
         AstBlock::Verbatim(block) => match &block.kind {
@@ -145,7 +161,7 @@ pub(super) fn render_block(
                     BlockWriter::start(output, "figure", &attributes);
                     BlockWriter::line_break(output);
                     if let Some(title) = &block.metadata.title {
-                        render_verbatim_caption(output, title, block.range, context);
+                        render_figure_caption(output, title, block.range, context);
                     }
                 }
                 let mut pre_attributes = Vec::new();
@@ -207,7 +223,7 @@ pub(super) fn render_block(
                         block_attributes(explicit_id, &block.metadata, &[class], context);
                     BlockWriter::start(output, "figure", &attributes);
                     BlockWriter::line_break(output);
-                    render_verbatim_caption(output, title, block.range, context);
+                    render_figure_caption(output, title, block.range, context);
                     render_preformatted(output, &[], &block.value);
                     BlockWriter::end(output, "figure");
                     BlockWriter::line_break(output);
@@ -218,49 +234,7 @@ pub(super) fn render_block(
             }
         },
         AstBlock::List(list) => render_list(output, list, explicit_id, policy, context, scope),
-        AstBlock::Math(block) => {
-            if let crate::render::ResolutionMatch::Unique(resolution) =
-                context.input_usage.math_at(block.range)
-                && policy.math_languages.allowed.contains(&block.language)
-            {
-                let mut attributes = block_attributes(
-                    explicit_id,
-                    &block.metadata,
-                    &[body::math_class(block.language)],
-                    context,
-                );
-                attributes.extend(body::math_data_attributes(block.language, "block"));
-                BlockWriter::start(output, "div", &attributes);
-                super::safe::HtmlWriter::new(output).validated_math(
-                    &context.math_value(block.range, &resolution.value),
-                    &block.value,
-                );
-                BlockWriter::end(output, "div");
-                BlockWriter::line_break(output);
-            } else if policy.math_languages.allowed.contains(&block.language) {
-                let mut attributes = block_attributes(
-                    explicit_id,
-                    &block.metadata,
-                    &[body::math_class(block.language)],
-                    context,
-                );
-                attributes.extend(body::math_data_attributes(block.language, "block"));
-                BlockWriter::start(output, "pre", &attributes);
-                BlockWriter::start(output, "code", &[]);
-                BlockWriter::text(output, &block.value);
-                BlockWriter::end(output, "code");
-                BlockWriter::end(output, "pre");
-                BlockWriter::line_break(output);
-            } else {
-                let attributes = block_attributes(explicit_id, &block.metadata, &[], context);
-                render_preformatted(output, &attributes, &block.value);
-                context.diagnostics.push(render_diagnostic(
-                    "math-language-not-allowed",
-                    "math language is rejected by the render policy",
-                    block.attribute_range,
-                ));
-            }
-        }
+        AstBlock::Math(block) => render_math_block(output, block, explicit_id, policy, context),
         AstBlock::Delimited(block) => {
             render_delimited(output, block, explicit_id, policy, context, scope);
         }
@@ -281,6 +255,53 @@ pub(super) fn render_preformatted(
     BlockWriter::text(output, value);
     BlockWriter::end(output, "pre");
     BlockWriter::line_break(output);
+}
+
+fn render_math_block(
+    output: &mut String,
+    block: &crate::block_model::MathBlock,
+    explicit_id: Option<&str>,
+    policy: &RenderPolicy,
+    context: &mut InlineRenderContext<'_, '_>,
+) {
+    let allowed = policy.math_languages.allowed.contains(&block.language);
+    let math_class = [body::math_class(block.language)];
+    let fixed = if allowed { math_class.as_slice() } else { &[] };
+    let mut attributes = start_titled_block(
+        output,
+        explicit_id,
+        &block.metadata,
+        block.range,
+        fixed,
+        context,
+    );
+    let resolution = context.input_usage.math_at(block.range);
+    if allowed {
+        attributes.extend(body::math_data_attributes(block.language, "block"));
+        if let crate::render::ResolutionMatch::Unique(resolution) = resolution {
+            BlockWriter::start(output, "div", &attributes);
+            super::safe::HtmlWriter::new(output).validated_math(
+                &context.math_value(block.range, &resolution.value),
+                &block.value,
+            );
+            BlockWriter::end(output, "div");
+        } else {
+            BlockWriter::start(output, "pre", &attributes);
+            BlockWriter::start(output, "code", &[]);
+            BlockWriter::text(output, &block.value);
+            BlockWriter::end(output, "code");
+            BlockWriter::end(output, "pre");
+        }
+        BlockWriter::line_break(output);
+    } else {
+        render_preformatted(output, &attributes, &block.value);
+        context.diagnostics.push(render_diagnostic(
+            "math-language-not-allowed",
+            "math language is rejected by the render policy",
+            block.attribute_range,
+        ));
+    }
+    end_titled_block(output, &block.metadata);
 }
 
 pub(super) fn render_delimited(
@@ -309,6 +330,9 @@ pub(super) fn render_delimited(
                     block_attributes(explicit_id, &block.metadata, &[quote_class], context);
                 BlockWriter::start(output, "div", &attributes);
                 BlockWriter::line_break(output);
+                if let Some(title) = &block.metadata.title {
+                    render_block_title(output, title, block.range, context);
+                }
                 if quote.kind == crate::block_model::QuoteKind::Quote {
                     BlockWriter::start(output, "blockquote", &[]);
                     BlockWriter::line_break(output);
@@ -366,15 +390,21 @@ pub(super) fn render_delimited(
         }
     }
     match &block.content {
-        crate::block_model::DelimitedContent::Verbatim(value) => {
-            if !matches!(block.kind, crate::block_model::DelimitedBlockKind::Comment) {
-                let attributes = block_attributes(explicit_id, &block.metadata, &[], context);
-                render_preformatted(output, &attributes, value);
-            }
+        crate::block_model::DelimitedContent::Verbatim(_) => {
+            // Lowering turns listings and literals into AstBlock::Verbatim.
+            debug_assert_eq!(block.kind, crate::block_model::DelimitedBlockKind::Comment);
         }
         crate::block_model::DelimitedContent::Passthrough(value) => {
-            let attributes = block_attributes(explicit_id, &block.metadata, &[], context);
+            let attributes = start_titled_block(
+                output,
+                explicit_id,
+                &block.metadata,
+                block.range,
+                &[],
+                context,
+            );
             render_preformatted(output, &attributes, value);
+            end_titled_block(output, &block.metadata);
         }
         crate::block_model::DelimitedContent::Table(table) => {
             render_table(output, table, block, explicit_id, policy, context, scope);
@@ -387,8 +417,8 @@ pub(super) fn render_delimited(
 
 /// A compound block is a container the reader can see: the wrapper names its
 /// kind, and the block title leads the content the same way it does for an
-/// admonition. A quote delimiter without a quote style stays transparent, as
-/// the compatibility guide records.
+/// admonition. Other compound blocks need a wrapper when a title, ID or role
+/// gives the container a visible identity.
 fn render_compound(
     output: &mut String,
     block: &crate::block_model::DelimitedBlock,
@@ -397,26 +427,22 @@ fn render_compound(
     context: &mut InlineRenderContext<'_, '_>,
     scope: RenderScope,
 ) {
-    let kind_class = match block.kind {
-        crate::block_model::DelimitedBlockKind::Example => "example",
-        crate::block_model::DelimitedBlockKind::Sidebar => "sidebar",
-        crate::block_model::DelimitedBlockKind::Open => "open",
-        _ => {
-            render_delimited_children(output, block, policy, context, scope);
-            return;
-        }
+    let fixed: &[&'static str] = match block.kind {
+        crate::block_model::DelimitedBlockKind::Example => &["example"],
+        crate::block_model::DelimitedBlockKind::Sidebar => &["sidebar"],
+        crate::block_model::DelimitedBlockKind::Open => &["open"],
+        _ if block.metadata.title.is_some() => &["titled-block"],
+        _ => &[],
     };
-    let attributes = block_attributes(explicit_id, &block.metadata, &[kind_class], context);
+    let attributes = block_attributes(explicit_id, &block.metadata, fixed, context);
+    if attributes.is_empty() {
+        render_delimited_children(output, block, policy, context, scope);
+        return;
+    }
     BlockWriter::start(output, "div", &attributes);
     BlockWriter::line_break(output);
     if let Some(title) = &block.metadata.title {
-        BlockWriter::start(output, "div", &[classes(&["title"])]);
-        if let Some(lead) = caption_lead(block.range, context) {
-            BlockWriter::text(output, &lead);
-        }
-        render_inlines(output, &title.inlines, context);
-        BlockWriter::end(output, "div");
-        BlockWriter::line_break(output);
+        render_block_title(output, title, block.range, context);
     }
     render_delimited_children(output, block, policy, context, scope);
     BlockWriter::end(output, "div");
@@ -447,15 +473,34 @@ pub(super) fn render_verse_children(
     let crate::block_model::DelimitedContent::Compound(children) = &block.content else {
         return;
     };
-    if children
+    // Only visible children determine the verse's form. Comments and omitted
+    // blocks cannot change how the reader sees the surrounding stanzas.
+    let paragraphs = children
         .iter()
-        .all(|child| matches!(child, AstBlock::Paragraph(_)))
+        .filter(|child| {
+            !matches!(child, AstBlock::Delimited(comment)
+            if comment.kind == crate::block_model::DelimitedBlockKind::Comment)
+        })
+        .filter(|child| !context.is_omitted(child.range()))
+        .map(|child| match child {
+            AstBlock::Paragraph(paragraph) => Some(paragraph),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>();
+    let Some(paragraphs) = paragraphs else {
+        // Compound verse uses ordinary block rendering and inline references.
+        render_delimited_children(output, block, policy, context, scope);
+        return;
+    };
+    if paragraphs.is_empty() {
+        return;
+    }
+    if paragraphs
+        .iter()
+        .all(|paragraph| is_plain_stanza(paragraph, context))
     {
         BlockWriter::start(output, "pre", &[]);
-        for (index, child) in children.iter().enumerate() {
-            let AstBlock::Paragraph(paragraph) = child else {
-                unreachable!()
-            };
+        for (index, paragraph) in paragraphs.iter().enumerate() {
             if index > 0 {
                 BlockWriter::line_break(output);
                 BlockWriter::line_break(output);
@@ -467,8 +512,29 @@ pub(super) fn render_verse_children(
         BlockWriter::end(output, "pre");
         BlockWriter::line_break(output);
     } else {
-        render_delimited_children(output, block, policy, context, scope);
+        for paragraph in paragraphs {
+            let id = context
+                .identifiers
+                .target_at(paragraph.range)
+                .map(|target| target.id.as_str());
+            let attributes = start_titled_block(
+                output,
+                id,
+                &paragraph.metadata,
+                paragraph.range,
+                &[],
+                context,
+            );
+            render_preformatted(output, &attributes, &paragraph.value);
+            end_titled_block(output, &paragraph.metadata);
+        }
     }
+}
+
+fn is_plain_stanza(paragraph: &Paragraph, context: &InlineRenderContext<'_, '_>) -> bool {
+    paragraph.metadata.title.is_none()
+        && paragraph.metadata.role_names().next().is_none()
+        && context.identifiers.target_at(paragraph.range).is_none()
 }
 
 pub(super) fn render_admonition_start(
@@ -508,7 +574,6 @@ pub(super) fn render_table(
     scope: RenderScope,
 ) {
     let metadata = &block.metadata;
-    let caption_lead = caption_lead(block.range, context);
     use crate::table::{
         HorizontalAlignment, TableCellStyle, TableFrame, TableGrid, TableSection, TableStripes,
     };
@@ -544,10 +609,7 @@ pub(super) fn render_table(
     BlockWriter::line_break(output);
     if let Some(caption) = &metadata.title {
         BlockWriter::start(output, "caption", &[]);
-        if let Some(lead) = &caption_lead {
-            BlockWriter::text(output, lead);
-        }
-        render_inlines(output, &caption.inlines, context);
+        render_caption_content(output, caption, block.range, context);
         BlockWriter::end(output, "caption");
         BlockWriter::line_break(output);
     }
@@ -690,18 +752,25 @@ pub(super) fn render_list(
     context: &mut InlineRenderContext<'_, '_>,
     scope: RenderScope,
 ) {
+    let fixed: &[&'static str] = if list.kind == crate::block_model::ListKind::Callout {
+        &["callout-list"]
+    } else {
+        &[]
+    };
+    let attributes = start_titled_block(
+        output,
+        explicit_id,
+        &list.metadata,
+        list.range,
+        fixed,
+        context,
+    );
     let tag = match list.kind {
         crate::block_model::ListKind::Unordered => "ul",
         crate::block_model::ListKind::Ordered => "ol",
         crate::block_model::ListKind::Description => "dl",
         crate::block_model::ListKind::Callout => "ol",
     };
-    let fixed: &[&'static str] = if list.kind == crate::block_model::ListKind::Callout {
-        &["callout-list"]
-    } else {
-        &[]
-    };
-    let attributes = block_attributes(explicit_id, &list.metadata, fixed, context);
     BlockWriter::start(output, tag, &attributes);
     BlockWriter::line_break(output);
     for (index, item) in list.items.iter().enumerate() {
@@ -773,6 +842,7 @@ pub(super) fn render_list(
     }
     BlockWriter::end(output, tag);
     BlockWriter::line_break(output);
+    end_titled_block(output, &list.metadata);
 }
 
 pub(super) fn bibliography_entry_for_item<'a>(
@@ -931,6 +1001,19 @@ pub(super) fn render_paragraph(
     id: Option<&str>,
     context: &mut InlineRenderContext<'_, '_>,
 ) {
+    let attributes = start_titled_block(
+        output,
+        id,
+        &paragraph.metadata,
+        paragraph.range,
+        paragraph_classes(paragraph),
+        context,
+    );
+    render_paragraph_content(output, paragraph, &attributes, context);
+    end_titled_block(output, &paragraph.metadata);
+}
+
+fn paragraph_classes(paragraph: &Paragraph) -> &'static [&'static str] {
     // `lead` is the one role with a fixed class of its own; the policy decides
     // about every other role.
     let lead = paragraph
@@ -943,9 +1026,16 @@ pub(super) fn render_paragraph(
             .attributes
             .iter()
             .any(|attribute| attribute.name.is_none() && attribute.value == "lead");
-    let fixed: &[&'static str] = if lead { &["lead"] } else { &[] };
-    let attributes = block_attributes(id, &paragraph.metadata, fixed, context);
-    BlockWriter::start(output, "p", &attributes);
+    if lead { &["lead"] } else { &[] }
+}
+
+fn render_paragraph_content(
+    output: &mut String,
+    paragraph: &Paragraph,
+    attributes: &[body::PlannedAttribute],
+    context: &mut InlineRenderContext<'_, '_>,
+) {
+    BlockWriter::start(output, "p", attributes);
     render_inlines(output, &paragraph.inlines, context);
     BlockWriter::end(output, "p");
     BlockWriter::line_break(output);
@@ -960,24 +1050,78 @@ pub(super) fn render_inlines(
     body::serialize_inlines(output, &plan);
 }
 
-/// The `figcaption` of a verbatim block: the caption lead, then the title as
-/// plain text, as the HTML contract promises for code samples.
-fn render_verbatim_caption(
+/// The owning block chooses the title's element. Its content shares the body
+/// renderer so references, equations and citations use the same context.
+fn render_caption_content(
+    output: &mut String,
+    title: &crate::block_model::BlockTitle,
+    range: crate::source::TextRange,
+    context: &mut InlineRenderContext<'_, '_>,
+) {
+    if let Some(lead) = caption_lead(range, context) {
+        BlockWriter::text(output, &lead);
+    }
+    render_inlines(output, &title.inlines, context);
+}
+
+fn render_block_title(
+    output: &mut String,
+    title: &crate::block_model::BlockTitle,
+    range: crate::source::TextRange,
+    context: &mut InlineRenderContext<'_, '_>,
+) {
+    BlockWriter::start(output, "div", &[classes(&["title"])]);
+    render_caption_content(output, title, range, context);
+    BlockWriter::end(output, "div");
+    BlockWriter::line_break(output);
+}
+
+fn render_figure_caption(
     output: &mut String,
     title: &crate::block_model::BlockTitle,
     range: crate::source::TextRange,
     context: &mut InlineRenderContext<'_, '_>,
 ) {
     BlockWriter::start(output, "figcaption", &[]);
-    if let Some(lead) = caption_lead(range, context) {
-        BlockWriter::text(output, &lead);
-    }
-    BlockWriter::text(
-        output,
-        &crate::projection::resolved_inline_text(&title.inlines),
-    );
+    render_caption_content(output, title, range, context);
     BlockWriter::end(output, "figcaption");
     BlockWriter::line_break(output);
+}
+
+/// A title and its body own the authored ID and roles together. Only the body
+/// receives structural classes such as `lead`, `callout-list` or `math-latex`.
+fn start_titled_block(
+    output: &mut String,
+    id: Option<&str>,
+    metadata: &crate::block_model::BlockMetadata,
+    range: crate::source::TextRange,
+    body_classes: &[&'static str],
+    context: &mut InlineRenderContext<'_, '_>,
+) -> Vec<body::PlannedAttribute> {
+    if let Some(title) = &metadata.title {
+        let attributes = block_attributes(id, metadata, &["titled-block"], context);
+        BlockWriter::start(output, "div", &attributes);
+        BlockWriter::line_break(output);
+        render_block_title(output, title, range, context);
+        fixed_class_attributes(body_classes)
+    } else {
+        block_attributes(id, metadata, body_classes, context)
+    }
+}
+
+fn end_titled_block(output: &mut String, metadata: &crate::block_model::BlockMetadata) {
+    if metadata.title.is_some() {
+        BlockWriter::end(output, "div");
+        BlockWriter::line_break(output);
+    }
+}
+
+fn fixed_class_attributes(classes_: &[&'static str]) -> Vec<body::PlannedAttribute> {
+    if classes_.is_empty() {
+        Vec::new()
+    } else {
+        vec![classes(classes_)]
+    }
 }
 
 /// The `Figure 1. ` a numbered caption writes in front of its title.
@@ -1004,13 +1148,7 @@ pub(super) fn render_image_block(
     render_inlines(output, &paragraph.inlines, context);
     BlockWriter::line_break(output);
     if let Some(title) = &paragraph.metadata.title {
-        BlockWriter::start(output, "figcaption", &[]);
-        if let Some(lead) = caption_lead(paragraph.range, context) {
-            BlockWriter::text(output, &lead);
-        }
-        render_inlines(output, &title.inlines, context);
-        BlockWriter::end(output, "figcaption");
-        BlockWriter::line_break(output);
+        render_figure_caption(output, title, paragraph.range, context);
     }
     BlockWriter::end(output, "figure");
     BlockWriter::line_break(output);
@@ -1033,6 +1171,12 @@ pub(super) struct InlineRenderContext<'inputs, 'render> {
 }
 
 impl InlineRenderContext<'_, '_> {
+    fn is_omitted(&self, range: crate::source::TextRange) -> bool {
+        self.region
+            .as_ref()
+            .is_some_and(|region| region.omitted.contains(&range))
+    }
+
     pub(super) fn math_value(
         &self,
         range: crate::source::TextRange,

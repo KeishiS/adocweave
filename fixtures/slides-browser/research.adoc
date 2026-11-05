@@ -36,6 +36,7 @@ image::result.svg[観測から解析を経て結果を得る流れ,width=500]
 
 [.notes]
 --
+.PRIVATE_NOTE_TITLE
 PRIVATE_NOTE cite:[secret].
 補足 footnote:note-condition[この発表者用の補足は、共有用のスライドには含めません。]。
 Notes formula latexmath:[\begin{equation}n=4\label{result}\end{equation}] and latexmath:[\eqref{result}].

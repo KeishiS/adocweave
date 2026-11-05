@@ -711,6 +711,95 @@ mod tests {
     }
 
     #[test]
+    fn omitted_verse_stanzas_hide_their_titles_and_preserve_visible_line_breaks() {
+        for title in ["", ".SECRET title\n"] {
+            let analysis = Engine::new(AnalysisOptions::default())
+                .analyze(&format!("[verse]\n____\nPublic first.\nPublic second.\n\n{title}SECRET first.\nSECRET second.\n\nPublic last.\n____\n"))
+                .unwrap();
+            let doc = analysis.document();
+            let root = doc.index().top_level_blocks()[0];
+            let AstBlock::Delimited(verse) = doc.block(root).unwrap() else {
+                panic!("verse block");
+            };
+            let crate::block_model::DelimitedContent::Compound(children) = &verse.content else {
+                panic!("verse stanzas");
+            };
+            let hidden = doc.index().block_id_at(children[1].range()).unwrap();
+            let selection = HtmlRegionSelection {
+                blocks: vec![root],
+                omitted_blocks: [hidden].into(),
+                ..Default::default()
+            };
+            let output = render_regions(
+                doc,
+                &RenderPolicy::default(),
+                &RenderInputs::default(),
+                &[selection],
+                OutputLimits::default(),
+            )
+            .unwrap();
+            assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+            assert_eq!(
+                output.regions[0],
+                concat!(
+                    "<div class=\"verse\">\n",
+                    "<pre>Public first.\nPublic second.\n\nPublic last.</pre>\n</div>\n",
+                )
+            );
+            assert!(
+                super::super::render(doc, &RenderPolicy::default())
+                    .html
+                    .contains("SECRET")
+            );
+        }
+    }
+
+    #[test]
+    fn omitted_non_stanzas_do_not_change_verse_and_empty_verse_has_no_pre() {
+        let analysis = Engine::new(AnalysisOptions::default())
+            .analyze("[verse]\n____\nFirst *literal* line.\nSecond line.\n\n* SECRET item\n____\n")
+            .unwrap();
+        let doc = analysis.document();
+        let root = doc.index().top_level_blocks()[0];
+        let AstBlock::Delimited(verse) = doc.block(root).unwrap() else {
+            panic!("verse block");
+        };
+        let crate::block_model::DelimitedContent::Compound(children) = &verse.content else {
+            panic!("verse children");
+        };
+        for omit_all in [false, true] {
+            let omitted_blocks = children
+                .iter()
+                .filter(|child| omit_all || matches!(child, AstBlock::List(_)))
+                .map(|child| doc.index().block_id_at(child.range()).unwrap())
+                .collect();
+            let selection = HtmlRegionSelection {
+                blocks: vec![root],
+                omitted_blocks,
+                ..Default::default()
+            };
+            let output = render_regions(
+                doc,
+                &RenderPolicy::default(),
+                &RenderInputs::default(),
+                &[selection],
+                OutputLimits::default(),
+            )
+            .unwrap();
+            assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+            assert!(!output.regions[0].contains("SECRET"));
+            if omit_all {
+                assert!(!output.regions[0].contains("<pre"));
+                assert!(!output.regions[0].contains("literal"));
+            } else {
+                assert!(
+                    output.regions[0].contains("<pre>First *literal* line.\nSecond line.</pre>")
+                );
+            }
+        }
+    }
+
+    #[test]
     fn output_limit_counts_all_regions_and_container_heading_has_no_duplicate_id() {
         let analysis = Engine::new(AnalysisOptions::default())
             .analyze("= First\n\n== Second\n")

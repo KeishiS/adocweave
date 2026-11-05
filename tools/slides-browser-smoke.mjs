@@ -624,6 +624,11 @@ async function speakerNotes(page, ports, targets, connections, url) {
   if (helper) {
     // Notes arrive through innerHTML; iframe readiness does not wait for their CSS.
     await poll(() => popup.evaluate("Boolean(document.querySelector('.speaker-controls-notes link[rel=\"stylesheet\"][href=\"assets/content.css\"]')?.sheet)"));
+    const noteTitle = await popup.evaluate(`(() => {
+      const title = document.querySelector('.speaker-controls-notes .title');
+      return { text: title?.textContent, weight: title && getComputedStyle(title).fontWeight };
+    })()`);
+    assert.deepEqual(noteTitle, { text: "PRIVATE_NOTE_TITLE", weight: "700" });
     assert.equal(await popup.evaluate("document.querySelector('.speaker-controls-notes .math-rendered') !== null"), true);
     const notesMath = await popup.evaluate(`(() => {
       const root = document.querySelector('.speaker-controls-notes .math-rendered');
@@ -654,6 +659,64 @@ async function speakerNotes(page, ports, targets, connections, url) {
     await writeFile(join(artifacts, "presenter-notes.png"), Buffer.from(screenshot.data, "base64"));
     console.log(`research slides verified: static SVG/TeX, citations, footnotes, tables, CJK DOM/SVG; artifacts: ${artifacts}`);
   }
+}
+
+async function blockTitles(page, url, name) {
+  await page.call("Page.navigate", { url });
+  await poll(() => page.evaluate(`location.href.split('#')[0]===${JSON.stringify(url)}&&probeReady`));
+  const titles = await page.evaluate(`(() => {
+    const paragraph = document.getElementById('paragraph');
+    const references = [...document.querySelectorAll('.footnote-ref, .footnote-backref')];
+    const ids = [...document.querySelectorAll('[id]')].map(node => node.id);
+    return {
+      paragraph: paragraph.querySelector(':scope > .title > strong')?.textContent,
+      weight: getComputedStyle(paragraph.querySelector('.title')).fontWeight,
+      code: document.querySelector('#code figcaption strong')?.textContent,
+      verse: document.querySelector('#verse pre')?.textContent,
+      container: document.getElementById('bare-container')?.tagName,
+      titles: [...document.querySelectorAll('.slide-content .title')].map(node => node.textContent),
+      links: references.length,
+      targets: references.every(link => document.getElementById(link.getAttribute('href').slice(1))),
+      uniqueIds: new Set(ids).size === ids.length,
+      privateNote: document.body.textContent.includes('PRIVATE_'),
+    };
+  })()`);
+  assert.equal(titles.paragraph, "title");
+  assert.equal(titles.code, "title");
+  assert.equal(titles.weight, "700");
+  assert.equal(titles.verse, "Line one.\nLine two.");
+  assert.equal(titles.container, "DIV");
+  assert.equal(titles.titles.length, 8);
+  assert.ok(titles.links >= 4 && titles.targets);
+  assert.equal(titles.uniqueIds, true);
+  assert.equal(titles.privateNote, false);
+  await page.evaluate("Reveal.slide(2,0,-1)");
+  const before = await page.evaluate(`(() => {
+    const slide = document.getElementById('steps');
+    const title = slide.querySelector('.titled-block > .title');
+    return { title: title.textContent, visibility: getComputedStyle(title).visibility,
+      fragmentTitle: Boolean(title.closest('.fragment')), visibleItems: slide.querySelectorAll('li.fragment.visible').length };
+  })()`);
+  assert.deepEqual(before, { title: "List title", visibility: "visible", fragmentTitle: false, visibleItems: 0 });
+  await page.evaluate("Reveal.next()");
+  assert.equal(await page.evaluate("document.querySelectorAll('#steps li.fragment.visible').length"), 1);
+  await page.evaluate("Reveal.slide(3)");
+  assert.deepEqual(await page.evaluate("[...document.querySelectorAll('#columns .column .title')].map(node => node.textContent)"), ["Left title", "Right title"]);
+  if (helper) {
+    const address = `${url}?print-pdf`;
+    await page.call("Page.navigate", { url: address });
+    await poll(() => page.evaluate("probeReady&&document.querySelectorAll('.pdf-page').length===6"));
+    const pdf = await page.call("Page.printToPDF", { printBackground: true, preferCSSPageSize: true });
+    const path = join(artifacts, `${name}.pdf`);
+    await writeFile(path, Buffer.from(pdf.data, "base64"));
+    assert.equal(Number(inspectPdf(pdfInfo, [path]).match(/^Pages:\s+(\d+)/m)?.[1]), 6);
+    const text = inspectPdf(pdfText, ["-enc", "UTF-8", path, "-"]);
+    for (const title of ["Paragraph title", "Definition title", "List title", "Quote title", "Left title", "Right title", "Code title", "Title footnote.", "Code title footnote.", "Verse title", "Inner title", "Line one.", "Line two."]) {
+      assert.ok(text.includes(title), `Missing PDF title: ${title}`);
+    }
+    assert.doesNotMatch(text, /PRIVATE_/);
+  }
+  reports.push({ name, titles });
 }
 async function mathExtensionLayout(page, name) {
   const layout = await page.evaluate(`(() => {
@@ -880,6 +943,13 @@ try {
     await navigation(page, singleNavigation.url);
     await singleFileNotices(page, singleNavigation.notices);
   }, singleNavigation.url);
+  await writeFile(join(root, "block-titles.adoc"), await readFile(new URL("../fixtures/slides-browser/block-titles.adoc", import.meta.url)));
+  const titled = spawnSync(binary, ["convert", "block-titles.adoc", "--to", "revealjs", "--output", "block-titles"],
+    { cwd: root, env: environment, encoding: "utf8" });
+  assert.equal(titled.status, 0, titled.stderr);
+  await runCase("block-titles-file", page => blockTitles(page, pathToFileURL(join(root, "block-titles", "index.html")).href, "block-titles-file"));
+  const singleTitles = await singleFile("block-titles.adoc", "block-titles");
+  await runCase("block-titles-single-file", page => blockTitles(page, singleTitles.url, "block-titles-single-file"), singleTitles.url);
   for (const [name, url, presenter] of [["public-file", pathToFileURL(join(root, "public", "index.html")).href, false],
     ["public-http", `${publicServer}/`, false], ["presenter-http", `${presenterServer}/`, true]]) {
     await runCase(`research-${name}`, page => researchDisplay(page, url, presenter));
