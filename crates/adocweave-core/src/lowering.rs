@@ -3,7 +3,9 @@
 use std::collections::BTreeSet;
 
 use crate::attributes::DocumentAttributeOccurrence;
-use crate::block_model::{AstBlock, AstDocument, DocumentHeader, DocumentType, ExplicitAnchor};
+use crate::block_model::{
+    AstBlock, AstDocument, DelimitedBlockKind, DocumentHeader, DocumentType, ExplicitAnchor,
+};
 use crate::inline_model::Inline;
 use crate::substitution::AttributeExpansionLimits;
 
@@ -77,6 +79,7 @@ pub(crate) fn lower(
     if checkpoint.is_cancelled() {
         return Err(LoweringFailure::Cancelled);
     }
+    exclude_comment_titles(&mut facts.blocks, checkpoint)?;
     let counters = counter_events(&facts.blocks, checkpoint)?;
     let attribute_environment = crate::attributes::AttributeEnvironment::build(
         &facts.attributes,
@@ -115,6 +118,27 @@ pub(crate) fn lower(
         crate::resolved::ResolvedBuildFailure::Cancelled => LoweringFailure::Cancelled,
     })?;
     Ok(document)
+}
+
+/// Comment titles remain in the syntax tree but do not contribute visible
+/// content, references, or attribute state. Remove them before counter events
+/// and the document-wide facts are collected.
+fn exclude_comment_titles(
+    blocks: &mut [AstBlock],
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<(), LoweringFailure> {
+    crate::walker::walk_blocks_mut_cancellable(
+        blocks,
+        &mut |block: &mut AstBlock| {
+            if let AstBlock::Delimited(block) = block
+                && block.kind == DelimitedBlockKind::Comment
+            {
+                block.metadata.title = None;
+            }
+        },
+        checkpoint,
+    )
+    .map_err(|()| LoweringFailure::Cancelled)
 }
 
 fn normalize_heading_kinds(

@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "adocweave"
-version = "0.61.0"
+version = "0.62.0"
 dependencies = [
  "adocweave-core",
  "adocweave-lsp",
@@ -27,7 +27,7 @@ dependencies = [
 
 [[package]]
 name = "adocweave-core"
-version = "0.61.0"
+version = "0.62.0"
 dependencies = [
  "roxmltree",
  "serde",
@@ -37,7 +37,7 @@ dependencies = [
 
 [[package]]
 name = "adocweave-lsp"
-version = "0.61.0"
+version = "0.62.0"
 dependencies = [
  "adocweave-core",
  "adocweave-project",
@@ -53,7 +53,7 @@ dependencies = [
 
 [[package]]
 name = "adocweave-project"
-version = "0.61.0"
+version = "0.62.0"
 dependencies = [
  "adocweave-core",
  "glob",
@@ -69,7 +69,7 @@ dependencies = [
 
 [[package]]
 name = "adocweave-textlint"
-version = "0.61.0"
+version = "0.62.0"
 dependencies = [
  "adocweave-core",
  "serde",
@@ -80,7 +80,7 @@ dependencies = [
 
 [[package]]
 name = "adocweave-wasm"
-version = "0.61.0"
+version = "0.62.0"
 dependencies = [
  "adocweave-core",
  "js-sys",
