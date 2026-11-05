@@ -1,0 +1,143 @@
+<h1 class="document-title" id="_block_titles">Block titles</h1>
+<div id="paragraph" class="titled-block">
+<div class="title">Paragraph <strong>title</strong> for AdocWeave <sup class="footnote"><a class="footnote-ref" id="_footnoteref_1_1" href="#_footnote_1">1</a></sup></div>
+<p class="lead">Paragraph body.</p>
+</div>
+<div id="unordered" class="titled-block">
+<div class="title">Unordered title with <a href="#paragraph">paragraph link</a></div>
+<ul>
+<li>First item</li>
+<li>Second item</li>
+</ul>
+</div>
+<div id="ordered" class="titled-block">
+<div class="title">Ordered title</div>
+<ol>
+<li>First item</li>
+<li>Second item</li>
+</ol>
+</div>
+<div id="description" class="titled-block">
+<div class="title">Description title</div>
+<dl>
+<dt>Term</dt>
+<dd>Definition.</dd>
+</dl>
+</div>
+<div class="titled-block">
+<div class="title">Checklist title</div>
+<ul>
+<li><span class="checklist-marker">☐</span> Pending item</li>
+<li><span class="checklist-marker">☑</span> Finished item</li>
+</ul>
+</div>
+<div class="titled-block">
+<div class="title">Outer list title</div>
+<ul>
+<li>Parent item
+<div id="nested" class="titled-block">
+<div class="title">Nested list title</div>
+<ol>
+<li>Nested first</li>
+<li>Nested second</li>
+</ol>
+</div>
+</li>
+</ul>
+</div>
+<figure id="source" class="source-block">
+<figcaption>Listing 1. Source <em>title</em> <sup class="footnote"><a class="footnote-ref" id="_footnoteref_2_1" href="#_footnote_2">2</a></sup></figcaption>
+<pre data-language="rust"><code class="language-rust">let value = 1; // &lt;1&gt;
+</code></pre>
+</figure>
+<div id="callouts" class="titled-block">
+<div class="title">Callout title</div>
+<ol class="callout-list">
+<li><span class="callout-number">1</span> Binding.</li>
+</ol>
+</div>
+<figure id="listing" class="listing-block">
+<figcaption>Listing 2. Listing title</figcaption>
+<pre>plain &lt;text&gt;
+</pre>
+</figure>
+<figure id="literal-block" class="literal-block">
+<figcaption>Literal block title</figcaption>
+<pre>literal *text*
+</pre>
+</figure>
+<figure id="literal-paragraph" class="literal-block">
+<figcaption>Literal paragraph title</figcaption>
+<pre> indented &lt;text&gt;</pre>
+</figure>
+<div id="container" class="titled-block">
+<div class="title">Container title</div>
+<p>Container body.</p>
+</div>
+<div id="quote" class="quote">
+<div class="title">Quote <strong>title</strong></div>
+<blockquote>
+<p>Quoted body.</p>
+</blockquote>
+<div class="attribution">— Author <cite>Source</cite></div>
+</div>
+<div id="verse" class="verse">
+<div class="title">Verse title</div>
+<pre>First line.
+Second line.</pre>
+<div class="attribution">— Poet <cite>Collection</cite></div>
+</div>
+<div id="short-warning" class="admonition admonition-warning"><div class="title">Short warning title</div>
+<p>Short warning body.</p>
+</div>
+<div id="long-note" class="admonition admonition-note"><div class="title">Long note title</div>
+<p>First note paragraph.</p>
+<p>Second note paragraph.</p>
+</div>
+<div id="example" class="example">
+<div class="title">Example 1. Example title</div>
+<p>Example body.</p>
+</div>
+<div id="sidebar" class="sidebar">
+<div class="title">Sidebar title</div>
+<p>Sidebar body.</p>
+</div>
+<div id="open" class="open">
+<div class="title">Open title</div>
+<p>Open body.</p>
+</div>
+<details id="disclosure" open>
+<summary>Disclosure title</summary>
+<p>Disclosure body.</p>
+</details>
+<table id="table" class="table-frame-all table-grid-all table-stripes-none">
+<caption>Table 1. Table title <sup class="footnote"><a class="footnote-ref" id="_footnoteref_3_1" href="#_footnote_3">3</a></sup></caption>
+<tbody>
+<tr>
+<td class="table-align-left table-valign-top">Cell one</td>
+<td class="table-align-left table-valign-top">Cell two</td>
+</tr>
+</tbody>
+</table>
+<figure id="image" class="image-block">
+Diagram
+<figcaption>Figure 1. Image title</figcaption>
+</figure>
+<div id="math" class="titled-block">
+<div class="title">Math title with <code class="math-latex" data-math-language="latexmath" data-math-display="inline">y &lt; 2</code></div>
+<pre class="math-latex" data-math-language="latexmath" data-math-display="block"><code>x &lt; y
+</code></pre>
+</div>
+<div id="passthrough" class="titled-block">
+<div class="title">Passthrough title</div>
+<pre>&lt;strong&gt;Escaped body.&lt;/strong&gt;
+</pre>
+</div>
+<p>Untitled paragraph with <a href="#paragraph">Paragraph title for AdocWeave Paragraph title note.</a>, <a href="#nested">Nested list title</a>, <a href="#source">Listing 1</a>, <a href="#table">Table 1</a>, and <a href="#image">Figure 1</a>.</p>
+<div class="footnotes">
+<ol>
+<li id="_footnote_1">Paragraph title note. <a class="footnote-backref" href="#_footnoteref_1_1">↩</a></li>
+<li id="_footnote_2">Source title note. <a class="footnote-backref" href="#_footnoteref_2_1">↩</a></li>
+<li id="_footnote_3">Table title note. <a class="footnote-backref" href="#_footnoteref_3_1">↩</a></li>
+</ol>
+</div>

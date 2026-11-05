@@ -137,6 +137,7 @@ pub(super) const ALLOWED_CLASSES: &[&str] = &[
     "table-stripes-odd",
     "toc",
     "title",
+    "titled-block",
     "verse",
 ];
 

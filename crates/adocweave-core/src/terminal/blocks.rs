@@ -212,14 +212,7 @@ fn render_paragraph(
     context: &mut RenderContext<'_, '_>,
 ) {
     canvas.separate();
-    // A paragraph that is nothing but an image is a figure, and its caption
-    // names it the way the rest of the document refers to it.
-    if crate::caption::block_image(paragraph).is_some() {
-        render_caption(canvas, &paragraph.metadata, paragraph.range, context);
-        let units = inline::plan(&paragraph.inlines, TerminalStyle::default(), context);
-        canvas.push_wrapped(&units);
-        return;
-    }
+    render_caption(canvas, &paragraph.metadata, paragraph.range, context);
     let units = inline::plan(&paragraph.inlines, TerminalStyle::default(), context);
     match &paragraph.admonition {
         // One paragraph of warning reads best on the same line as its label,
@@ -530,6 +523,7 @@ fn render_delimited(
             }
             DelimitedContent::Passthrough(value) => {
                 canvas.separate();
+                render_caption(canvas, &block.metadata, block.range, context);
                 for line in value.lines() {
                     canvas.push_text(line, TerminalStyle::of(TerminalRole::Muted));
                 }
@@ -637,12 +631,24 @@ fn render_verse(
         render_delimited_children(canvas, block, context);
         return;
     };
-    for child in children {
-        let AstBlock::Paragraph(paragraph) = child else {
-            render_block(canvas, child, context);
-            continue;
-        };
+    let paragraphs = children
+        .iter()
+        .filter(|child| {
+            !matches!(child, AstBlock::Delimited(comment)
+            if comment.kind == DelimitedBlockKind::Comment)
+        })
+        .map(|child| match child {
+            AstBlock::Paragraph(paragraph) => Some(paragraph),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>();
+    let Some(paragraphs) = paragraphs else {
+        render_delimited_children(canvas, block, context);
+        return;
+    };
+    for paragraph in paragraphs {
         canvas.separate();
+        render_caption(canvas, &paragraph.metadata, paragraph.range, context);
         for line in paragraph.value.lines() {
             canvas.push_text(line, TerminalStyle::default());
         }
@@ -690,7 +696,7 @@ fn render_collapsible_block(
 }
 
 /// An example or a sidebar is a container the reader can see, so it is framed.
-/// An open block is transparent and adds nothing of its own.
+/// An open block adds only its title, when present.
 fn render_compound_block(
     canvas: &mut Canvas<'_>,
     block: &DelimitedBlock,
@@ -702,6 +708,10 @@ fn render_compound_block(
         DelimitedBlockKind::Example | DelimitedBlockKind::Sidebar
     );
     if !framed {
+        if block.metadata.title.is_some() {
+            canvas.separate();
+            render_caption(canvas, &block.metadata, block.range, context);
+        }
         for child in children {
             render_block(canvas, child, context);
         }
@@ -731,6 +741,7 @@ fn render_list(
     if depth == 0 {
         canvas.separate();
     }
+    render_caption(canvas, &list.metadata, list.range, context);
     let markers = item_markers(canvas, list, depth);
     for (item, marker) in list.items.iter().zip(markers) {
         match (list.kind, item.terms.is_empty()) {
