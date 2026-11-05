@@ -75,6 +75,7 @@ pub struct StandardMacro {
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum MathLanguage {
     Latex,
+    AsciiMath,
     Typst,
 }
 
@@ -83,8 +84,17 @@ impl MathLanguage {
     pub const fn as_asciidoc_name(self) -> &'static str {
         match self {
             Self::Latex => "latexmath",
+            Self::AsciiMath => "asciimath",
             Self::Typst => "typst",
         }
+    }
+}
+
+/// Resolves the document's default STEM notation using Asciidoctor's aliases.
+pub(crate) fn stem_language(value: Option<&str>) -> MathLanguage {
+    match value {
+        Some("latexmath" | "latex" | "tex") => MathLanguage::Latex,
+        _ => MathLanguage::AsciiMath,
     }
 }
 
@@ -93,6 +103,8 @@ pub struct InlineFormula {
     pub range: TextRange,
     pub content_range: TextRange,
     pub language: MathLanguage,
+    /// Whether the authored macro is `stem`, whose notation comes from attributes.
+    pub uses_stem_attribute: bool,
     pub value: String,
     pub closed: bool,
 }

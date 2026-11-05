@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use crate::citation::ResolvedCitation;
 use crate::generated_bibliography::GeneratedBibliography;
 use crate::reference::ResolvedReference;
+use crate::rendered_content::{ResolvedMath, ResolvedRichCitation};
 use crate::resource::ResolvedResource;
 use crate::source::TextRange;
 
@@ -17,6 +18,8 @@ pub struct RenderInputs {
     references: ResolutionSet<ResolvedReference>,
     resources: ResolutionSet<ResolvedResource>,
     citations: ResolutionSet<ResolvedCitation>,
+    math: ResolutionSet<ResolvedMath>,
+    rich_citations: ResolutionSet<ResolvedRichCitation>,
     generated_bibliography: Option<GeneratedBibliography>,
 }
 
@@ -40,6 +43,25 @@ impl RenderInputs {
     pub fn with_citations(mut self, citations: Vec<ResolvedCitation>) -> Self {
         self.citations = ResolutionSet::new(citations, |resolution| resolution.source_range);
         self
+    }
+
+    /// Adds validated host-rendered math at exact source ranges.
+    #[must_use]
+    pub fn with_math(mut self, math: Vec<ResolvedMath>) -> Self {
+        self.math = ResolutionSet::new(math, |resolution| resolution.source_range);
+        self
+    }
+    /// Adds finite, validated citation formatting at exact source ranges.
+    #[must_use]
+    pub fn with_rich_citations(mut self, citations: Vec<ResolvedRichCitation>) -> Self {
+        self.rich_citations = ResolutionSet::new(citations, |resolution| resolution.source_range);
+        self
+    }
+    pub fn math(&self) -> &[ResolvedMath] {
+        &self.math.values
+    }
+    pub fn rich_citations(&self) -> &[ResolvedRichCitation] {
+        &self.rich_citations.values
     }
 
     /// Adds a bibliography section whose strings remain plain text.
@@ -82,6 +104,8 @@ impl RenderInputs {
             references: self.references.track(),
             resources: self.resources.track(),
             citations: self.citations.track(),
+            math: self.math.track(),
+            rich_citations: self.rich_citations.track(),
         }
     }
 }
@@ -140,6 +164,8 @@ pub enum RenderInputDomain {
     Reference,
     Resource,
     Citation,
+    Math,
+    RichCitation,
 }
 
 impl RenderInputDomain {
@@ -148,6 +174,8 @@ impl RenderInputDomain {
             Self::Reference => "reference",
             Self::Resource => "resource",
             Self::Citation => "citation",
+            Self::Math => "math",
+            Self::RichCitation => "rich citation",
         }
     }
 }
@@ -169,6 +197,8 @@ pub struct RenderInputUsage<'a> {
     references: UsageTracker<'a, ResolvedReference>,
     resources: UsageTracker<'a, ResolvedResource>,
     citations: UsageTracker<'a, ResolvedCitation>,
+    math: UsageTracker<'a, ResolvedMath>,
+    rich_citations: UsageTracker<'a, ResolvedRichCitation>,
 }
 
 impl<'a> RenderInputUsage<'a> {
@@ -182,6 +212,16 @@ impl<'a> RenderInputUsage<'a> {
 
     pub fn citation_at(&mut self, range: TextRange) -> ResolutionMatch<'a, ResolvedCitation> {
         self.citations.at(range)
+    }
+
+    pub fn math_at(&mut self, range: TextRange) -> ResolutionMatch<'a, ResolvedMath> {
+        self.math.at(range)
+    }
+    pub fn rich_citation_at(
+        &mut self,
+        range: TextRange,
+    ) -> ResolutionMatch<'a, ResolvedRichCitation> {
+        self.rich_citations.at(range)
     }
 
     pub fn finish(self) -> Vec<RenderInputProblem> {
@@ -198,6 +238,16 @@ impl<'a> RenderInputUsage<'a> {
         );
         self.citations.finish(
             RenderInputDomain::Citation,
+            |resolution| resolution.source_range,
+            &mut problems,
+        );
+        self.math.finish(
+            RenderInputDomain::Math,
+            |resolution| resolution.source_range,
+            &mut problems,
+        );
+        self.rich_citations.finish(
+            RenderInputDomain::RichCitation,
             |resolution| resolution.source_range,
             &mut problems,
         );

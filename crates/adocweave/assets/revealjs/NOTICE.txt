@@ -1,0 +1,11 @@
+AdocWeave slide browser assets
+
+reveal.js 6.0.2 (MIT), https://github.com/hakimel/reveal.js
+Includes fitty 2.4.2 (MIT), https://github.com/rikschennink/fitty
+Speaker notes plugin includes marked 17.0.5 (MIT), https://github.com/markedjs/marked
+The bundled versions are recorded by the upstream release lockfile.
+
+LICENSE.revealjs.txt, LICENSE.fitty.txt and LICENSE.marked.txt contain the full notices.
+Only the UMD runtime, reset/reveal CSS and notes plugin are bundled.
+AdocWeave supplies its own system-font theme and initialization.
+No upstream fonts, Markdown plugin, highlighting plugin or math plugin are bundled.

@@ -1,0 +1,6 @@
+[
+  {"id":"zebra","type":"article-journal","title":"Zebra public result","author":[{"family":"Doe","given":"Jane"}],"issued":{"date-parts":[[2024]]}},
+  {"id":"alpha","type":"article-journal","title":"Alpha public result","author":[{"family":"Doe","given":"Jane"}],"issued":{"date-parts":[[2024]]}},
+  {"id":"inside","type":"article-journal","title":"Inside footnote result","author":[{"family":"Roe","given":"Alex"}],"issued":{"date-parts":[[2023]]}},
+  {"id":"secret","type":"article-journal","title":"PRIVATE_BIBLIOGRAPHY","author":[{"family":"NoteOnly","given":"Nora"}],"issued":{"date-parts":[[2025]]}}
+]

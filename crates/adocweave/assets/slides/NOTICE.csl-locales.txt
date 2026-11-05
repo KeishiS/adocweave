@@ -1,0 +1,24 @@
+Citation Style Language (CSL) locale data
+https://citationstyles.org/
+
+The bundled locale-en-US.xml is an unmodified copy of locales-en-US.xml
+from the official Citation Style Language locales repository:
+https://github.com/citation-style-language/locales
+
+Source branch: v1.0.2
+Source commit: 8353f0623998ad020bb2f52b59eeb175408cb107
+Source file:
+https://raw.githubusercontent.com/citation-style-language/locales/8353f0623998ad020bb2f52b59eeb175408cb107/locales-en-US.xml
+SHA-256: 6f2cd3d1d5527ff07a2981f7ec237753e3b6787568d053c08485802cc3d04ac0
+
+Translators credited in the preserved XML metadata:
+Andrew Dunning, Sebastian Karcher, Rintze M. Zelle, Denis Meier,
+and Brenton M. Wiernik.
+
+License: Creative Commons Attribution-ShareAlike 3.0 Unported (CC BY-SA 3.0)
+https://creativecommons.org/licenses/by-sa/3.0/
+The complete license is included in LICENSE.csl-locales.txt, downloaded from:
+https://creativecommons.org/licenses/by-sa/3.0/legalcode.txt
+
+This notice applies to the locale data. The separate default.csl style was
+written for AdocWeave and is licensed under MIT OR Apache-2.0.

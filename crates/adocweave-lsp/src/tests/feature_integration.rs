@@ -73,7 +73,7 @@ fn hover_and_completion_cover_attributes_references_links_and_math() {
         (lsp::Position::new(3, 3), "reference target"),
         (lsp::Position::new(6, 3), "external link"),
         (lsp::Position::new(6, 29), "cross reference"),
-        (lsp::Position::new(6, 43), "LaTeX formula"),
+        (lsp::Position::new(6, 43), "AsciiMath formula"),
     ] {
         let hover = service
             .hover(&document_uri, position)

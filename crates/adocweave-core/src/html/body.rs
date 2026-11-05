@@ -13,7 +13,7 @@ use super::safe::{
 };
 use super::{
     InlineRenderContext, RenderPolicy, UnresolvedReferencePresentation, append_plan_diagnostics,
-    bibliography_reference_id, render_diagnostic,
+    render_diagnostic,
 };
 
 pub(super) struct BodyTraversalPlan<'document> {
@@ -108,6 +108,11 @@ enum InlineNode {
         collapse_line_breaks: bool,
     },
     Element(PlannedElement),
+    Math {
+        value: crate::rendered_content::ValidatedMath,
+        tex: String,
+    },
+    Rich(crate::rendered_content::ValidatedRichText),
 }
 
 struct PlannedElement {
@@ -283,6 +288,24 @@ fn plan_sequence(
             Inline::HardBreak { .. } => output.push(void_element("br", Vec::new(), true)),
             Inline::Passthrough { value, .. } => inline_text(output, value),
             Inline::Formula(formula) => {
+                if let crate::render::ResolutionMatch::Unique(resolution) =
+                    context.input_usage.math_at(formula.range)
+                    && context
+                        .policy
+                        .math_languages
+                        .allowed
+                        .contains(&formula.language)
+                {
+                    output.push(element_with_children(
+                        "span",
+                        math_attributes(formula.language, "inline"),
+                        vec![InlineNode::Math {
+                            value: context.math_value(formula.range, &resolution.value),
+                            tex: formula.value.clone(),
+                        }],
+                    ));
+                    continue;
+                }
                 let mut attributes = Vec::new();
                 if context
                     .policy
@@ -359,12 +382,41 @@ fn plan_reference(
     context: &mut InlineRenderContext<'_, '_>,
     output: &mut Vec<InlineNode>,
 ) {
-    let planned = plan::plan_reference(
+    if let Some(slides) = context.slides
+        && let Some(crate::reference::ReferenceKey::Local { anchor }) = &reference.target
+        && let Some(target) = context.identifiers.target_by_id(anchor)
+        && !slides.permits_target(target.target_range)
+    {
+        let mut diagnostic = render_diagnostic(
+            "slides-reference-outside-scope",
+            "local reference target is outside the permitted slide scope",
+            reference.target_range,
+        );
+        diagnostic.severity = crate::diagnostic::Severity::Error;
+        context.diagnostics.push(diagnostic);
+        output.extend(plan_label_or_text(
+            &reference.label,
+            &reference.target_source,
+            context,
+        ));
+        return;
+    }
+    let mut planned = plan::plan_reference(
         reference,
         context.identifiers,
         context.policy,
         context.input_usage,
     );
+    if context.slides.is_some()
+        && let Some(crate::reference::ReferenceKey::Local { anchor }) = &reference.target
+        && let Some(target) = context.identifiers.target_by_id(anchor)
+        && let Some(caption) = context
+            .slides
+            .and_then(|slides| slides.reference_caption(target.target_range))
+        && let Some(label) = caption.label()
+    {
+        planned.fallback = label;
+    }
     if let Some(href) = planned.href {
         let href = match href {
             PlannedReferenceHref::Local(anchor) => fragment_url("href", anchor.into_owned()),
@@ -377,7 +429,10 @@ fn plan_reference(
                 .iter()
                 .any(|candidate| candidate.range == reference.range)
         }) {
-            attributes.push(passive("id", bibliography_reference_id(reference.range)));
+            attributes.push(passive(
+                "id",
+                context.bibliography_reference_id(reference.range),
+            ));
         }
         output.push(element_with_children(
             "a",
@@ -450,6 +505,20 @@ fn plan_standard_macro(
             let number = footnote.number.to_string();
             let reference_id = format!("_footnoteref_{}_{}", footnote.number, occurrence + 1);
             let target = format!("_footnote_{}", footnote.number);
+            let (number, reference_id, target) = match context.slides {
+                Some(slides) => {
+                    let Some(link) = slides.footnote_link(context.slide, node.range) else {
+                        inline_text(output, first.unwrap_or(&node.target));
+                        return;
+                    };
+                    (
+                        link.number.to_string(),
+                        link.reference_id.clone(),
+                        link.target_id.clone(),
+                    )
+                }
+                None => (number, reference_id, target),
+            };
             let href = SafeFragmentUrl::new(&target)
                 .expect("generated footnote targets are nonempty and control-free")
                 .into_owned();
@@ -468,6 +537,16 @@ fn plan_standard_macro(
             ));
         }
         Kind::Anchor | Kind::BibliographyAnchor => {
+            if context.slides.is_some() && context.footnote.is_some() {
+                let mut diagnostic = render_diagnostic(
+                    "slides-footnote-anchor-unsupported",
+                    "anchor and bibliography definitions inside slide footnotes are unsupported",
+                    node.range,
+                );
+                diagnostic.severity = crate::diagnostic::Severity::Error;
+                context.diagnostics.push(diagnostic);
+                return;
+            }
             let mut attributes = vec![passive("id", &node.target)];
             if node.kind == Kind::BibliographyAnchor {
                 attributes.push(classes(&["bibliography-anchor"]));
@@ -494,24 +573,31 @@ fn plan_standard_macro(
                 let mut children = keys
                     .iter()
                     .filter(|key| {
-                        context
-                            .catalogs
-                            .bibliography()
-                            .iter()
-                            .any(|entry| entry.id == key.value)
-                            || context
-                                .generated_bibliography
-                                .is_some_and(|bibliography| bibliography.defines(&key.value))
+                        context.catalogs.bibliography().iter().any(|entry| {
+                            entry.id == key.value
+                                && context.slides.is_none_or(|slides| {
+                                    slides.permits_target(entry.definition_range)
+                                })
+                        }) || context
+                            .generated_bibliography
+                            .is_some_and(|bibliography| bibliography.defines(&key.value))
                     })
                     .map(|key| {
                         element_with_children(
                             "span",
-                            vec![passive("id", bibliography_reference_id(key.value_range))],
+                            vec![passive(
+                                "id",
+                                context.bibliography_reference_id(key.value_range),
+                            )],
                             Vec::new(),
                         )
                     })
                     .collect::<Vec<_>>();
                 children.extend(segments);
+                if let Some(link) = plan_slide_citation_link(&keys, context) {
+                    children.push(text_node(" "));
+                    children.push(link);
+                }
                 output.push(element_with_children(
                     "span",
                     vec![classes(&["citation"])],
@@ -520,17 +606,18 @@ fn plan_standard_macro(
                 return;
             }
             for key in keys {
-                let document_entry = context
-                    .catalogs
-                    .bibliography()
-                    .iter()
-                    .find(|entry| entry.id == key.value);
+                let document_entry = context.catalogs.bibliography().iter().find(|entry| {
+                    entry.id == key.value
+                        && context
+                            .slides
+                            .is_none_or(|slides| slides.permits_target(entry.definition_range))
+                });
                 let generated_entry = context
                     .generated_bibliography
                     .and_then(|bibliography| bibliography.entry(&key.value));
                 let href = document_entry
                     .map(|entry| entry.id.as_str())
-                    .or_else(|| generated_entry.map(|entry| entry.input.citation_key()))
+                    .or_else(|| generated_entry.map(|entry| entry.anchor_id.as_str()))
                     .and_then(SafeFragmentUrl::new)
                     .map(SafeFragmentUrl::into_owned);
                 if let Some(href) = href {
@@ -542,7 +629,7 @@ fn plan_standard_macro(
                         "a",
                         vec![
                             classes(&["citation"]),
-                            passive("id", bibliography_reference_id(key.value_range)),
+                            passive("id", context.bibliography_reference_id(key.value_range)),
                             fragment_url("href", href),
                         ],
                         vec![inline_text_node(label)],
@@ -608,6 +695,36 @@ fn plan_standard_macro(
         Kind::Image | Kind::Icon => plan_image_macro(node, context, output),
         Kind::Audio | Kind::Video => plan_media_macro(node, context, output),
     }
+}
+
+fn plan_slide_citation_link(
+    keys: &[&crate::inline_model::MacroAttribute],
+    context: &InlineRenderContext<'_, '_>,
+) -> Option<InlineNode> {
+    let slides = context.slides?;
+    let bibliography = context.generated_bibliography?;
+    let (target, label) = if keys.len() == 1 {
+        (
+            bibliography.entry(&keys[0].value)?.anchor_id.as_str(),
+            "Open cited reference",
+        )
+    } else {
+        if !keys.iter().any(|key| bibliography.defines(&key.value)) {
+            return None;
+        }
+        (slides.bibliography_id(), "Open references")
+    };
+    let href = SafeFragmentUrl::new(target)?.into_owned();
+    Some(element_with_children(
+        "a",
+        vec![
+            classes(&["citation-link"]),
+            fragment_url("href", href),
+            PlannedAttribute::Passive(PassiveAttributeName::aria_label(), label.to_owned()),
+            passive("title", label),
+        ],
+        vec![text_node("↗")],
+    ))
 }
 
 fn plan_image_macro(
@@ -784,6 +901,7 @@ fn append_dimension(
 pub(super) const fn math_class(language: crate::inline_model::MathLanguage) -> &'static str {
     match language {
         crate::inline_model::MathLanguage::Latex => "math-latex",
+        crate::inline_model::MathLanguage::AsciiMath => "math-asciimath",
         crate::inline_model::MathLanguage::Typst => "math-typst",
     }
 }
@@ -822,6 +940,8 @@ fn serialize_nodes(output: &mut String, nodes: &[InlineNode]) {
                     writer.text(TextValue::new(value));
                 }
             }
+            InlineNode::Math { value, tex } => HtmlWriter::new(output).validated_math(value, tex),
+            InlineNode::Rich(value) => HtmlWriter::new(output).validated_rich(value),
             InlineNode::Element(element) => {
                 let mut writer = HtmlWriter::new(output);
                 writer.start(element.name);
@@ -926,6 +1046,16 @@ pub(super) fn classes(values: &[&'static str]) -> PlannedAttribute {
     classes_with_roles(values, Vec::new())
 }
 
+pub(super) fn fragment_attributes(index: u32) -> Vec<PlannedAttribute> {
+    vec![
+        PlannedAttribute::Classes {
+            names: vec![ClassName::fragment()],
+            roles: Vec::new(),
+        },
+        PlannedAttribute::Passive(PassiveAttributeName::fragment_index(), index.to_string()),
+    ]
+}
+
 /// One `class` attribute: the renderer's fixed classes, then the role classes
 /// the render policy admitted for this block.
 pub(super) fn classes_with_roles(
@@ -967,7 +1097,30 @@ fn plan_resolved_citation(
     range: crate::source::TextRange,
     context: &mut InlineRenderContext<'_, '_>,
 ) -> Option<Vec<InlineNode>> {
-    let outcome = match context.input_usage.citation_at(range) {
+    let plain = context.input_usage.citation_at(range);
+    let rich = context.input_usage.rich_citation_at(range);
+    if !matches!(plain, crate::render::ResolutionMatch::Missing)
+        && !matches!(rich, crate::render::ResolutionMatch::Missing)
+    {
+        context.diagnostics.push(render_diagnostic(
+            "duplicate-render-input",
+            "citation has both plain and rich resolutions",
+            range,
+        ));
+        return None;
+    }
+    if let crate::render::ResolutionMatch::Unique(resolution) = rich {
+        if resolution.value.allowed_by(&context.policy.active_urls) {
+            return Some(vec![InlineNode::Rich(resolution.value.clone())]);
+        }
+        context.diagnostics.push(render_diagnostic(
+            "url-not-allowed",
+            "citation link is rejected by the render policy",
+            range,
+        ));
+        return Some(vec![inline_text_node(resolution.value.plain_text())]);
+    }
+    let outcome = match plain {
         crate::render::ResolutionMatch::Unique(resolution) => &resolution.outcome,
         // A duplicate is already reported as a render input problem, and a
         // missing resolution simply leaves the keys to the unresolved policy.
