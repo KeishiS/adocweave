@@ -25,12 +25,20 @@ rustPlatform.buildRustPackage {
     runHook preInstall
     releaseDir="target/${pkgs.stdenv.hostPlatform.rust.rustcTarget}/release"
     install -Dm755 "$releaseDir/adocweave" "$out/bin/adocweave"
+    noticeDir="$out/share/doc/adocweave/browser-assets"
+    mkdir -p "$noticeDir"
+    install -m644 crates/adocweave/assets/revealjs/LICENSE.* crates/adocweave/assets/revealjs/NOTICE.txt "$noticeDir/"
+    cslNoticeDir="$out/share/doc/adocweave/csl"
+    mkdir -p "$cslNoticeDir"
+    install -m644 crates/adocweave/assets/slides/LICENSE.csl-locales.txt \
+      crates/adocweave/assets/slides/NOTICE.csl-locales.txt \
+      crates/adocweave/assets/slides/locale-en-US.xml "$cslNoticeDir/"
     runHook postInstall
   '';
   meta = {
     description = "AsciiDoc converter and Language Server";
     homepage = "https://github.com/KeishiS/adocweave";
-    license = with pkgs.lib.licenses; [ asl20 mit ];
+    license = with pkgs.lib.licenses; [ asl20 mit cc-by-sa-30 ];
     mainProgram = "adocweave";
     platforms = pkgs.lib.platforms.linux;
   };

@@ -1153,6 +1153,8 @@ fn macro_boundary_subject(value: &str, token: MacroToken) -> Option<(usize, &'st
         MacroToken::Formula(token) => {
             let name = if starts_ascii_case_insensitive(&value[token.open..], "latexmath:[") {
                 "latexmath"
+            } else if starts_ascii_case_insensitive(&value[token.open..], "asciimath:[") {
+                "asciimath"
             } else {
                 "stem"
             };
@@ -1214,6 +1216,7 @@ struct FormulaToken {
     content_end: usize,
     end: usize,
     closed: bool,
+    language: Option<MathLanguage>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1375,7 +1378,11 @@ fn recognize_macro_with_index(
         );
     }
     let named_prefix = named_macro_prefix(rest);
-    if let Some(NamedMacroPrefix::Formula { prefix_len }) = named_prefix {
+    if let Some(NamedMacroPrefix::Formula {
+        prefix_len,
+        language,
+    }) = named_prefix
+    {
         let close = delimiters.next_close_bracket(open + prefix_len);
         return InlineRecognition::matched(
             value,
@@ -1385,6 +1392,7 @@ fn recognize_macro_with_index(
                 content_end: close.unwrap_or(value.len()),
                 end: close.map_or(value.len(), |close| close + 1),
                 closed: close.is_some(),
+                language,
             })),
         );
     }
@@ -1657,11 +1665,13 @@ fn build_macro(
             content_end,
             end,
             closed,
+            language,
         }) => {
             let formula = InlineFormula {
                 range: subrange(range, open, end),
                 content_range: subrange(range, content_start, content_end),
-                language: MathLanguage::Latex,
+                language: language.unwrap_or(MathLanguage::AsciiMath),
+                uses_stem_attribute: language.is_none(),
                 value: value[content_start..content_end].to_owned(),
                 closed,
             };
@@ -1994,6 +2004,7 @@ fn named_macro_candidate(value: &str) -> bool {
 enum NamedMacroPrefix {
     Formula {
         prefix_len: usize,
+        language: Option<MathLanguage>,
     },
     Passthrough {
         prefix_len: usize,
@@ -2027,10 +2038,17 @@ fn named_macro_prefix(value: &str) -> Option<NamedMacroPrefix> {
     if starts_ascii_case_insensitive(value, "stem:[") {
         Some(NamedMacroPrefix::Formula {
             prefix_len: "stem:[".len(),
+            language: None,
         })
     } else if starts_ascii_case_insensitive(value, "latexmath:[") {
         Some(NamedMacroPrefix::Formula {
             prefix_len: "latexmath:[".len(),
+            language: Some(MathLanguage::Latex),
+        })
+    } else if starts_ascii_case_insensitive(value, "asciimath:[") {
+        Some(NamedMacroPrefix::Formula {
+            prefix_len: "asciimath:[".len(),
+            language: Some(MathLanguage::AsciiMath),
         })
     } else if starts_ascii_case_insensitive(value, "pass:[") {
         Some(NamedMacroPrefix::Passthrough {

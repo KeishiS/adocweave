@@ -19,6 +19,19 @@ let
     assert pkgs.nodejs.version == nodeVersion;
     pkgs.nodejs;
 
+  # Browser checks register the same pinned fonts on developer machines and CI,
+  # without Fontconfig's default set of impure host font directories.
+  browserFonts = with pkgs; [
+    dejavu_fonts
+    noto-fonts-cjk-sans
+    noto-fonts-cjk-serif
+  ];
+  browserFontConfig = pkgs.makeFontsConf {
+    fontDirectories = browserFonts;
+    impureFontDirectories = [ ];
+    includes = [ "${pkgs.fontconfig.out}/etc/fonts/conf.d" ];
+  };
+
   # cargo-fuzz needs a nightly toolchain of roughly 1.5 GiB. Wrapping it in a
   # script keeps that toolchain out of the shell's own PATH, so the rest of the
   # session still uses the pinned stable compiler.
@@ -89,10 +102,16 @@ let
       htmlValidator ? false,
       rustSource ? false,
       vscodeLibraries ? false,
+      browserFontsEnabled ? false,
     }:
     pkgs.mkShell (
       {
-        packages = commonPackages ++ [ rust ] ++ extra ++ lib.optionals htmlValidator [ pkgs.validator-nu ];
+        packages =
+          commonPackages
+          ++ [ rust ]
+          ++ extra
+          ++ lib.optionals htmlValidator [ pkgs.validator-nu ]
+          ++ lib.optionals (stdenv.isLinux && browserFontsEnabled) browserFonts;
       }
       // lib.optionalAttrs htmlValidator {
         ADOCWEAVE_HTML_VALIDATOR = "${pkgs.validator-nu}/bin/vnu";
@@ -102,6 +121,9 @@ let
       }
       // lib.optionalAttrs (stdenv.isLinux && vscodeLibraries) {
         LD_LIBRARY_PATH = lib.makeLibraryPath vscodeRuntime;
+      }
+      // lib.optionalAttrs (stdenv.isLinux && browserFontsEnabled) {
+        FONTCONFIG_FILE = browserFontConfig;
       }
     );
 in
@@ -113,6 +135,7 @@ in
     htmlValidator = true;
     rustSource = true;
     vscodeLibraries = true;
+    browserFontsEnabled = true;
     extra = [
       pkgs.rust-analyzer
       adocweave-fuzz
@@ -120,6 +143,7 @@ in
     ++ lib.optionals stdenv.isLinux [
       pkgs.chromium
       pkgs.xvfb
+      pkgs.poppler-utils
     ];
   };
 
@@ -133,7 +157,12 @@ in
   ci-integrations = shell {
     rust = ciRust pkgs;
     vscodeLibraries = true;
-    extra = lib.optionals stdenv.isLinux [ pkgs.xvfb ];
+    browserFontsEnabled = true;
+    extra = lib.optionals stdenv.isLinux [
+      pkgs.chromium
+      pkgs.xvfb
+      pkgs.poppler-utils
+    ];
   };
 
   # The independent fuzz smoke keeps the large nightly toolchain out of every
@@ -147,9 +176,11 @@ in
   # not whichever one the runner image happens to carry.
   ci-browser = shell {
     rust = ciRust pkgs;
+    browserFontsEnabled = true;
     extra = lib.optionals stdenv.isLinux [
       pkgs.chromium
       pkgs.xvfb
+      pkgs.poppler-utils
     ];
   };
 

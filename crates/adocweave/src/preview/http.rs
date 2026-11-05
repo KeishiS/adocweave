@@ -6,6 +6,13 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use super::Artifact;
+use crate::slides;
+#[cfg(test)]
+use crate::slides::Audience;
+#[cfg(test)]
+use adocweave_project::BundleSnapshot;
+
 const MAX_REQUEST_BYTES: usize = 8192;
 const HTTP_WORKERS: usize = 4;
 const HTTP_QUEUE_CAPACITY: usize = 28;
@@ -14,54 +21,81 @@ const REQUEST_DEADLINE: Duration = Duration::from_millis(500);
 const RESPONSE_DEADLINE: Duration = Duration::from_millis(500);
 #[cfg(test)]
 type WorkerHook = Arc<dyn Fn() + Send + Sync>;
-const CLIENT_JS: &str = r#"let generation=-1;
+const CLIENT_JS: &str = r#"const generation=Number(document.querySelector('meta[name="adocweave-preview-generation"]').content);
+let pending=false;
 async function update(){
+  if(pending)return;
+  pending=true;
   try {
     const event=await fetch('/events',{cache:'no-store'}).then(r=>r.json());
-    if(generation>=0&&event.generation!==generation){
-      document.querySelector('iframe').contentWindow.location.reload();
-    }
-    if(generation<0||event.generation!==generation){
-      document.querySelector('pre').textContent=await fetch('/diagnostics',{cache:'no-store'}).then(r=>r.text());
-    }
-    generation=event.generation;
-  } catch (_) {}
+    if(event.generation!==generation){window.location.reload();return;}
+    document.querySelector('pre').textContent=JSON.stringify(event.diagnostics,null,2);
+  } catch (_) {} finally {pending=false;}
 }
 setInterval(update,500); update();
 "#;
 
 pub(super) struct HttpSnapshot {
     generation: u64,
-    html: String,
+    artifact: Artifact,
     diagnostics: String,
-    style_origins: BTreeSet<String>,
+    live: bool,
 }
 
 impl HttpSnapshot {
+    #[cfg(test)]
     pub(super) fn new(
         generation: u64,
         html: String,
         diagnostics: String,
         style_origins: BTreeSet<String>,
     ) -> Self {
+        Self::from_artifact(
+            generation,
+            Artifact::Html {
+                html,
+                style_origins,
+            },
+            diagnostics,
+            true,
+        )
+    }
+    pub(super) fn from_artifact(
+        generation: u64,
+        artifact: Artifact,
+        diagnostics: String,
+        live: bool,
+    ) -> Self {
         Self {
             generation,
-            html,
+            artifact,
             diagnostics,
-            style_origins,
+            live,
         }
     }
-
+    pub(super) fn artifact(&self) -> &Artifact {
+        &self.artifact
+    }
     pub(super) const fn generation(&self) -> u64 {
         self.generation
     }
-
-    pub(super) fn failure(&self, generation: u64, html: String, diagnostics: String) -> Self {
-        Self {
-            generation,
-            html,
-            diagnostics,
-            style_origins: self.style_origins.clone(),
+    fn events(&self) -> String {
+        format!(
+            "{{\"generation\":{},\"diagnostics\":{}}}\n",
+            self.generation, self.diagnostics
+        )
+    }
+    fn live_html(&self, html: &str) -> String {
+        // Inject at response time so a page identifies the exact snapshot that
+        // supplied it, including a retained artifact after a failed rebuild.
+        let metadata = format!(
+            "<meta name=\"adocweave-preview-generation\" content=\"{}\">",
+            self.generation
+        );
+        if let Some(end) = html.find("</head>") {
+            format!("{}{}{}", &html[..end], metadata, &html[end..])
+        } else {
+            format!("{metadata}{html}")
         }
     }
 }
@@ -219,6 +253,10 @@ fn respond(mut stream: TcpStream, snapshot: &HttpSnapshot, local: SocketAddr) ->
             &BTreeSet::new(),
         );
     }
+    let style_origins = match &snapshot.artifact {
+        Artifact::Html { style_origins, .. } => style_origins.clone(),
+        _ => BTreeSet::new(),
+    };
     if !matches!(request.method, "GET" | "HEAD") {
         return write_response(
             &mut stream,
@@ -226,19 +264,88 @@ fn respond(mut stream: TcpStream, snapshot: &HttpSnapshot, local: SocketAddr) ->
             405,
             "text/plain",
             "method not allowed\n",
-            &snapshot.style_origins,
+            &style_origins,
+        );
+    }
+    if let Some(audience) = snapshot.artifact.audience() {
+        let policy = format!(
+            "{}; frame-ancestors 'self'",
+            slides::bundle::content_security_policy(audience)
+        );
+        let path = request.path.split('?').next().unwrap_or(request.path);
+        let relative = if matches!(path, "/" | "/index.html") {
+            "index.html"
+        } else {
+            path.strip_prefix('/').unwrap_or("")
+        };
+        if let Artifact::Slides { bundle, .. } = &snapshot.artifact
+            && let Some(file) = bundle.file(relative)
+        {
+            if snapshot.live && relative == "index.html" {
+                return write_bytes(
+                    &mut stream,
+                    request.method,
+                    200,
+                    file.media_type.content_type(),
+                    snapshot.live_html(snapshot.artifact.html()).as_bytes(),
+                    &policy,
+                );
+            }
+            return write_bytes(
+                &mut stream,
+                request.method,
+                200,
+                file.media_type.content_type(),
+                &file.bytes,
+                &policy,
+            );
+        }
+        if snapshot.live {
+            let (mime, body) = match path {
+                "/" | "/index.html" => (
+                    "text/html; charset=utf-8",
+                    snapshot.live_html(snapshot.artifact.html()).into_bytes(),
+                ),
+                "/assets/preview.js" => (
+                    "text/javascript; charset=utf-8",
+                    include_bytes!("../../assets/slides/preview.js").to_vec(),
+                ),
+                "/events" => ("application/json", snapshot.events().into_bytes()),
+                _ => {
+                    return write_bytes(
+                        &mut stream,
+                        request.method,
+                        404,
+                        "text/plain; charset=utf-8",
+                        b"not found\n",
+                        &policy,
+                    );
+                }
+            };
+            return write_bytes(&mut stream, request.method, 200, mime, &body, &policy);
+        }
+        return write_bytes(
+            &mut stream,
+            request.method,
+            404,
+            "text/plain; charset=utf-8",
+            b"not found\n",
+            &policy,
         );
     }
     let (status, content_type, body) = match request.path {
-        "/" => (200, "text/html; charset=utf-8", shell()),
-        "/document" => (200, "text/html; charset=utf-8", snapshot.html.clone()),
-        "/client.js" => (200, "text/javascript; charset=utf-8", CLIENT_JS.to_owned()),
-        "/events" => (
+        "/" => (
             200,
-            "application/json",
-            format!("{{\"generation\":{}}}\n", snapshot.generation),
+            "text/html; charset=utf-8",
+            snapshot.live_html(&shell()),
         ),
-        "/diagnostics" => (200, "application/json", snapshot.diagnostics.clone()),
+        "/document" => (
+            200,
+            "text/html; charset=utf-8",
+            snapshot.artifact.html().to_owned(),
+        ),
+        "/client.js" => (200, "text/javascript; charset=utf-8", CLIENT_JS.to_owned()),
+        "/events" => (200, "application/json", snapshot.events()),
         _ => (404, "text/plain; charset=utf-8", "not found\n".to_owned()),
     };
     write_response(
@@ -247,7 +354,7 @@ fn respond(mut stream: TcpStream, snapshot: &HttpSnapshot, local: SocketAddr) ->
         status,
         content_type,
         &body,
-        &snapshot.style_origins,
+        &style_origins,
     )
 }
 
@@ -392,6 +499,24 @@ fn write_response(
     body: &str,
     style_origins: &BTreeSet<String>,
 ) -> io::Result<()> {
+    write_bytes(
+        stream,
+        method,
+        status,
+        content_type,
+        body.as_bytes(),
+        &content_security_policy(style_origins),
+    )
+}
+
+fn write_bytes(
+    stream: &mut TcpStream,
+    method: &str,
+    status: u16,
+    content_type: &str,
+    body: &[u8],
+    policy: &str,
+) -> io::Result<()> {
     let reason = match status {
         200 => "OK",
         404 => "Not Found",
@@ -409,12 +534,12 @@ fn write_response(
     let headers = format!(
         "HTTP/1.1 {status} {reason}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\n{allow}Cache-Control: no-store\r\nContent-Security-Policy: {}\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n",
         body.len(),
-        content_security_policy(style_origins)
+        policy
     );
     let deadline = Instant::now() + RESPONSE_DEADLINE;
     write_until(stream, headers.as_bytes(), deadline)?;
     if method != "HEAD" {
-        write_until(stream, body.as_bytes(), deadline)?;
+        write_until(stream, body, deadline)?;
     }
     Ok(())
 }
@@ -448,7 +573,7 @@ fn write_until(stream: &mut TcpStream, mut bytes: &[u8], deadline: Instant) -> i
 
 fn content_security_policy(style_origins: &BTreeSet<String>) -> String {
     format!(
-        "default-src 'none'; script-src 'self'; frame-src 'self'; style-src 'unsafe-inline'{}",
+        "default-src 'none'; connect-src 'self'; script-src 'self'; frame-src 'self'; style-src 'unsafe-inline'{}",
         style_origins
             .iter()
             .map(|origin| format!(" {origin}"))
@@ -508,6 +633,183 @@ mod tests {
 
     fn snapshot(html: String) -> Arc<HttpSnapshot> {
         Arc::new(HttpSnapshot::new(1, html, "[]".to_owned(), BTreeSet::new()))
+    }
+
+    fn slide_snapshot(live: bool) -> HttpSnapshot {
+        use adocweave_core::NeverCancel;
+        use adocweave_project::{BundleFile, BundleMediaType, ProjectLimits};
+        let bundle = BundleSnapshot::from_files(
+            vec![
+                BundleFile {
+                    path: "index.html".to_owned(),
+                    media_type: BundleMediaType::Html,
+                    bytes: b"<html>complete slides</html>".to_vec(),
+                },
+                BundleFile {
+                    path: "assets/picture.png".to_owned(),
+                    media_type: BundleMediaType::Png,
+                    bytes: vec![0, 255, 137, 1],
+                },
+            ],
+            ProjectLimits::default(),
+            &NeverCancel,
+        )
+        .unwrap();
+        HttpSnapshot::from_artifact(
+            3,
+            Artifact::Slides {
+                bundle: Arc::new(bundle),
+                audience: Audience::Public,
+            },
+            "[]".to_owned(),
+            live,
+        )
+    }
+
+    fn slide_response(snapshot: &HttpSnapshot, path: &str, method: &str) -> Vec<u8> {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::scope(|scope| {
+            let server = scope.spawn(|| {
+                let (stream, _) = listener.accept().unwrap();
+                respond(stream, snapshot, address).unwrap();
+            });
+            let mut stream = TcpStream::connect(address).unwrap();
+            stream
+                .write_all(
+                    format!("{method} {path} HTTP/1.1\r\nHost: {address}\r\n\r\n").as_bytes(),
+                )
+                .unwrap();
+            let mut response = Vec::new();
+            stream.read_to_end(&mut response).unwrap();
+            server.join().unwrap();
+            response
+        })
+    }
+
+    #[test]
+    fn slide_http_serves_top_level_html_binary_assets_and_only_manifest_paths() {
+        let snapshot = slide_snapshot(false);
+        let html = String::from_utf8(slide_response(&snapshot, "/?receiver", "GET")).unwrap();
+        assert!(html.contains("<html>complete slides</html>"));
+        assert!(!html.contains("<iframe"));
+        assert!(html.contains("frame-ancestors 'self'"));
+        assert!(!html.contains("script-src 'self' 'unsafe-inline'"));
+        let image = slide_response(&snapshot, "/assets/picture.png", "GET");
+        assert!(image.ends_with(&[0, 255, 137, 1]));
+        assert!(String::from_utf8_lossy(&image).contains("Content-Type: image/png"));
+        let head = slide_response(&snapshot, "/assets/picture.png", "HEAD");
+        assert!(head.ends_with(b"\r\n\r\n"));
+        assert!(String::from_utf8_lossy(&head).contains("Content-Length: 4"));
+        for path in [
+            "/events",
+            "/diagnostics",
+            "/document",
+            "/assets/../index.html",
+            "/%69ndex.html",
+            "/.adocweave-manifest.json",
+            "/unknown",
+        ] {
+            assert!(
+                String::from_utf8_lossy(&slide_response(&snapshot, path, "GET"))
+                    .starts_with("HTTP/1.1 404"),
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn failed_live_generation_keeps_previous_complete_bundle_and_new_diagnostics() {
+        let previous = slide_snapshot(true);
+        let mut state = super::super::State {
+            http: Arc::new(previous),
+            dependencies: Default::default(),
+        };
+        state.adopt(
+            4,
+            super::super::Build::slide_failure(
+                "incomplete page".to_owned(),
+                Default::default(),
+                Audience::Public,
+            ),
+        );
+        let failed = &state.http;
+        assert!(
+            String::from_utf8_lossy(&slide_response(failed, "/", "GET"))
+                .contains("complete slides")
+        );
+        assert!(slide_response(failed, "/assets/picture.png", "GET").ends_with(&[0, 255, 137, 1]));
+        let html = String::from_utf8(slide_response(failed, "/", "GET")).unwrap();
+        assert!(html.contains("name=\"adocweave-preview-generation\" content=\"4\""));
+        let response = String::from_utf8(slide_response(failed, "/events", "GET")).unwrap();
+        let (_, body) = response.split_once("\r\n\r\n").unwrap();
+        let event: serde_json::Value = serde_json::from_str(body).unwrap();
+        assert_eq!(event["generation"], 4);
+        assert_eq!(event["diagnostics"][0]["message"], "incomplete page");
+        assert!(
+            String::from_utf8_lossy(&slide_response(failed, "/diagnostics", "GET"))
+                .starts_with("HTTP/1.1 404")
+        );
+    }
+
+    #[test]
+    fn html_response_identifies_its_snapshot_before_the_first_poll() {
+        let first = slide_snapshot(true);
+        let html = String::from_utf8(slide_response(&first, "/", "GET")).unwrap();
+        assert!(html.contains("name=\"adocweave-preview-generation\" content=\"3\""));
+        let mut newer = slide_snapshot(true);
+        newer.generation = 4;
+        let events = String::from_utf8(slide_response(&newer, "/events", "GET")).unwrap();
+        assert!(events.contains("\"generation\":4"));
+        assert!(!html.contains("content=\"4\""));
+        let static_html =
+            String::from_utf8(slide_response(&slide_snapshot(false), "/", "GET")).unwrap();
+        assert!(!static_html.contains("adocweave-preview-generation"));
+    }
+
+    #[test]
+    fn initial_slide_failures_serve_current_error_and_can_recover() {
+        use super::super::{Build, State};
+        let mut state = State::from_build(
+            1,
+            Build::slide_failure(
+                "first error".to_owned(),
+                Default::default(),
+                Audience::Public,
+            ),
+        );
+        state.adopt(
+            2,
+            Build::slide_failure(
+                "second error".to_owned(),
+                Default::default(),
+                Audience::Public,
+            ),
+        );
+        let html = String::from_utf8(slide_response(&state.http, "/", "GET")).unwrap();
+        assert!(html.contains("second error"));
+        assert!(!html.contains("first error"));
+        assert!(html.contains("name=\"adocweave-preview-generation\" content=\"2\""));
+        assert!(
+            String::from_utf8_lossy(&slide_response(&state.http, "/assets/preview.js", "GET"))
+                .contains("event.generation")
+        );
+        let Artifact::Slides { bundle, audience } = slide_snapshot(true).artifact else {
+            panic!("slide fixture")
+        };
+        state.adopt(
+            3,
+            Build::slides(
+                (*bundle).clone(),
+                audience,
+                "[]".to_owned(),
+                Default::default(),
+            ),
+        );
+        let html = String::from_utf8(slide_response(&state.http, "/", "GET")).unwrap();
+        assert!(html.contains("complete slides"));
+        assert!(!html.contains("second error"));
+        assert!(html.contains("name=\"adocweave-preview-generation\" content=\"3\""));
     }
 
     #[test]

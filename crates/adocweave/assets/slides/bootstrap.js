@@ -1,0 +1,85 @@
+/* Fixed AdocWeave initialization; authored metadata is never evaluated. */
+(() => {
+  "use strict";
+  const presenter = document.body.dataset.audience === "presenter";
+  const parameters = new URLSearchParams(location.search);
+  let dimensions = document.body.dataset.aspectRatio?.split(":").map(Number) ?? [screen.width, screen.height];
+  // Notes previews must retain the presenting deck's ratio on another monitor.
+  if (parameters.has("receiver") && window.parent !== window) {
+    try {
+      const config = window.parent.opener?.Reveal?.getConfig();
+      if (config) dimensions = [config.width, config.height];
+    } catch {
+      // A standalone or cross-origin receiver uses its own document settings.
+    }
+  }
+  const detectedRatio = dimensions[0] / dimensions[1];
+  const aspectRatio = dimensions.every(value => value > 0) && detectedRatio >= .25 && detectedRatio <= 4 ? detectedRatio : 16 / 9;
+  const deck = new Reveal(document.querySelector(".reveal"), {
+    width: 1280,
+    height: 1280 / aspectRatio,
+    margin: parameters.has("print-pdf") ? 0 : .04,
+    hash: true,
+    fragmentInURL: true,
+    pdfSeparateFragments: false,
+    history: false,
+    center: false,
+    transition: "none",
+    slideNumber: "c/t",
+    plugins: presenter ? [RevealNotes] : []
+  });
+  window.Reveal = deck;
+
+  function navigate(target) {
+    const slide = target.closest(".slides section");
+    if (!slide) return false;
+    const indices = deck.getIndices(slide);
+    const fragment = target.closest(".fragment");
+    const value = fragment ? Number(fragment.dataset.fragmentIndex) : -1;
+    const current = deck.getIndices();
+    const required = Number.isInteger(value) ? value : -1;
+    const vertical = indices.v ?? 0;
+    const sameSlide = current.h === indices.h && current.v === vertical;
+    const stage = sameSlide && Number.isInteger(current.f) ? Math.max(current.f, required) : required;
+    deck.slide(indices.h, vertical, stage);
+    // Reveal may expose all fragments when returning to a previous slide.
+    // Apply the requested stage after its slide transition has finished.
+    deck.navigateFragment(stage);
+    return true;
+  }
+
+  document.addEventListener("click", event => {
+    const anchor = event.target.closest && event.target.closest("a[href^='#']");
+    if (!anchor) return;
+    let id;
+    try { id = decodeURIComponent(anchor.getAttribute("href").slice(1)); } catch { return; }
+    const target = document.getElementById(id);
+    if (target && navigate(target)) {
+      event.preventDefault();
+      // Handle authored references before Reveal's bubbling hash listener.
+      event.stopPropagation();
+    }
+  }, true);
+
+  function imageReady(image) {
+    if (image.decode) return image.decode().catch(() => {});
+    if (image.complete) return Promise.resolve();
+    return new Promise(resolve => {
+      image.addEventListener("load", resolve, { once: true });
+      image.addEventListener("error", resolve, { once: true });
+    });
+  }
+
+  deck.initialize().then(async () => {
+    const fonts = document.fonts ? document.fonts.ready : Promise.resolve();
+    await Promise.all([fonts, ...Array.from(document.images, imageReady)]);
+    deck.layout();
+    if (!location.hash.startsWith("#/")) {
+      let id;
+      try { id = decodeURIComponent(location.hash.slice(1)); } catch { id = ""; }
+      const target = document.getElementById(id);
+      if (target) navigate(target);
+    }
+    window.dispatchEvent(new Event("adocweave-slides-ready"));
+  });
+})();

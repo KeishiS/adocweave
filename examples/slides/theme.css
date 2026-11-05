@@ -1,0 +1,26 @@
+/* Change the theme without replacing the slide layout or math rules. */
+:root {
+  --adocweave-background: #fffdf8;
+  --adocweave-foreground: #253247;
+  --adocweave-muted: #596579;
+  --adocweave-accent: #245c86;
+  --adocweave-surface: #edf3f7;
+  --adocweave-border: #ccd8e2;
+  --adocweave-font-size: 28px;
+  --adocweave-font-family: "Noto Serif CJK JP", "Yu Mincho", "Hiragino Mincho ProN", serif;
+}
+
+.reveal h2 { font-size: 1.4em; }
+.reveal .footnotes { font-size: .7em; }
+.reveal figure img { max-height: 360px; }
+.reveal #method .columns { gap: 32px; }
+
+/* Exclude the title slide and the container of a vertical slide group. */
+.reveal .slides section:not(.stack):not(.title-slide) {
+  padding: 40px 56px 56px;
+}
+
+/* The bundled print padding uses !important, so match it here. */
+html.reveal-print .reveal .slides section:not(.stack):not(.title-slide) {
+  padding: 40px 56px 56px !important;
+}

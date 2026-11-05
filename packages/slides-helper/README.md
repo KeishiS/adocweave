@@ -1,0 +1,148 @@
+# @adocweave/slides-helper
+
+AdocWeaveのHTMLスライド向けに、TeX数式とCSL形式の引用・参考文献を事前処理するNode.jsパッケージです。
+Node.js 24.19.0以降を使用します。実行入口は`adocweave-slides-helper`です。
+起動時にパッケージの`engines.node`を検査し、必要なバージョンを満たさない場合は、
+検出したバージョンと導入案内を標準エラーへ表示して終了します。
+
+## 導入
+
+npm Registryの配布版は、版を指定して導入します。
+CLIに対応する補助のバージョンは、[ネイティブ版の変更履歴](https://github.com/KeishiS/adocweave/blob/main/CHANGELOG.md)で確認してください。
+
+```console
+npm install --global --ignore-scripts @adocweave/slides-helper@X.Y.Z
+```
+
+npm archiveには監査した実行時の依存一式を含め、導入時に推移依存の版を選び直しません。
+独自に原稿のディレクトリへ置いた実行ファイルは自動探索しません。
+AdocWeave CLIから使う場合は`PATH`へ導入するか、`--slides-helper`に入口を指定します。
+
+ソースから使う場合は、リポジトリ直下で固定依存を導入します。
+
+```console
+npm ci --ignore-scripts --prefix packages/slides-helper
+adocweave convert talk.adoc --to revealjs --output dist/talk \
+  --slides-helper /absolute/path/to/adocweave/packages/slides-helper/bin.mjs
+```
+
+通常の本文と手書きの書誌定義だけの生成には、この補助パッケージは必要ありません。
+数式やCSL引用を含むスライドの記法とデータ指定は
+[CLI利用手順](https://github.com/KeishiS/adocweave/blob/main/docs/user-guide/command-line.adoc#revealjs-slides)を参照してください。
+
+## 実行
+
+```console
+adocweave-slides-helper < request.json > result.json
+```
+
+npmの実行用リンクを使わず、`node`にインストール先の`bin.mjs`を渡して直接起動することもできます。
+Windowsでもこの方法を使えます。
+
+一つのUTF-8 JSON要求を標準入力から読み、一つのJSON応答を標準出力へ書いて終了します。
+診断は応答の`diagnostics`に英語で含めます。errorがある場合は終了コード1、それ以外は0です。
+ライブラリのログを標準出力へ混ぜません。
+
+## 入出力
+
+[protocol.d.mts](./protocol.d.mts)が入出力の型定義です。空の要求も処理できます。
+
+```json
+{
+  "schemaVersion": 3,
+  "extensions": [],
+  "eqnums": "none",
+  "scopes": {
+    "body": { "equations": [], "citations": [] },
+    "notes": { "equations": [], "citations": [] }
+  }
+}
+```
+
+`body`は本文、`notes`は発表者ノートの掲載範囲です。この二つだけを受け付けます。
+式番号、式のlabel、TeX macroの状態、引用の状態は、掲載範囲ごとに独立します。
+式と引用の配列は、それぞれ文書中の順序で渡してください。
+
+`key`は呼出し側が生成し、同じ掲載範囲の式・引用を通じて一意にします。
+先頭をASCII英字とし、英数字、`_`、`-`からなる64文字以内の識別子を使います。
+応答の`status`は`ok`または`failed`です。成功時は入力順を維持し、各keyに結果を一つ返します。
+失敗時は`diagnostics`だけを返し、部分的な成果物と通知は含めません。
+呼出し側は成功結果の不明なkey、欠落・重複、および診断のkeyを検査してください。
+原稿のファイル名や位置は呼出し側で保持します。
+
+`notices.math`と`notices.citations`には、使用した数式・引用の配布通知本文を返します。
+それぞれ式・引用の入力がなければ`null`です。数式の通知にはフォントの著作権表示、GUST Font License、LPPL、
+MathJaxのlicense、引用の通知にはciteprocの帰属表示とCPAL本文を含めます。パッケージ自身の固定同梱ファイルだけを読みます。
+呼出し側は各本文64 KiB・合計256 KiB以内のUTF-8文字列として検査し、固定filenameのテキスト資産へ保存してください。
+失敗応答には`notices`を含めません。公開用の生成では、発表者ノートだけが使う通知も除去してください。
+
+## 数式
+
+各式は`{ key, tex, display, footnote? }`で指定します。
+`footnote: true`の式はinlineだけを許可し、数式番号とlabelの定義を禁止します。同じ掲載範囲の脚注外で定義した式番号への`ref`・`eqref`は使用できます。`eqnums`は要求全体に共通で、`none`、`ams`、`all`を受け付けます。
+
+`extensions`は必須の配列です。`color`、`cancel`、`mathtools`だけを指定でき、重複は許可しません。
+空配列は追加拡張なしを表します。入力順にかかわらず、この順で有効にします。
+`base`、`ams`、`newcommand`、`configmacros`は常に有効で、配列には指定しません。
+`mathtools`が使うAMSの機能と、式番号・参照はこの基本機能で処理します。
+拡張は同梱したMathJaxから読み込み、原稿から任意の拡張を取得しません。
+
+`color`の色はSVGの`fill`・`stroke`へ出力します。`rgb`、`RGB`、`gray`による色定義はMathJaxがHEX表記へ変換します。受信側は色名やHEX表記を有限に検査し、URLなどを拒否する必要があります。`\colorbox`の背景色と`\fcolorbox`の枠色・背景色にも同じ制約が適用されます。MathJax内部の`data-bgcolor`属性と、枠の図形に重複する`border`スタイルは除去し、背景の矩形と枠の多角形は保持します。
+番号を自動付与するかどうかはMathJaxの規則に従います。両掲載範囲の番号は別々に1から始まります。
+成功時には、ブラウザーでMathJaxを実行する必要のない静的`svg`を返します。
+SVGのglyph pathを各式に含め、IDと内部リンクに掲載範囲・keyを反映します。
+
+`label`、前方の`ref`・`eqref`、`tag`、`notag`、AMS環境、macro定義を処理します。
+未定義のmacro、重複label、番号のある参照先がない式参照はerrorです。
+TeXの`require`、拡張機能の自動取得、任意HTMLの埋込みは受け付けません。
+MathJax自身のmacro展開上限とbuffer上限を有効にしています。
+
+共通の`macros`には`{ name, definition, arguments?, default? }`を渡せます。
+名前はASCII英字1〜64文字、引数は0〜9個です。`default`は最初の省略可能な引数の既定値です。
+式中で定義したmacroは、同じ掲載範囲の後続の式へ引き継ぎます。
+
+## 引用と参考文献
+
+引用には`{ key, items }`を指定し、各itemに書誌データの`id`を渡します。
+`locator`、`label`、`prefix`、`suffix`、`suppressAuthor`、`authorOnly`も指定できます。
+共通の`csl`にはCSL-JSONの`items`、CSL styleのXML文字列、localeのXML文字列を渡します。
+ファイル名やURLを指定して取得する操作はありません。
+
+citeprocで掲載範囲全体を文書順に処理します。後の引用によって名前や年の区別が変わる場合は、
+前の引用の表示も更新して返します。参考文献はCSL styleの順序で、引用されたitemだけを返します。
+参考文献の配置は呼出し側が行います。
+
+引用・参考文献は有限のinline treeです。文字列の`text`と、子要素を持つ`emphasis`、`strong`、
+`superscript`、`subscript`、`smallcaps`、`underline`、`normal-emphasis`、`normal-strong`、
+`normal-smallcaps`、`link`を使います。`normal-*`は外側から引き継いだ同種の装飾を解除します。
+リンクは資格情報のないHTTP・HTTPSだけを受け付けます。
+対応するCSL styleはこの有限表現へ変換できるものに限られ、任意のCSL styleの表示を保証しません。
+段落、インデント、左右の列配置は保持せず、既知のwrapperを文字の区切りへ変換します。
+任意HTML、未対応の装飾、複数itemを一つにまとめる参考文献項目はerrorです。
+citeprocが生成する既知の参考文献wrapperを除去し、番号と本文の間の区切りを保持します。
+
+## 上限
+
+| 対象 | 上限 |
+| --- | ---: |
+| 標準入力 | 4 MiB |
+| JSON応答 | 32 MiB |
+| 式・引用 | それぞれ両掲載範囲の合計1024件 |
+| 式のTeX | 16 KiB |
+| 引用一つのitem | 64件 |
+| 書誌item | 4096件 |
+| 共通macro | 64個、定義一つ4 KiB |
+| CSL style・locale | それぞれ512 KiB |
+| 引用・参考文献一つのinline tree | 4096ノード、深さ32 |
+| 引用・参考文献一つの文字列 | 合計256 KiB |
+| 引用・参考文献一つのHTML表現 | escapeと装飾を含め1.5 MiB、URL一つ4 KiB |
+| 通知本文 | 一つ64 KiB、合計256 KiB |
+
+MathJaxのbuffer上限など、使用するライブラリの上限も適用されます。
+AsciiDocの解析、include、原稿の取得、サーバー、監視は呼出し側の責務です。
+
+## 配布条件
+
+パッケージ自身はMITまたはApache-2.0で使用できます。実行時の依存ライブラリとフォントには、
+それぞれの配布条件が適用されます。[THIRD_PARTY_NOTICES.adoc](./THIRD_PARTY_NOTICES.adoc)と`licenses/`に
+実際に配布されたライセンス本文、著作権表示、citeprocのCPAL選択と帰属表示を収録しています。
