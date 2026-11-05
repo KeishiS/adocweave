@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 export interface ExtensionManifest {
   capabilities?: { untrustedWorkspaces?: { description?: string; supported?: boolean } };
   displayName: string;
+  devDependencies?: Record<string, string>;
   engines?: { vscode?: string };
   name: string;
   publisher: string;
@@ -44,4 +45,19 @@ export function supportedVSCodeFloor(manifest: ExtensionManifest): string {
     throw new Error(`engines.vscodeは^MAJOR.MINOR.PATCH形式が必要です：${range}`);
   }
   return floor;
+}
+
+/** Rejects API types that require a newer editor than the declared minimum. */
+export function validateVSCodeTypesCompatibility(manifest: ExtensionManifest): void {
+  const floor = supportedVSCodeFloor(manifest);
+  const types = manifest.devDependencies?.["@types/vscode"];
+  if (typeof types !== "string" || !/^\d+\.\d+\.\d+$/.test(types)) {
+    throw new Error("@types/vscode must be pinned to a MAJOR.MINOR.PATCH version");
+  }
+  // DefinitelyTyped patch versions can change without changing the VS Code API.
+  const [engineMajor = 0, engineMinor = 0] = floor.split(".").map(Number);
+  const [typesMajor = 0, typesMinor = 0] = types.split(".").map(Number);
+  if (typesMajor > engineMajor || (typesMajor === engineMajor && typesMinor > engineMinor)) {
+    throw new Error(`@types/vscode ${types} requires a newer editor than engines.vscode ${floor}`);
+  }
 }
