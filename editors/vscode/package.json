@@ -2,7 +2,7 @@
   "name": "adocweave",
   "displayName": "AdocWeave Language Support",
   "description": "AdocWeave Language Server client and AsciiDoc syntax highlighting",
-  "version": "0.55.3",
+  "version": "0.56.0",
   "publisher": "adocweave",
   "license": "MIT OR Apache-2.0",
   "homepage": "https://github.com/KeishiS/adocweave",
@@ -12,7 +12,7 @@
   },
   "private": true,
   "engines": {
-    "vscode": "^1.107.0"
+    "vscode": "^1.138.0"
   },
   "categories": [
     "Programming Languages",
@@ -96,7 +96,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.9",
     "@types/node": "26.4.0",
-    "@types/vscode": "1.107.0",
+    "@types/vscode": "1.138.0",
     "@vscode/test-electron": "3.1.0",
     "@vscode/vsce": "3.9.2",
     "esbuild": "0.28.2",
