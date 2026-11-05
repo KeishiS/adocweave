@@ -58,21 +58,22 @@ The copyright holders retain their rights.
 [cols="2,1,2",options="header"]
 |===
 |Package |Version and license |License text
+|@isaacs/nonrecursive-glob-match |1.0.3; BlueOak-1.0.0 |licenses/@isaacs-nonrecursive-glob-match.txt
 |@xmldom/xmldom |0.9.12; MIT |licenses/@xmldom-xmldom.txt
 |balanced-match |4.0.4; MIT |licenses/balanced-match.txt
 |brace-expansion |5.0.12; MIT |licenses/brace-expansion.txt
 |commander |14.0.3; MIT |licenses/commander.txt
 |entities |8.1.0; BSD-2-Clause |licenses/entities.txt
-|glob |13.0.6; BlueOak-1.0.0 |licenses/glob.txt
+|glob |14.0.3; BlueOak-1.0.0 |licenses/glob.txt
 |lru-cache |11.5.3; BlueOak-1.0.0 |licenses/lru-cache.txt
 |mhchemparser |4.2.1; Apache-2.0 |licenses/mhchemparser.txt
-|minimatch |10.2.6; BlueOak-1.0.0 |licenses/minimatch.txt
+|minimatch |11.0.4; BlueOak-1.0.0 |licenses/minimatch.txt
 |minipass |7.1.3; BlueOak-1.0.0 |licenses/minipass.txt
 |mj-context-menu |1.0.0; Apache-2.0 |licenses/mj-context-menu.txt
 |package-json-from-dist |1.0.1; BlueOak-1.0.0 |licenses/package-json-from-dist.txt
 |parse5 |8.0.1; MIT |licenses/parse5.txt
-|path-scurry |2.0.2; BlueOak-1.0.0 |licenses/path-scurry.txt
-|rimraf |6.1.3; BlueOak-1.0.0 |licenses/rimraf.txt
+|path-scurry |3.0.0; BlueOak-1.0.0 |licenses/path-scurry.txt
+|rimraf |6.1.4; BlueOak-1.0.0 |licenses/rimraf.txt
 |speech-rule-engine |5.0.0-rc.4; Apache-2.0 |licenses/speech-rule-engine.txt
 |wicked-good-xpath |1.3.0; MIT |licenses/wicked-good-xpath.txt
 |===
