@@ -11,4 +11,8 @@
 - Bounded input and output, finite citation formatting, and distribution notices for the libraries and fonts actually used. CSL inputs must be nonempty and normalized citation output stays within the host's inline node budget.
 - An npm archive containing the complete audited runtime dependency tree as bundled dependencies.
 
+### Fixed
+
+- Updated transitive file-matching dependencies to prevent glob-pattern resource exhaustion and stop filesystem traversal after cancellation.
+
 [0.2.0]: https://github.com/KeishiS/adocweave/tree/slides-helper/v0.2.0

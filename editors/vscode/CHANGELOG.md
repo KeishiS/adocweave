@@ -6,6 +6,10 @@
 
 - The extension now requires VS Code 1.138.0 or later and uses the matching VS Code API types. Update VS Code or your compatible editor before installing this version.
 
+### Fixed
+
+- Pinned the Language Server client to the compatible 9.0.1 release with patched glob dependencies, avoiding resource exhaustion from crafted patterns while preserving the supported editor features.
+
 ## [0.55.2] - 2026-10-04
 
 ### Fixed

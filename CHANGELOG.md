@@ -25,6 +25,7 @@ separate changelogs for the
 
 ### Fixed
 
+- The native executable requires a Tokio version containing the I/O safety fix for RUSTSEC-2026-0386.
 - HTML and terminal output retain titles on ordinary paragraphs, lists, unstyled quote containers, and other supported content blocks. Slide body and presenter-note titles use the same content rendering rules.
 - Source, listing, and literal captions render inline formatting, links, references, footnotes, citations, and formulas. Title references and their footnote backlinks now point to rendered elements.
 - Verse paragraph titles are displayed before their paragraphs. Paragraph-only verse bodies preserve their line breaks; verse blocks containing other block kinds use ordinary block rendering. Unstyled quote containers retain explicit IDs and allowed roles even without a title.
