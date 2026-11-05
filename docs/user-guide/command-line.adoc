@@ -21,6 +21,9 @@ help、診断、要約およびエラーは英語で表示します。
 |`adocweave preview manual.adoc`
 |ローカルプレビューを起動します。
 
+|`adocweave serve dist/talk`
+|生成済みスライドをローカルで配信します。
+
 |`adocweave check manual.adoc`
 |文書の問題を確認します。
 
@@ -40,6 +43,19 @@ help、診断、要約およびエラーは英語で表示します。
 ----
 adocweave check -- -manual.adoc
 ----
+
+== HTML変換
+
+``convert``はHTMLを標準出力へ書き、描画時の診断を標準エラー出力へ書きます。
+診断には元ファイル、行番号、UTF-8のバイト数による列番号、重要度およびcodeを表示します。
+include先の診断も、その元ファイルの位置を示します。HTMLには診断を混在させません。
+
+描画時のerrorがある場合は終了コード1、warning、informationおよびhintだけの場合は0を返します。
+読み書き、引数、stylesheetおよび上限の失敗は、それぞれの終了コードを返します。
+安全に描画できたHTMLは、描画時の診断がある場合も標準出力へ書きます。
+
+``.notes``は通常HTMLでは汎用roleです。本文は保持し、``html.roles``で許可した場合だけ
+CSS用の``role-notes`` classを付けます。``.notes``を非公開の指定として扱いません。
 
 [#diagnostics]
 == 診断
@@ -332,7 +348,7 @@ xref:project-configuration.adoc#terminal-colors[プロジェクト設定]を参�
 
 == ローカルプレビュー
 
-``preview``は完全なHTML文書を生成し、既定では``127.0.0.1:4000``で配信します。表示されたURLをブラウザーで
+通常の``preview``は完全なHTML文書をプレビュー用の画面内で表示し、既定では``127.0.0.1:4000``で配信します。表示されたURLをブラウザーで
 開いてください。終了するには kbd:[Ctrl+C]を押します。
 
 [source,console]
@@ -348,6 +364,7 @@ adocweave preview --port 8080 --css theme.css manual.adoc
 ``--bind ADDRESS --allow-external``を指定します。プレビューには利用者認証とTLSによる暗号化がないため、
 信頼できないネットワークへ公開しないでください。
 
+[#html-css]
 == 完全なHTML文書とCSS
 
 ``convert``は既定でHTML fragmentを出力します。完全なHTML文書を生成するには``--complete``を指定します。
@@ -360,3 +377,12 @@ adocweave convert --complete --css theme.css --css-url https://example.com/print
 
 CSSの指定はプロジェクト設定と合わせて16件までです。CSSファイルはUTF-8で、1件あたり1 MiBまでです。
 symlinkのCSSファイル、安全でない内容、許可されていないURLおよび上限を超えたCSSは拒否します。
+
+[#revealjs-slides]
+== reveal.jsスライド
+
+``preview``と``convert``へ``--to revealjs``を指定すると、AsciiDocの原稿をスライドとして表示・生成できます。
+``preview``は編集内容を反映し、``convert``は配布用のディレクトリまたは単一HTMLを生成します。
+保存済みのスライドは``serve``で配信できます。
+原稿の書き方、数式と引用、CSS、発表者ノート、HTMLの配布およびPDF保存は、
+xref:slides.adoc[スライドの作成]を参照してください。

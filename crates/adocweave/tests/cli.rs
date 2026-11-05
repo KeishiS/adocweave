@@ -804,14 +804,11 @@ fn preview_non_privileged_child_recovers_after_include_permission_returns() {
     std::fs::set_permissions(&dependency, std::fs::Permissions::from_mode(0o000)).expect("deny");
     let mut denied_generation = None;
     for _ in 0..200 {
-        let diagnostics = preview_get(address, "/diagnostics");
-        if diagnostics.contains("permission") {
-            let events = preview_get(address, "/events");
-            denied_generation = events
-                .split("\"generation\":")
-                .nth(1)
-                .and_then(|value| value.split('}').next())
-                .and_then(|value| value.parse::<u64>().ok());
+        let response = preview_get(address, "/events");
+        let (_, body) = response.split_once("\r\n\r\n").expect("HTTP response");
+        let event: serde_json::Value = serde_json::from_str(body).expect("preview event");
+        if event["diagnostics"].to_string().contains("permission") {
+            denied_generation = event["generation"].as_u64();
             break;
         }
         std::thread::sleep(Duration::from_millis(10));
@@ -823,12 +820,11 @@ fn preview_non_privileged_child_recovers_after_include_permission_returns() {
     std::fs::write(&dependency, "VISIBLE_TWO\n").expect("update restored include");
     for _ in 0..200 {
         let document = preview_get(address, "/document");
-        let events = preview_get(address, "/events");
-        let advanced = events
-            .split("\"generation\":")
-            .nth(1)
-            .and_then(|value| value.split('}').next())
-            .and_then(|value| value.parse::<u64>().ok())
+        let response = preview_get(address, "/events");
+        let (_, body) = response.split_once("\r\n\r\n").expect("HTTP response");
+        let event: serde_json::Value = serde_json::from_str(body).expect("preview event");
+        let advanced = event["generation"]
+            .as_u64()
             .is_some_and(|generation| generation > denied_generation);
         if advanced && document.contains("VISIBLE_TWO") {
             stop_preview(&mut child);
@@ -912,7 +908,7 @@ fn preview_serves_and_recovers_from_an_initial_include_read_failure() {
         "{initial_document}"
     );
     assert!(!initial_document.contains("RECOVERED_INCLUDE"));
-    let diagnostics = preview_get(address, "/diagnostics");
+    let diagnostics = preview_get(address, "/events");
     assert!(diagnostics.contains("part.adoc"), "{diagnostics}");
     assert!(child.try_wait().expect("child state").is_none());
     std::fs::write(&include, "RECOVERED_INCLUDE\n").expect("create include");
@@ -1525,6 +1521,87 @@ fn convert_reads_a_file() {
     assert!(output.stderr.is_empty());
 }
 
+#[test]
+fn convert_writes_render_warnings_to_stderr_and_keeps_stdout_as_html() {
+    for color in ["auto", "always", "never"] {
+        let output = run_with_stdin(
+            &["convert", "--no-config", "--color", color, "-"],
+            b"link:javascript:alert(1)[unsafe]\n",
+        );
+
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"<p>unsafe</p>\n");
+        let stderr = String::from_utf8(output.stderr).expect("diagnostic");
+        assert!(stderr.contains("<stdin>:1:6: warning[invalid-url-scheme]:"));
+        assert_eq!(stderr.contains("\x1b[33m"), color == "always");
+        assert!(!stderr.contains("<p>"));
+    }
+}
+
+#[test]
+fn convert_maps_render_diagnostics_to_included_source_lines_and_byte_columns() {
+    let root = tempfile::tempdir().expect("project");
+    std::fs::write(
+        root.path().join("manual.adoc"),
+        "= Title\n\ninclude::part.adoc[]\n",
+    )
+    .expect("primary source");
+    std::fs::write(
+        root.path().join("part.adoc"),
+        "Included text.\n\n😀 link:javascript:alert(1)[unsafe]\n",
+    )
+    .expect("included source");
+
+    let output = adocweave()
+        .current_dir(root.path())
+        .args(["convert", "--no-config", "manual.adoc"])
+        .output()
+        .expect("included conversion");
+
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("😀 unsafe"));
+    let stderr = String::from_utf8(output.stderr).expect("diagnostic");
+    assert!(
+        stderr.starts_with("include:part.adoc:3:11: warning[invalid-url-scheme]:"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("manual.adoc:"));
+}
+
+#[test]
+fn convert_preserves_notes_as_a_regular_role_without_a_render_error() {
+    let root = tempfile::tempdir().expect("project");
+    std::fs::write(
+        root.path().join("manual.adoc"),
+        "[.notes]\n--\nPrivate explanation.\n--\n",
+    )
+    .expect("source");
+    std::fs::write(
+        root.path().join(".adocweave.toml"),
+        "schema-version = 2\n[html]\nroles = [\"notes\"]\n",
+    )
+    .expect("configuration");
+
+    for configured in [false, true] {
+        let mut command = adocweave();
+        command.current_dir(root.path()).arg("convert");
+        if !configured {
+            command.arg("--no-config");
+        }
+        let output = command.arg("manual.adoc").output().expect("conversion");
+
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stderr.is_empty());
+        let html = String::from_utf8(output.stdout).expect("HTML");
+        assert!(html.contains("Private explanation."));
+        assert_eq!(html.contains("role-notes"), configured);
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn file_arguments_accept_non_utf8_paths() {
@@ -1945,7 +2022,7 @@ fn config_show_reports_source_and_redacts_attribute_values() {
     let config = root.join("project.toml");
     std::fs::write(
         &config,
-        "schema-version = 2\n[analysis.attributes.token]\nvalue = \"do-not-print\"\n",
+        "schema-version = 2\n[analysis.attributes.token]\nvalue = \"do-not-print\"\n[math]\nextensions = [\"mathtools\", \"color\"]\n",
     )
     .expect("write config");
 
@@ -1963,6 +2040,10 @@ fn config_show_reports_source_and_redacts_attribute_values() {
         config.canonicalize().unwrap().to_string_lossy().as_ref()
     );
     assert_eq!(value["analysis"]["attributes"]["token"]["state"], "set");
+    assert_eq!(
+        value["math"]["extensions"],
+        serde_json::json!(["color", "mathtools"])
+    );
 
     std::fs::remove_dir_all(root).expect("remove project");
 }

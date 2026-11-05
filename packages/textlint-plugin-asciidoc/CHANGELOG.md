@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.54.2] - 2026-11-05
+
+### Fixed
+
+- Titles attached to comment blocks are excluded from prose linting and no longer contribute footnotes, references, or counter changes. Original source and lint-control comment text remain available to the Processor.
+
+## [0.54.1] - 2026-10-04
+
+### Fixed
+
+- Explicit AsciiMath formulas and math blocks whose style shares a metadata line with an ID, role, or option are excluded from prose linting. Inline formulas use the existing `Code` nodes, preserving the Processor API and TxtAST types.
+
 ## [0.54.0] - 2026-08-30
 
 ### Breaking changes

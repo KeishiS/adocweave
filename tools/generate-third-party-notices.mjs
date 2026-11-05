@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
 import { vscodeRuntimePackages } from "./verify-vscode-dependencies.mjs";
+import { verifySlidesAssets } from "./verify-slides-assets.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 
@@ -129,12 +130,33 @@ function writeNotice(outputPath, contents) {
 }
 
 export function generateNativeThirdPartyNotices(target, outputPath) {
+  const directory = new URL("../crates/adocweave/assets/revealjs/", import.meta.url);
+  const metadata = verifySlidesAssets(fileURLToPath(directory));
+  const browserNotices = metadata.archives.map(source => {
+    const asset = metadata.assets.find(asset => asset.archive === source.name && asset.path.startsWith("LICENSE."));
+    if (!asset) fail(`Embedded browser license is missing: ${source.name}`);
+    const license = readFileSync(new URL(asset.path, directory), "utf8").trimEnd();
+    return `=== ${source.name} ${source.version}
+
+link:${source.tarball}[取得元のarchive]
+
+[listing]
+----
+${license}
+----
+`;
+  }).join("\n");
+  const cslDirectory = new URL("../crates/adocweave/assets/slides/", import.meta.url);
+  const cslNotice = ["NOTICE.csl-locales.txt", "LICENSE.csl-locales.txt"]
+    .map(name => readFileSync(new URL(name, cslDirectory), "utf8").trimEnd())
+    .join("\n\n");
   writeNotice(
     outputPath,
     renderCargoThirdPartyNotices(
       cargoRuntimePackages("adocweave", target),
       "native archiveに含める実行ファイル",
-    ),
+    ) + `\n== 同梱するブラウザー資産\n\n実行ファイルに含める資産の著作権表示とlicense全文を記載します。\n\n${browserNotices}`
+      + `\n== 同梱するCSLロケール\n\n[listing]\n----\n${cslNotice}\n----\n`,
   );
 }
 

@@ -345,6 +345,7 @@ fn wasm_toc_entry(entry: &CoreTocEntry) -> TocEntry {
 const fn math_language(language: CoreMathLanguage) -> MathLanguage {
     match language {
         CoreMathLanguage::Latex => MathLanguage::Latex,
+        CoreMathLanguage::AsciiMath => MathLanguage::AsciiMath,
         CoreMathLanguage::Typst => MathLanguage::Typst,
     }
 }
@@ -470,6 +471,7 @@ mod tests {
     fn every_core_projection_enum_has_the_intended_wire_variant() {
         for (core, wire) in [
             (CoreMathLanguage::Latex, MathLanguage::Latex),
+            (CoreMathLanguage::AsciiMath, MathLanguage::AsciiMath),
             (CoreMathLanguage::Typst, MathLanguage::Typst),
         ] {
             assert_eq!(math_language(core), wire);

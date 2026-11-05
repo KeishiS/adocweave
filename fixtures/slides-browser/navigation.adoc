@@ -1,0 +1,41 @@
+= Reference regression
+:lang: ja
+
+[#method]
+== Method — 手法
+
+The heading reference <<method>> preserves an already visible stage.
+
+[%step]
+* [[first-step]]First stage.
+* [[second-step]]Second stage.
+
+[.notes]
+--
+PRIVATE_NOTE
+--
+
+[#vertical]
+== Vertical
+
+The heading reference <<vertical>> preserves an already visible stage.
+
+[%step]
+* [[vertical-first]]First vertical stage.
+* [[vertical-second]]Second vertical stage.
+
+[#detail]
+=== Detail
+
+The heading reference <<detail>> preserves an already visible stage.
+
+[%step]
+* [[detail-first]]First detail stage.
+* [[detail-second]]Second detail stage.
+
+[#last]
+== Last
+
+Return to <<method>>, <<first-step>>, or <<second-step>>;
+<<vertical>>, <<vertical-first>>, or <<vertical-second>>;
+<<detail>>, <<detail-first>>, or <<detail-second>>.

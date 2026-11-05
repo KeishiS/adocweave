@@ -4,8 +4,58 @@ This changelog covers the native `adocweave` executable and the public Rust APIs
 separate changelogs for the
 [WebAssembly package](https://github.com/KeishiS/adocweave/blob/main/packages/wasm/CHANGELOG.md),
 [textlint plugin](https://github.com/KeishiS/adocweave/blob/main/packages/textlint-plugin-asciidoc/CHANGELOG.md),
+[slides helper](https://github.com/KeishiS/adocweave/blob/main/packages/slides-helper/CHANGELOG.md),
 [VS Code extension](https://github.com/KeishiS/adocweave/blob/main/editors/vscode/CHANGELOG.md), and
 [Zed extension](https://github.com/KeishiS/adocweave/blob/main/editors/zed/CHANGELOG.md).
+
+## [0.62.0] - 2026-11-05
+
+### Main changes
+
+- `convert --to revealjs` produces a local reveal.js slide directory. The existing CLI also previews manuscripts and serves generated directories; no separate build command or executable is required.
+- `convert --to revealjs --single-file` writes a self-contained public presentation to standard output. Redirect it to an HTML file to distribute scripts, styles, validated images, and dependency notices together. It excludes presenter notes, supports browser PDF export, and cannot be combined with `--output` or `--audience presenter`.
+- Slides support horizontal and vertical groups, two columns, fragments, images, cross-references, and presenter notes. Public output removes notes before collecting resources or processing their equations and citations. Body content and presenter notes have independent equation, footnote, and citation scopes.
+- LaTeX equations render to static SVG with original TeX retained. CSL citations and bibliographies use the independently versioned `@adocweave/slides-helper` 0.2.0 and helper protocol 3. Documents without LaTeX or CSL citations do not start the helper. Browsers do not load MathJax or a citation processor.
+- `math.extensions` selects the bundled `color`, `cancel`, and `mathtools` extensions for slide equations. Omitted or empty settings enable no additional extensions; unknown and duplicate entries are rejected. Named CSS colors and hexadecimal colors remain in validated SVG, while arbitrary CSS functions and external references remain unsupported. Preview reflects configuration changes.
+- CSL citations need only `--bibliography`: the CLI embeds a numeric citation style and the full CSL `en-US` locale. `--csl-style` and `--csl-locale` override these defaults independently; invalid explicit files remain errors. CSL inputs and visible hand-written bibliography entries cannot be combined.
+- Slides include an offline theme with locally installed Japanese Mincho fonts, bottom-aligned footnotes, and consistent equation, figure, table, and reference styling. Local CSS can customize the theme. Footnote equations are unnumbered inline math; references to equations outside footnotes remain supported within the same scope.
+- Slides use the initial screen aspect ratio by default, with a 16:9 fallback. The document-header attribute `slides-aspect-ratio` selects `auto` or a fixed positive-integer `WIDTH:HEIGHT` ratio between 1:4 and 4:1. Presenter previews use the main presentation's dimensions. A fixed ratio keeps distributed slides consistent across screens.
+- Slides opened with `?print-pdf` support Chrome/Chromium's built-in PDF export. All fragment stages appear together; content exceeding the slide height can continue across multiple pages. Browser printing uses the slide aspect ratio and retains backgrounds, equations, figures, and footnotes.
+- Saved slides include bundled browser assets, dependency notices, and a manifest. Updates protect unknown or modified files and remove obsolete managed assets, including notes when switching to public output. Serving verifies registered files and never serves unregistered files.
+
+### Fixed
+
+- The native executable requires a Tokio version containing the I/O safety fix for RUSTSEC-2026-0386.
+- HTML and terminal output retain titles on ordinary paragraphs, lists, unstyled quote containers, and other supported content blocks. Slide body and presenter-note titles use the same content rendering rules.
+- Source, listing, and literal captions render inline formatting, links, references, footnotes, citations, and formulas. Title references and their footnote backlinks now point to rendered elements.
+- Verse paragraph titles are displayed before their paragraphs. Paragraph-only verse bodies preserve their line breaks; verse blocks containing other block kinds use ordinary block rendering. Unstyled quote containers retain explicit IDs and allowed roles even without a title.
+- Comment titles do not execute counters or contribute references, footnotes, citations, or formulas to the document.
+- Slide equations preserve clipping for stretched braces and delimiters while retaining overflow needed by equation bodies and numbers.
+- The default slide theme emphasizes definition-list terms and places each description on the following line with a one-em indent.
+- Ordinary HTML preview permits same-origin update polling under its Content Security Policy. Preview also detects regeneration between the initial HTML response and first notification; diagnostics match their generation, and failed slide rebuilds retain the last successful output.
+- On Unix, interrupting slide conversion cancels its helper and reaps its process group through the existing cancellation path. Incompatible helper responses identify the required protocol and helper version.
+- `convert` reports HTML rendering diagnostics on standard error at the original document or include position. Rendering errors produce exit code 1; warning-only output succeeds.
+- Math block styles can share a metadata line with an ID, role, or option. Explicit `asciimath` notation is recognized alongside `latexmath`.
+- Slides diagnose unsupported note forms, unsupported reveal.js attributes, and misplaced `slides-aspect-ratio` attributes. Empty and note-only decks are rejected. Page titles use resolved heading text; generated footnote and citation IDs do not disclose private note sizes.
+
+### Rust API
+
+- `DelimitedBlockKind::Comment` blocks in `semantic::Document` expose `metadata.title == None`. The source text and syntax tree retain the authored title; semantic processing excludes it.
+- `adocweave_project::MathExtension`, `ProjectConfig::math_extensions()`, and `ProjectConfigErrorCode::InvalidMathExtension` expose the finite slide-math extension setting and its diagnostics. Update exhaustive error-code matches accordingly.
+- `MathLanguage` adds `AsciiMath`. `InlineFormula` adds `uses_stem_attribute`, and math block `range` includes preceding metadata while `content_range` identifies the formula text. Update exhaustive matches and struct literals accordingly.
+- Validated SVG and finite citation content can be passed through output inputs. Validation rejects unsupported XML, external references, missing or duplicated helper results, and processing-limit violations before rendering.
+- `render_regions`, `render_slide_regions`, `HtmlRegions`, `HtmlRegionSelection`, `HtmlRegionError`, `HtmlSlideScope`, `HtmlSlideSelections`, and `HtmlSlideRegions` expose selected body-region rendering. Slide regions group rendered content and footnotes by source slide, preserving the existing escaping and URL policy while separating body and presenter-note references.
+- `RenderInputDomain` adds `Math` and `RichCitation`; update exhaustive matches.
+- `adocweave_project::ProjectObservationKind` adds `BinaryContentsNoSymlinks` for bounded local resource reads; update exhaustive matches.
+- `output::projection::heading_text(&Heading)` exposes resolved plain heading text using the existing inline-text rules. It does not run host math or citation processing.
+
+### Migration
+
+- Update CSS selectors for titled paragraphs, lists, math, passthrough, and unstyled quote containers: their titles and bodies are grouped in `div.titled-block`. Authored IDs and allowed role classes belong to that wrapper; structural classes such as `lead` and `callout-list` belong to the inner body element. Titled literal paragraphs use `figure.literal-block` with a `figcaption`.
+- Unstyled quote containers without titles now carry explicit IDs and allowed roles on a `div` without a fixed kind class. Account for that wrapper when styling these containers.
+- Source, listing, and literal `figcaption` content now contains rendered inline elements. Consumers must not assume these captions contain only plain text; document-structure title strings remain plain text.
+- Generic `stem` notation now follows the `stem` attribute at its source position, including fixed attributes and include-local changes. `latexmath`, `latex`, and `tex` select LaTeX; other values, empty values, and an unset attribute select AsciiMath. Set `:stem: latexmath` or use explicit `latexmath:[...]` / `[latexmath]` where a document relied on implicit LaTeX. Slides accept LaTeX and diagnose unsupported notation.
+- To use the new slide output with LaTeX or CSL citations, install `@adocweave/slides-helper` 0.2.0. Check any entry selected by `--slides-helper` or `ADOCWEAVE_SLIDES_HELPER` as well. Native 0.62.0 and the helper must use protocol 3 with the required `extensions` array; protocols 1 and 2 are rejected.
 
 ## [0.58.0] - 2026-09-20
 
@@ -134,6 +184,7 @@ if let Ok(expanded) = analysis.expanded {
 }
 ```
 
+[0.62.0]: https://github.com/KeishiS/adocweave/compare/v0.58.0...v0.62.0
 [0.58.0]: https://github.com/KeishiS/adocweave/compare/v0.57.0...v0.58.0
 [0.57.0]: https://github.com/KeishiS/adocweave/compare/v0.56.5...v0.57.0
 [0.56.5]: https://github.com/KeishiS/adocweave/compare/v0.56.4...v0.56.5

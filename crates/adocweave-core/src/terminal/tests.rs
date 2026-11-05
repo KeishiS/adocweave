@@ -486,6 +486,55 @@ fn a_verse_keeps_the_lines_the_author_wrote() {
 }
 
 #[test]
+fn a_verse_keeps_child_titles_separate_from_its_literal_lines() {
+    assert_eq!(
+        plain(
+            "[verse]\n____\n.Stanza _title_ footnote:[Note.]\nLine *one*\nLine two\n____\n",
+            40
+        ),
+        "│ Stanza title [1]\n│ Line *one*\n│ Line two\n\nFootnotes\n[1] Note.\n"
+    );
+}
+
+#[test]
+fn a_verse_with_mixed_blocks_renders_prose_inlines_and_footnotes() {
+    for body in [
+        "* item\n\nA _word_ footnote:[Note.]\nsecond line\n",
+        "A _word_ footnote:[Note.]\nsecond line\n\n* item\n",
+    ] {
+        let rendered = document(&format!("[verse]\n____\n{body}____\n"), 60);
+        let text = rendered.to_plain_text();
+
+        assert!(text.contains("A word [1] second line"), "{text}");
+        assert_eq!(text.matches("[1]").count(), 2, "{text}");
+        assert!(text.contains("[1] Note."), "{text}");
+        assert!(
+            rendered
+                .lines
+                .iter()
+                .flat_map(|line| &line.spans)
+                .any(|span| span.text == "word" && span.style.italic)
+        );
+    }
+}
+
+#[test]
+fn comments_do_not_change_verse_line_breaks_or_inline_interpretation() {
+    for title in ["", ".Visible *title*\n"] {
+        let source = |comment: &str| {
+            format!(
+                "[verse]\n____\n{title}First *literal* line.\nSecond line.\n\n{comment}Third _literal_ line.\nFourth line.\n____\n"
+            )
+        };
+        let expected = plain(&source(""), 60);
+        let actual = plain(&source(".PRIVATE title\n////\nPRIVATE body\n////\n\n"), 60);
+        assert_eq!(actual, expected);
+        assert!(actual.contains("First *literal* line."), "{actual}");
+        assert!(!actual.contains("PRIVATE"));
+    }
+}
+
+#[test]
 fn a_listing_block_is_bordered_and_never_reflowed() {
     assert_eq!(
         plain("----\none two three four five six seven\n----\n", 20),
@@ -504,6 +553,130 @@ fn a_source_block_numbers_its_lines_when_the_document_asks() {
 #[test]
 fn a_block_title_stands_directly_above_the_block() {
     assert_eq!(plain(".Title\n----\ncode\n----\n", 40), "Title\n│ code\n");
+}
+
+#[test]
+fn titles_lead_paragraphs_lists_and_transparent_containers() {
+    for (body, expected) in [
+        ("Body.\n", "Title\nBody.\n"),
+        ("* item\n", "Title\n• item\n"),
+        (". item\n", "Title\n1. item\n"),
+        ("term:: description\n", "Title\nterm\n  description\n"),
+        ("<1> explanation\n", "Title\n<1> explanation\n"),
+        ("--\nBody.\n--\n", "Title\nBody.\n"),
+        ("____\nBody.\n____\n", "Title\nBody.\n"),
+        ("NOTE: Body.\n", "Title\nNOTE: Body.\n"),
+        ("++++\n<raw>\n++++\n", "Title\n<raw>\n"),
+    ] {
+        assert_eq!(plain(&format!(".Title\n{body}"), 40), expected, "{body}");
+    }
+}
+
+#[test]
+fn block_titles_render_inline_semantics_and_footnote_markers_once() {
+    for body in [
+        "Body.\n",
+        "* item\n",
+        ". item\n",
+        "term:: description\n",
+        "<1> explanation\n",
+        "--\nBody.\n--\n",
+        "____\nBody.\n____\n",
+        "NOTE: Body.\n",
+        "++++\n<raw>\n++++\n",
+        "[quote]\n____\nBody.\n____\n",
+        "[verse]\n____\nLine one\nLine two\n____\n",
+        "[NOTE]\n====\nBody.\n====\n",
+        "[source,rust]\n----\nfn main() {}\n----\n",
+        "[source,rust,linenums]\n----\nfn main() {}\n----\n",
+        "....\nliteral\n....\n",
+        " literal\n",
+        "[latexmath]\n++++\nx=1\n++++\n",
+        "image::picture.png[Picture]\n",
+        "|===\n|Cell\n|===\n",
+        "====\nBody.\n====\n",
+        "****\nBody.\n****\n",
+        "[%collapsible]\n====\nBody.\n====\n",
+    ] {
+        let source = format!(
+            ":name: Resolved\n\n.{{name}} _emphasis_ xref:#target[Target] footnote:[Note text.]\n{body}\n[#target]\nDestination.\n"
+        );
+        let rendered = document(&source, 100);
+        let text = rendered.to_plain_text();
+        assert_eq!(
+            text.matches("Resolved emphasis Target [1]").count(),
+            1,
+            "{body}: {text}"
+        );
+        assert_eq!(text.matches("[1]").count(), 2, "{body}: {text}");
+        assert_eq!(text.matches("Note text.").count(), 1, "{body}: {text}");
+        assert!(
+            rendered
+                .lines
+                .iter()
+                .flat_map(|line| &line.spans)
+                .any(|span| {
+                    span.text == "emphasis"
+                        && span.style.role == TerminalRole::Caption
+                        && span.style.italic
+                }),
+            "{body}: {text}"
+        );
+    }
+}
+
+#[test]
+fn titles_in_list_continuations_keep_the_item_indentation() {
+    let source = "* outer\n+\n.Inner title\n--\nBody.\n--\n+\n.Nested title\n* nested\n";
+
+    assert_eq!(
+        plain(source, 40),
+        "• outer\n\n  Inner title\n  Body.\n\n  Nested title\n  • nested\n"
+    );
+}
+
+#[test]
+fn long_titles_wrap_without_losing_caption_style() {
+    let rendered = document(".A long title with several words\nBody.\n", 12);
+    let (body, title_lines) = rendered.lines.split_last().expect("title and body");
+
+    assert_eq!(
+        title_lines
+            .iter()
+            .map(super::TerminalLine::text)
+            .collect::<Vec<_>>()
+            .join(" "),
+        "A long title with several words"
+    );
+    assert_eq!(body.text(), "Body.");
+    assert!(title_lines.len() > 1);
+    assert!(
+        rendered
+            .lines
+            .iter()
+            .all(|line| line.display_width(AmbiguousWidth::Narrow) <= 12)
+    );
+    assert!(
+        title_lines
+            .iter()
+            .flat_map(|line| &line.spans)
+            .all(|span| { span.style.role == TerminalRole::Caption && span.style.bold })
+    );
+}
+
+#[test]
+fn a_reference_diagnostic_in_a_title_keeps_its_source_range() {
+    let source = ".See <<missing>>\nBody.\n";
+    let rendered = render(analyze(source).document(), &policy(40));
+
+    assert_eq!(rendered.document.to_plain_text(), "See missing\nBody.\n");
+    assert_eq!(rendered.diagnostics.len(), 1);
+    let diagnostic = &rendered.diagnostics[0];
+    assert_eq!(diagnostic.code.as_str(), "unresolved-cross-reference");
+    assert_eq!(
+        &source[diagnostic.range.start().to_usize()..diagnostic.range.end().to_usize()],
+        "missing"
+    );
 }
 
 #[test]
@@ -537,7 +710,10 @@ fn a_collapsible_block_is_open_and_marked_as_one() {
 #[test]
 fn a_comment_block_is_written_for_the_author_and_never_shown() {
     assert_eq!(
-        plain("////\nnot for the reader\n////\n\ntext\n", 40),
+        plain(
+            ".Private title\n////\nnot for the reader\n////\n\ntext\n",
+            40
+        ),
         "text\n"
     );
 }

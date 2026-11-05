@@ -72,6 +72,7 @@ pub(super) const ALLOWED_ATTRIBUTES: &[&str] = &[
     "src",
     "target",
     "title",
+    "value",
     "width",
 ];
 pub(super) const ALLOWED_CLASSES: &[&str] = &[
@@ -91,6 +92,7 @@ pub(super) const ALLOWED_CLASSES: &[&str] = &[
     "callout-number",
     "checklist-marker",
     "citation",
+    "citation-link",
     "document-title",
     "example",
     "footnote",
@@ -104,6 +106,7 @@ pub(super) const ALLOWED_CLASSES: &[&str] = &[
     "listing-block",
     "literal-block",
     "math-latex",
+    "math-asciimath",
     "math-typst",
     "menu",
     "open",
@@ -134,6 +137,7 @@ pub(super) const ALLOWED_CLASSES: &[&str] = &[
     "table-stripes-odd",
     "toc",
     "title",
+    "titled-block",
     "verse",
 ];
 
@@ -160,6 +164,14 @@ impl<'a> PassiveAttributeName<'a> {
             && !BOOLEAN_ATTRIBUTES.contains(&value)
             && value != CLASS_ATTRIBUTE)
             .then_some(Self(value))
+    }
+
+    pub(super) const fn fragment_index() -> Self {
+        Self("data-fragment-index")
+    }
+
+    pub(super) const fn aria_label() -> Self {
+        Self("aria-label")
     }
 }
 
@@ -190,6 +202,10 @@ impl<'a> ClassName<'a> {
     pub(super) fn new(value: &'a str) -> Option<Self> {
         (value != "language-*" && value != "role-*" && ALLOWED_CLASSES.contains(&value))
             .then_some(Self(value))
+    }
+
+    pub(super) const fn fragment() -> Self {
+        Self("fragment")
     }
 }
 
@@ -389,6 +405,25 @@ impl<'a> HtmlWriter<'a> {
 
     pub(super) fn text(&mut self, value: TextValue<'_>) {
         escape_into(self.output, value.0);
+    }
+
+    /// Markup reconstructed from a finite XML tree, never copied from raw input.
+    pub(super) fn validated_math(
+        &mut self,
+        value: &crate::rendered_content::ValidatedMath,
+        tex: &str,
+    ) {
+        self.output
+            .push_str("<span class=\"math-rendered\" role=\"math\" aria-label=\"");
+        escape_into(self.output, tex);
+        self.output.push_str("\">");
+        self.output.push_str(value.svg());
+        self.output.push_str("<code class=\"math-source\" hidden>");
+        escape_into(self.output, tex);
+        self.output.push_str("</code></span>");
+    }
+    pub(super) fn validated_rich(&mut self, value: &crate::rendered_content::ValidatedRichText) {
+        self.output.push_str(value.html());
     }
 
     pub(super) fn safe_style_body(&mut self, value: SafeStyleBody<'_>) {
