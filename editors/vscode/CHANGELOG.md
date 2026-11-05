@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.55.3] - 2026-11-05
+
+### Fixed
+
+- Pinned the Language Server client to the compatible 9.0.1 release with patched glob dependencies, avoiding resource exhaustion from crafted patterns while preserving the supported editor features.
+
 ## [0.55.2] - 2026-10-04
 
 ### Fixed
