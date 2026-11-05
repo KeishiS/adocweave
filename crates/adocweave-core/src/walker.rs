@@ -38,6 +38,19 @@ pub fn walk<'document>(
     });
 }
 
+/// Traverses an existing inline tree, including styled text and link labels.
+pub fn walk_inlines<'document>(
+    inlines: &'document [Inline],
+    mut visitor: impl FnMut(SemanticNode<'document>),
+) {
+    for inline in inlines {
+        let _: ControlFlow<()> = try_walk_node(SemanticNode::Inline(inline), &mut |node| {
+            visitor(node);
+            ControlFlow::Continue(())
+        });
+    }
+}
+
 pub(crate) fn walk_ast<'document>(
     document: &'document AstDocument,
     mut visitor: impl FnMut(SemanticNode<'document>),

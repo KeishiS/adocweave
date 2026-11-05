@@ -1,1 +1,1 @@
-pub const PROTOCOL_SCHEMA_VERSION: u16 = 16;
+pub const PROTOCOL_SCHEMA_VERSION: u16 = 17;

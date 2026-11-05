@@ -4,8 +4,8 @@ use adocweave_core::output::diagnostics as diagnostic;
 use adocweave_core::text::{PositionEncoding, SourceDocument};
 
 use crate::check_output::{
-    CheckOutcome, DiagnosticCounts, DiagnosticFormat, FailOn, github_annotation, sarif_log,
-    sarif_result,
+    CheckOutcome, DiagnosticCounts, DiagnosticFormat, FailOn, ProjectSourceView, github_annotation,
+    sarif_log, sarif_result,
 };
 use crate::{diagnostic_json, local_target};
 
@@ -23,11 +23,6 @@ pub(crate) struct Options {
 pub(crate) enum Error {
     Position(adocweave_core::text::PositionError),
     Serialize(String),
-}
-
-pub(crate) struct ProjectSourceView<'source> {
-    pub(crate) display_id: String,
-    pub(crate) source: &'source str,
 }
 
 pub(crate) fn process_project(

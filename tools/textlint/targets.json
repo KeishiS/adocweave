@@ -8,7 +8,9 @@
   ],
   "authoredDirectories": [
     "docs/",
-    "packages/textlint-plugin-asciidoc/"
+    "examples/slides/",
+    "packages/textlint-plugin-asciidoc/",
+    "packages/slides-helper/"
   ],
   "excludedDirectories": [
     {
