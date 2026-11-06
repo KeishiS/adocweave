@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.56.0] - 2026-11-05
+
+### Breaking changes
+
+- Titled paragraphs, lists, math, passthrough, and unstyled quote containers group their titles and bodies in `div.titled-block`. Authored IDs and allowed role classes move to that wrapper; update CSS selectors accordingly. Titled literal paragraphs use `figure.literal-block` with a `figcaption`.
+- Unstyled quote containers without titles carry explicit IDs and allowed roles on a `div` without a fixed kind class.
+- Source, listing, and literal captions render inline elements instead of flattening their titles to plain text. Document-structure title strings remain plain text.
+- Comment block titles no longer participate in semantic analysis: they do not execute counters or contribute references, footnotes, citations, or formulas to analysis results.
+
+### Fixed
+
+- HTML output retains titles on supported content blocks, including paragraphs, lists, quotations, literal paragraphs, math, and passthrough.
+- Title links, references, footnotes, citations, and formulas use the ordinary inline renderer, preserving footnote references and backlinks alongside the title.
+- Verse paragraph titles are displayed before their paragraphs. Paragraph-only verse bodies preserve their line breaks; verse blocks containing other block kinds use ordinary block rendering.
+
 ## [0.55.0] - 2026-10-04
 
 ### Breaking changes

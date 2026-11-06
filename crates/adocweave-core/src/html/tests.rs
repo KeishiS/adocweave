@@ -1372,6 +1372,7 @@ fn html_contract_has_explicit_allowlists() {
             "table-stripes-odd",
             "toc",
             "title",
+            "titled-block",
             "verse"
         ]
     );
@@ -2165,6 +2166,419 @@ fn compound_blocks_render_a_wrapper_with_their_title() {
             "<div id=\"def-a\" class=\"open\">\n<div class=\"title\">定義 1</div>\n<p>本文</p>\n</div>\n",
             "<p>引用</p>\n",
         )
+    );
+}
+
+#[test]
+fn block_titles_render_inline_content_and_footnote_links_once() {
+    for (name, body) in [
+        ("paragraph", "body\n"),
+        ("unordered list", "* body\n"),
+        ("ordered list", ". body\n"),
+        ("description list", "term:: body\n"),
+        ("callout list", "<1> body\n"),
+        ("open", "--\nbody\n--\n"),
+        ("bare quote", "____\nbody\n____\n"),
+        ("quote", "[quote,Author,Book]\n____\nbody\n____\n"),
+        ("verse", "[verse,Author,Book]\n____\nbody\n____\n"),
+        ("literal paragraph", " body\n"),
+        ("math", "[latexmath]\n++++\nx=1\n++++\n"),
+        ("passthrough", "++++\n<b>body</b>\n++++\n"),
+        ("source", "[source,rust]\n----\nfn main() {}\n----\n"),
+        ("listing", "----\nbody\n----\n"),
+        ("literal", "....\nbody\n....\n"),
+        ("example", "====\nbody\n====\n"),
+        ("sidebar", "****\nbody\n****\n"),
+        ("table", "|===\n|body\n|===\n"),
+        ("image", "image::https://example.org/image.png[body]\n"),
+        ("admonition paragraph", "NOTE: body\n"),
+        ("admonition block", "[NOTE]\n====\nbody\n====\n"),
+        ("collapsible", "[%collapsible]\n====\nbody\n====\n"),
+    ] {
+        let parsed = parse(&format!(
+            "[#target.marked]\n.Unique *title* <<destination>> footnote:[note]\n{body}\n[#destination]\n== Destination\n"
+        ))
+        .expect(name);
+        let output = render_with_inputs(
+            &parsed.ast,
+            &role_policy(&["marked"], super::UnknownRole::Diagnostic),
+            &echo_resource_inputs(&parsed.ast),
+        );
+        assert!(
+            output.diagnostics.is_empty(),
+            "{name}: {:?}",
+            output.diagnostics
+        );
+        let html = &output.html;
+        for expected in [
+            "Unique <strong>title</strong>",
+            "<a href=\"#destination\">Destination</a>",
+            "id=\"target\"",
+            "role-marked",
+            "id=\"_footnoteref_1_1\"",
+            "href=\"#_footnoteref_1_1\"",
+            "id=\"_footnote_1\"",
+            "href=\"#_footnote_1\"",
+        ] {
+            assert_eq!(
+                html.matches(expected).count(),
+                1,
+                "{name}: {expected}\n{html}"
+            );
+        }
+    }
+}
+
+#[test]
+fn block_titles_match_the_shared_html_fixture() {
+    let parsed = parse(include_str!("../../../../fixtures/html/block-titles.adoc"))
+        .expect("block title fixture");
+    let output = render(&parsed.ast, &RenderPolicy::default());
+    assert_eq!(
+        output.html,
+        include_str!("../../../../fixtures/html/block-titles.fragment.html")
+    );
+    // The unprovided image uses its alt text while retaining the figure title.
+    assert_eq!(output.diagnostics.len(), 1);
+    assert_eq!(output.diagnostics[0].code.as_str(), "unresolved-resource");
+}
+
+#[test]
+fn titled_wrappers_own_authored_attributes_and_body_classes_stay_on_the_body() {
+    let parsed = parse(concat!(
+        "[#paragraph.marked]\n[lead]\n.Paragraph\nbody\n\n",
+        "[#callout.marked]\n.Callouts\n<1> body\n\n",
+        "[#admonition.marked]\n.Notice\nNOTE: body\n",
+    ))
+    .expect("parse");
+    let output = render(
+        &parsed.ast,
+        &role_policy(&["marked"], super::UnknownRole::Diagnostic),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    assert_eq!(
+        output.html,
+        concat!(
+            "<div id=\"paragraph\" class=\"titled-block role-marked\">\n",
+            "<div class=\"title\">Paragraph</div>\n<p class=\"lead\">body</p>\n</div>\n",
+            "<div id=\"callout\" class=\"titled-block role-marked\">\n",
+            "<div class=\"title\">Callouts</div>\n<ol class=\"callout-list\">\n",
+            "<li><span class=\"callout-number\">1</span> body</li>\n</ol>\n</div>\n",
+            "<div id=\"admonition\" class=\"admonition admonition-note role-marked\">",
+            "<div class=\"title\">Notice</div>\n<p>body</p>\n</div>\n",
+        )
+    );
+    let rejected = render(
+        &parsed.ast,
+        &role_policy(&[], super::UnknownRole::Diagnostic),
+    );
+    assert_eq!(rejected.diagnostics.len(), 3);
+    assert!(
+        rejected
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code.as_str() == "role-not-allowed")
+    );
+    assert!(!rejected.html.contains("role-marked"));
+}
+
+#[test]
+fn titled_list_continuations_and_asciidoc_cells_render_inside_their_containers() {
+    let parsed = parse(concat!(
+        "* parent\n+\n[#nested]\n.Nested *list*\n. child\n\n",
+        "[cols=\"a\"]\n|===\n|\n.Cell *title*\ncell body\n|===\n",
+    ))
+    .expect("parse");
+    let output = render(&parsed.ast, &RenderPolicy::default());
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    assert!(
+        output.html.contains(concat!(
+            "<li>parent\n<div id=\"nested\" class=\"titled-block\">\n",
+            "<div class=\"title\">Nested <strong>list</strong></div>\n",
+            "<ol>\n<li>child</li>\n</ol>\n</div>\n</li>",
+        )),
+        "{}",
+        output.html
+    );
+    assert!(output.html.contains(concat!(
+        "<td class=\"table-align-left table-valign-top\"><div class=\"titled-block\">\n",
+        "<div class=\"title\">Cell <strong>title</strong></div>\n<p>cell body</p>\n</div>\n</td>",
+    )), "{}", output.html);
+}
+
+#[test]
+fn titles_consume_resolved_math_and_citations_in_the_body_context() {
+    use crate::rendered_content::{
+        ResolvedMath, ResolvedRichCitation, RichInline, ValidatedMath, ValidatedRichText,
+    };
+    for body in [
+        "body\n",
+        "* body\n",
+        "[source,rust]\n----\nfn main() {}\n----\n",
+    ] {
+        let analysis = analyze(&format!(".Title latexmath:[x] cite:[paper]\n{body}"));
+        let formula = crate::projection::formulas(&analysis).remove(0);
+        let citation = analysis.citations().remove(0);
+        let inputs = RenderInputs::default()
+            .with_math(vec![ResolvedMath::new(
+                formula.source_range,
+                ValidatedMath::validate("body", "m0", r#"<svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><text>x</text></svg>"#).unwrap(),
+            )])
+            .with_rich_citations(vec![ResolvedRichCitation::new(
+                citation.range,
+                ValidatedRichText::validate(vec![RichInline::Emphasis { children: vec![RichInline::Text { text: "Paper".into() }] }]).unwrap(),
+            )]);
+        let output =
+            super::render_with_inputs(analysis.document(), &RenderPolicy::default(), &inputs);
+        assert!(
+            output.diagnostics.is_empty(),
+            "{body}: {:?}",
+            output.diagnostics
+        );
+        assert_eq!(output.html.matches("<svg ").count(), 1, "{}", output.html);
+        assert_eq!(
+            output.html.matches("<em>Paper</em>").count(),
+            1,
+            "{}",
+            output.html
+        );
+    }
+}
+
+#[test]
+fn titled_math_keeps_its_owner_with_resolved_and_rejected_body_math() {
+    use crate::rendered_content::{ResolvedMath, ValidatedMath};
+    let analysis = analyze("[#equation.marked]\n.Equation\n[latexmath]\n++++\nx=1\n++++\n");
+    let formula = crate::projection::formulas(&analysis).remove(0);
+    let inputs = RenderInputs::default().with_math(vec![ResolvedMath::new(
+        formula.source_range,
+        ValidatedMath::validate(
+            "body",
+            "m0",
+            r#"<svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><text>x=1</text></svg>"#,
+        )
+        .unwrap(),
+    )]);
+    let mut policy = role_policy(&["marked"], super::UnknownRole::Diagnostic);
+    let output = super::render_with_inputs(analysis.document(), &policy, &inputs);
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    assert!(
+        output.html.starts_with(concat!(
+            "<div id=\"equation\" class=\"titled-block role-marked\">\n",
+            "<div class=\"title\">Equation</div>\n<div class=\"math-latex\"",
+        )),
+        "{}",
+        output.html
+    );
+    assert_eq!(output.html.matches("<svg ").count(), 1);
+    assert_eq!(output.html.matches("role-marked").count(), 1);
+
+    policy.math_languages.allowed.clear();
+    let output = super::render(analysis.document(), &policy);
+    assert_eq!(output.diagnostics.len(), 1);
+    assert_eq!(
+        output.diagnostics[0].code.as_str(),
+        "math-language-not-allowed"
+    );
+    assert_eq!(
+        output.html,
+        concat!(
+            "<div id=\"equation\" class=\"titled-block role-marked\">\n",
+            "<div class=\"title\">Equation</div>\n<pre>x=1\n</pre>\n</div>\n",
+        )
+    );
+}
+
+#[test]
+fn verse_child_titles_and_attributes_keep_the_stanza_line_breaks() {
+    let parsed = parse(concat!(
+        "[verse]\n____\n",
+        ".Child *title* footnote:child[Stanza note.]\n[#stanza.marked]\n",
+        "First *literal* line.\nSecond line.\n\n",
+        "[#untitled.marked]\nThird line.\nFourth line.\n",
+        "____\n",
+    ))
+    .expect("verse with titled stanza");
+    let output = render(
+        &parsed.ast,
+        &role_policy(&["marked"], super::UnknownRole::Diagnostic),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    assert!(
+        output.html.contains(concat!(
+            "<div id=\"stanza\" class=\"titled-block role-marked\">\n",
+            "<div class=\"title\">Child <strong>title</strong> ",
+        )),
+        "{}",
+        output.html
+    );
+    assert!(
+        output
+            .html
+            .contains("<pre>First *literal* line.\nSecond line.</pre>\n</div>"),
+        "{}",
+        output.html
+    );
+    assert!(
+        output
+            .html
+            .contains("<pre id=\"untitled\" class=\"role-marked\">Third line.\nFourth line.</pre>"),
+        "{}",
+        output.html
+    );
+    assert_eq!(
+        output.html.matches("Child <strong>title</strong>").count(),
+        1
+    );
+    assert_eq!(output.html.matches("id=\"_footnoteref_1_1\"").count(), 1);
+    assert_eq!(output.html.matches("href=\"#_footnoteref_1_1\"").count(), 1);
+    assert_eq!(output.html.matches("role-marked").count(), 2);
+}
+
+#[test]
+fn compound_verse_keeps_ordinary_paragraph_inlines_and_footnote_targets() {
+    for title in ["", ".Stanza *title* footnote:[Title note.]\n"] {
+        let parsed = parse(&format!(
+            "[verse]\n____\n{title}Line *bold* footnote:[Body note.]\n\n* item\n____\n"
+        ))
+        .expect("compound verse");
+        let output = render(&parsed.ast, &RenderPolicy::default());
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert!(
+            output.html.contains("<p>Line <strong>bold</strong> "),
+            "{}",
+            output.html
+        );
+        assert!(
+            output.html.contains("<ul>\n<li>item</li>\n</ul>"),
+            "{}",
+            output.html
+        );
+        let notes = if title.is_empty() { 1 } else { 2 };
+        for number in 1..=notes {
+            assert_eq!(
+                output
+                    .html
+                    .matches(&format!("id=\"_footnoteref_{number}_1\""))
+                    .count(),
+                1,
+                "{}",
+                output.html
+            );
+            assert_eq!(
+                output
+                    .html
+                    .matches(&format!("href=\"#_footnoteref_{number}_1\""))
+                    .count(),
+                1,
+                "{}",
+                output.html
+            );
+        }
+        if !title.is_empty() {
+            assert_eq!(
+                output.html.matches("Stanza <strong>title</strong>").count(),
+                1
+            );
+        }
+    }
+}
+
+#[test]
+fn comments_do_not_change_verse_stanza_rendering() {
+    for title in ["", ".Visible *title*\n"] {
+        let source = |comment: &str| {
+            format!(
+                "[verse]\n____\n{title}First *literal* line.\nSecond line.\n\n{comment}Third _literal_ line.\nFourth line.\n____\n"
+            )
+        };
+        let without_comment = parse(&source("")).expect("verse");
+        let with_comment = parse(&source(".PRIVATE title\n////\nPRIVATE body\n////\n\n"))
+            .expect("verse with comment");
+        let expected = render(&without_comment.ast, &RenderPolicy::default());
+        let actual = render(&with_comment.ast, &RenderPolicy::default());
+        assert!(actual.diagnostics.is_empty(), "{:?}", actual.diagnostics);
+        assert_eq!(actual.html, expected.html);
+        assert!(
+            actual.html.contains("First *literal* line.\nSecond line."),
+            "{}",
+            actual.html
+        );
+        assert!(!actual.html.contains("PRIVATE"));
+    }
+}
+
+#[test]
+fn compound_verse_consumes_body_math_and_citation_resolutions() {
+    use crate::rendered_content::{
+        ResolvedMath, ResolvedRichCitation, RichInline, ValidatedMath, ValidatedRichText,
+    };
+    let analysis = analyze("[verse]\n____\nLine latexmath:[x] cite:[paper].\n\n* item\n____\n");
+    let formula = crate::projection::formulas(&analysis).remove(0);
+    let citation = analysis.citations().remove(0);
+    let inputs = RenderInputs::default()
+        .with_math(vec![ResolvedMath::new(
+            formula.source_range,
+            ValidatedMath::validate("body", "m0", r#"<svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><text>x</text></svg>"#).unwrap(),
+        )])
+        .with_rich_citations(vec![ResolvedRichCitation::new(
+            citation.range,
+            ValidatedRichText::validate(vec![RichInline::Text { text: "Resolved citation".into() }]).unwrap(),
+        )]);
+    let output = super::render_with_inputs(analysis.document(), &RenderPolicy::default(), &inputs);
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    assert_eq!(output.html.matches("<svg ").count(), 1, "{}", output.html);
+    assert_eq!(
+        output.html.matches("Resolved citation").count(),
+        1,
+        "{}",
+        output.html
+    );
+}
+
+#[test]
+fn untitled_compound_containers_keep_ids_and_roles_without_implying_a_quote() {
+    let parsed = parse(concat!(
+        "[#container.marked]\n____\nBody.\n____\n\n",
+        "<<container>>\n\n",
+        "[.marked]\n____\nRole only.\n____\n\n",
+        "____\nTransparent.\n____\n",
+    ))
+    .expect("untitled containers");
+    let output = render(
+        &parsed.ast,
+        &role_policy(&["marked"], super::UnknownRole::Diagnostic),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    assert_eq!(
+        output.html,
+        concat!(
+            "<div id=\"container\" class=\"role-marked\">\n<p>Body.</p>\n</div>\n",
+            "<p><a href=\"#container\">container</a></p>\n",
+            "<div class=\"role-marked\">\n<p>Role only.</p>\n</div>\n",
+            "<p>Transparent.</p>\n",
+        )
+    );
+    let rejected = render(
+        &parsed.ast,
+        &role_policy(&[], super::UnknownRole::Diagnostic),
+    );
+    assert_eq!(rejected.diagnostics.len(), 2);
+    assert!(
+        rejected
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code.as_str() == "role-not-allowed")
+    );
+    assert!(
+        rejected
+            .html
+            .starts_with("<div id=\"container\">\n<p>Body.</p>\n</div>")
+    );
+    assert!(
+        rejected
+            .html
+            .ends_with("<p>Role only.</p>\n<p>Transparent.</p>\n")
     );
 }
 

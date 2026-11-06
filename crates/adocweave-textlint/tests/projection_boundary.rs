@@ -37,6 +37,70 @@ fn explicit_and_metadata_combined_math_stays_outside_prose_linting() {
 }
 
 #[test]
+fn comment_titles_are_not_prose_and_lint_control_comments_keep_their_text() {
+    let source = concat!(
+        ".Private title {counter:private} footnote:[Secret]\n",
+        "////\ntextlint-disable\n////\n\n",
+        "Visible.\n\n",
+        "// textlint-enable\n",
+    );
+    let analysis = Engine::new(AnalysisOptions::default())
+        .analyze(source)
+        .expect("comment analysis");
+    let plan = adocweave_textlint::plan(&analysis, adocweave_textlint::PlanLimits::default())
+        .expect("comment textlint plan");
+
+    assert_eq!(analysis.syntax().reconstruct(), source);
+    assert_eq!(
+        plan.range,
+        Utf16Range(0, utf16_offset(source, source.len()))
+    );
+    let [
+        TxtAstNode::Paragraph {
+            children: block_comment,
+            ..
+        },
+        TxtAstNode::Paragraph {
+            children: paragraph,
+            ..
+        },
+        TxtAstNode::Paragraph {
+            children: line_comment,
+            ..
+        },
+    ] = plan.children.as_slice()
+    else {
+        panic!("comment titles must not produce a Header: {plan:?}");
+    };
+    for (children, text) in [
+        (block_comment, "textlint-disable\n"),
+        (line_comment, "textlint-enable"),
+    ] {
+        let [TxtAstNode::Comment { value_range, .. }] = children.as_slice() else {
+            panic!("lint control remains a Comment: {children:?}");
+        };
+        assert_eq!(
+            &source[value_range.0 as usize..value_range.1 as usize],
+            text
+        );
+    }
+    let [TxtAstNode::Str { value_range, .. }] = paragraph.as_slice() else {
+        panic!("visible prose: {paragraph:?}");
+    };
+    assert_eq!(
+        &source[value_range.0 as usize..value_range.1 as usize],
+        "Visible."
+    );
+    assert!(analysis.catalogs().footnotes().is_empty());
+    assert!(
+        !analysis
+            .attribute_environment()
+            .final_values()
+            .contains_key("private")
+    );
+}
+
+#[test]
 fn textlint_and_search_projection_separate_representative_prose_and_code() {
     let source = concat!(
         "= 見出し\n\n",

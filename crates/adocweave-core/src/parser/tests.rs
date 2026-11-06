@@ -1215,7 +1215,12 @@ fn list_continuation_metadata_attaches_to_a_nested_list() {
         &crate::render::RenderInputs::default(),
     )
     .html;
-    assert!(html.contains("<ul id=\"nested\">"), "{html}");
+    assert!(
+        html.contains(
+            "<div id=\"nested\" class=\"titled-block\">\n<div class=\"title\">Nested</div>\n<ul>"
+        ),
+        "{html}"
+    );
     assert!(html.contains("<a href=\"#nested\">Nested</a>"), "{html}");
 }
 

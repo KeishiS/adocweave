@@ -12,6 +12,8 @@ AdocWeave adds AsciiDoc syntax highlighting, diagnostics, navigation, completion
 
 ## Installation
 
+VS Code 1.138.0 or later, or a compatible editor with the same API support, is required.
+
 Install `adocweave.adocweave` from the [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=adocweave.adocweave) or [Open VSX](https://open-vsx.org/extension/adocweave/adocweave). The official publisher is `adocweave`.
 
 ```sh
