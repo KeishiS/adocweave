@@ -33,6 +33,3 @@ manifestの`schemaVersion`は形式の非互換変更、`outputContractVersion`�
 更新します。
 公開仕様に含まれない空白、属性順または未選択の投影fieldだけを変更する場合は`outputContractVersion`を
 更新しません。
-
-`syntax-support.json`は、対応表、互換性評価、文法および対応するfixtureの同期を検査するための
-manifestである。人向けの仕様は`docs/`に記載し、このファイルへ説明文を重複させない。

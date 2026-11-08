@@ -262,8 +262,8 @@ adocweave preview math.adoc --to revealjs --config math-extensions.toml --css th
 原稿と同じディレクトリの``.adocweave.toml``へ設定を追加した場合は、``--config``を省略できます。
 設定の探索範囲はxref:project-configuration.adoc#configuration-selection[設定ファイルの選択]を参照してください。
 スライドのプレビュー中に設定を変更すると、数式も生成し直します。
-リポジトリには、link:../../fixtures/slides-browser/math-extensions.adoc[拡張を使う原稿]と
-link:../../fixtures/slides-browser/math-extensions.toml[対応する設定]もあります。これらを試す場合も、設定は``--config``で指定します。
+リポジトリには、link:../../examples/slides/math-extensions.adoc[拡張を使う原稿]と
+link:../../examples/slides/math-extensions.toml[対応する設定]もあります。これらを試す場合も、設定は``--config``で指定します。
 
 ``math.extensions``の省略または空配列は、追加拡張なしを表します。
 指定できるのは上の3つだけで、重複や未知の名前はエラーにします。
