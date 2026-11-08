@@ -43,9 +43,9 @@ link:../../editors/vscode/CHANGELOG.md[拡張のChangelog]に記録します。
 |構築後の成果物、checksumおよび公開先
 |cargo-distが生成する標準dist-manifest
 
-|root workspaceが必要とするRustとNode.jsの最小版
-|link:../../Cargo.toml[Cargo workspaceの``rust-version``]と、各npmパッケージの``package.json``にある
-``engines.node``
+|root workspaceが必要とするRustとNode.jsの最小バージョン
+|link:../../Cargo.toml[Cargo workspaceの``rust-version``]と、``packages/slides-helper``および
+``packages/textlint-plugin-asciidoc``の``package.json``にある``engines.node``
 
 |Zed拡張が対応する最小Rust版
 |link:../../editors/zed/Cargo.toml[Zed拡張のmanifest]。公式レジストリの構築環境に合わせ、
@@ -205,13 +205,12 @@ xref:adr/0023-publication-boundary.adoc#publication-authority[ADR 0023]を参照
 [#publication-failure]
 == 公開と失敗時保証
 
-公開前検査に成功した``main``から、まずRelease workflowへ``dry-run``を指定します。``dry-run``は4対象プラットフォームの
-native成果物を構築して検査しますが、tagとGitHub Releaseを作成しません。成功したcommitが現在の``main``の先端と
-一致することを確認してから、同じworkflowへ``vX.Y.Z``を指定します。native Releaseの検査は、指定したtag、workspace版
-および実行元が``main``であることを``host``より前に一度だけ確認します。workflowはplanを生成し、native成果物を
-構築して検査した後、一つのGitHub Releaseとtagを作成します。
-異なるworkflow runや手元の成果物を途中で混在させません。npmパッケージとエディタ拡張はこのRelease workflowへ
-含めません。
+ネイティブ版の公開は、次の条件を満たすものとします。Release workflowは入力の``tag``に``dry-run``または
+``vX.Y.Z``を受け取り、``dry-run``では4対象プラットフォームのnative成果物を構築して検査するだけで、tagと
+GitHub Releaseを作成しません。``vX.Y.Z``の公開では、指定したtag、workspaceのバージョンおよび実行元が``main``で
+あることを、GitHub Releaseを作成する前に一度だけ確認します。GitHub Releaseとtagは一回の公開で一つずつ作成し、
+同じworkflow runで構築して検査した成果物だけを使います。異なるworkflow runや手元の成果物は混在させません。
+npmパッケージとエディタ拡張はこのRelease workflowへ含めません。
 
 ``main``の検査に成功したcommitへ``wasm/vX.Y.Z``または``textlint-plugin-asciidoc/vX.Y.Z``タグを作成すると、
 対応するパッケージ専用workflowが起動します。workflowはタグ、パッケージの版、commitおよび``main``への統合を
@@ -249,7 +248,6 @@ VS Code拡張は専用タグのworkflowでVSIXの再現性、導入、更新、�
 textlint用Processorは、それぞれの公開workflowで候補を構築し、公開前後に対応する利用側で検査します。
 WebAssemblyパッケージも専用の公開workflowで候補を構築し、公開前後に対応する利用側で検査します。
 
-Releaseの操作手順はxref:../../CONTRIBUTING.adoc[コントリビューションガイド]を基準とします。
 検査をこの段階へ分ける理由はxref:adr/0031-path-independent-pull-request-gate.adoc[ADR 0031]を参照してください。
 
 公開後は、WebAssemblyパッケージとtextlint用Processorをnpm Registry、VS Code拡張をVisual Studio Marketplaceと

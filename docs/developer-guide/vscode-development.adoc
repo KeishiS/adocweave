@@ -23,8 +23,8 @@ literalなどの意味的な補足を担当し、見出しの基本色付けを�
 
 == 自動検証
 
-リポジトリのrootで次を実行します。``npm test``は単体テスト、``test:extension``は
-Extension host testを実行します。
+リポジトリのrootで次を実行します。``npm test``はテスト用のコードを``build:test``で構築してから単体テストを
+実行し、``test:extension``はExtension host testを実行します。
 
 [source,console]
 ----
@@ -33,9 +33,11 @@ npm ci --ignore-scripts --prefix editors/vscode
 npm run check --prefix editors/vscode
 npm test --prefix editors/vscode
 npm run build --prefix editors/vscode
-npm run build:test --prefix editors/vscode
 npm run test:extension --prefix editors/vscode
 ----
+
+Extension host testは、既定でリポジトリの``target/debug/adocweave``をLanguage Serverとして使います。
+``CARGO_TARGET_DIR``で構築先を変えている場合は、構築した実行ファイルのパスを``ADOCWEAVE_TEST_SERVER``へ指定します。
 
 Extension host testは固定バージョンの公式VS Codeを隔離したuser dataディレクトリへ取得し、local buildの
 ``adocweave``を絶対pathで指定します。診断、Outline、Code Action、Format、Hover、補完、Definition、
