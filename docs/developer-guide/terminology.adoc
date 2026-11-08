@@ -22,11 +22,8 @@ AsciiDocの構文要素の名前も原綴りです。``admonition paragraph``、
 
 == 使わない表現
 
-// textlint-disable adocweave-terminology
 次の語は、辞書的には正しくても意味を取り違えさせるため使いません。複合語を含め、この語を含む表現は
-すべて対象です。検査対象の一覧は
-link:../../config/japanese-terminology.json[`config/japanese-terminology.json`]を基準とします。この文書には、
-各項目を避ける理由と、書き直すときの判断基準を記載します。
+すべて対象です。各項目には、避ける理由と、書き直すときの判断基準を記載します。
 
 [#legal-contract-metaphor]
 `契約`::
@@ -101,15 +98,6 @@ link:../../config/japanese-terminology.json[`config/japanese-terminology.json`]�
 何をどのプログラムが処理するのか分からないため使いません。JSON、schema、manifest、生成した型定義など、
 対象となる形式またはファイルを具体的に記載します。
 --
-// textlint-enable adocweave-terminology
-
-この節の規則は``cargo make verify``で検査します。``docs/``以下の``.adoc``は、Gitの追跡状態にかかわらず
-すべて検査します。AdocWeaveが文章として分類した箇所だけを検査するため、code、URLおよびAsciiDocの
-構文記号を対象にしません。検査が見るのは禁止語だけで、何に直すかは書き手が文脈で決めます。
-正しい表現が一つに定まらなくても検査は成立します。
-
-この文書自身の例は、前後の``textlint-disable``と``textlint-enable``のcommentでプロジェクト用語規則だけを
-抑制します。ほかの日本語規則はこの文書にも適用します。
 
 == 判断が必要な語
 
@@ -152,9 +140,9 @@ link:../../config/japanese-terminology.json[`config/japanese-terminology.json`]�
 [#version-wording-review]
 === 「版」の確認
 
-「版」は、バージョン、配布形態、刊行物および組版など複数の意味を持つため、禁止語にはしません。
-用語検査は「版」を見つけると警告を表示します。バージョンの意味で使用している場合は「バージョン」と
-記載してください。それ以外の意味で適切に使用している場合は変更不要です。
+「版」は、バージョン、配布形態、刊行物および組版など複数の意味を持つため、使わない表現には含めません。
+バージョンの意味で使用している場合は「バージョン」と記載してください。それ以外の意味で適切に使用している
+場合は変更不要です。
 
 == 単純に置き換える語
 
