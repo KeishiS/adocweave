@@ -8,10 +8,7 @@
 |目的
 |参照する節
 
-|NixでCLIを使用
-|xref:#nix-installation[Nixによる導入]
-
-|Nixを使わずにCLIまたはLanguage Serverを使用
+|CLIまたはLanguage Serverを使用
 |「配布物の選択」「取得したファイルの検証」「native実行ファイルの導入」
 
 |Webアプリへの組込み
@@ -72,47 +69,6 @@ CLIは``--slides-helper``、環境変数``ADOCWEAVE_SLIDES_HELPER``、``PATH``�
 補助は自身の``engines.node``を起動時に検査し、必要なバージョンを満たさない場合は、
 検出したバージョンと導入案内を返します。
 数式・引用・CSSと公開用／発表者用の指定はxref:slides.adoc[スライドの作成]を参照してください。
-
-[#nix-installation]
-== Nixによる導入
-
-一時的に実行する場合は``nix run``を使用します。
-結果を再現できるようにする場合は、タグまたはコミットを指定します。
-
-[source,console]
-----
-nix run github:KeishiS/adocweave -- --version --json
-nix run 'github:KeishiS/adocweave?ref=vX.Y.Z' -- convert document.adoc
-nix run github:KeishiS/adocweave -- lsp
-----
-
-利用者のprofileへ導入する場合は次のコマンドを使用します。
-
-[source,console]
-----
-nix profile install github:KeishiS/adocweave
-nix profile upgrade AdocWeave
-nix profile rollback
-nix profile remove AdocWeave
-----
-
-継続して使用する場合は、flake inputを利用側の``flake.lock``へ固定し、
-``adocweave.packages.${system}.default``を使用します。
-このパッケージには``adocweave``が含まれます。Language Serverは``adocweave lsp``で起動します。
-
-Linuxでは、リリースタグを指定すると``https://keishis.cachix.org``からビルド済みパッケージを取得できます。
-
-[source,nix]
-----
-nix.settings = {
-  extra-substituters = [ "https://keishis.cachix.org" ];
-  extra-trusted-public-keys = [
-    "keishis.cachix.org-1:j3UwGrrgTifYMa9Uo6fyDU8GEJBcorOzrHdkXBXruK4="
-  ];
-};
-----
-
-NixOS以外では、同じ値をシステムの``nix.conf``へ記載します。
 
 == 配布物の選択
 

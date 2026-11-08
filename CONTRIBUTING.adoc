@@ -4,12 +4,10 @@ AdocWeaveへの変更は短命なブランチで作業し、pull requestを通�
 
 == 開発環境
 
-開発環境はNixで提供しています。リポジトリのrootで次を実行してください。
+構築とテストにはRustとNode.jsを使います。必要なバージョンは次のmanifestで定めています。
 
-[source,console]
-----
-nix develop
-----
+* Rust: rootのlink:Cargo.toml[``Cargo.toml``]にある``workspace.package.rust-version``以上の版
+* Node.js: 各npmパッケージの``package.json``にある``engines.node``を満たす版
 
 [#build-and-test]
 == 構築とテスト
@@ -256,13 +254,13 @@ xref:docs/developer-guide/release-distribution.adoc[GitHub Releases配布仕様]
 公開後に問題が見つかった場合は、既存のtagやassetを置換せず、修正をpull requestで``main``へ統合して
 新しいバージョンで最初から実行します。
 
-最初の自動公開より前に、``github-release``、``cachix-publish``、``marketplace-publish``、``npm-publish``および
-``open-vsx-publish``の5つのenvironmentを作成します。各environmentのdeployment branch policyではSelected branches
+最初の自動公開より前に、``github-release``、``marketplace-publish``、``npm-publish``および
+``open-vsx-publish``の4つのenvironmentを作成します。各environmentのdeployment branch policyではSelected branches
 and tagsを選びます。``npm-publish``では``wasm/v*``、``textlint-plugin-asciidoc/v*``と``slides-helper/v*``、
 ``marketplace-publish``と``open-vsx-publish``では
-``vscode/v*``を許可します。``github-release``と``cachix-publish``では``main``だけを許可します。
+``vscode/v*``を許可します。``github-release``では``main``だけを許可します。
 ネイティブ版は``main``から手動実行します。
-Open VSXとCachixのtokenは対応するenvironmentへ移します。
+Open VSXのtokenは``open-vsx-publish`` environmentへ移します。
 textlint用Processorのnpm Trusted Publisherには``textlint-plugin-publish.yml``と``npm-publish`` environment、
 スライド用補助のnpm Trusted Publisherには``slides-helper-publish.yml``と同じenvironmentを登録します。
 Visual Studio Marketplace用の``marketplace-publish`` environmentには``AZURE_CLIENT_ID``と
@@ -351,18 +349,6 @@ environment``npm-publish``を登録します。同じ版が公開済みであれ
 
 補助の依存を更新する場合は、manifestとlockfile、推移依存の版、配布実物のlicenseと通知を確認します。
 
-[#cachix-publication]
-=== Cachixへの公開
-
-Cachixへの公開はstableなGitHub Releaseの公開後に自動的に始まります。
-
-公開jobはRelease、tag、commitおよびworkspace版を照合し、``x86_64-linux``と``aarch64-linux``のNix packageと
-依存物一式を送信します。送信後は、書込みtokenを持たない別のrunnerがローカルでの構築を禁止してCachixから
-packageを取得し、versionと``adocweave lsp``の起動を確認します。
-
-同じcommitから生成されるNix store pathは変わらないため、公開済みの内容を置き換えずに不足した送信と確認を
-やり直せます。
-
 [#release-checklist]
 == Release checklist
 
@@ -396,4 +382,3 @@ clean環境で、公開assetだけを使って実行します。
 * [ ] textlint用Processor: 新しいプロジェクトへ導入し、``.adoc``の検査と``textlint --fix``で入力が変化しないことを
       確認する。
 * [ ] native実行ファイル: clean ``PATH``へ導入し、CLI操作と``adocweave lsp``、更新、rollbackおよび完全削除を確認する。
-* [ ] Nix: 利用側flakeへtagのコミットを固定し、通常のCLI操作と``adocweave lsp``の``nix run``を確認する。

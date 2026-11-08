@@ -36,7 +36,7 @@
 - [ ] Rust API
 - [ ] WebAssembly・Web Worker
 - [ ] HTML出力
-- [ ] Nix・配布・CI
+- [ ] 配布・CI
 - [ ] 内部実装・保守
 - [ ] ドキュメントだけ
 

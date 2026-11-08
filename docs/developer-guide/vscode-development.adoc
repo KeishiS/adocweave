@@ -23,12 +23,11 @@ literalなどの意味的な補足を担当し、見出しの基本色付けを�
 
 == 自動検証
 
-Nix開発環境に入り、リポジトリのrootで次を実行します。``npm test``は単体テスト、``test:extension``は
+リポジトリのrootで次を実行します。``npm test``は単体テスト、``test:extension``は
 Extension host testを実行します。
 
 [source,console]
 ----
-nix develop
 cargo build -p adocweave
 npm ci --ignore-scripts --prefix editors/vscode
 npm run check --prefix editors/vscode
@@ -55,7 +54,7 @@ uninstallを確認します。
 公開するバイト列が入力だけから決まることも公開workflowが確認します。同じソースから
 VSIXをもう一度構築してSHA-256を比較するため、この検査は拡張のrelease candidateを構築する場合だけ実行します。
 
-これらの構築と検査を行う``editors/vscode/scripts``はTypeScript（``.mts``）で書き、配布物で固定したNode.jsが型注釈を
+これらの構築と検査を行う``editors/vscode/scripts``はTypeScript（``.mts``）で書き、Node.jsが型注釈を
 取り除いてそのまま実行します（変換や追加の依存はありません）。型検査は``npm run check --prefix editors/vscode``の
 ``tsc -p tsconfig.scripts.json``で行い、型消去だけでは実行できない構文は拒否します。
 
