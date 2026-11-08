@@ -246,7 +246,7 @@ xref:docs/developer-guide/zed-development.adoc[Zed拡張の開発]に記載し�
 cargo make acceptance
 ----
 
-このtaskは``verify``済みのsourceを前提に、cross target、実WASM、エディタ、fuzzおよびNixの統合検査を行います。
+このtaskは``verify``済みのsourceを前提に、cross target、実WASM、エディタおよびNixの統合検査を行います。
 ``release-check``は``verify``、``security-audit``、``acceptance``およびnativeのcargo-dist計画を一つの実行計画へ
 まとめるため、同じtaskを重複して実行しません。
 
@@ -312,7 +312,7 @@ xref:docs/developer-guide/zed-development.adoc#zed-registry-submission[公式レ
 node tools/native-release-version.mjs --version X.Y.Z
 ----
 +
-このtoolは``Cargo.toml``、``Cargo.lock``および``fuzz/Cargo.lock``だけを更新します。npmパッケージと
+このtoolは``Cargo.toml``と``Cargo.lock``だけを更新します。npmパッケージと
 エディタ拡張のmanifestは、それぞれを公開するときに所有先で更新します。
 . 必要な仕様文書とテスト用入力も更新してから、native用lockfileとChangelogの版がworkspace版と一致することを
   検査します。
@@ -352,7 +352,7 @@ rootの``CHANGELOG.md``へ記載します。利用者の作業が必要な場合
 公開前は直近の公開済みtagとの差分を一つの項目へまとめ、開発中だけの変更を利用者向けの移行操作として記載しません。
 ``dist plan --tag=vX.Y.Z --output-format=json``の``announcement_github_body``で、必要な移行説明が含まれることを確認します。
 
-``tools/native-release-version.mjs``はnative版の固定された3ファイルだけを変更し、rootの``CHANGELOG.md``は読み取るだけです。
+``tools/native-release-version.mjs``はnative版の固定された2ファイルだけを変更し、rootの``CHANGELOG.md``は読み取るだけです。
 Changelogの見出し、本文、日付および参照先は人が記載します。cargo-distは対象版の項目をGitHub Release Notesへ直接取り込むため、
 別のRelease Notes生成器は使用しません。
 
