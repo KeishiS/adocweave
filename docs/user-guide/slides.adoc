@@ -566,7 +566,6 @@ adocweave preview talk.adoc --to revealjs --audience public --css theme.css
 AsciiDocの本文から、ローカルで開けるスライド一式を生成します。
 既定のディレクトリ出力では、生成先の``index.html``をブラウザーで開くと、
 同梱したreveal.jsとCSSで表示します。表示時に外部のJavaScriptやフォントを取得しません。
-``public``出力をファイルとして開く動作は、固定したChromiumで検証しています。
 発表者画面は、xref:#slides-preview[``preview``または``serve``によるローカルHTTP配信]を使ってください。
 読み込める資源を制限するCSPは、ファイル表示ではHTMLの``meta``要素で指定します。
 そのため、埋込み先のページを制限する``frame-ancestors``など、HTTPヘッダ専用の制限は適用されません。
@@ -629,8 +628,7 @@ HTMLへ含め、表示に必要な別ファイルを読み込みません。数�
 [#slides-pdf]
 == ブラウザーからのPDF保存
 
-ChromeまたはChromiumで、スライドのURLへ``?print-pdf``を付けて開きます。
-PDF保存の自動検証には固定したChromiumを使います。Firefoxの印刷結果は保証しません。
+ChromeまたはChromiumで、スライドのURLへ``?print-pdf``を付けて開きます。Firefoxの印刷結果は保証しません。
 保存済みの``public``出力の``index.html``を直接開く場合も、``serve``や``preview``で配信する場合も同じです。
 ``--single-file``で生成したHTMLも同じ方法で印刷できます。
 例えば、``serve dist/talk --port 8080``で配信したスライドは``http://127.0.0.1:8080/?print-pdf``で開いてください。

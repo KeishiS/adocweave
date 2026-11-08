@@ -9,44 +9,38 @@ AdocWeaveへの変更は短命なブランチで作業し、pull requestを通�
 [source,console]
 ----
 nix develop
-cargo make verify
 ----
 
-``cargo make verify``はPull Request用の標準検査であり、``cargo make``の既定taskです。書式、lint、test、
-生成fileの差分、browserおよびeditor adapter、HTML5標準適合性、人が書いた文書および配布metadataを
-まとめて検査します。
+[#build-and-test]
+== 構築とテスト
 
-スライドのCLI試験は実際のNode補助も使います。``cargo make verify``は補助の依存関係を先に導入します。
-``adocweave``のCLI試験を``cargo test``で直接実行する場合は、その前に次を実行してください。
+Rust workspaceは、リポジトリのrootで次のように構築してテストします。スライドのCLI試験は実際のNode補助を
+使うため、``cargo test``の前に補助の依存関係を導入します。
 
 [source,console]
 ----
 npm ci --ignore-scripts --prefix packages/slides-helper
+cargo build
+cargo test --workspace --all-features
 ----
 
-次のtask名は、並行して開発するMarginalis、Renkanと共通の外向きの名前です。repositoryが変わっても
-同じ名前で同じ意味の検査を実行できます。
+``--all-features``を付けると、テストはWebAssemblyパッケージの型宣言``packages/wasm/protocol.d.mts``も
+生成し直します。差分が出た場合は、protocolの変更と同じcommitへ含めます。
 
-[cols="1,3",options="header"]
-|===
-|task |意味
+npmパッケージとVS Code拡張は、それぞれのテストを次のように実行します。VS Code拡張は、先に依存関係を
+導入します。
 
-|``verify``
-|ソース、文書、adapterおよび配布metadataの検査（既定task）
+[source,console]
+----
+npm test --prefix packages/slides-helper
+npm test --prefix packages/wasm
+node --test packages/textlint-plugin-asciidoc/*.test.mjs
+npm ci --ignore-scripts --prefix editors/vscode
+npm test --prefix editors/vscode
+----
 
-|``security-audit``
-|依存関係の出所、licenseおよびadvisoryの監査
-
-|``acceptance``
-|現在のhostで実行できる``main``向け統合検査
-
-|``release-check``
-|``verify``、``security-audit``、``acceptance``およびnative配布計画を含む公開前の検査
-|===
-
-``fmt``はソースを整形し、``fmt-check``は変更せずに書式を検査します。日常の入口とCI専用入口以外のtaskは
-Makefileの内部実装とし、個別の検査を切り分ける場合は対応する``cargo``、``npm``または``node``のcommandを
-直接実行します。
+Zed拡張はroot workspaceに含まれません。構築とテストの手順は
+xref:docs/developer-guide/zed-development.adoc#zed-development-build[Zed拡張の開発]を参照してください。
 
 == 作業の進め方
 
@@ -63,13 +57,7 @@ git switch -c fix/browser-archive-import-check
 ブランチ名の付け方は<<branch-names>>を参照してください。
 
 . 一つのブランチでは一つの目的に集中し、実装と対応するテストとドキュメントを更新します。
-. 変更をコミットする前に検証を実行します。
-+
-[source,console]
-----
-cargo make verify
-----
-
+. 変更をコミットする前に、<<build-and-test>>の手順で、変更した製品を構築してテストします。
 . ブランチをpushしてpull requestを作成し、squash方式のauto-mergeを設定します。必須check``verify``が
   成功すると``main``へ統合されます。``main``へ直接pushしません。
 +
@@ -132,8 +120,7 @@ remote名、ブランチ名、mergeの方式および必須checkの構成は、M
 == 変更時の確認
 
 * 不具合修正には、可能な限り再発を防ぐテストを追加します。
-* 依存関係を更新する場合は、対象のlockfileだけを更新し、``cargo make security-audit``を実行します。
-* Nix flakeまたはパッケージを変更する場合は、``cargo make acceptance``を実行します。
+* 依存関係を更新する場合は、対象のlockfileだけを更新し、<<dependencies>>の確認を行います。
 * ``.adoc``文書は既存の用語と書式に合わせます。
 * 比較用の期待出力は、実際の出力との差分を確認し、意図した変更である場合だけ更新します。
 * AsciiDoc構文を変更する場合は、`docs/user-guide/syntax-support.adoc`、`docs/user-guide/compatibility.adoc`、
@@ -156,48 +143,33 @@ remote名、ブランチ名、mergeの方式および必須checkの構成は、M
 == 依存関係
 
 依存関係は各manifestとlockfileを基準とし、文書や別の目録へパッケージ一覧とバージョンを転記しません。
-VS Code拡張の配布runtimeに許可するlicenseとnpm registryは``tools/verify-vscode-dependencies.mjs``で定義します。
-スライド用Node補助パッケージと同梱するブラウザー資産は``tools/verify-slides-dependencies.mjs``で別に検査し、
-VS Code拡張の許可範囲を広げません。
 
 依存関係を更新するときは次を確認します。
 
 . 対象のmanifestとlockfileだけを更新し、無関係な依存関係の変更を分離します。
-. ``cargo make security-audit``を実行します。
-. license、取得元、生成されるnoticeおよび``@adocweave/wasm``の大きさの差分を確認します。
-. 通常の品質検査を通してからpull requestを統合します。
+. licenseと取得元の差分を確認します。
+. <<build-and-test>>の手順を通してからpull requestを統合します。
 
 同じcrateの複数バージョンが依存関係へ入ることは禁止しません。上流のバージョン制約で決まる値であり、
-一覧を保守しても実害を防げないためです。重複が問題になるのは成果物の大きさとbuild時間です。大きさは
-次の2つが上限を超えていないことを確かめます。``test-wasm-smoke``は``@adocweave/wasm``のarchiveと
-WebAssembly本体の大きさを、``test-vscode-release-determinism``はVSIXの大きさを検査します。
+一覧を保守しても実害を防げないためです。重複が問題になるのは成果物の大きさとbuild時間です。
 
-``security-audit``は、VS Code拡張、スライド用Node補助パッケージ、同梱するReveal資産を``npm audit --omit=dev``で
-検査します。推移依存を含めて取得元をnpm registryに限定し、許可するlicenseを配布物ごとに検査します。
-``@adocweave/wasm``とtextlint用パッケージはruntime npm依存を持ちません。
-
-スライド用補助パッケージはSHA-512 integrityと、導入した依存物のlicense本文を検査します。citeprocのCPAL選択と
-NewcmフォントのGUST Font Licenseについては、確認したarchiveと本文・通知のdigestだけを
+スライド用補助パッケージのテストは、導入した依存物のlicense本文が記録と一致することを検査します。
+citeprocのCPAL選択とNewcmフォントのGUST Font Licenseについては、確認したarchiveと本文・通知のdigestだけを
 ``packages/slides-helper/licenses/evidence.json``へ記録します。依存の版やarchiveが変わった場合は、配布実物の
-本文と通知を確認し直します。CPALのGUI帰属表示条件について、CSLを使うpreviewの初期表示へExhibit Bの
-copyright、phrase、URLが見え、生成物に帰属表示とlicense本文が同梱されることを受入検査で確認します。
+本文と通知を確認し直します。CPALのGUI帰属表示条件を満たすため、CSLを使うpreviewの初期表示にはExhibit Bの
+copyright、phrase、URLを表示し、生成物には帰属表示とlicense本文を同梱します。
 licenseの選択と帰属表示を採用した理由はxref:docs/developer-guide/adr/0034-standard-runtime-dependency-audit.adoc[ADR 0034]を
 参照してください。
 
-Reveal資産の正本は``crates/adocweave/assets/revealjs/sources.json``です。上流manifestで``devDependencies``へ
-分類されていても、同梱してブラウザーで実行するライブラリはruntime監査へ含めます。この正本から一時的な
-npm audit入力を生成し、別の恒久的な依存一覧を作りません。``verify``では資産とlicenseのdigest、notesの
-popup scriptを検査します。資産の更新時には、取得archiveと保存した資産の対応も
-``node tools/verify-slides-assets.mjs ARCHIVE_DIRECTORY``で検査します。
+Reveal資産の正本は``crates/adocweave/assets/revealjs/sources.json``です。別の恒久的な依存一覧は作りません。
 
 既定のCSLロケールは``crates/adocweave/assets/slides/NOTICE.csl-locales.txt``に記載した上流commitから取得します。
-更新時は翻訳者を含むXMLのmetadataを保持し、出典、ライセンス本文およびnative配布物の通知を確認します。
-通知のSHA-256も更新し、``verify``で同梱XMLとの一致を検査します。
+更新時は翻訳者を含むXMLのmetadataを保持し、出典とライセンス本文を確認して、通知のSHA-256も更新します。
 
-ビルド専用のnpm依存は配布runtimeの脆弱性・license検査へ含めません。lockfileに固定し、``npm ci --ignore-scripts``が
-取得時にintegrityを検証します。観測したビルド依存のlicense集合を別の目録として保守しません。
+ビルド専用のnpm依存はlockfileに固定し、``npm ci --ignore-scripts``が取得時にintegrityを検証します。
+観測したビルド依存のlicense集合を別の目録として保守しません。
 
-Frontendへruntime dependencyを追加する場合は、lockfileへ固定し、標準依存監査と第三者依存の通知へ含めます。
+Frontendへruntime dependencyを追加する場合は、lockfileへ固定し、第三者依存の通知へ含めます。
 
 == 文書を増やさない規則
 
@@ -232,45 +204,8 @@ pull requestを作成するときは、link:.github/pull_request_template.md[Pul
 
 CIの必須checkは``verify``の一つだけです。このcheckは検査を実行せず、常に成功します。
 
-手元の``cargo make verify``はsource検査を実行します。Zedの構築は
+手元では、<<build-and-test>>の手順で変更した製品を構築してテストします。Zedの構築は
 xref:docs/developer-guide/zed-development.adoc[Zed拡張の開発]に記載したRust版とtargetで確認してください。
-手元で成果物を含む追加の受入検査を行う場合は、次を実行します。
-
-[source,console]
-----
-cargo make acceptance
-----
-
-このtaskは``verify``済みのsourceを前提に、cross target、実WASM、エディタおよびNixの統合検査を行います。
-``release-check``は``verify``、``security-audit``、``acceptance``およびnativeのcargo-dist計画を一つの実行計画へ
-まとめるため、同じtaskを重複して実行しません。
-
-手元では、``flake.lock``で固定した開発環境のChromiumを使用します。別のbrowserを確認する場合は
-``ADOCWEAVE_BROWSER``で実行ファイルを指定できます。
-Linuxの``default``、``ci-integrations``および``ci-browser``の開発環境は、
-同じ固定版のDejaVuとNoto CJKをFontconfigへ登録します。
-日本語を含むBrowser検査は、この開発環境で実行してください。これらのフォントは開発環境だけに含め、
-ネイティブパッケージや生成HTMLへ配布しません。
-
-研究スライドの受入確認には、CLIと同じ固定Chromiumを使う既存のsmokeを実行します。
-helperを指定すると、公開版と発表者版の数式・引用・脚注・表、日本語のHTML/SVG描画、
-印刷用PDFおよび保存後のプレビュー更新を確認し、画面、PDFと測定値を``target/slides-browser/``へ保存します。
-
-[source,console]
-----
-nix develop .#ci-browser -c node tools/slides-browser-smoke.mjs \
-  target/debug/adocweave "${ADOCWEAVE_BROWSER:-chromium}" packages/slides-helper/bin.mjs
-----
-
-この測定はファイルの保存完了から新しいDOMとRevealの準備完了までを対象にし、HTTPへの生成物採用時間と区別します。
-結果の時間を合否の閾値には使いません。helperを省略すると、Node補助なしのスライド生成・配信を確認します。
-
-通常HTMLのプレビューは、以下の検査でCSP下の更新通知、保存後の表示と診断からの回復を確認します。
-
-[source,console]
-----
-nix develop .#ci-browser -c node tools/preview-browser-smoke.mjs target/debug/adocweave chromium
-----
 
 ブランチ保護では、GitHub Actionsが表示する``verify``だけをrequired status checkに設定します。
 
@@ -298,47 +233,12 @@ xref:docs/developer-guide/zed-development.adoc#zed-registry-submission[公式レ
   利用者への影響に応じて次のSemantic Versioningの版を決め、先頭へ項目を追加します。
   移行操作やRustの公開APIに互換性のない変更がある場合は、その内容も記載します。WebAssemblyパッケージ、
   textlint用Processor、VS Code拡張およびZed拡張の版は更新しません。
-. 次の版へ進む場合は、Cargo workspaceの版とnative用lockfileを更新します。現在の未公開版を使う場合は、
-  この操作を行いません。版更新toolは、先に用意したChangelog項目を確認しますが、Changelogの見出し、本文、
-  日付および参照先を変更しません。
-+
-[source,console]
-----
-node tools/native-release-version.mjs --version X.Y.Z
-----
-+
-このtoolは``Cargo.toml``と``Cargo.lock``だけを更新します。npmパッケージと
-エディタ拡張のmanifestは、それぞれを公開するときに所有先で更新します。
-. 必要な仕様文書とテスト用入力も更新してから、native用lockfileとChangelogの版がworkspace版と一致することを
-  検査します。
-+
-[source,console]
-----
-node tools/native-release-version.mjs --check
-----
-. ``cargo make release-check``を実行し、pull requestの必須checkが成功したことを確認して``main``へ統合します。
-. release対象のPull Requestをすべて統合し、公開対象が``main``の先端であることと、そのcommitに対するrelease gateの
-  成功を確認します。Release workflowを``dry-run``で実行します。``dry-run``は公開せず、4対象プラットフォームのnative archiveを
-  構築して成果物試験まで実行します。
-+
-[source,console]
-----
-gh workflow run release.yml --ref main -f tag=dry-run
-----
-. ``dry-run``が成功したcommitと現在の``main``の先端が同じであることを確認し、同じworkflowへ
-  ``vX.Y.Z``を指定してstable releaseを開始します。
-+
-[source,console]
-----
-gh workflow run release.yml --ref main -f tag=vX.Y.Z
-----
-. cargo-distのworkflowが、検査済みの4つのnative成果物を一つのGitHub Releaseへ添付し、tagを作成します。
-  独立版のnpmパッケージとVS Code拡張は、このReleaseに含めません。
-. Release workflowがCachixの公開jobを実行し、書込みtokenを持たない後続jobが公開済みパッケージを取得して確認します。
-. Cachixへの公開を含むRelease workflow全体が成功し、予定されたassetを含むstableなGitHub Releaseが作成されたことを
+. 次の版へ進む場合は、``Cargo.toml``のworkspace版を更新し、``cargo update --workspace``で``Cargo.lock``へ
+  反映します。現在の未公開版を使う場合は、この操作を行いません。npmパッケージとエディタ拡張のmanifestは、
+  それぞれを公開するときに所有先で更新します。
+. 必要な仕様文書とテスト用入力も更新し、``Cargo.lock``と``CHANGELOG.md``の版がworkspace版と一致することを
   確認します。
-  ``RELEASE_TAG=vX.Y.Z cargo make native-release-acceptance``で公開済みassetを確認し、
-  必要に応じてxref:#release-checklist[Release checklist]の任意の受入確認を行います。
+. <<build-and-test>>の手順を実行し、pull requestの必須checkが成功したことを確認して``main``へ統合します。
 
 CLI引数、Language Server protocol、設定schemaなど、外部から利用する仕様を変更した場合は、変更内容と影響を
 rootの``CHANGELOG.md``へ記載します。利用者の作業が必要な場合は``Migration``、Rustの公開APIに互換性のない変更が
@@ -347,15 +247,11 @@ rootの``CHANGELOG.md``へ記載します。利用者の作業が必要な場合
 公開前は直近の公開済みtagとの差分を一つの項目へまとめ、開発中だけの変更を利用者向けの移行操作として記載しません。
 ``dist plan --tag=vX.Y.Z --output-format=json``の``announcement_github_body``で、必要な移行説明が含まれることを確認します。
 
-``tools/native-release-version.mjs``はnative版の固定された2ファイルだけを変更し、rootの``CHANGELOG.md``は読み取るだけです。
 Changelogの見出し、本文、日付および参照先は人が記載します。cargo-distは対象版の項目をGitHub Release Notesへ直接取り込むため、
 別のRelease Notes生成器は使用しません。
 
 公開処理の権限、同一runでのcandidate検証およびReleaseの状態遷移は
 xref:docs/developer-guide/release-distribution.adoc[GitHub Releases配布仕様]を基準とします。
-外部公開だけに失敗した場合は、Release workflowの``Re-run failed jobs``を使用します。成功済みのGitHub Release作成jobを
-再実行せず、失敗した公開jobと後続jobだけを同じtagとcommitで再実行します。再実行前にworkflowのcleanup結果を
-確認します。
 
 公開後に問題が見つかった場合は、既存のtagやassetを置換せず、修正をpull requestで``main``へ統合して
 新しいバージョンで最初から実行します。
@@ -376,18 +272,11 @@ Visual Studio Marketplace用の``marketplace-publish`` environmentには``AZURE_
 === VS Code拡張のRelease
 
 VS Code拡張の版は``editors/vscode/package.json``、変更内容は``editors/vscode/CHANGELOG.md``を正本とします。
-ネイティブ版のworkspace版とは同期しません。公開する変更をPull Requestから``main``へ統合し、そのcommitの
-release gateが成功した後、``package.json``と同じ版のannotated tagを作成して``upstream``へpushします。
-
-[source,console]
-----
-git tag -a vscode/vX.Y.Z -m "AdocWeave VS Code extension vX.Y.Z"
-git push upstream vscode/vX.Y.Z
-----
+ネイティブ版のworkspace版とは同期しません。公開には、``package.json``と同じ版のannotated tag``vscode/vX.Y.Z``を
+使用します。
 
 ``vscode-publish.yml``はVSIXを一度だけ構築し、同じworkflow artifactをOpen VSX RegistryとVisual Studio Marketplaceへ
-送ります。片方だけが失敗した場合は、GitHub Actionsの``Re-run failed jobs``で失敗したjobだけを再実行します。
-公開済みの版が候補と一致する場合は、再送信せず公開内容の検査から再開します。
+送ります。
 
 [#open-vsx-publication]
 === Open VSX Registryへの公開
@@ -420,22 +309,14 @@ npmのscope``@adocweave``はリポジトリの保守者が所有します。所�
 
 ``@adocweave/textlint-plugin-asciidoc``の版は``packages/textlint-plugin-asciidoc/package.json``、変更内容は
 同じディレクトリの``CHANGELOG.md``を基準とします。ネイティブ版とは別にSemantic Versioningを適用し、
-利用者向けのAPIまたは動作が変わった場合だけ更新します。
-
-変更を``main``へ統合し、そのcommitの検査が成功した後、パッケージの版と一致するtagを作成します。
-
-[source,console]
-----
-git tag -a textlint-plugin-asciidoc/vX.Y.Z \
-  -m "@adocweave/textlint-plugin-asciidoc X.Y.Z"
-git push upstream textlint-plugin-asciidoc/vX.Y.Z
-----
+利用者向けのAPIまたは動作が変わった場合だけ更新します。公開には、パッケージの版と一致するtag
+``textlint-plugin-asciidoc/vX.Y.Z``を使用します。
 
 ``textlint-plugin-publish.yml``はtagが指すcommitからパッケージを一度だけ構築して検査し、npm Trusted Publishingで
 直接公開します。GitHub Releaseには添付しません。Trusted Publisherにはworkflow file
-``textlint-plugin-publish.yml``とenvironment``npm-publish``を登録します。失敗した場合は同じworkflow runの
-``Re-run failed jobs``を使用します。同じ版が公開済みであれば内容を確認して送信を省略します。公開後はnpmから
-導入し直し、署名とprovenance、固定したtextlint利用側および``npx``での動作を確認します。
+``textlint-plugin-publish.yml``とenvironment``npm-publish``を登録します。同じ版が公開済みであれば内容を確認して
+送信を省略します。公開後はnpmから導入し直し、署名とprovenance、固定したtextlint利用側および``npx``での動作を
+確認します。
 修正が必要な場合は新しい版を使用します。
 
 [#wasm-npm-publication]
@@ -443,21 +324,13 @@ git push upstream textlint-plugin-asciidoc/vX.Y.Z
 
 ``@adocweave/wasm``の版は``packages/wasm/package.json``、変更内容は同じディレクトリの
 ``CHANGELOG.md``を基準とします。ネイティブ版とは別にSemantic Versioningを適用し、利用者向けのAPIまたは動作が
-変わった場合だけ更新します。
-
-変更を``main``へ統合し、そのcommitの検査が成功した後、パッケージの版と一致するtagを作成します。
-
-[source,console]
-----
-git tag -a wasm/vX.Y.Z -m "@adocweave/wasm X.Y.Z"
-git push upstream wasm/vX.Y.Z
-----
+変わった場合だけ更新します。公開には、パッケージの版と一致するtag``wasm/vX.Y.Z``を使用します。
 
 ``wasm-publish.yml``はtagが指すcommitからパッケージを一度だけ構築して検査し、npm Trusted Publishingで直接
 公開します。GitHub Releaseには添付しません。Trusted Publisherにはworkflow file``wasm-publish.yml``と
-environment``npm-publish``を登録します。失敗した場合は同じworkflow runの``Re-run failed jobs``を使用します。
-同じ版が公開済みであれば内容を確認して送信を省略します。公開後はnpmから導入し直し、署名とprovenance、
-Node.jsおよび実ブラウザーでの動作を確認します。修正が必要な場合は新しい版を使用します。
+environment``npm-publish``を登録します。同じ版が公開済みであれば内容を確認して送信を省略します。
+公開後はnpmから導入し直し、署名とprovenance、Node.jsおよび実ブラウザーでの動作を確認します。
+修正が必要な場合は新しい版を使用します。
 
 [#slides-helper-npm-publication]
 === スライド用補助パッケージの公開
@@ -467,60 +340,21 @@ Node.jsおよび実ブラウザーでの動作を確認します。修正が必�
 ``package-lock.json``から導入し、npmの``bundleDependencies``でarchiveへ収録します。
 監査した依存と配布通知を保ち、導入時の依存版の再選択を避けます。
 未公開の変更は現在の項目へまとめ、初回公開では開発中のバージョン間の比較ではなく提供する機能を記載します。
+公開には、manifestの版と一致するtag``slides-helper/vX.Y.Z``を使用します。
 
-公開候補は次のコマンドで作成します。``target/distrib``へ保存したarchiveを別の場所へ導入し、
-空のnpm cacheを使ったoffline導入、依存の版、実行入口、空要求、数式・引用および通知を検査します。
-
-[source,console]
-----
-cargo make test-slides-helper-release-candidate
-----
-
-初回は、``@adocweave``への公開権限と2FAを持つ管理者が``npm login``で認証し、検査済みのarchiveを
-``npm stage publish``へ渡します。以下の``X.Y.Z``を候補の版へ置き換えてください。
-https://docs.npmjs.com/staged-publishing/[npmのstaged publishing]は、新規パッケージに公開用のplaceholder版
-``0.0.0-stage``を作り、候補の内容は承認されるまで公開しません。
-
-[source,console]
-----
-npm stage publish target/distrib/adocweave-slides-helper-X.Y.Z.tgz --access public
-npm stage list @adocweave/slides-helper
-----
-
-パッケージが作成されたら、npmのSettingsでTrusted Publisherを登録します。
-ownerは``KeishiS``、repositoryは``adocweave``、workflow fileは``slides-helper-publish.yml``、
-environmentは``npm-publish``とし、直接の``npm publish``を許可します。
-https://docs.npmjs.com/cli/v11/commands/npm-trust/[登録には既存のパッケージが必要]です。
-設定の項目と直接公開の許可はhttps://docs.npmjs.com/trusted-publishers/[npmのTrusted Publishing手順]で確認してください。
-
-初回候補を手元から承認せず、``npm stage list``で取得したstage IDを``npm stage reject STAGE_ID``で取り消します。
-実際の版は、以下のtagとGitHub Actionsからprovenance付きで公開します。初回登録、設定および実公開の結果は
-Issueへ記録し、候補の導入検査だけでnpmへの公開済みとは扱いません。
-
-変更を``main``へ統合し、そのcommitの検査が成功した後、manifestと一致するtagを作成します。
-
-[source,console]
-----
-git tag -a slides-helper/vX.Y.Z -m "@adocweave/slides-helper X.Y.Z"
-git push upstream slides-helper/vX.Y.Z
-----
-
-``slides-helper-publish.yml``は同じ候補を共通の``npm-publish.yml``へ渡します。Trusted Publisherには
+``slides-helper-publish.yml``は構築した候補を共通の``npm-publish.yml``へ渡します。Trusted Publisherには
 ``slides-helper-publish.yml``と``npm-publish`` environmentを登録します。公開後はnpmから導入し直し、
-署名、provenance、固定依存および実行を確認します。失敗時は同じrunの失敗jobだけを再実行し、
-既に公開された同じ版の内容は置き換えません。
+署名、provenance、固定依存および実行を確認します。既に公開された同じ版の内容は置き換えません。
 
 補助を必要とするnative版は、対応する補助パッケージを先に公開し、その公開版の導入検査が成功してから
 リリースします。公開候補の検査だけを通した状態で、npmから導入できる版として案内しません。
 
-補助の依存を更新する場合は、manifestとlockfile、推移依存の版、配布実物のlicenseと通知を確認し、
-``security-audit``と公開候補の検査を実行します。
+補助の依存を更新する場合は、manifestとlockfile、推移依存の版、配布実物のlicenseと通知を確認します。
 
 [#cachix-publication]
 === Cachixへの公開
 
-Cachixへの公開はstableなGitHub Releaseの公開後に自動的に始まります。送信または確認に失敗した場合は、
-Release workflowの``Re-run failed jobs``を実行します。
+Cachixへの公開はstableなGitHub Releaseの公開後に自動的に始まります。
 
 公開jobはRelease、tag、commitおよびworkspace版を照合し、``x86_64-linux``と``aarch64-linux``のNix packageと
 依存物一式を送信します。送信後は、書込みtokenを持たない別のrunnerがローカルでの構築を禁止してCachixから
@@ -534,13 +368,9 @@ packageを取得し、versionと``adocweave lsp``の起動を確認します。
 
 公開前は自動検査に加え、GitHub上の設定と公開対象を人が確認します。
 
-公開済みnative Releaseの検査は必須です。``RELEASE_TAG=vX.Y.Z cargo make native-release-acceptance``を実行すると、
-Releaseのasset一覧、標準manifest、checksum、attestationおよび実行ホスト向けarchiveの導入を確認します。
-
-それ以外の公開後の項目は**任意**です。実際の画面操作や実環境での導入は人手でしか行えず、毎releaseで全経路を
+公開後の項目は**任意**です。実際の画面操作や実環境での導入は人手でしか行えず、毎releaseで全経路を
 確認すると一人では回らないためです。気になる経路を選んで確認し、結果は必要に応じてIssueへ記録します。
-変更のなかった成果物は省略してかまいません。公開したassetそのものの完全性(checksum、attestation、
-バージョン、Cachixへの登録)は自動で確認できるため、任意の対象から外します。
+変更のなかった成果物は省略してかまいません。
 
 公開後の手動確認を行う場合は、リポジトリのcheckoutやワークスペースの``target``を``PATH``へ含めない
 clean環境で、公開assetだけを使って実行します。
@@ -567,7 +397,3 @@ clean環境で、公開assetだけを使って実行します。
       確認する。
 * [ ] native実行ファイル: clean ``PATH``へ導入し、CLI操作と``adocweave lsp``、更新、rollbackおよび完全削除を確認する。
 * [ ] Nix: 利用側flakeへtagのコミットを固定し、通常のCLI操作と``adocweave lsp``の``nix run``を確認する。
-
-公開assetの完全性は公開後のtaskで確認します。asset集合と0バイトではないこと、checksum、attestation、``--version --json``、
-Cachixへの登録、Open VSXへ公開したfileのバイト一致およびVisual Studio Marketplaceへ公開したVSIXの
-署名以外の内容一致は、公開workflowと公開後の検証で機械的に判定できるため、この一覧には含めません。

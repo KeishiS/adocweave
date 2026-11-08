@@ -23,19 +23,26 @@ literalなどの意味的な補足を担当し、見出しの基本色付けを�
 
 == 自動検証
 
-Nix開発環境で次を実行します。
+Nix開発環境に入り、リポジトリのrootで次を実行します。``npm test``は単体テスト、``test:extension``は
+Extension host testを実行します。
 
 [source,console]
 ----
 nix develop
-cargo make verify
-cargo make acceptance
+cargo build -p adocweave
+npm ci --ignore-scripts --prefix editors/vscode
+npm run check --prefix editors/vscode
+npm test --prefix editors/vscode
+npm run build --prefix editors/vscode
+npm run build:test --prefix editors/vscode
+npm run test:extension --prefix editors/vscode
 ----
 
 Extension host testは固定バージョンの公式VS Codeを隔離したuser dataディレクトリへ取得し、local buildの
 ``adocweave``を絶対pathで指定します。診断、Outline、Code Action、Format、Hover、補完、Definition、
 References、Document Link、Rename、Semantic Tokens、UTF-16位置、include先の更新、連続編集後の古い結果の不採用、
 複数workspace folder、再起動および終了後のprocess残存を確認します。通常利用しているVS Code profileは使用しません。
+VS Codeの画面を開くため、画面のないLinuxではXvfbなどの仮想displayを``DISPLAY``へ指定して実行します。
 
 検査に使うVS Codeのバージョンは、拡張の``package.json``にある``engines.vscode``の対応下限から決まります。
 型定義の``@types/vscode``がこの下限より新しいAPIを要求する場合は、``npm run check``で拒否します。
@@ -47,7 +54,6 @@ uninstallを確認します。
 
 公開するバイト列が入力だけから決まることも公開workflowが確認します。同じソースから
 VSIXをもう一度構築してSHA-256を比較するため、この検査は拡張のrelease candidateを構築する場合だけ実行します。
-Pull RequestではVSIXを構築せず、source、manifestおよびtestを検査します。
 
 これらの構築と検査を行う``editors/vscode/scripts``はTypeScript（``.mts``）で書き、配布物で固定したNode.jsが型注釈を
 取り除いてそのまま実行します（変換や追加の依存はありません）。型検査は``npm run check --prefix editors/vscode``の
