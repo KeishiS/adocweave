@@ -27,5 +27,11 @@
       "Bash(node tools/checked-gh-prose.mjs:*)",
       "Bash(node tools/textlint/github-markdown-lint.mjs:*)"
     ]
+  },
+  "attribution": {
+    "commit": "Co-Authored-By: Claude <noreply@anthropic.com>"
+  },
+  "env": {
+    "AI_COAUTHOR": "Claude <noreply@anthropic.com>"
   }
 }
