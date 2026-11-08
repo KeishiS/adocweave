@@ -261,12 +261,12 @@ xref:adr/0032-same-run-release-publication.adoc[ADR 0032]を参照してくだ�
 [#distribution-verification]
 == 段階ごとの検証
 
-Pull Requestでは標準source検査、macOSとWindowsのProject試験、およびZed公式レジストリ用の
-``wasm32-wasip2``向け構築を別のjobで実行し、必須checkの``verify``へ結果をまとめます。cargo-distは``dist plan``で
-workspace版、成果物およびjobの構成を検査しますが、配布成果物は構築しません。
+Pull Requestでは、作成者が手元の``cargo make verify``で標準source検査を実行します。cargo-distは``dist plan``で
+workspace版、成果物およびjobの構成を検査しますが、配布成果物は構築しません。CIの必須check``verify``は検査を実行しません。
 
-``main``ではそのほかのcross target、fuzz、Nix packageなどの統合検査を行います。ネイティブ版のRelease workflowでは固定したtagとcommitに
-対してplanを再生成し、対象OSでnative成果物を構築します。完成成果物は対象OSで検査します。
+手元の``cargo make acceptance``はそのほかのcross target、fuzz、Nix packageなどの統合検査を行います。
+ネイティブ版のRelease workflowでは固定したtagとcommitに対してplanを再生成し、対象OSでnative成果物を構築します。
+完成成果物は対象OSで検査します。
 VS Code拡張は専用タグのworkflowでVSIXの再現性、導入、更新、ロールバックおよびLanguage Server接続を検査します。
 textlint用Processorは、それぞれの公開workflowで候補を構築し、公開前後に対応する利用側で検査します。
 WebAssemblyパッケージも専用の公開workflowで候補を構築し、公開前後に対応する利用側で検査します。

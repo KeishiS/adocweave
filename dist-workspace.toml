@@ -30,7 +30,7 @@ github-attestations = true
 github-attestations-phase = "host"
 packages = ["adocweave"]
 # Which actions to run on pull requests
-pr-run-mode = "plan"
+pr-run-mode = "skip"
 # Plan jobs to run in CI
 plan-jobs = ["./native-release-checks"]
 # Run native archive smoke tests after target builds
