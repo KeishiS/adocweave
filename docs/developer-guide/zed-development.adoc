@@ -38,14 +38,11 @@ rustup target add wasm32-wasip2
 cargo build -p adocweave
 cargo test --manifest-path editors/zed/Cargo.toml
 cargo build --manifest-path editors/zed/Cargo.toml --target wasm32-wasip2
-node tools/zed-registry-contract.mjs
 ----
 
-Rustのテストは実行ファイルの選択と``adocweave lsp``の起動引数を検査します。レジストリ用の検査は
-拡張の基本情報、license、iconおよびバージョン管理を確認します。また、README、Changelogおよび拡張ソースに
-日本語が含まれていないことを確認します。
+Rustのテストは実行ファイルの選択と``adocweave lsp``の起動引数を検査します。
 公式レジストリは、Rust 1.90で``wasm32-wasip2``向けに構築します。
-``editors/zed/Cargo.toml``の``rust-version``はその版以下とし、root workspaceの開発用Rustとは別に管理します。
+``editors/zed/Cargo.toml``の``rust-version``はそのバージョン以下とし、root workspaceの``rust-version``とは別に管理します。
 
 [#zed-development-install]
 == 開発用拡張の導入
@@ -95,6 +92,14 @@ GitHub Releaseから現在のOSとCPUに合うnative実行ファイルを取得�
 ``version = "0.0.0"``は構築用の固定値であり、拡張のバージョンではありません。利用者に見える変更では、
 ``extension.toml``と``editors/zed/CHANGELOG.md``を同じcommitで更新します。専用tagとGitHub Releaseは
 作成しません。
+
+公式レジストリへ提出する``editors/zed``は、次の要件を満たす必要があります。
+
+* ``README.md``、``CHANGELOG.md``および拡張のソース``src/*.rs``に日本語を含まないこと
+* ``LICENSE``がMIT Licenseであること
+* ``icon.png``が128×128のPNG画像であること
+* ``CHANGELOG.md``に、``extension.toml``の``version``と同じバージョンを示す日付なしの見出し``## [X.Y.Z]``が
+  あること
 
 提出するcommitについて、この文書の検査と開発用拡張の確認を完了し、公開branchに含まれることを確認します。
 Zed公式の``zed-industries/extensions``リポジトリでは、HTTPSのsubmoduleを

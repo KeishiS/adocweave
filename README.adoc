@@ -39,7 +39,7 @@ xref:docs/user-guide/compatibility.adoc[AsciiDocとの互換性]を参照して�
 
 利用する環境に応じた導入方法は、xref:docs/user-guide/release-installation.adoc[インストールと更新]にまとめています。
 
-* コマンドラインとNix
+* コマンドライン
 * VS CodeとZed
 * WebAssemblyライブラリ
 * textlint用Processor

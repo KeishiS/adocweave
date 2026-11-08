@@ -26,7 +26,6 @@ body:
         - Zed拡張
         - Rust API
         - WebAssembly・Web Worker
-        - Nix
         - その他
     validations:
       required: true

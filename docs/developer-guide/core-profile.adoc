@@ -15,7 +15,7 @@ AdocWeaveは、AsciiDocの読み取り、問題の検出、整形、HTMLへの�
 
 コアAPIはRustワークスペース内部のバージョンを使います。WebAssemblyの製品バージョンは
 link:../../packages/wasm/package.json[WebAssembly package manifest]、必要なRustのバージョンは
-link:../../toolchains.json[toolchain manifest]を基準とします。
+link:../../Cargo.toml[Cargo workspace]の``rust-version``を基準とします。
 公開結果を保存するアプリケーションは、AdocWeaveの更新時にHTMLおよび検索用情報を再構築してください。
 
 0.y.zの間はminor版で互換性のない変更を行う場合があります。更新前に

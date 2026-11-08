@@ -36,7 +36,7 @@
 - [ ] Rust API
 - [ ] WebAssembly・Web Worker
 - [ ] HTML出力
-- [ ] Nix・配布・CI
+- [ ] 配布・CI
 - [ ] 内部実装・保守
 - [ ] ドキュメントだけ
 
@@ -51,12 +51,12 @@
 
 <!-- 実行した項目にチェックを付け、コマンドと結果を記載してください。未実施の場合は理由を記載してください。 -->
 
-- [ ] `cargo make verify`
+- [ ] 変更した製品の構築とテスト（`CONTRIBUTING.adoc`の「構築とテスト」）
 - [ ] 変更内容に対応する個別のテスト
 - [ ] security・回帰fixture
 - [ ] native・WASM・CLI・LSPなど影響するconsumer間の確認
 
-<!-- `cargo make verify`以外に実行したコマンドと結果を記載してください。 -->
+<!-- 実行したコマンドと結果を記載してください。 -->
 
 ## ドキュメント
 

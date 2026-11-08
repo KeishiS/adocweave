@@ -1,5 +1,0 @@
-:scheme: javascript
-
-{scheme}:alert(1)[unsafe]
-
-********* deeply nested list item

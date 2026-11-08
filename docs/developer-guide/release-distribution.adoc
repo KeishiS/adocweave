@@ -43,8 +43,9 @@ link:../../editors/vscode/CHANGELOG.md[拡張のChangelog]に記録します。
 |構築後の成果物、checksumおよび公開先
 |cargo-distが生成する標準dist-manifest
 
-|root workspaceのRustとNode.jsの構築版
-|link:../../toolchains.json[toolchain manifest]
+|root workspaceが必要とするRustとNode.jsの最小バージョン
+|link:../../Cargo.toml[Cargo workspaceの``rust-version``]と、``packages/slides-helper``および
+``packages/textlint-plugin-asciidoc``の``package.json``にある``engines.node``
 
 |Zed拡張が対応する最小Rust版
 |link:../../editors/zed/Cargo.toml[Zed拡張のmanifest]。公式レジストリの構築環境に合わせ、
@@ -93,7 +94,6 @@ Visual Studio Marketplaceは公開後のVSIXへ署名情報を追加するため
 異なる場合があります。公開後の検査では拡張ID、version、target、署名以外のfile一覧および各fileの内容を照合し、
 Marketplaceが追加したZIP内の標準署名領域（``_xmlsignatures/``と対応するmetadata）だけを比較から除きます。
 
-ネイティブ版に付随するCachixへの送信と送信後の確認は、GitHub Releaseの公開後に``release.yml``内のjobで行います。
 WebAssemblyパッケージとtextlint用Processorは、それぞれの専用タグで専用workflowを直接起動します。
 VS Code拡張は``vscode/vX.Y.Z``タグで``vscode-publish.yml``を直接起動します。候補を構築するjobと二つの
 公開jobを一つのworkflow runへ置き、公開済みの内容が候補と一致する場合は送信を省略します。一方の公開jobが
@@ -145,7 +145,7 @@ cargo-distのplanは、workspaceのバージョン、``vX.Y.Z``タグ、native�
 dist-manifestにないfile、欠落したfile、異なるバージョンおよび異なるsource commitを受理しません。
 
 ``sha256.sum``は4件のnative archiveに対してcargo-distが生成する標準checksum一覧です。archiveごとの
-``.sha256``も公開します。公開後の受入検査では、両方のchecksumを実際に取得したarchiveと照合します。
+``.sha256``も公開します。
 
 GitHub Releaseへ添付する成果物、checksumおよび標準dist-manifestにはGitHub Artifact Attestationを付けます。
 credentialや署名fileはarchiveへ埋め込みません。privateリポジトリから取得する場合も、利用者が明示的に与えた
@@ -160,10 +160,7 @@ GitHub Releaseへ添付しません。
 
 planの生成、構築および成果物検査はrepositoryの読取り権限だけで実行し、公開先のsecretを参照しません。
 GitHub Releaseへ添付する``host`` jobだけが、``github-release`` environmentでReleaseへの書込みとArtifact Attestationに
-必要なOIDC権限を持ちます。
-Release作成後は、``release.yml``のCachix公開jobをrepositoryの読取り権限だけで実行します。このjobへ
-``cachix-publish`` environmentを直接設定し、``CACHIX_AUTH_TOKEN``はこのenvironmentからだけ取得します。
-取得確認jobはenvironmentも書込みtokenも使用しません。外部actionは完全なcommit SHAへ固定します。
+必要なOIDC権限を持ちます。外部actionは完全なcommit SHAへ固定します。
 
 VS Code拡張では、``vscode-publish.yml``の``open-vsx`` jobだけが``open-vsx-publish`` environmentの専用tokenを
 使用します。``marketplace`` jobは``marketplace-publish`` environmentのClient IDとTenant IDを使い、GitHubの
@@ -191,19 +188,9 @@ WebAssemblyパッケージでは、``wasm-publish.yml``から同じnpm公開job�
 manifestの版、commitおよび``main``への統合を照合し、公開後はnpmから導入した入口で空要求と
 代表的な数式・引用を実行します。``npm audit signatures``でパッケージの署名付きprovenanceを確認します。
 
-stable Releaseの公開後に、``release.yml``の``publish-cachix`` jobだけが``CACHIX_AUTH_TOKEN``を使用します。公開jobは
-公開済みのtag、commitおよびworkspace版を照合し、同じcommitから``x86_64-linux``と``aarch64-linux``向けに
-構築したNix packageをCachixへ送信します。依存物は、``cache.nixos.org``に存在しないものだけを送信します。
-
-送信後は、書込みtokenを持たない別のrunnerが対象packageのCachix上での存在を確認します。ローカルでの構築を禁止したまま、
-Cachixと``cache.nixos.org``から必要な内容を取得します。Cachixの公開鍵は秘密情報ではないため、GitHubのenvironmentに
-変数として登録せず、workflowへ固定します。
-取得した``adocweave``のversionと``adocweave lsp``の起動を確認します。Nix store pathは内容から決まるため、
-同じtagでworkflowを再実行しても既存の内容は変わりません。
-
-最初の自動公開より前に、``github-release``、``cachix-publish``、``marketplace-publish``、``npm-publish``および
+最初の自動公開より前に、``github-release``、``marketplace-publish``、``npm-publish``および
 ``open-vsx-publish``の各environmentを作成します。VS Code用の二つのenvironmentは``vscode/v*``タグだけを許可します。
-``github-release``と``cachix-publish``は``main``だけ、``npm-publish``は``wasm/v*``と
+``github-release``は``main``だけ、``npm-publish``は``wasm/v*``と
 ``textlint-plugin-asciidoc/v*``と``slides-helper/v*``を許可します。
 Open VSXのtokenはrepository全体ではなく``open-vsx-publish`` environmentへ置きます。
 ``marketplace-publish`` environmentには``AZURE_CLIENT_ID``と``AZURE_TENANT_ID``を変数として登録します。
@@ -218,16 +205,12 @@ xref:adr/0023-publication-boundary.adoc#publication-authority[ADR 0023]を参照
 [#publication-failure]
 == 公開と失敗時保証
 
-公開前検査に成功した``main``から、まずRelease workflowへ``dry-run``を指定します。``dry-run``は4対象プラットフォームの
-native成果物を構築して検査しますが、tagとGitHub Releaseを作成しません。成功したcommitが現在の``main``の先端と
-一致することを確認してから、同じworkflowへ``vX.Y.Z``を指定します。native Releaseの検査は、指定したtag、workspace版
-および実行元が``main``であることを``host``より前に一度だけ確認します。workflowはplanを生成し、native成果物を
-構築して検査した後、一つのGitHub Releaseとtagを作成します。
-異なるworkflow runや手元の成果物を途中で混在させません。Release作成に成功すると、Release workflow内の
-``publish-cachix`` jobがplanで確定したtagとReleaseを作成した完全なcommit SHAを使ってNixパッケージを構築し、
-Cachixへ送信します。このjobはstableなRelease、tagのcommit、checkoutしたcommitおよびworkspace版を照合します。
-``main``との関係はnative Releaseの検査を正本とし、Cachix公開jobでは重ねて
-検査しません。npmパッケージとエディタ拡張はこのRelease workflowへ含めません。
+ネイティブ版の公開は、次の条件を満たすものとします。Release workflowは入力の``tag``に``dry-run``または
+``vX.Y.Z``を受け取り、``dry-run``では4対象プラットフォームのnative成果物を構築して検査するだけで、tagと
+GitHub Releaseを作成しません。``vX.Y.Z``の公開では、指定したtag、workspaceのバージョンおよび実行元が``main``で
+あることを、GitHub Releaseを作成する前に一度だけ確認します。GitHub Releaseとtagは一回の公開で一つずつ作成し、
+同じworkflow runで構築して検査した成果物だけを使います。異なるworkflow runや手元の成果物は混在させません。
+npmパッケージとエディタ拡張はこのRelease workflowへ含めません。
 
 ``main``の検査に成功したcommitへ``wasm/vX.Y.Z``または``textlint-plugin-asciidoc/vX.Y.Z``タグを作成すると、
 対応するパッケージ専用workflowが起動します。workflowはタグ、パッケージの版、commitおよび``main``への統合を
@@ -241,11 +224,6 @@ workflowはタグ、拡張の版、commitおよび``main``への統合を確認�
 二つの公開jobへ渡し、公開後は各レジストリから取得した拡張のID、版および内容を照合します。さらに、取得した
 VSIXを実際のExtension Hostで起動し、``adocweave lsp``との接続を確認します。一方のjobだけが失敗した場合は、
 成功済みのjobを再実行せず、失敗したjobだけを再実行します。
-
-ネイティブ版の外部公開jobはRelease workflowの一部であり、いずれかが失敗するとRelease workflow全体も失敗します。外部サービスへの
-送信だけが失敗した場合は、GitHub Actionsの標準操作``Re-run failed jobs``を使用します。成功済みのRelease作成jobと
-Cachix公開jobはそのままにし、失敗したCachix公開jobと後続の取得確認jobだけを再実行します。公開jobはtagと対象環境ごとの
-concurrencyを持ち、Nix store pathは内容から決まるため、同じtagとcommitで繰り返しても公開済みの内容を変更しません。
 
 一度作成したstable tagとReleaseは削除、置換または自動的な差戻しを行いません。GitHub Releaseの公開前に
 一時的な原因でworkflowが失敗した場合は、同じtagとcommitに対して再実行します。sourceの修正が必要な場合と、
@@ -261,23 +239,18 @@ xref:adr/0032-same-run-release-publication.adoc[ADR 0032]を参照してくだ�
 [#distribution-verification]
 == 段階ごとの検証
 
-Pull Requestでは、作成者が手元の``cargo make verify``で標準source検査を実行します。cargo-distは``dist plan``で
-workspace版、成果物およびjobの構成を検査しますが、配布成果物は構築しません。CIの必須check``verify``は検査を実行しません。
+Pull Requestでは、作成者がxref:../../CONTRIBUTING.adoc#build-and-test[構築とテスト]の手順を手元で実行します。
+CIの必須check``verify``は検査を実行しません。
 
-手元の``cargo make acceptance``はそのほかのcross target、fuzz、Nix packageなどの統合検査を行います。
 ネイティブ版のRelease workflowでは固定したtagとcommitに対してplanを再生成し、対象OSでnative成果物を構築します。
 完成成果物は対象OSで検査します。
 VS Code拡張は専用タグのworkflowでVSIXの再現性、導入、更新、ロールバックおよびLanguage Server接続を検査します。
 textlint用Processorは、それぞれの公開workflowで候補を構築し、公開前後に対応する利用側で検査します。
 WebAssemblyパッケージも専用の公開workflowで候補を構築し、公開前後に対応する利用側で検査します。
 
-taskの現在の入口とReleaseの操作手順はxref:../../CONTRIBUTING.adoc[コントリビューションガイド]を基準とします。
-検査をこの段階へ分ける理由はxref:adr/0031-path-independent-pull-request-gate.adoc[ADR 0031]、task間の責務は
-xref:adr/0033-make-task-boundary.adoc[ADR 0033]を参照してください。
+検査をこの段階へ分ける理由はxref:adr/0031-path-independent-pull-request-gate.adoc[ADR 0031]を参照してください。
 
-GitHub Releaseの公開後は、``RELEASE_TAG=vX.Y.Z cargo make native-release-acceptance``で成果物を実際のReleaseから
-取得し、asset一覧、標準manifest、checksum、attestationおよび実行ホストへの導入を確認します。
-WebAssemblyパッケージとtextlint用Processorはnpm Registry、VS Code拡張はVisual Studio Marketplaceと
+公開後は、WebAssemblyパッケージとtextlint用Processorをnpm Registry、VS Code拡張をVisual Studio Marketplaceと
 Open VSX Registryから取得して確認します。
 外部registryへ公開したpackageと拡張はregistryから導入し直し、署名などregistry固有のmetadataを除く内容、
 基本操作および固定consumerでの動作を確認します。これらの確認は公開済みの成果物に対して行い、公開前の検査と
