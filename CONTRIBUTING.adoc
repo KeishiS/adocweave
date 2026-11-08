@@ -202,26 +202,7 @@ Advisoryを一時的に除外する場合だけ``deny.toml``へ構造化したig
 ``理由: 説明; 期限: YYYY-MM-DD; Issue: https://github.com/KeishiS/adocweave/issues/番号``の形で記載します。
 空の例外一覧、包括的な除外および無期限の例外は置きません。
 
-Dependabotのpull requestでも通常のreviewと必須検査を省略しません。Cargo更新ではlockfile、license、取得元、
-advisoryおよびRust stableへの影響を、GitHub Actions更新では完全なcommit SHAへの固定とRelease Notesを
-確認します。
-
-[#dependabot-updates]
-=== Dependabotの手動merge
-
-DependabotのPull Requestは更新範囲にかかわらず自動mergeせず、人が変更内容と必須検査を確認して統合します。
-リポジトリにはDependabotのauto-mergeを登録するworkflowとwrite権限を置きません。
-
-reviewでは、manifestとlockfileの差分、直接・間接依存関係、SemVerの更新範囲、security advisory、
-license、取得元および生成されるnoticeを確認します。GitHub Actions更新では完全なcommit SHAへの
-固定と上流Release Notesも確認します。必須検査、競合確認および最新の``main``への追従を省略しません。
-
-自動mergeを再検討する場合は、同じ管理者が作成した通常のPull Requestを統合できるreview体制、
-Dependabot alertを完全に取得できるActions権限、strictなrulesetおよびalert照会後の時間差を解消する設計を
-新しいIssueで扱います。設定やworkflowを直接追加して開始しません。
-
-Nix入力はDependabotの対象外であり、``flake.lock``を手動で更新します。Frontendへruntime dependencyを追加する
-場合は、lockfileへ固定し、標準依存監査と第三者依存の通知へ含めます。
+Frontendへruntime dependencyを追加する場合は、lockfileへ固定し、標準依存監査と第三者依存の通知へ含めます。
 
 == 文書を増やさない規則
 
@@ -537,9 +518,8 @@ git push upstream slides-helper/vX.Y.Z
 補助を必要とするnative版は、対応する補助パッケージを先に公開し、その公開版の導入検査が成功してから
 リリースします。公開候補の検査だけを通した状態で、npmから導入できる版として案内しません。
 
-補助の依存更新は``/packages/slides-helper``を対象とするDependabotのPull Requestで確認します。
-manifestとlockfile、推移依存の版、配布実物のlicenseと通知を確認し、``security-audit``と公開候補の
-検査を実行します。通常のxref:dependabot-updates[手動merge]と同じ手順を使います。
+補助の依存を更新する場合は、manifestとlockfile、推移依存の版、配布実物のlicenseと通知を確認し、
+``security-audit``と公開候補の検査を実行します。
 
 [#cachix-publication]
 === Cachixへの公開
