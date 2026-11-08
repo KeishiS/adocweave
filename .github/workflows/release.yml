@@ -17,10 +17,9 @@ name: Release
 permissions:
   "contents": "read"
 
-# Pull requests validate the cargo-dist plan. Manual runs accept either dry-run or a
-# stable vX.Y.Z tag; only a stable tag publishes a GitHub Release.
+# Only manual runs start this workflow. They accept either dry-run or a stable
+# vX.Y.Z tag; only a stable tag publishes a GitHub Release.
 on:
-  pull_request:
   workflow_dispatch:
     inputs:
       tag:
