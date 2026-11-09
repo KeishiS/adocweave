@@ -21,18 +21,22 @@ literalなどの意味的な補足を担当し、見出しの基本色付けを�
 画像生成で作成したもので、このリポジトリの成果物として扱います。図案を変更する場合は元画像を差し替え、
 同じ縦横比のまま128×128へ縮小して``icon.png``を更新します。
 
+[#vscode-development-checks]
 == 自動検証
 
-リポジトリのrootで次を実行します。``npm test``はテスト用のコードを``build:test``で構築してから単体テストを
-実行し、``test:extension``はExtension host testを実行します。
+整形の検査、``npm run check``および単体テストの``npm test``は、
+xref:../../CONTRIBUTING.adoc#build-and-test[構築とテスト]の``makers verify``に含まれます。
+整形は``makers fmt``で行います。
+
+VS Codeを起動して拡張を動かすExtension host testは``verify``に含まれず、リポジトリのrootで次のように実行します。
+``build``は拡張本体を、``build:test``はテスト用のコードを構築し、``test:extension``はExtension host testを実行します。
 
 [source,console]
 ----
 cargo build -p adocweave
 npm ci --ignore-scripts --prefix editors/vscode
-npm run check --prefix editors/vscode
-npm test --prefix editors/vscode
 npm run build --prefix editors/vscode
+npm run build:test --prefix editors/vscode
 npm run test:extension --prefix editors/vscode
 ----
 
