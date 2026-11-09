@@ -31,7 +31,7 @@ fn block_titles_preserve_slide_scopes_fragments_and_footnote_targets() {
     write(
         root.path(),
         "talk.adoc",
-        include_str!("../../../fixtures/slides-browser/block-titles.adoc"),
+        include_str!("../../../fixtures/slides/block-titles.adoc"),
     );
     for audience in ["public", "presenter"] {
         success(&convert(

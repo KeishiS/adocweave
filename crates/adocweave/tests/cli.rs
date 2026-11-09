@@ -3143,12 +3143,9 @@ fn local_include_with_literal_url_suffix_uses_the_shared_fixture() {
 fn file_input_rejects_stdin_base() {
     let root = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../fixtures/includes/separate-base/root.adoc"
+        "/../../fixtures/includes/root.adoc"
     );
-    let base = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../fixtures/includes/separate-base/resources"
-    );
+    let base = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/includes/parts");
     let project_root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
     let output = adocweave()
         .args([
