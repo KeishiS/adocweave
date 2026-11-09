@@ -17,7 +17,6 @@ ADRは、複数の機能に影響する長期的な設計判断と、その理�
 * xref:0010-position-dependent-document-attributes.adoc[ADR 0010: 読込順に従う文書属性environment]
 * xref:0015-manual-dependency-updates.adoc[ADR 0015: 依存更新の手動merge]
 * xref:0024-include-processing-by-default.adoc[ADR 0024: includeの既定での展開]
-* xref:0039-ci-shell-responsibility-boundary.adoc[ADR 0039: CI検査ごとのNix開発shellの分担]
 * xref:0042-wasm-public-contract.adoc[ADR 0042: WebAssemblyの要求・応答・エラー公開仕様]
 * xref:0043-independent-distribution-units.adoc[ADR 0043: 単一のネイティブ実行ファイルと配布物ごとの公開単位]
 * xref:0044-lsp-open-document-scope.adoc[ADR 0044: Language Serverの解析対象を開いた文書へ限定]
@@ -27,6 +26,7 @@ ADRは、複数の機能に影響する長期的な設計判断と、その理�
 * xref:0048-terminal-rendering-boundary.adoc[ADR 0048: 端末出力の整形とANSI変換の分担]
 * xref:0049-research-slides-boundary.adoc[ADR 0049: 研究スライドの構成と数式・引用処理の分担]
 * xref:0050-minimal-cargo-make-entry-points.adoc[ADR 0050: 検査の入口を少数のcargo-make taskへ限定する]
+* xref:0051-rust-toolchain-file-and-devshell-only-flake.adoc[ADR 0051: 開発環境をrust-toolchain.tomlとdevShellだけのflakeで提供する]
 
 == 一部有効
 
@@ -44,7 +44,6 @@ ADRは、複数の機能に影響する長期的な設計判断と、その理�
 * xref:0031-path-independent-pull-request-gate.adoc[ADR 0031: 変更pathに依存しないPull Request検査]（ADR 0032、0033および0034で一部改訂）
 * xref:0032-same-run-release-publication.adoc[ADR 0032: 同一workflow runでのリリース公開]（ADR 0040および0043で一部改訂）
 * xref:0034-standard-runtime-dependency-audit.adoc[ADR 0034: 配布runtimeの依存監査を標準toolへ集約]（ADR 0036で一部改訂）
-* xref:0035-minimal-nix-flake-outputs.adoc[ADR 0035: Nix flakeの公開出力と検査を最小化]（ADR 0039および0040で一部改訂）
 * xref:0036-no-unconsumed-sbom.adoc[ADR 0036: 利用要件のないSBOM公開を廃止]（ADR 0040および0043で一部改訂）
 * xref:0037-rust-owned-project-schema.adoc[ADR 0037: プロジェクト設定Schemaの正本をRustへ集約]（ADR 0045で一部改訂）
 * xref:0040-unified-release-and-native-executable.adoc[ADR 0040: 単一バージョン・Release・native実行ファイル]（ADR 0043で一部改訂）
@@ -78,5 +77,9 @@ ADRは、複数の機能に影響する長期的な設計判断と、その理�
   xref:0043-independent-distribution-units.adoc[ADR 0043]
 * xref:0033-make-task-boundary.adoc[ADR 0033: Make taskの外向き入口と実処理の分離] →
   xref:0050-minimal-cargo-make-entry-points.adoc[ADR 0050]
+* xref:0035-minimal-nix-flake-outputs.adoc[ADR 0035: Nix flakeの公開出力と検査を最小化] →
+  xref:0051-rust-toolchain-file-and-devshell-only-flake.adoc[ADR 0051]
 * xref:0038-additive-workspace-scan-excludes.adoc[ADR 0038: ワークスペース走査の除外patternを組込み値へ追加] →
   xref:0044-lsp-open-document-scope.adoc[ADR 0044]
+* xref:0039-ci-shell-responsibility-boundary.adoc[ADR 0039: CI検査ごとのNix開発shellの分担] →
+  xref:0051-rust-toolchain-file-and-devshell-only-flake.adoc[ADR 0051]

@@ -1,0 +1,97 @@
+= ADR 0051: 開発環境をrust-toolchain.tomlとdevShellだけのflakeで提供する
+:status: 採用
+
+== 状態
+
+{status}
+
+== 文脈
+
+以前は、rootの``toolchains.json``がRustとNode.jsのバージョンを定めていました。Nixのflake、Nixのパッケージ定義
+およびCIのworkflowがこのファイルを読み、使うRustやNode.jsのバージョンと一致するかを照合していました。flakeは、
+入力と出力を``flake.nix``に宣言し、入力のリビジョンを``flake.lock``に固定するNixの形式です。このflakeは、
+パッケージ（``packages``）、実行入口（``apps``）、検査（``checks``）と、5つのdevShell（``nix develop``で
+起動する開発用のシェル）を公開していました。そのため、1つのバージョンの変更が、``toolchains.json``、
+Nixの定義およびworkflowの複数のファイルへ波及していました。
+
+一方で、rootには``rust-toolchain.toml``がありませんでした。このファイルは、リポジトリの中で使うRustの
+バージョン、コンポーネントおよびtargetを定めるもので、rustupが読みます。ファイルがないため、rustupの利用者は、
+各自が既定にしているRustで構築と検査をしていました。
+
+開発環境を作り直すため、これらのNixの定義と``toolchains.json``は削除しました。
+
+== 決定
+
+rootの``rust-toolchain.toml``を、開発と検査に使うRustの唯一の定義とします。rustupと、Nixから指定した
+バージョンのRustを導入できるようにするrust-overlayの両方が、このファイルを読みます。rust-overlayでは
+``fromRustupToolchainFile``関数を使います。``channel``には``1.97.1``のような正確なバージョンを書きます。
+``components``には、``clippy``と``rustfmt``に加え、エディタの補完などに使う``rust-src``と``rust-analyzer``も
+含めます。``targets``には、Zed拡張を公式レジストリと同じ構築先向けに構築するための``wasm32-wasip2``を含めます。
+
+``Cargo.toml``の``workspace.package.rust-version``は、常に``channel``と同じ値にし、同じコミットで更新します。
+2つの値を照合する仕組みは作りません。開発と検査に使うRustが最小のバージョンそのものであるため、
+``makers verify``の成功が、最小のバージョンで構築できることの確認になります。
+
+``flake.nix``は``devShells.<system>.default``だけを公開します。対象のsystemは``x86_64-linux``、
+``aarch64-linux``および``aarch64-darwin``で、定義は1つのファイルに収めます。``packages``、``apps``、``checks``
+および``overlays``は公開しません。
+
+devShellには、``makers verify``が実行するコマンドだけを入れます。検査を加える変更で新しいツールが必要に
+なった場合は、同じ変更でdevShellへ加えます。``ps``のようにOSが標準で備えるコマンドはdevShellに入れず、
+Nixの外の環境のものを使います。
+
+Nixのパッケージ集であるnixpkgsは、安定リリースのchannel（現在は``nixos-26.05``）から取得します。Node.jsは
+nixpkgsの``nodejs_24``を使い、``package.json``の``engines.node``とは照合しません。
+
+``flake.lock``はコミットし、人が``nix flake update``で更新します。
+
+Nixは任意の手段とし、rustupと``cargo install``による手順も残します。
+
+CIの実行環境は、このADRでは決めません。
+
+本ADRはxref:0035-minimal-nix-flake-outputs.adoc[ADR 0035]とxref:0039-ci-shell-responsibility-boundary.adoc[ADR 0039]を
+置き換えます。
+
+== 検討した代替案
+
+**共通のmanifestを戻し、各定義で照合する。** rustupとrust-overlayは``rust-toolchain.toml``を直接読むため、
+別のmanifestを置くと、その値と``rust-toolchain.toml``を照合する仕組みが新たに必要になります。文脈で述べた
+変更の波及が戻るため採用しません。
+
+**``channel = "stable"``にする。** バージョンを上げる変更は不要になりますが、rustupとNixが使うRustは、
+それぞれがstableを解決した時点で決まるため一致しません。また、新しいRustが加えたlintにより、コードを
+変えていなくても検査が急に失敗するため採用しません。
+
+**``flake.nix``へバージョンを直接書く、または``rust-version``を読む。** rustupは``flake.nix``も
+``Cargo.toml``の``rust-version``も読みません。rustupの利用者が使うRustとそろえられないため採用しません。
+
+**nixpkgsの``rustc``を使う。** rust-overlayの入力は不要になりますが、Rustのバージョンがnixpkgsのリビジョンで
+決まり、rustupが使うバージョンとそろえられないため採用しません。
+
+**fenixを使う。** fenixは、Rustを導入する別のNixの定義集で、``rust-toolchain.toml``も読めます。ただし、
+ファイルのほかにRustの配布物の一覧（manifest）のハッシュ値``sha256``を指定する必要があり、
+バージョンを上げるたびにその値も更新することになるため採用しません。
+
+**用途別に複数のdevShellを作る、または定義を``nix/``へ分割する。** 用途ごとに導入するツールを絞れますが、
+devShellが1つの小さなflakeでは、読む場所が増えるだけで読みにくくなるため採用しません。
+
+**``rust-version``を開発用のバージョンと別に管理する。** 利用者に古いRustでの構築を認められますが、
+開発と検査が別のバージョンを使うと、最小のバージョンで構築できることを確かめる検査がなくなります。
+そのため採用しません。
+
+== 帰結
+
+Rustのバージョンを上げる変更は、``rust-toolchain.toml``の``channel``と``rust-version``の2行で済みます。
+ただし、``flake.lock``で固定したrust-overlayが新しいバージョンを知らない場合は、``flake.lock``の更新も
+必要です。その場合はdevShellの評価が失敗するため、更新が必要なことに気付けます。
+
+rustupの利用者には、リポジトリの中で``cargo``などを実行したときに、指定のRustがコンポーネントとtargetを
+含めて自動で導入されます。
+
+Zed拡張も、公式レジストリが使うRustではなく、``rust-toolchain.toml``のRustで構築します。公式レジストリの
+Rustで構築できることは、手元の検査では確かめません。
+
+devShellはOSが標準で備えるコマンドを含みません。そのため、``nix develop -i``のようにホストの環境変数を
+引き継がずに起動すると、``ps``を使うテストが失敗します。
+
+このflakeは``packages``と``apps``を公開しません。Nixでの配布は、このADRでは決めません。
