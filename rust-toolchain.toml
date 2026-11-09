@@ -1,0 +1,7 @@
+# 開発と検査に使うRustです。rustupとflake.nixのdevShellの両方が、このファイルを読みます。
+# Cargo.tomlのworkspace.package.rust-versionは、常にchannelと同じ値にし、同じcommitで更新します。
+[toolchain]
+channel = "1.97.1"
+profile = "minimal"
+components = ["clippy", "rustfmt", "rust-src", "rust-analyzer"]
+targets = ["wasm32-wasip2"]

@@ -2,24 +2,57 @@
 
 AdocWeaveへの変更は短命なブランチで作業し、pull requestを通してmainへ統合します。
 
+[#development-environment]
 == 開発環境
 
-構築とテストにはRustとNode.jsを使います。必要なバージョンは次のmanifestで定めています。
+構築と検査には、Rust、Node.js、cargo-makeおよびgitを使います。検査と整形は、rootの``Makefile.toml``に
+定義したtaskを、cargo-makeの``makers``コマンドで実行します。taskは、名前を付けて呼び出せるコマンドの組です。
 
-* Rust: rootのlink:Cargo.toml[``Cargo.toml``]にある``workspace.package.rust-version``以上のバージョン
-* Node.js: ``packages/slides-helper``と``packages/textlint-plugin-asciidoc``の``package.json``にある
-  ``engines.node``を満たすバージョン
+開発に使うRustのバージョンは、rootのlink:rust-toolchain.toml[``rust-toolchain.toml``]で定めます。
+このファイルは、整形に使う``rustfmt``と、lint（誤りやすい書き方の検出）に使う``clippy``も、Rustと一緒に
+導入するコンポーネントとして指定します。Nixを使う場合も使わない場合も、このファイルが定めるRustを使います。
 
-Rustの整形には``rustfmt``、lint（誤りやすい書き方の検出）には``clippy``を使います。どちらもRustのtoolchainへ
-追加するcomponentで、rustupを使う場合は``rustup component add rustfmt clippy``で追加します。
+利用者が構築できる最小のRustのバージョンは、rootのlink:Cargo.toml[``Cargo.toml``]にある
+``workspace.package.rust-version``で示します。この値は``rust-toolchain.toml``の``channel``と常に同じにし、
+両方を同じコミットで更新します。開発と検査に使うRustが最小のバージョンと一致するため、``makers verify``が
+成功すれば、最小のバージョンで構築できることも確かめられます。
 
-検査と整形は、rootの``Makefile.toml``に定義したtaskを、cargo-makeの``makers``コマンドで実行します。
-taskは、名前を付けて呼び出せるコマンドの組です。次のようにcargo-makeを導入すると、``makers``が使えます。
+=== Nixを使う場合
+
+Nixは、導入するソフトウェアとそのバージョンをファイルへ宣言し、同じ環境を再現するパッケージマネージャーです。
+rootのlink:flake.nix[``flake.nix``]は、Nixのflakeとして、開発用のシェルであるdevShellを定義します。
+flakeは、取得元（入力）と提供する環境（出力）を1つのファイルに宣言し、入力のリビジョンを``flake.lock``に
+固定する形式です。
+
+flakeを有効にした（実験的機能の``nix-command``と``flakes``を有効にした）Nixで、リポジトリのrootから
+次のコマンドを実行すると、``makers verify``に必要なコマンドをそろえたシェルが起動します。
+
+[source,console]
+----
+nix develop
+----
+
+devShellのRustも、``rust-toolchain.toml``が定めるバージョンです。``ps``のようにOSが標準で備えるコマンドは
+devShellに含めず、Nixの外の環境のものを使います。
+
+``flake.lock``を更新するときは、``nix flake update``を実行し、``nix develop -c makers verify``が成功することを
+確かめてからpull requestにします。
+
+=== Nixを使わない場合
+
+Rustは、Rustのバージョンを切り替えて管理するrustup（https://rustup.rs[導入方法]）で導入します。
+rustupは、リポジトリの中で``cargo``などを初めて実行したときに、``rust-toolchain.toml``が指定するRustを、
+コンポーネントと、Zed拡張の構築先である``wasm32-wasip2`` targetを含めて自動で導入します。自動の導入を
+無効にしている場合は、リポジトリの中で``rustup toolchain install``を実行します。続けて次のようにcargo-makeを
+導入すると、``makers``が使えます。
 
 [source,console]
 ----
 cargo install --locked cargo-make
 ----
+
+Node.jsは、``packages/slides-helper``と``packages/textlint-plugin-asciidoc``の``package.json``にある
+``engines.node``を満たすバージョンを導入します。
 
 [#build-and-test]
 == 構築とテスト
@@ -248,8 +281,9 @@ pull requestを作成するときは、link:.github/pull_request_template.md[Pul
 
 CIの必須checkは``verify``の一つだけです。このcheckは検査を実行せず、常に成功します。
 
-手元では、<<build-and-test>>の手順で変更した製品を構築してテストします。Zedの構築は
-xref:docs/developer-guide/zed-development.adoc[Zed拡張の開発]に記載したRust版とtargetで確認してください。
+手元では、<<build-and-test>>の手順で変更した製品を構築してテストします。Zed拡張を変更した場合は、
+xref:docs/developer-guide/zed-development.adoc#zed-development-build[Zed拡張の開発]の手順で
+``wasm32-wasip2`` target向けにも構築してください。
 
 ブランチ保護では、GitHub Actionsが表示する``verify``だけをrequired status checkに設定します。
 
