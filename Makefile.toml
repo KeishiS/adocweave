@@ -10,22 +10,27 @@ skip_core_tasks = true
 alias = "verify"
 
 [tasks.fmt]
-description = "Format Rust sources in the workspace and the Zed extension"
-dependencies = ["fmt-workspace", "fmt-zed"]
+description = "Format Rust sources in the workspace and the Zed extension and TypeScript sources in the VS Code extension"
+dependencies = ["fmt-workspace", "fmt-zed", "fmt-vscode"]
 
 [tasks.fmt-check]
-description = "Check Rust formatting in the workspace and the Zed extension without changing files"
-dependencies = ["fmt-check-workspace", "fmt-check-zed"]
+description = "Check Rust formatting in the workspace and the Zed extension and TypeScript formatting in the VS Code extension without changing files"
+dependencies = ["fmt-check-workspace", "fmt-check-zed", "fmt-check-vscode"]
 
 [tasks.verify]
-description = "Check formatting, run Clippy with warnings denied, and run tests for the workspace and the Zed extension"
+description = "Check formatting, run Clippy with warnings denied, run the VS Code extension checks, and run the Rust, npm package, and VS Code extension tests"
 dependencies = [
   "fmt-check",
   "clippy-workspace",
   "clippy-zed",
+  "check-vscode",
   "test-workspace",
   "test-zed",
   "protocol-unchanged",
+  "test-slides-helper",
+  "test-wasm",
+  "test-textlint-plugin-asciidoc",
+  "test-vscode",
 ]
 
 [tasks.fmt-workspace]
@@ -38,6 +43,17 @@ private = true
 command = "cargo"
 args = ["fmt", "--manifest-path", "editors/zed/Cargo.toml"]
 
+[tasks.install-vscode]
+private = true
+command = "npm"
+args = ["ci", "--ignore-scripts", "--no-audit", "--no-fund", "--prefix", "editors/vscode"]
+
+[tasks.fmt-vscode]
+private = true
+dependencies = ["install-vscode"]
+command = "npm"
+args = ["run", "format", "--prefix", "editors/vscode"]
+
 [tasks.fmt-check-workspace]
 private = true
 command = "cargo"
@@ -47,6 +63,12 @@ args = ["fmt", "--all", "--check"]
 private = true
 command = "cargo"
 args = ["fmt", "--manifest-path", "editors/zed/Cargo.toml", "--check"]
+
+[tasks.fmt-check-vscode]
+private = true
+dependencies = ["install-vscode"]
+command = "npm"
+args = ["run", "format:check", "--prefix", "editors/vscode"]
 
 [tasks.clippy-workspace]
 private = true
@@ -58,7 +80,14 @@ private = true
 command = "cargo"
 args = ["clippy", "--manifest-path", "editors/zed/Cargo.toml", "--all-targets", "--locked", "--", "-D", "warnings"]
 
-# スライドのCLI試験は実際のNode補助を起動するため、テストの前に補助の依存関係を導入します。
+# `check` scriptは整形を検査しません。VS Code拡張の整形の検査は`fmt-check-vscode`だけが行います。
+[tasks.check-vscode]
+private = true
+dependencies = ["install-vscode"]
+command = "npm"
+args = ["run", "check", "--prefix", "editors/vscode"]
+
+# スライドのCLI試験は実際のNode補助を起動し、補助パッケージ自身のテストも依存関係を使うため、テストの前に導入します。
 [tasks.install-slides-helper]
 private = true
 command = "npm"
@@ -82,3 +111,25 @@ private = true
 dependencies = ["test-workspace"]
 command = "git"
 args = ["diff", "--exit-code", "--", "packages/wasm/protocol.d.mts"]
+
+[tasks.test-slides-helper]
+private = true
+dependencies = ["install-slides-helper"]
+command = "npm"
+args = ["test", "--prefix", "packages/slides-helper"]
+
+[tasks.test-wasm]
+private = true
+command = "npm"
+args = ["test", "--prefix", "packages/wasm"]
+
+[tasks.test-textlint-plugin-asciidoc]
+private = true
+command = "npm"
+args = ["test", "--prefix", "packages/textlint-plugin-asciidoc"]
+
+[tasks.test-vscode]
+private = true
+dependencies = ["install-vscode"]
+command = "npm"
+args = ["test", "--prefix", "editors/vscode"]

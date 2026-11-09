@@ -13,7 +13,7 @@ AdocWeaveへの変更は短命なブランチで作業し、pull requestを通�
 Rustの整形には``rustfmt``、lint（誤りやすい書き方の検出）には``clippy``を使います。どちらもRustのtoolchainへ
 追加するcomponentで、rustupを使う場合は``rustup component add rustfmt clippy``で追加します。
 
-Rustの検査は、rootの``Makefile.toml``に定義したtaskを、cargo-makeの``makers``コマンドで実行します。
+検査と整形は、rootの``Makefile.toml``に定義したtaskを、cargo-makeの``makers``コマンドで実行します。
 taskは、名前を付けて呼び出せるコマンドの組です。次のようにcargo-makeを導入すると、``makers``が使えます。
 
 [source,console]
@@ -24,38 +24,34 @@ cargo install --locked cargo-make
 [#build-and-test]
 == 構築とテスト
 
-Rustのコードは、リポジトリのrootで次のように検査します。
+変更は、リポジトリのrootで次のように検査します。
 
 [source,console]
 ----
 makers verify
 ----
 
-``verify``は、root workspaceとZed拡張のそれぞれについて、整形の検査、Clippyおよびテストを実行します。
-Clippyの警告も失敗として扱います。引数を付けない``makers``も``verify``を実行します。
+``verify``は、対象ごとに次の検査を実行します。引数を付けない``makers``も``verify``を実行します。
 
-スライドのCLI試験は実際のNode補助を起動するため、``verify``はテストの前に``packages/slides-helper``へ
-補助の依存関係を導入します。
+* root workspaceとZed拡張: 整形の検査、Clippyおよびテスト。Clippyの警告も失敗として扱います。
+* ``packages/``にあるnpmパッケージ: ``npm test``
+* VS Code拡張: 整形の検査、``npm run check``（lint、型検査、manifestと構文強調の定義の検証）および``npm test``
+
+``verify``は、npmの依存関係を使う検査の前に、``packages/slides-helper``と``editors/vscode``へ依存関係を導入します。
+npmのcacheにない依存関係はregistry（パッケージの配布元）から取得するため、初回はregistryへの接続が必要です。
+スライドのCLI試験は実際のNode補助を起動するため、Rustのテストも補助の依存関係を使います。
 
 テストは、Rustの型からWebAssemblyパッケージの型宣言``packages/wasm/protocol.d.mts``を生成し直します。
 生成し直した結果がindex（``git add``で次のcommitへ登録した内容）と異なる場合は、``verify``が失敗します。
 protocolを変更した場合は、生成し直したファイルを``git add``してから再び実行し、同じcommitへ含めます。
 
-Rustのコードの整形は``makers fmt``、ファイルを変更しない整形の検査は``makers fmt-check``で実行します。
-どちらもroot workspaceとZed拡張を対象にします。
+整形は``makers fmt``、ファイルを変更しない整形の検査は``makers fmt-check``で実行します。
+どちらも、Rustのコード（root workspaceとZed拡張）とVS Code拡張のTypeScriptを対象にします。
+VS Code拡張の整形には、npmの依存関係に含まれる整形ツールのBiomeを使います。そのため、どちらも先に
+VS Code拡張の依存関係を導入し、``verify``と同じく初回はregistryへの接続が必要です。
 
-npmパッケージとVS Code拡張のテストは``verify``に含まれません。それぞれ次のように実行します。
-スライド用補助パッケージとVS Code拡張は、先に依存関係を導入します。
-
-[source,console]
-----
-npm ci --ignore-scripts --prefix packages/slides-helper
-npm test --prefix packages/slides-helper
-npm test --prefix packages/wasm
-node --test packages/textlint-plugin-asciidoc/*.test.mjs
-npm ci --ignore-scripts --prefix editors/vscode
-npm test --prefix editors/vscode
-----
+VS Codeを起動して拡張を動かすExtension host testは``verify``に含まれません。手順は
+xref:docs/developer-guide/vscode-development.adoc#vscode-development-checks[VS Code拡張の開発]を参照してください。
 
 Zed拡張はroot workspaceに含まれませんが、``verify``の対象です。公式レジストリと同じ``wasm32-wasip2``向けの
 構築は、xref:docs/developer-guide/zed-development.adoc#zed-development-build[Zed拡張の開発]を参照してください。
