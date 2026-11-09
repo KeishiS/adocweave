@@ -1,0 +1,87 @@
+= ADR 0050: 検査の入口を少数のcargo-make taskへ限定する
+:status: 採用
+
+== 状態
+
+{status}
+
+== 文脈
+
+Rustの検査は、root workspaceと、workspaceから除外したZed拡張（``editors/zed``）の両方に必要です。
+``cargo fmt --all``や``cargo test --workspace``はworkspaceに含まれないZed拡張を対象にしないため、同じ種類の検査を
+``--manifest-path``で対象を変えて2回ずつ実行する必要があります。
+
+workspaceのテストには前提と副作用があります。スライドのCLI試験は実際のNode補助を起動するため、補助の依存関係を
+先に導入する必要があります。また、``--all-features``のテストはRustの型から``packages/wasm/protocol.d.mts``を
+生成し直します。xref:0022-rust-first-wasm-protocol.adoc[ADR 0022]はこのファイルを公開仕様の正本としているため、
+生成し直した結果がcommitした内容と異なるままテストが成功すると、Rustの型と公開仕様の食い違いを見逃します。
+これらを人が手順として覚えて実行すると、漏れても気付けません。
+
+xref:0033-make-task-boundary.adoc[ADR 0033]の``Makefile.toml``は入口を4つに絞りましたが、CIが直接呼ぶtask、
+別名、中間のtaskおよび埋め込んだshell scriptを持っていました。入口から実際のコマンドまでを追うには、
+これらを順にたどる必要がありました。
+
+同じ開発手順を共有するMarginalisとRenkanは、cargo-makeの``fmt``、``fmt-check``および``verify``を
+共通の入口としています。
+
+== 決定
+
+検査の入口は、リポジトリのrootに置く``Makefile.toml``とし、cargo-makeで実行します。
+
+公開taskは``fmt``、``fmt-check``、``verify``と、``verify``の別名である``default``です。``default``は、引数を
+付けない``cargo make``を``verify``へつなぎます。公開taskは、MarginalisとRenkanの両方で使われている名前を持つ
+ものに限ります。その名前のtaskであれば、新しいADRなしで公開taskとして加えられます。
+
+公開taskは、依存するtaskを並べるだけにします。それ以外のtaskは``private``とし、``command``と``args``で
+1つのコマンドを実行します。private taskが依存に持つのは、そのコマンドの前提になるtaskだけです。
+``script``は書きません。複数の手順や条件分岐が必要な検査は、製品のテストかコマンド自体へ置きます。
+
+``[config]``では``default_to_workspace = false``と``skip_core_tasks = true``を設定します。前者は、taskを
+workspaceの各memberで繰り返さず、rootで1回だけ実行するためです。後者は、cargo-makeが組み込みで定義する
+taskの大半を読み込まないためです。ただし、cargo-makeが常に定義する空のtask``init``、``end``、``empty``は残り、
+一覧に表示されます。``init``と``end``は、どのtaskを実行するときも前後に実行されますが、何もしません。
+
+検査の前提になる依存関係の導入は、その検査を行うtaskの依存とします。cloneした直後でも
+``cargo make verify``だけで検査を始められます。テストが生成し直す追跡ファイルは、テストの後にgitで
+indexとの差分を検査し、テストが追跡ファイルを書き換えたまま成功として終わることを防ぎます。
+
+Rustの検査は、root workspaceとZed拡張に同じ種類を適用します。整形の検査、警告を失敗とするClippyおよび
+テストです。Zed拡張はworkspaceへ含めず、``--manifest-path``で対象を指定する別のtaskで検査します。
+
+Windowsでの開発は対象にしません。Rustのプロセス起動は、Windowsで``npm``を``npm.cmd``へ解決しないため、
+``npm``を呼ぶtaskをそのまま実行できません。
+
+本ADRはxref:0033-make-task-boundary.adoc[ADR 0033]を置き換えます。
+
+== 検討した代替案
+
+**taskを置かず、文書にコマンドを並べる。** 2つの対象への検査、前提の導入および差分の検査を人が順に
+行う必要があり、手順が漏れても気付けないため採用しません。
+
+**ADR 0033のtask構成を戻す。** ``security-audit``、``acceptance``、``release-check``およびCIが直接呼ぶtaskには、
+対応する検査がありません。実行する検査のない入口を公開して保守する理由がないため採用しません。
+
+**Cargoのaliasやshell scriptを入口にする。** Cargoのaliasは1つのcargoコマンドしか実行できず、npmやgitを
+呼べません。shell scriptは実行するshellに依存し、Marginalis、Renkanと入口の形がそろわないため採用しません。
+
+**taskに``script``を書いてtaskの数を減らす。** ファイルは短くなりますが、依存関係とshellの処理を同時に
+読む必要があり、ADR 0033の文脈と同じ読みにくさが戻るため採用しません。
+
+**Zed拡張をroot workspaceへ含める。** Zed拡張は、公式レジストリに合わせたRustのバージョンとeditionを持つ
+単独のcrateです。検査の都合で製品の構成を変えないため採用しません。
+
+== 帰結
+
+``Makefile.toml``で定義する公開taskは4つになり、その定義を読めば、入口から実際のコマンドまでをたどれます。
+検査を1つ加えると、1つのコマンドを実行するprivate taskが1つ増えます。
+
+private taskの名前は互換性を保証しません。個別に実行する場合は、cargo-makeの``--allow-private``を付けるか、
+対応するコマンドを直接実行します。
+
+開発者はcargo-makeを導入する必要があります。``verify``は実行のたびに``npm ci``でnpmの依存関係を導入し直します。
+npmのcacheにない依存関係はregistryから取得するため、初回はregistryへの接続が必要です。
+
+``verify``は``packages/wasm/protocol.d.mts``を書き換えることがあり、indexとの差分があれば失敗します。
+protocolを変更した場合は、生成し直したファイルを``git add``してから再び実行します。
+
+Windowsで``verify``が動作することは保証しません。
