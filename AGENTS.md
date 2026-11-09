@@ -58,7 +58,7 @@
 
 ## 検証
 
-* commitの前に `cargo make verify` を実行し、成功することを確かめます。
+* commitの前に `makers verify` を実行し、成功することを確かめます。
 
 ## エージェントの設定
 

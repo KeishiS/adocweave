@@ -32,7 +32,7 @@ rustup target add wasm32-wasip2
 == 構築と自動検査
 
 Zed拡張の整形の検査、Clippyおよびテストは、xref:../../CONTRIBUTING.adoc#build-and-test[構築とテスト]の
-``cargo make verify``に含まれます。Rustのテストは実行ファイルの選択と``adocweave lsp``の起動引数を検査します。
+``makers verify``に含まれます。Rustのテストは実行ファイルの選択と``adocweave lsp``の起動引数を検査します。
 
 Language Serverと、公式レジストリと同じtarget向けのZed拡張は、リポジトリrootで次のように構築します。
 

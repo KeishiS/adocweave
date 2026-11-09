@@ -26,10 +26,10 @@ xref:0033-make-task-boundary.adoc[ADR 0033]の``Makefile.toml``は入口を4つ�
 
 == 決定
 
-検査の入口は、リポジトリのrootに置く``Makefile.toml``とし、cargo-makeで実行します。
+検査の入口は、リポジトリのrootに置く``Makefile.toml``とし、cargo-makeの``makers``コマンドで実行します。
 
 公開taskは``fmt``、``fmt-check``、``verify``と、``verify``の別名である``default``です。``default``は、引数を
-付けない``cargo make``を``verify``へつなぎます。公開taskは、MarginalisとRenkanの両方で使われている名前を持つ
+付けない``makers``を``verify``へつなぎます。公開taskは、MarginalisとRenkanの両方で使われている名前を持つ
 ものに限ります。その名前のtaskであれば、新しいADRなしで公開taskとして加えられます。
 
 公開taskは、依存するtaskを並べるだけにします。それ以外のtaskは``private``とし、``command``と``args``で
@@ -42,7 +42,7 @@ taskの大半を読み込まないためです。ただし、cargo-makeが常に
 一覧に表示されます。``init``と``end``は、どのtaskを実行するときも前後に実行されますが、何もしません。
 
 検査の前提になる依存関係の導入は、その検査を行うtaskの依存とします。cloneした直後でも
-``cargo make verify``だけで検査を始められます。テストが生成し直す追跡ファイルは、テストの後にgitで
+``makers verify``だけで検査を始められます。テストが生成し直す追跡ファイルは、テストの後にgitで
 indexとの差分を検査し、テストが追跡ファイルを書き換えたまま成功として終わることを防ぎます。
 
 Rustの検査は、root workspaceとZed拡張に同じ種類を適用します。整形の検査、警告を失敗とするClippyおよび
