@@ -32,7 +32,7 @@
           # 検査を加えて新しいツールが必要になったら、同じ変更でここへ加えます。
           default = pkgs.mkShell {
             packages = [
-              # rustupと同じrust-toolchain.tomlを読み、Rustのバージョンをそろえます。
+              # rust-toolchain.tomlが定めるバージョンのRustを、コンポーネントと構築先を含めて導入します。
               (pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
               pkgs.cargo-make
               pkgs.nodejs_24

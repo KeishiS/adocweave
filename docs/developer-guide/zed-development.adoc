@@ -18,12 +18,11 @@ Zedの``lsp.adocweave``設定にも使用します。これにより、同じ言
 
 * Zedと``zed``または``zeditor`` CLI
 * 公式レジストリの``AsciiDoc``拡張
-* ``cargo``、``rustc``、``rustfmt``、``clippy``およびcargo-make
+* devShellが用意する``cargo``、``rustc``、``rustfmt``、``clippy``およびcargo-make
 
-Zed拡張は、公式レジストリと同じ``wasm32-wasip2`` target向けに構築します。rootの``rust-toolchain.toml``は、
-このtargetを含むRustを指定します。rustupを使う場合は、rustupがこのtargetを自動で導入します。Nixを使う場合は、
-devShellのRustに含まれます。導入の手順はxref:../../CONTRIBUTING.adoc#development-environment[開発環境]を
-参照してください。
+Zed拡張は、公式レジストリと同じ構築先である``wasm32-wasip2``向けに構築します。devShellのRustは、rootの
+``rust-toolchain.toml``の指定により、この構築先向けに構築できます。devShellを起動する手順は
+xref:../../CONTRIBUTING.adoc#development-environment[開発環境]を参照してください。
 
 [#zed-development-build]
 == 構築と自動検査
@@ -31,7 +30,7 @@ devShellのRustに含まれます。導入の手順はxref:../../CONTRIBUTING.ad
 Zed拡張の整形の検査、Clippyおよびテストは、xref:../../CONTRIBUTING.adoc#build-and-test[構築とテスト]の
 ``makers verify``に含まれます。Rustのテストは実行ファイルの選択と``adocweave lsp``の起動引数を検査します。
 
-Language Serverと、公式レジストリと同じtarget向けのZed拡張は、リポジトリrootで次のように構築します。
+Language Serverと、公式レジストリと同じ構築先向けのZed拡張は、リポジトリrootで次のように構築します。
 
 [source,console]
 ----
