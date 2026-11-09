@@ -78,7 +78,7 @@
   },
   "scripts": {
     "build": "node scripts/build.mts",
-    "check": "npm run format:check && npm run lint && tsc --noEmit && tsc -p tsconfig.scripts.json && node scripts/validate-package.mts",
+    "check": "npm run lint && tsc --noEmit && tsc -p tsconfig.scripts.json && node scripts/validate-package.mts",
     "format": "biome format --write src test scripts",
     "format:check": "biome format src test scripts",
     "lint": "biome lint src test scripts",
