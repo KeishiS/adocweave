@@ -1,0 +1,84 @@
+# 外から使うtaskは`fmt`、`fmt-check`、`verify`と、`verify`の別名の`default`です。
+# これらの名前はMarginalis、Renkanと共通です。
+# ほかのtaskはprivateで、それぞれ1つのコマンドを実行します。
+
+[config]
+default_to_workspace = false
+skip_core_tasks = true
+
+[tasks.default]
+alias = "verify"
+
+[tasks.fmt]
+description = "Format Rust sources in the workspace and the Zed extension"
+dependencies = ["fmt-workspace", "fmt-zed"]
+
+[tasks.fmt-check]
+description = "Check Rust formatting in the workspace and the Zed extension without changing files"
+dependencies = ["fmt-check-workspace", "fmt-check-zed"]
+
+[tasks.verify]
+description = "Check formatting, run Clippy with warnings denied, and run tests for the workspace and the Zed extension"
+dependencies = [
+  "fmt-check",
+  "clippy-workspace",
+  "clippy-zed",
+  "test-workspace",
+  "test-zed",
+  "protocol-unchanged",
+]
+
+[tasks.fmt-workspace]
+private = true
+command = "cargo"
+args = ["fmt", "--all"]
+
+[tasks.fmt-zed]
+private = true
+command = "cargo"
+args = ["fmt", "--manifest-path", "editors/zed/Cargo.toml"]
+
+[tasks.fmt-check-workspace]
+private = true
+command = "cargo"
+args = ["fmt", "--all", "--check"]
+
+[tasks.fmt-check-zed]
+private = true
+command = "cargo"
+args = ["fmt", "--manifest-path", "editors/zed/Cargo.toml", "--check"]
+
+[tasks.clippy-workspace]
+private = true
+command = "cargo"
+args = ["clippy", "--workspace", "--all-targets", "--all-features", "--locked", "--", "-D", "warnings"]
+
+[tasks.clippy-zed]
+private = true
+command = "cargo"
+args = ["clippy", "--manifest-path", "editors/zed/Cargo.toml", "--all-targets", "--locked", "--", "-D", "warnings"]
+
+# スライドのCLI試験は実際のNode補助を起動するため、テストの前に補助の依存関係を導入します。
+[tasks.install-slides-helper]
+private = true
+command = "npm"
+args = ["ci", "--ignore-scripts", "--no-audit", "--no-fund", "--prefix", "packages/slides-helper"]
+
+[tasks.test-workspace]
+private = true
+dependencies = ["install-slides-helper"]
+command = "cargo"
+args = ["test", "--workspace", "--all-features", "--locked"]
+
+[tasks.test-zed]
+private = true
+command = "cargo"
+args = ["test", "--manifest-path", "editors/zed/Cargo.toml", "--locked"]
+
+# `--all-features`のテストは、Rustの型から`packages/wasm/protocol.d.mts`を生成し直します。
+# commitした型宣言がRustの型と食い違っている場合は、indexとの差分として検出して失敗させます。
+[tasks.protocol-unchanged]
+private = true
+dependencies = ["test-workspace"]
+command = "git"
+args = ["diff", "--exit-code", "--", "packages/wasm/protocol.d.mts"]

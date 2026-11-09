@@ -18,7 +18,7 @@ Zedの``lsp.adocweave``設定にも使用します。これにより、同じ言
 
 * Zedと``zed``または``zeditor`` CLI
 * 公式レジストリの``AsciiDoc``拡張
-* ``cargo``、``rustc``および``rustfmt``
+* ``cargo``、``rustc``、``rustfmt``、``clippy``およびcargo-make
 * ``rustup``で導入した``wasm32-wasip2`` target
 
 targetがない場合は、Zedが使用するRustツールチェーンで次を実行します。
@@ -31,16 +31,17 @@ rustup target add wasm32-wasip2
 [#zed-development-build]
 == 構築と自動検査
 
-リポジトリrootで次を実行します。
+Zed拡張の整形の検査、Clippyおよびテストは、xref:../../CONTRIBUTING.adoc#build-and-test[構築とテスト]の
+``makers verify``に含まれます。Rustのテストは実行ファイルの選択と``adocweave lsp``の起動引数を検査します。
+
+Language Serverと、公式レジストリと同じtarget向けのZed拡張は、リポジトリrootで次のように構築します。
 
 [source,console]
 ----
 cargo build -p adocweave
-cargo test --manifest-path editors/zed/Cargo.toml
 cargo build --manifest-path editors/zed/Cargo.toml --target wasm32-wasip2
 ----
 
-Rustのテストは実行ファイルの選択と``adocweave lsp``の起動引数を検査します。
 公式レジストリは、Rust 1.90で``wasm32-wasip2``向けに構築します。
 ``editors/zed/Cargo.toml``の``rust-version``はそのバージョン以下とし、root workspaceの``rust-version``とは別に管理します。
 
