@@ -16,7 +16,7 @@
 ネイティブ実行ファイルとRust公開APIは、リポジトリ直下の``Cargo.toml``にある
 ``workspace.package.version``を基準とします。npmパッケージとエディタ拡張は、各ディレクトリのmanifestと
 Changelogを基準とする独立したバージョンを持ちます。
-root workspaceが必要とするRustのバージョンはlink:../Cargo.toml[``Cargo.toml``]の``rust-version``、
+rootのワークスペースが必要とするRustのバージョンはlink:../Cargo.toml[``Cargo.toml``]の``rust-version``、
 Node.jsのバージョンは``packages/slides-helper``と``packages/textlint-plugin-asciidoc``の``package.json``にある
 ``engines.node``を基準とします。
 開発と検査に使うRustのバージョンはlink:../rust-toolchain.toml[``rust-toolchain.toml``]で定め、
@@ -24,7 +24,7 @@ Node.jsのバージョンは``packages/slides-helper``と``packages/textlint-plu
 Zed拡張が対応する最小のRustのバージョンは、公式レジストリの構築環境に合わせて
 link:../editors/zed/Cargo.toml[拡張のmanifest]で別に指定します。
 
-ネイティブ版の変更内容はhttps://github.com/KeishiS/adocweave/releases[GitHub Releases]、npmパッケージと
+ネイティブ版の変更内容は https://github.com/KeishiS/adocweave/releases[GitHub Releases]、npmパッケージと
 エディタ拡張の変更内容は各配布物のChangelogを参照してください。
 
 == ディレクトリの案内

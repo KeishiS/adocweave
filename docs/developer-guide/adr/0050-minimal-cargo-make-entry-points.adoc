@@ -7,7 +7,7 @@
 
 == 文脈
 
-Rustの検査は、root workspaceと、workspaceから除外したZed拡張（``editors/zed``）の両方に必要です。
+Rustの検査は、rootのワークスペースと、ワークスペースから除外したZed拡張（``editors/zed``）の両方に必要です。
 ``cargo fmt --all``や``cargo test --workspace``はworkspaceに含まれないZed拡張を対象にしないため、同じ種類の検査を
 ``--manifest-path``で対象を変えて2回ずつ実行する必要があります。
 
@@ -46,7 +46,7 @@ taskの大半を読み込まないためです。ただし、cargo-makeが常に
 ``makers verify``だけで検査を始められます。テストが生成し直す追跡ファイルは、テストの後にgitで
 indexとの差分を検査し、テストが追跡ファイルを書き換えたまま成功として終わることを防ぎます。
 
-Rustの検査は、root workspaceとZed拡張に同じ種類を適用します。整形の検査、警告を失敗とするClippyおよび
+Rustの検査は、rootのワークスペースとZed拡張に同じ種類を適用します。整形の検査、警告を失敗とするClippyおよび
 テストです。Zed拡張はworkspaceへ含めず、``--manifest-path``で対象を指定する別のtaskで検査します。
 
 Windowsでの開発は対象にしません。Rustのプロセス起動は、Windowsで``npm``を``npm.cmd``へ解決しないため、
@@ -68,7 +68,7 @@ Windowsでの開発は対象にしません。Rustのプロセス起動は、Win
 **taskに``script``を書いてtaskの数を減らす。** ファイルは短くなりますが、依存関係とshellの処理を同時に
 読む必要があり、ADR 0033の文脈と同じ読みにくさが戻るため採用しません。
 
-**Zed拡張をroot workspaceへ含める。** Zed拡張は、公式レジストリに合わせたRustのバージョンとeditionを持つ
+**Zed拡張をrootのワークスペースへ含める。** Zed拡張は、公式レジストリに合わせたRustのバージョンとeditionを持つ
 単独のcrateです。検査の都合で製品の構成を変えないため採用しません。
 
 == 帰結

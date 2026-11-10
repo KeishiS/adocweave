@@ -39,7 +39,7 @@ cargo build --manifest-path editors/zed/Cargo.toml --target wasm32-wasip2
 ----
 
 公式レジストリは、Rust 1.90で``wasm32-wasip2``向けに構築します。
-``editors/zed/Cargo.toml``の``rust-version``はそのバージョン以下とし、root workspaceの``rust-version``とは別に管理します。
+``editors/zed/Cargo.toml``の``rust-version``はそのバージョン以下とし、rootのワークスペースの``rust-version``とは別に管理します。
 手元の構築と``makers verify``は``rust-toolchain.toml``が定めるバージョンのRustを使うため、Rust 1.90で
 構築できることは確かめません。
 

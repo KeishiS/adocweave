@@ -43,13 +43,13 @@ link:../../editors/vscode/CHANGELOG.md[拡張のChangelog]に記録します。
 |構築後の成果物、checksumおよび公開先
 |cargo-distが生成する標準dist-manifest
 
-|root workspaceが必要とするRustとNode.jsの最小バージョン
+|rootのワークスペースが必要とするRustとNode.jsの最小バージョン
 |link:../../Cargo.toml[Cargo workspaceの``rust-version``]と、``packages/slides-helper``および
 ``packages/textlint-plugin-asciidoc``の``package.json``にある``engines.node``
 
 |Zed拡張が対応する最小Rust版
 |link:../../editors/zed/Cargo.toml[Zed拡張のmanifest]。公式レジストリの構築環境に合わせ、
-root workspaceとは別に管理します。
+rootのワークスペースとは別に管理します。
 
 |ネイティブ版の変更
 |link:../../CHANGELOG.md[Changelog]。cargo-distが対応するバージョンの内容をGitHub Release本文へ取り込みます。

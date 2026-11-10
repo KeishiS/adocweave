@@ -135,7 +135,7 @@ HTML配信時の世代をページへ渡し、世代と診断を同じ通知で�
 別リポジトリでは変更の同期と検査も分かれます。独立した利用側がない段階では内部moduleとし、
 実装を共有する範囲と利用者が導入する配布単位を分けます。
 
-RustのCSL処理にはhttps://github.com/typst/hayagriva[Hayagriva]などの選択肢があります。採用する場合は、
+RustのCSL処理には https://github.com/typst/hayagriva[Hayagriva]などの選択肢があります。採用する場合は、
 CSL JSONからの入力変換、装飾結果の受渡しと、locator、同名著者の区別および参考文献順の連携を別途検証する
 必要があります。MathJaxのためのNode補助は引き続き必要なため、今回は同じ補助でciteprocを使い、外部計算の
 入口を一つにまとめ、今回保守する連携の数を抑えます。
