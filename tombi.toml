@@ -1,0 +1,14 @@
+# TOMLのlintと整形の設定です。対象は、.gitignoreが除外しない.tomlファイルです。
+
+[files]
+# テストの入力と期待値を置く`fixtures`ディレクトリは、どの階層にあっても対象にしません。
+exclude = ["**/fixtures/**"]
+
+# 1行の長さを100桁までにします。Cargo.tomlなどのキーと表は、Tombiの既定の動作として、
+# schemaが定める順序へ並べ替えます。
+[format.rules]
+line-width = 100
+
+# Tombiに同梱されたJSON Schemaだけを使い、検査の結果がネットワークの状態で変わらないようにします。
+[schema]
+catalog.paths = ["tombi://www.schemastore.org/api/json/catalog.json"]

@@ -28,9 +28,10 @@ xref:0033-make-task-boundary.adoc[ADR 0033]の``Makefile.toml``は入口を4つ�
 
 検査の入口は、リポジトリのrootに置く``Makefile.toml``とし、cargo-makeの``makers``コマンドで実行します。
 
-公開taskは``fmt``、``fmt-check``、``verify``と、``verify``の別名である``default``です。``default``は、引数を
-付けない``makers``を``verify``へつなぎます。公開taskは、MarginalisとRenkanの両方で使われている名前を持つ
-ものに限ります。その名前のtaskであれば、新しいADRなしで公開taskとして加えられます。
+公開taskは、MarginalisとRenkanの両方で使われている名前を持つものに限ります。その名前のtaskであれば、
+新しいADRなしで公開taskとして加えられます。本ADRで最初に定める公開taskは``fmt``、``fmt-check``、``verify``と、
+``verify``の別名である``default``です。``default``は、引数を付けない``makers``を``verify``へつなぎます。
+現在の公開taskの一覧は、``Makefile.toml``の先頭のコメントにあります。
 
 公開taskは、依存するtaskを並べるだけにします。それ以外のtaskは``private``とし、``command``と``args``で
 1つのコマンドを実行します。private taskが依存に持つのは、そのコマンドの前提になるtaskだけです。
@@ -72,7 +73,7 @@ Windowsでの開発は対象にしません。Rustのプロセス起動は、Win
 
 == 帰結
 
-``Makefile.toml``で定義する公開taskは4つになり、その定義を読めば、入口から実際のコマンドまでをたどれます。
+公開taskは少数に限られ、``Makefile.toml``の定義を読めば、入口から実際のコマンドまでをたどれます。
 検査を1つ加えると、1つのコマンドを実行するprivate taskが1つ増えます。
 
 private taskの名前は互換性を保証しません。個別に実行する場合は、cargo-makeの``--allow-private``を付けるか、

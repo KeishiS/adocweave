@@ -28,6 +28,14 @@
           pkgs.cargo-make
           pkgs.nodejs_24
           pkgs.git
+          # 整形とlint
+          pkgs.biome
+          pkgs.rumdl
+          pkgs.tombi
+          pkgs.yamlfmt
+          pkgs.yamllint
+          pkgs.actionlint
+          pkgs.nixfmt
         ];
       };
     };
