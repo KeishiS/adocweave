@@ -99,7 +99,7 @@ let output = render_with_inputs(analysis.document(), &policy, &inputs);
 ``ReferenceQuery``および解決結果を共有します。機能ごとに対象文字列を再解析しません。
 入力途中の構文失敗と、確定した対象不在を区別します。
 
-LSPアダプターはxref:language-server.adoc[Language Server設計]の通知順序、generation、
+LSPアダプターは xref:language-server.adoc[Language Server設計]の通知順序、generation、
 キャンセルおよびlock規則に従います。コアは特定の非同期runtimeを要求しません。
 
 == HTMLの安全性

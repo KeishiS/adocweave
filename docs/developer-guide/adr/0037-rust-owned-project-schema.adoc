@@ -20,7 +20,7 @@ JSON Schemaはエディタでの入力支援に必要です。一方、除外pat
 
 [NOTE]
 ====
-ここでいう``adocweave-config``はxref:0045-project-owned-configuration.adoc[ADR 0045]で廃止し、現在は
+ここでいう``adocweave-config``は xref:0045-project-owned-configuration.adoc[ADR 0045]で廃止し、現在は
 ``adocweave-project``が同じ役割を持ちます。Rustの型をSchemaの正本とする判断は維持しています。
 ====
 

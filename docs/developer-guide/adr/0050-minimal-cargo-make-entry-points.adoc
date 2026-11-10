@@ -13,7 +13,7 @@ Rustの検査は、rootのワークスペースと、ワークスペースから
 
 workspaceのテストには前提と副作用があります。スライドのCLI試験は実際のNode補助を起動するため、補助の依存関係を
 先に導入する必要があります。また、``--all-features``のテストはRustの型から``packages/wasm/protocol.d.mts``を
-生成し直します。xref:0022-rust-first-wasm-protocol.adoc[ADR 0022]はこのファイルを公開仕様の正本としているため、
+生成し直します。 xref:0022-rust-first-wasm-protocol.adoc[ADR 0022]はこのファイルを公開仕様の正本としているため、
 生成し直した結果がcommitした内容と異なるままテストが成功すると、Rustの型と公開仕様の食い違いを見逃します。
 これらを人が手順として覚えて実行すると、漏れても気付けません。
 
@@ -52,7 +52,7 @@ Rustの検査は、rootのワークスペースとZed拡張に同じ種類を適
 Windowsでの開発は対象にしません。Rustのプロセス起動は、Windowsで``npm``を``npm.cmd``へ解決しないため、
 ``npm``を呼ぶtaskをそのまま実行できません。
 
-本ADRはxref:0033-make-task-boundary.adoc[ADR 0033]を置き換えます。
+本ADRは xref:0033-make-task-boundary.adoc[ADR 0033]を置き換えます。
 
 == 検討した代替案
 

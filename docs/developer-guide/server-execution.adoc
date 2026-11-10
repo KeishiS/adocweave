@@ -1,7 +1,7 @@
 = 利用側アプリの実行仕様
 
 この文書は、CLI、Language Server、WebAssemblyその他の利用側アプリに共通する実行順序と失敗時保証の正本です。
-各コンポーネントの責務と依存方向はxref:architecture.adoc#component-boundaries[アーキテクチャ]を参照してください。
+各コンポーネントの責務と依存方向は xref:architecture.adoc#component-boundaries[アーキテクチャ]を参照してください。
 内部型、フィールドおよび状態遷移はRust APIと試験を基準とします。
 
 [#analysis-execution]
@@ -59,7 +59,7 @@ CPU処理、外部I/O、実行枠の待機およびクライアントとの通�
 
 ファイルシステムの競合に対する保証とOSごとの差は
 xref:adr/0046-project-owned-local-filesystem.adoc[ADR 0046]を参照してください。プロジェクト設定から決まる
-ルートディレクトリおよび上限の現在の動作はxref:../user-guide/project-configuration.adoc[プロジェクト設定]を
+ルートディレクトリおよび上限の現在の動作は xref:../user-guide/project-configuration.adoc[プロジェクト設定]を
 基準とします。Language Serverが解析する文書とファイル監視は
 xref:language-server.adoc#lsp-workspace[Language Serverの実行仕様]を基準とします。
 

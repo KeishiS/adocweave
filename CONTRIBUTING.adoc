@@ -232,7 +232,7 @@ citeprocのCPAL選択とNewcmフォントのGUST Font Licenseについては、�
 ``packages/slides-helper/licenses/evidence.json``へ記録します。依存の版やarchiveが変わった場合は、配布実物の
 本文と通知を確認し直します。CPALのGUI帰属表示条件を満たすため、CSLを使うpreviewの初期表示にはExhibit Bの
 copyright、phrase、URLを表示し、生成物には帰属表示とlicense本文を同梱します。
-licenseの選択と帰属表示を採用した理由はxref:docs/developer-guide/adr/0034-standard-runtime-dependency-audit.adoc[ADR 0034]を
+licenseの選択と帰属表示を採用した理由は xref:docs/developer-guide/adr/0034-standard-runtime-dependency-audit.adoc[ADR 0034]を
 参照してください。
 
 Reveal資産の正本は``crates/adocweave/assets/revealjs/sources.json``です。資産は``https://registry.npmjs.org/``の
@@ -275,7 +275,7 @@ CLIが端末へ表示するhelp、診断、進捗、要約およびerrorは英�
 
 == Pull request
 
-pull requestを作成するときは、link:.github/pull_request_template.md[Pull Request template]を使用します。
+pull requestを作成するときは、 link:.github/pull_request_template.md[Pull Request template]を使用します。
 変更の目的、主な変更点、実行した検証を簡潔に記載し、未実施の検証がある場合は理由を記載してください。
 
 CIの必須checkは``verify``の一つだけです。このcheckは検査を実行せず、常に成功します。

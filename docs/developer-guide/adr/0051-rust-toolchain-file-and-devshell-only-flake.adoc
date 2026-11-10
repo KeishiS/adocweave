@@ -53,7 +53,7 @@ nixpkgsの``nodejs_24``を使い、``package.json``の``engines.node``とは照�
 
 CIの実行環境は、このADRでは決めません。
 
-本ADRはxref:0035-minimal-nix-flake-outputs.adoc[ADR 0035]とxref:0039-ci-shell-responsibility-boundary.adoc[ADR 0039]を
+本ADRは xref:0035-minimal-nix-flake-outputs.adoc[ADR 0035]と xref:0039-ci-shell-responsibility-boundary.adoc[ADR 0039]を
 置き換えます。
 
 == 検討した代替案

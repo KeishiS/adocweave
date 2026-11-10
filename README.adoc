@@ -37,7 +37,7 @@ xref:docs/user-guide/compatibility.adoc[AsciiDocとの互換性]を参照して�
 
 == インストール
 
-利用する環境に応じた導入方法は、xref:docs/user-guide/release-installation.adoc[インストールと更新]にまとめています。
+利用する環境に応じた導入方法は、 xref:docs/user-guide/release-installation.adoc[インストールと更新]にまとめています。
 
 * コマンドライン
 * VS CodeとZed
@@ -75,7 +75,7 @@ adocweave format --write docs
 全オプション、標準入力および``include::``の扱いは、
 xref:docs/user-guide/command-line.adoc[コマンドライン]を参照してください。
 研究スライドのLaTeX数式やCSLによる引用整形には、Node.jsと別配布の補助プログラムが必要です。
-原稿作成、CSSによるデザイン調整と配布の手順は、xref:docs/user-guide/slides.adoc[スライドの作成]を参照してください。
+原稿作成、CSSによるデザイン調整と配布の手順は、 xref:docs/user-guide/slides.adoc[スライドの作成]を参照してください。
 
 == ドキュメント
 
@@ -93,7 +93,7 @@ xref:docs/user-guide/command-line.adoc[コマンドライン]を参照してく�
 開発環境、変更時の確認およびPull Requestの手順は、
 xref:CONTRIBUTING.adoc[コントリビューションガイド]を参照してください。
 
-セキュリティ上の問題は、link:.github/SECURITY.md[セキュリティポリシー]に従って報告してください。
+セキュリティ上の問題は、 link:.github/SECURITY.md[セキュリティポリシー]に従って報告してください。
 
 [#license]
 == ライセンス

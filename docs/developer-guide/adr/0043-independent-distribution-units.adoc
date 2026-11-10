@@ -33,7 +33,7 @@ crates.ioへ公開せず、Rust専用の圧縮ファイルや変更履歴も設�
 [#distribution-units]
 === 配布物ごとの版と公開先
 
-各配布物はlink:https://semver.org/lang/ja/[Semantic Versioning 2.0.0]に従う独立した版を持ちます。
+各配布物は link:https://semver.org/lang/ja/[Semantic Versioning 2.0.0]に従う独立した版を持ちます。
 互換性の対象は、ネイティブ実行ファイルではCLI、LSPおよびRust公開API、npmパッケージでは公開するJavaScriptと
 TypeScriptのAPI、エディタ拡張では設定、コマンドおよび利用者に示す動作です。``0.Y.Z``の間は、互換性のない変更と
 互換性のある機能追加でminor、互換性を維持する修正でpatchを更新します。``1.0.0``以降は、互換性のない変更で
@@ -135,7 +135,7 @@ link:https://docs.astral.sh/ruff/versioning/[Ruffの版管理]を参考にしま
 link:https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#initialize[
 Language Server Protocol 3.17の``initialize``仕様]に従います。
 
-ネイティブ成果物には、link:https://axodotdev.github.io/cargo-dist/book/reference/config.html[cargo-distの
+ネイティブ成果物には、 link:https://axodotdev.github.io/cargo-dist/book/reference/config.html[cargo-distの
 標準的な圧縮ファイル、checksumおよびmanifest]と、
 link:https://axodotdev.github.io/cargo-dist/book/supplychain-security/attestations/github.html[GitHub Artifact
 Attestation]を使用します。npmパッケージの公開元確認には

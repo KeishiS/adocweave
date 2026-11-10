@@ -1,8 +1,8 @@
 = 配布仕様
 
 この文書は、配布物と安全上の保証の正本です。利用者の導入、更新、checksumおよび
-attestationの確認はxref:../user-guide/release-installation.adoc[インストールと更新]、開発者がReleaseを
-準備する手順はxref:../../CONTRIBUTING.adoc[コントリビューションガイド]を参照してください。
+attestationの確認は xref:../user-guide/release-installation.adoc[インストールと更新]、開発者がReleaseを
+準備する手順は xref:../../CONTRIBUTING.adoc[コントリビューションガイド]を参照してください。
 
 [#distribution-authorities]
 == 配布情報の正本
@@ -12,7 +12,7 @@ attestationの確認はxref:../user-guide/release-installation.adoc[インスト
 |対象 |正本
 
 |ネイティブ実行ファイルのバージョン
-|リポジトリ直下のlink:../../Cargo.toml[Cargo workspaceの``package.version``]
+|リポジトリ直下の link:../../Cargo.toml[Cargo workspaceの``package.version``]
 
 |Zed拡張のバージョン
 |link:../../editors/zed/extension.toml[``editors/zed/extension.toml``の``version``]。変更内容は
@@ -28,11 +28,11 @@ link:../../editors/vscode/CHANGELOG.md[拡張のChangelog]に記録します。
 
 |textlint用Processorの版
 |link:../../packages/textlint-plugin-asciidoc/package.json[``packages/textlint-plugin-asciidoc/package.json``]。
-変更内容はlink:../../packages/textlint-plugin-asciidoc/CHANGELOG.md[パッケージのChangelog]に記録します。
+変更内容は link:../../packages/textlint-plugin-asciidoc/CHANGELOG.md[パッケージのChangelog]に記録します。
 
 |スライド用補助パッケージの版
 |link:../../packages/slides-helper/package.json[``packages/slides-helper/package.json``]。
-変更内容はlink:../../packages/slides-helper/CHANGELOG.md[パッケージのChangelog]に記録します。
+変更内容は link:../../packages/slides-helper/CHANGELOG.md[パッケージのChangelog]に記録します。
 
 |native成果物、対象環境および公開方法
 |link:../../dist-workspace.toml[cargo-distのworkspace設定]と各配布packageの``dist.toml``
@@ -98,8 +98,8 @@ WebAssemblyパッケージとtextlint用Processorは、それぞれの専用タ�
 VS Code拡張は``vscode/vX.Y.Z``タグで``vscode-publish.yml``を直接起動します。候補を構築するjobと二つの
 公開jobを一つのworkflow runへ置き、公開済みの内容が候補と一致する場合は送信を省略します。一方の公開jobが
 失敗した場合は、GitHub Actionsの``Re-run failed jobs``でそのjobだけを再実行します。
-この公開単位を選んだ理由はxref:adr/0043-independent-distribution-units.adoc[ADR 0043]、公開先と
-権限の分離はxref:adr/0023-publication-boundary.adoc[ADR 0023]を参照してください。
+この公開単位を選んだ理由は xref:adr/0043-independent-distribution-units.adoc[ADR 0043]、公開先と
+権限の分離は xref:adr/0023-publication-boundary.adoc[ADR 0023]を参照してください。
 
 [#artifact-contracts]
 == 成果物の保証
@@ -124,7 +124,7 @@ xref:core-profile.adoc#wasm-api[WebAssembly API]を基準とし、Worker内部�
 VS Code拡張とZed拡張はLanguage Serverを同梱しません。設定で指定した絶対path、``PATH``、自動取得の順で
 ``adocweave``を選び、``lsp``引数を付けて起動します。Zed拡張は最新の安定版GitHub Releaseにある
 ``adocweave-<target>.zip``を使用し、拡張版との一致を求めません。現在の選択規則と手動導入方法は利用者向け文書を基準とし、
-この分担の理由はxref:adr/0028-editor-language-server-boundary.adoc[ADR 0028]を参照してください。
+この分担の理由は xref:adr/0028-editor-language-server-boundary.adoc[ADR 0028]を参照してください。
 VS Code拡張が起動できる最低ネイティブ版は``0.51.0``です。拡張版とネイティブ版の一致は求めず、利用できる
 機能はLanguage Serverが``initialize``応答で示す標準LSP capabilityから判断します。
 
@@ -239,7 +239,7 @@ xref:adr/0032-same-run-release-publication.adoc[ADR 0032]を参照してくだ�
 [#distribution-verification]
 == 段階ごとの検証
 
-Pull Requestでは、作成者がxref:../../CONTRIBUTING.adoc#build-and-test[構築とテスト]の手順を手元で実行します。
+Pull Requestでは、作成者が xref:../../CONTRIBUTING.adoc#build-and-test[構築とテスト]の手順を手元で実行します。
 CIの必須check``verify``は検査を実行しません。
 
 ネイティブ版のRelease workflowでは固定したtagとcommitに対してplanを再生成し、対象OSでnative成果物を構築します。
@@ -248,7 +248,7 @@ VS Code拡張は専用タグのworkflowでVSIXの再現性、導入、更新、�
 textlint用Processorは、それぞれの公開workflowで候補を構築し、公開前後に対応する利用側で検査します。
 WebAssemblyパッケージも専用の公開workflowで候補を構築し、公開前後に対応する利用側で検査します。
 
-検査をこの段階へ分ける理由はxref:adr/0031-path-independent-pull-request-gate.adoc[ADR 0031]を参照してください。
+検査をこの段階へ分ける理由は xref:adr/0031-path-independent-pull-request-gate.adoc[ADR 0031]を参照してください。
 
 公開後は、WebAssemblyパッケージとtextlint用Processorをnpm Registry、VS Code拡張をVisual Studio Marketplaceと
 Open VSX Registryから取得して確認します。

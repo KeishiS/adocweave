@@ -210,13 +210,13 @@ extensions = ["color", "cancel", "mathtools"]
 ``base``、``ams``、``newcommand``、``configmacros``は常に有効で、この配列には指定しません。
 入力順にかかわらず、追加拡張は``color``、``cancel``、``mathtools``の順で有効にします。
 スライドのプレビューでは、設定ファイルの変更も反映します。
-具体的な記法と制約はxref:slides.adoc#slides-math-extensions[数式の色と追加記法]を参照してください。
+具体的な記法と制約は xref:slides.adoc#slides-math-extensions[数式の色と追加記法]を参照してください。
 
 [#terminal-colors]
 === 端末表示の配色
 
 ``terminal.colors.<ROLE>``の``<ROLE>``は設定値ではなく、色を決める対象を表します。指定できる名前と
-色の一覧はlink:../../config/adocweave.schema.json[JSON Schema]にあります。色は端末が元から持つ
+色の一覧は link:../../config/adocweave.schema.json[JSON Schema]にあります。色は端末が元から持つ
 基本色の名前（``black``、``red``、``green``、``yellow``、``blue``、``magenta``、``cyan``、``white``と、
 それぞれに``bright-``を付けた名前）と、端末が使っていた色をそのまま使う``default``です。
 

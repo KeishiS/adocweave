@@ -4,14 +4,14 @@ AsciiDocの原稿から、reveal.jsで表示するスライドを作成します
 原稿を編集しながらブラウザーで確認し、発表者ノート付きで発表したり、ノートを除いたHTMLやPDFを配布したりできます。
 このガイドでは、補助プログラムを使わない短い原稿から始め、数式、引用、見た目の調整へ進みます。
 
-* 初回の操作：xref:#slides-start[最初のスライド]
-* 原稿の記法：xref:#slides-authoring[原稿の構成]、xref:#slides-math-citations[数式と引用]
-* 見た目の変更：xref:#slides-css[CSSによるデザイン調整]
-* 発表と配布：xref:#slides-preview[プレビューと配信]、xref:#slides-export[HTMLの生成と配布]、xref:#slides-pdf[PDF保存]
+* 初回の操作： xref:#slides-start[最初のスライド]
+* 原稿の記法： xref:#slides-authoring[原稿の構成]、 xref:#slides-math-citations[数式と引用]
+* 見た目の変更： xref:#slides-css[CSSによるデザイン調整]
+* 発表と配布： xref:#slides-preview[プレビューと配信]、 xref:#slides-export[HTMLの生成と配布]、 xref:#slides-pdf[PDF保存]
 
 == 前提
 
-CLIの導入方法はxref:release-installation.adoc[インストールと更新]を参照してください。
+CLIの導入方法は xref:release-installation.adoc[インストールと更新]を参照してください。
 以下では、導入した``adocweave``を端末から実行できる状態を前提にします。
 ソースから試す場合は、開発環境を用意したリポジトリ内で、各コマンドの``adocweave``を
 ``cargo run -p adocweave --``へ置き換えてください。
@@ -25,7 +25,7 @@ xref:release-installation.adoc#slides-helper-installation[スライド用補助�
 [#slides-start]
 == 最初のスライド
 
-サンプルのlink:../../examples/slides/talk.adoc[``talk.adoc``]と
+サンプルの xref:../../examples/slides/talk.adoc[``talk.adoc``]と
 link:../../examples/slides/theme.css[``theme.css``]を同じ作業ディレクトリへコピーし、
 そのディレクトリを端末で開いてください。ソースからCLIを実行する場合は、リポジトリ内に作業ディレクトリを作ります。
 次のコマンドで、原稿とCSSの変更が反映されるプレビューを起動します。
@@ -41,8 +41,8 @@ adocweave preview talk.adoc --to revealjs --css theme.css
 終了するには、起動した端末で``Ctrl+C``を押してください。
 
 サンプルの本文や見出しを書き換え、次の節の記法を必要に応じて加えてください。
-共有用のHTMLを作る操作はxref:#slides-export[HTMLの生成と配布]、
-PDFを保存する操作はxref:#slides-pdf[ブラウザーからのPDF保存]で説明します。
+共有用のHTMLを作る操作は xref:#slides-export[HTMLの生成と配布]、
+PDFを保存する操作は xref:#slides-pdf[ブラウザーからのPDF保存]で説明します。
 
 [#slides-authoring]
 == 原稿の構成
@@ -170,7 +170,7 @@ foreignObject、外部参照およびCSSによる外部資産の取得には対�
 == 数式と引用
 
 LaTeX数式と、CSLという書誌情報の書式指定を使う引用には、スライド用補助プログラムが必要です。
-導入と選択方法はxref:release-installation.adoc#slides-helper-installation[補助パッケージの導入]を参照してください。
+導入と選択方法は xref:release-installation.adoc#slides-helper-installation[補助パッケージの導入]を参照してください。
 補助を明示する場合は、以下のコマンドへ``--slides-helper FILE``を追加します。
 数式やCSLで整形する引用が表示対象にない場合は、補助プログラムを起動しません。
 ``public``で除外したノートだけにある数式や引用のために、入力ファイルや補助プログラムを読み込むこともありません。
@@ -260,9 +260,9 @@ adocweave preview math.adoc --to revealjs --config math-extensions.toml --css th
 ----
 
 原稿と同じディレクトリの``.adocweave.toml``へ設定を追加した場合は、``--config``を省略できます。
-設定の探索範囲はxref:project-configuration.adoc#configuration-selection[設定ファイルの選択]を参照してください。
+設定の探索範囲は xref:project-configuration.adoc#configuration-selection[設定ファイルの選択]を参照してください。
 スライドのプレビュー中に設定を変更すると、数式も生成し直します。
-リポジトリには、link:../../examples/slides/math-extensions.adoc[拡張を使う原稿]と
+リポジトリには、 xref:../../examples/slides/math-extensions.adoc[拡張を使う原稿]と
 link:../../examples/slides/math-extensions.toml[対応する設定]もあります。これらを試す場合も、設定は``--config``で指定します。
 
 ``math.extensions``の省略または空配列は、追加拡張なしを表します。
@@ -521,7 +521,7 @@ PDFでは内容が多いスライドが複数ページに続く場合があり�
 === CSSファイルと資産の制約
 
 利用者のCSSはUTF-8のローカルファイルで指定します。
-件数と容量の上限は、xref:command-line.adoc#html-css[通常HTMLのCSS]と共通です。
+件数と容量の上限は、 xref:command-line.adoc#html-css[通常HTMLのCSS]と共通です。
 CSS内の``@import``や``url()``から、画像やフォントを探索・コピーすることはありません。
 単一HTMLにもそれらの別ファイルは収集しません。
 外部stylesheetのURL指定は受け付けません。
@@ -529,7 +529,7 @@ CSS内の``@import``や``url()``から、画像やフォントを探索・コピ
 背景画像やWebフォントを別ファイルから読み込むテーマの表示は保証しません。
 図は原稿の画像指定から取り込み、フォントは閲覧端末へ導入したものを指定してください。
 
-既定の値や個別の規則は、同梱のlink:../../crates/adocweave/assets/slides/theme.css[``theme.css``]と
+既定の値や個別の規則は、同梱の link:../../crates/adocweave/assets/slides/theme.css[``theme.css``]と
 link:../../crates/adocweave/assets/slides/content.css[``content.css``]で確認できます。
 
 [#slides-preview]
@@ -556,7 +556,7 @@ adocweave preview talk.adoc --to revealjs --audience public --css theme.css
 原稿、補助プログラムおよび引用の入力ファイルは不要です。内容を更新する場合は``convert``で生成し直してください。
 ``serve``は起動時の生成物を配信し続けます。更新した生成物を配信するには``serve``を再起動してください。
 ``--bind``、``--port``および``--allow-external``の指定は通常のプレビューと共通です。
-生成と配信のコマンドはxref:#slides-export[HTMLの生成と配布]で説明します。
+生成と配信のコマンドは xref:#slides-export[HTMLの生成と配布]で説明します。
 
 [#slides-export]
 == HTMLの生成と配布
@@ -566,7 +566,7 @@ adocweave preview talk.adoc --to revealjs --audience public --css theme.css
 AsciiDocの本文から、ローカルで開けるスライド一式を生成します。
 既定のディレクトリ出力では、生成先の``index.html``をブラウザーで開くと、
 同梱したreveal.jsとCSSで表示します。表示時に外部のJavaScriptやフォントを取得しません。
-発表者画面は、xref:#slides-preview[``preview``または``serve``によるローカルHTTP配信]を使ってください。
+発表者画面は、 xref:#slides-preview[``preview``または``serve``によるローカルHTTP配信]を使ってください。
 読み込める資源を制限するCSPは、ファイル表示ではHTMLの``meta``要素で指定します。
 そのため、埋込み先のページを制限する``frame-ancestors``など、HTTPヘッダ専用の制限は適用されません。
 ローカルHTTP配信ではヘッダでもCSPを指定します。

@@ -1,9 +1,9 @@
 = Language Serverの実行仕様
 
 この文書は、``adocweave lsp``で外部から観測できるプロトコル、並行実行および失敗時の保証の正本です。
-コンポーネント間の責務はxref:architecture.adoc#component-boundaries[アーキテクチャ]、
-一般的な解析の実行順序はxref:server-execution.adoc[利用側アプリの実行仕様]を参照してください。
-エディタへの導入方法はxref:../user-guide/release-installation.adoc[インストールと更新]を参照してください。
+コンポーネント間の責務は xref:architecture.adoc#component-boundaries[アーキテクチャ]、
+一般的な解析の実行順序は xref:server-execution.adoc[利用側アプリの実行仕様]を参照してください。
+エディタへの導入方法は xref:../user-guide/release-installation.adoc[インストールと更新]を参照してください。
 
 [#lsp-scope]
 == 対応範囲
@@ -65,7 +65,7 @@ Project内の``SourceId``はURIとして解釈しません。要求開始時点�
 ``ContentModified (-32801)``を返します。両方が発生した場合は、明示的な要求取消しを優先します。
 結果を公開する直前に文書の版と設定を再確認し、古い診断、編集または応答をクライアントへ送りません。
 
-ワーカー、スナップショットおよびロックの共通規則はxref:server-execution.adoc#asynchronous-execution[非同期実行]を
+ワーカー、スナップショットおよびロックの共通規則は xref:server-execution.adoc#asynchronous-execution[非同期実行]を
 基準とします。
 
 [#lsp-workspace]
