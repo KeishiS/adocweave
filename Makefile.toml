@@ -1,7 +1,4 @@
 # 外から使うtaskは`fmt`、`fmt-check`、`lint`、`verify`と、`verify`の別名の`default`です。
-# これらの名前はMarginalis、Renkanと共通です。
-# ほかのtaskはprivateで、それぞれ1つのコマンドを実行します。
-
 [config]
 default_to_workspace = false
 skip_core_tasks = true
@@ -70,7 +67,6 @@ private = true
 command = "cargo"
 args = ["fmt", "--manifest-path", "editors/zed/Cargo.toml"]
 
-# Biomeは、JSONとVS Code拡張のTypeScriptを扱います。対象はrootの`biome.json`で定めます。
 [tasks.fmt-biome]
 private = true
 command = "biome"
@@ -86,9 +82,6 @@ private = true
 command = "tombi"
 args = ["format"]
 
-# YAMLのファイルは、`.github`の下と、yamllintの設定の`.yamllint.yaml`だけです。
-# YAMLのファイルを別の場所へ加える場合は、`fmt-check-yaml`と`lint-yaml`の引数にも同じ変更で加えます。
-# 利用者ごとのyamlfmtの設定は読みません。空行は残し、続いた空行は1行にまとめます。
 [tasks.fmt-yaml]
 private = true
 command = "yamlfmt"
