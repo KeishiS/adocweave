@@ -2,12 +2,15 @@
 name = "adocweave-lsp"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
-homepage.workspace = true
-publish.workspace = true
-repository.workspace = true
 rust-version.workspace = true
 description = "Language Server for AdocWeave"
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+path = "src/lib.rs"
 
 [dependencies]
 adocweave-core = { path = "../adocweave-core" }
@@ -16,8 +19,8 @@ async-lsp = { version = "0.2.4", default-features = false, features = [
   "client-monitor",
   "omni-trait",
   "stdio",
-  "tracing",
   "tokio",
+  "tracing",
 ] }
 futures = { version = "0.3", default-features = false, features = ["std"] }
 serde = { version = "1", features = ["derive"] }
@@ -35,6 +38,3 @@ tower = "0.5"
 
 [dev-dependencies]
 tempfile = "3"
-
-[lib]
-path = "src/lib.rs"

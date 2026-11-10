@@ -73,12 +73,30 @@ args = ["run", "format:check", "--prefix", "editors/vscode"]
 [tasks.clippy-workspace]
 private = true
 command = "cargo"
-args = ["clippy", "--workspace", "--all-targets", "--all-features", "--locked", "--", "-D", "warnings"]
+args = [
+  "clippy",
+  "--workspace",
+  "--all-targets",
+  "--all-features",
+  "--locked",
+  "--",
+  "-D",
+  "warnings"
+]
 
 [tasks.clippy-zed]
 private = true
 command = "cargo"
-args = ["clippy", "--manifest-path", "editors/zed/Cargo.toml", "--all-targets", "--locked", "--", "-D", "warnings"]
+args = [
+  "clippy",
+  "--manifest-path",
+  "editors/zed/Cargo.toml",
+  "--all-targets",
+  "--locked",
+  "--",
+  "-D",
+  "warnings"
+]
 
 # `check` scriptは整形を検査しません。VS Code拡張の整形の検査は`fmt-check-vscode`だけが行います。
 [tasks.check-vscode]

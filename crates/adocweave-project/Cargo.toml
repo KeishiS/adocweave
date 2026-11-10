@@ -2,12 +2,15 @@
 name = "adocweave-project"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
-homepage.workspace = true
-publish.workspace = true
-repository.workspace = true
 rust-version.workspace = true
 description = "Owned request and result contracts for one AdocWeave project run"
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+path = "src/lib.rs"
 
 [dependencies]
 adocweave-core = { path = "../adocweave-core" }
@@ -17,16 +20,13 @@ serde_json = "1"
 sha2 = "0.11"
 toml = "1.1"
 
-[target.'cfg(target_os = "linux")'.dependencies]
-rustix = { version = "1.1.4", features = ["fs"] }
-
-[target.'cfg(not(target_os = "linux"))'.dependencies]
-tempfile = "3"
-
 [dev-dependencies]
 jsonschema = { version = "0.53", default-features = false }
 schemars = "1.2"
 tempfile = "3"
 
-[lib]
-path = "src/lib.rs"
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+tempfile = "3"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { version = "1.1.4", features = ["fs"] }
