@@ -2,24 +2,43 @@
 
 AdocWeaveへの変更は短命なブランチで作業し、pull requestを通してmainへ統合します。
 
+[#development-environment]
 == 開発環境
 
-構築とテストにはRustとNode.jsを使います。必要なバージョンは次のmanifestで定めています。
+構築と検査には、Rust、Node.js、cargo-makeおよびgitを使います。これらは、Nixで起動する開発用のシェルでそろえます。
+開発用のシェルを使えるのは、IntelやAMDの64ビットCPUで動くLinuxだけです。
 
-* Rust: rootのlink:Cargo.toml[``Cargo.toml``]にある``workspace.package.rust-version``以上のバージョン
-* Node.js: ``packages/slides-helper``と``packages/textlint-plugin-asciidoc``の``package.json``にある
-  ``engines.node``を満たすバージョン
+Nixは、導入するソフトウェアとそのバージョンをファイルへ宣言し、同じ環境を再現するパッケージマネージャーです。
+rootの link:flake.nix[``flake.nix``]は、Nixのflakeとして、開発用のシェルであるdevShellを定義します。
+flakeは、取得元（入力）と提供する環境（出力）を1つのファイルに宣言し、入力のリビジョンを``flake.lock``に
+固定する形式です。
 
-Rustの整形には``rustfmt``、lint（誤りやすい書き方の検出）には``clippy``を使います。どちらもRustのtoolchainへ
-追加するcomponentで、rustupを使う場合は``rustup component add rustfmt clippy``で追加します。
-
-検査と整形は、rootの``Makefile.toml``に定義したtaskを、cargo-makeの``makers``コマンドで実行します。
-taskは、名前を付けて呼び出せるコマンドの組です。次のようにcargo-makeを導入すると、``makers``が使えます。
+Nixは https://nixos.org/download/[公式の手順]で導入します。flakeと``nix develop``などのコマンドを
+使えるようにする実験的機能の``flakes``と``nix-command``を有効にします。
+手順は https://wiki.nixos.org/wiki/Flakes[NixOS Wikiの説明]にあります。そのうえで、リポジトリのrootから
+次のコマンドを実行すると、``makers verify``に必要なコマンドをそろえたシェルが起動します。
 
 [source,console]
 ----
-cargo install --locked cargo-make
+nix develop
 ----
+
+``ps``のようにOSが標準で備えるコマンドはdevShellに含めず、Nixの外の環境のものを使います。
+
+検査と整形は、rootの``Makefile.toml``に定義したtaskを、cargo-makeの``makers``コマンドで実行します。
+taskは、名前を付けて呼び出せるコマンドの組です。
+
+開発に使うRustのバージョンは、rootの link:rust-toolchain.toml[``rust-toolchain.toml``]で定めます。
+このファイルは、整形に使う``rustfmt``と、lint（誤りやすい書き方の検出）に使う``clippy``も、Rustと一緒に
+導入するコンポーネントとして指定します。devShellは、このファイルが定めるRustを導入します。
+
+利用者が構築できる最小のRustのバージョンは、rootの link:Cargo.toml[``Cargo.toml``]にある
+``workspace.package.rust-version``で示します。この値は``rust-toolchain.toml``の``channel``と常に同じにし、
+両方を同じコミットで更新します。開発と検査に使うRustが最小のバージョンと一致するため、``makers verify``が
+成功すれば、最小のバージョンで構築できることも確かめられます。
+
+``flake.lock``を更新するときは、``nix flake update``を実行し、``nix develop -c makers verify``が成功することを
+確かめてからpull requestにします。
 
 [#build-and-test]
 == 構築とテスト
@@ -248,8 +267,9 @@ pull requestを作成するときは、link:.github/pull_request_template.md[Pul
 
 CIの必須checkは``verify``の一つだけです。このcheckは検査を実行せず、常に成功します。
 
-手元では、<<build-and-test>>の手順で変更した製品を構築してテストします。Zedの構築は
-xref:docs/developer-guide/zed-development.adoc[Zed拡張の開発]に記載したRust版とtargetで確認してください。
+手元では、<<build-and-test>>の手順で変更した製品を構築してテストします。Zed拡張を変更した場合は、
+xref:docs/developer-guide/zed-development.adoc#zed-development-build[Zed拡張の開発]の手順で
+構築先の``wasm32-wasip2``向けにも構築してください。
 
 ブランチ保護では、GitHub Actionsが表示する``verify``だけをrequired status checkに設定します。
 

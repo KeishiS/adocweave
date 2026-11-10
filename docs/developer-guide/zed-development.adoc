@@ -18,15 +18,11 @@ Zedの``lsp.adocweave``設定にも使用します。これにより、同じ言
 
 * Zedと``zed``または``zeditor`` CLI
 * 公式レジストリの``AsciiDoc``拡張
-* ``cargo``、``rustc``、``rustfmt``、``clippy``およびcargo-make
-* ``rustup``で導入した``wasm32-wasip2`` target
+* devShellが用意する``cargo``、``rustc``、``rustfmt``、``clippy``およびcargo-make
 
-targetがない場合は、Zedが使用するRustツールチェーンで次を実行します。
-
-[source,console]
-----
-rustup target add wasm32-wasip2
-----
+Zed拡張は、公式レジストリと同じ構築先である``wasm32-wasip2``向けに構築します。devShellのRustは、rootの
+``rust-toolchain.toml``の指定により、この構築先向けに構築できます。devShellを起動する手順は
+xref:../../CONTRIBUTING.adoc#development-environment[開発環境]を参照してください。
 
 [#zed-development-build]
 == 構築と自動検査
@@ -34,7 +30,7 @@ rustup target add wasm32-wasip2
 Zed拡張の整形の検査、Clippyおよびテストは、xref:../../CONTRIBUTING.adoc#build-and-test[構築とテスト]の
 ``makers verify``に含まれます。Rustのテストは実行ファイルの選択と``adocweave lsp``の起動引数を検査します。
 
-Language Serverと、公式レジストリと同じtarget向けのZed拡張は、リポジトリrootで次のように構築します。
+Language Serverと、公式レジストリと同じ構築先向けのZed拡張は、リポジトリrootで次のように構築します。
 
 [source,console]
 ----
@@ -44,6 +40,8 @@ cargo build --manifest-path editors/zed/Cargo.toml --target wasm32-wasip2
 
 公式レジストリは、Rust 1.90で``wasm32-wasip2``向けに構築します。
 ``editors/zed/Cargo.toml``の``rust-version``はそのバージョン以下とし、root workspaceの``rust-version``とは別に管理します。
+手元の構築と``makers verify``は``rust-toolchain.toml``が定めるバージョンのRustを使うため、Rust 1.90で
+構築できることは確かめません。
 
 [#zed-development-install]
 == 開発用拡張の導入
@@ -118,7 +116,7 @@ version = "<extension.tomlのversion>"
 ``pnpm sort-extensions``を実行し、一つの拡張だけを扱うPull Requestとして提出します。説明には、既存の
 ``AsciiDoc``拡張が言語と構文強調を担当し、AdocWeave拡張はLanguage Server機能を追加することを記載します。
 
-更新時はsubmoduleを新しい公開branch上のcommitへ進め、``extensions.toml``の版も同時に更新します。
+更新時はsubmoduleを新しい公開branch上のcommitへ進め、``extensions.toml``のバージョンも同時に更新します。
 AdocWeaveリポジトリのworkflowから外部リポジトリへの投稿は行いません。
 
 [#zed-development-references]
