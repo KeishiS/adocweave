@@ -12,34 +12,23 @@
   outputs =
     { nixpkgs, rust-overlay, ... }:
     let
-      systems = [
-        "x86_64-linux"
-        "aarch64-linux"
-        "aarch64-darwin"
-      ];
+      system = "x86_64-linux";
+      pkgs = import nixpkgs {
+        inherit system;
+        overlays = [ rust-overlay.overlays.default ];
+      };
     in
     {
-      devShells = nixpkgs.lib.genAttrs systems (
-        system:
-        let
-          pkgs = import nixpkgs {
-            inherit system;
-            overlays = [ rust-overlay.overlays.default ];
-          };
-        in
-        {
-          # `makers verify`が実行するコマンドをそろえます。
-          # 検査を加えて新しいツールが必要になったら、同じ変更でここへ加えます。
-          default = pkgs.mkShell {
-            packages = [
-              # rust-toolchain.tomlが定めるバージョンのRustを、コンポーネントと構築先を含めて導入します。
-              (pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
-              pkgs.cargo-make
-              pkgs.nodejs_24
-              pkgs.git
-            ];
-          };
-        }
-      );
+      # `makers verify`が実行するコマンドをそろえます。
+      # 検査を加えて新しいツールが必要になったら、同じ変更でここへ加えます。
+      devShells.${system}.default = pkgs.mkShell {
+        packages = [
+          # rust-toolchain.tomlが定めるバージョンのRustを、コンポーネントと構築先を含めて導入します。
+          (pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
+          pkgs.cargo-make
+          pkgs.nodejs_24
+          pkgs.git
+        ];
+      };
     };
 }

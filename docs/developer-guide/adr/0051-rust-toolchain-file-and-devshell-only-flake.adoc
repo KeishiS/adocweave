@@ -35,9 +35,10 @@ Rustを導入できるようにするrust-overlayは、``fromRustupToolchainFile
 2つの値を照合する仕組みは作りません。開発と検査に使うRustが最小のバージョンそのものであるため、
 ``makers verify``の成功が、最小のバージョンで構築できることの確認になります。
 
-``flake.nix``は``devShells.<system>.default``だけを公開します。対象のsystemは``x86_64-linux``、
-``aarch64-linux``および``aarch64-darwin``で、定義は1つのファイルに収めます。``packages``、``apps``、``checks``
-および``overlays``は公開しません。
+``flake.nix``は``devShells.x86_64-linux.default``だけを公開し、定義は1つのファイルに収めます。この名前に
+含まれる``x86_64-linux``はsystem、つまりNixがCPUとOSの組で表す実行環境で、IntelやAMDの64ビットCPUで動く
+Linuxを指します。devShellの構築と``makers verify``の成功を確かめたのはこのsystemだけであるため、対象を
+これに限ります。``packages``、``apps``、``checks``および``overlays``は公開しません。
 
 devShellには、``makers verify``が実行するコマンドだけを入れます。検査を加える変更で新しいツールが必要に
 なった場合は、同じ変更でdevShellへ加えます。``ps``のようにOSが標準で備えるコマンドはdevShellに入れず、
@@ -80,6 +81,11 @@ CIの実行環境は、このADRでは決めません。
 **用途別に複数のdevShellを作る、または定義を``nix/``へ分割する。** 用途ごとに導入するツールを絞れますが、
 devShellが1つの小さなflakeでは、読む場所が増えるだけで読みにくくなるため採用しません。
 
+**ARMのLinuxとApple SiliconのMac（``aarch64-linux``と``aarch64-darwin``）も対象にする。** それらの
+コンピュータでも``nix develop``を使えるようになり、加える定義も短く済みます。ただし、devShellの構築と
+``makers verify``の成功を確かめたのは``x86_64-linux``だけで、確かめていない環境を対象として示すことに
+なるため採用しません。
+
 **``rust-version``を開発用のバージョンと別に管理する。** 利用者に古いRustでの構築を認められますが、
 開発と検査が別のバージョンを使うと、最小のバージョンで構築できることを確かめる検査がなくなります。
 そのため採用しません。
@@ -94,7 +100,9 @@ Rustのバージョンを上げる変更は、``rust-toolchain.toml``の``channe
 必要です。その場合はdevShellの評価が失敗するため、更新が必要なことに気付けます。
 
 開発に参加するには、flakeを有効にしたNixが必要です。Nixを使えない環境では、文書の手順で開発環境を
-用意できません。devShellが対象とする3つのsystem以外では、このflakeで開発環境を用意できません。
+用意できません。``x86_64-linux``以外のsystem（ARMのLinuxやApple SiliconのMacなど）では、このflakeで
+開発環境を用意できません。ほかのsystemを対象にするには、そのsystemでdevShellの構築と``makers verify``の
+成功を確かめたうえで、flakeへ加えます。
 
 devShellの外でrustupを通してRustを使うツールがリポジトリの中で動くと、rustupは``rust-toolchain.toml``が
 指定するRustを、コンポーネントと構築先を含めて導入します。

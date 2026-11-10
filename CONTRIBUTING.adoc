@@ -6,6 +6,7 @@ AdocWeaveへの変更は短命なブランチで作業し、pull requestを通�
 == 開発環境
 
 構築と検査には、Rust、Node.js、cargo-makeおよびgitを使います。これらは、Nixで起動する開発用のシェルでそろえます。
+開発用のシェルを使えるのは、IntelやAMDの64ビットCPUで動くLinuxだけです。
 
 Nixは、導入するソフトウェアとそのバージョンをファイルへ宣言し、同じ環境を再現するパッケージマネージャーです。
 rootの link:flake.nix[``flake.nix``]は、Nixのflakeとして、開発用のシェルであるdevShellを定義します。
