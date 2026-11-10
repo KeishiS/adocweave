@@ -44,6 +44,24 @@ taskは、名前を付けて呼び出せるコマンドの組です。
 ``makers fmt``で整形し直した結果を、``flake.lock``の更新と同じコミットに含めます。どちらか一方だけの
 コミットでは、整形の検査が失敗するためです。
 
+devShellは、direnvで自動的に読み込むこともできます。
+direnvは、ディレクトリへ移動したときに、そこにある``.envrc``に従って環境変数を設定するツールです。
+rootの``.envrc``は``use flake``でdevShellを読み込むため、リポジトリのディレクトリへ
+移動するだけで、devShellのコマンドを使えます。
+``flake.nix``、``flake.lock``または``rust-toolchain.toml``が変わると、devShellを読み込み直します。
+``use flake``はdirenv本体の機能のため、Nix向けの拡張であるnix-direnvは必要ありません。
+
+direnvは https://direnv.net/docs/installation.html[公式の手順]で導入し、使っているシェルへ組み込みます。
+初めて使うときと、``.envrc``が変わったときは、内容を確かめてから、リポジトリのrootで次のコマンドを
+実行して読み込みを許可します。
+
+[source,console]
+----
+direnv allow
+----
+
+direnvは任意です。使わない場合は、``nix develop``でdevShellを起動します。
+
 [#build-and-test]
 == 構築とテスト
 
