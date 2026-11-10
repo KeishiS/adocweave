@@ -62,6 +62,20 @@ direnv allow
 
 direnvは任意です。使わない場合は、``nix develop``でdevShellを起動します。
 
+エディタにZedを使う場合は、rootの``.zed/settings.json``により、``makers fmt``が整形する形式のファイルを、
+保存するときに同じツールと設定で整形します。整形の対象は<<build-and-test>>で説明します。ほかの形式の
+ファイルは、保存しても内容を変えません。そのため、AsciiDocの文書の行末の空白も、保存では消えません。
+
+Zedは、開いたディレクトリにある``.zed/settings.json``をプロジェクトの設定として読むため、
+リポジトリのrootを開きます。Zedは、初めて開いたディレクトリを制限モード（Restricted Mode）で開き、
+信頼するまでプロジェクトの設定を使いません。画面の案内に従って、リポジトリのrootを信頼します。
+
+整形に使うツールはdevShellにあるため、ZedがdevShellの環境を使えるようにします。ランチャーなどから
+起動したZedは、プロジェクトを開くときにdirenvの環境を読み込みます。端末から``zed .``（nixpkgsで
+導入したZedでは``zeditor .``）を実行して起動したZedは、direnvを実行せず、その端末の環境を使います。
+direnvを読み込んだリポジトリのディレクトリか、``nix develop``で起動したシェルから実行します。
+TOMLとNixのファイルの整形には、ZedのTOML拡張とNix拡張が必要です。
+
 [#build-and-test]
 == 構築とテスト
 

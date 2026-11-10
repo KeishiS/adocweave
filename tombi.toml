@@ -12,3 +12,10 @@ line-width = 100
 # Tombiに同梱されたJSON Schemaだけを使い、検査の結果がネットワークの状態で変わらないようにします。
 [schema]
 catalog.paths = ["tombi://www.schemastore.org/api/json/catalog.json"]
+
+# エディタが標準入力で渡すファイルには、上の`exclude`が効きません。また、ZedはCargoが生成する
+# `Cargo.lock`もTOMLとして扱います。`makers fmt`が整形しないこれらのファイルを、エディタで保存しても
+# 内容が変わらないよう、整形を無効にします。
+[[overrides]]
+files.include = ["**/Cargo.lock", "**/fixtures/**"]
+format.enabled = false
