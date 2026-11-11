@@ -1,8 +1,8 @@
 = アーキテクチャ
 
 この文書は、AdocWeaveを構成する各コンポーネントの責務と依存方向の正本です。公開APIと対応範囲は
-xref:core-profile.adoc[コアの対応範囲]、文法はxref:grammar.adoc[文法の詳細]、
-利用側アプリの実行順序はxref:server-execution.adoc[利用側アプリの実行仕様]を参照してください。
+xref:core-profile.adoc[コアの対応範囲]、文法は xref:grammar.adoc[文法の詳細]、
+利用側アプリの実行順序は xref:server-execution.adoc[利用側アプリの実行仕様]を参照してください。
 
 [#component-boundaries]
 == コンポーネントの責務と依存方向
@@ -55,11 +55,11 @@ WebAssemblyインターフェイス
 |===
 
 crateとpackageの正確な構成、依存先および版は各manifestを基準とします。この図は実装の直接依存を示します。
-配布成果物と公開方法はxref:release-distribution.adoc[配布仕様]を基準とし、この文書へ複製しません。
+配布成果物と公開方法は xref:release-distribution.adoc[配布仕様]を基準とし、この文書へ複製しません。
 
 BrowserのWorker入口とNode.jsのdirect入口は、同じWebAssembly要求、応答およびerrorの公開仕様を使います。
 公開仕様は利用側が渡す文書、必要な結果および外部リソースを表し、前処理、正規化、出力変換などの内部段階を
-含めません。具体的な設計判断はxref:adr/0042-wasm-public-contract.adoc[ADR 0042]を参照してください。
+含めません。具体的な設計判断は xref:adr/0042-wasm-public-contract.adoc[ADR 0042]を参照してください。
 
 [#single-analysis]
 == 単一解析
@@ -69,7 +69,7 @@ BrowserのWorker入口とNode.jsのdirect入口は、同じWebAssembly要求、�
 
 構文層は元のbyte列、空白、不完全な入力および回復地点を保持します。意味層は見出し、段落、表、参照、
 属性などを出力形式に依存しない値として表します。HTMLやエディタ固有の規則はParserへ持ち込みません。
-具体的な認識規則と回復結果はxref:grammar.adoc[文法の詳細]を基準とします。
+具体的な認識規則と回復結果は xref:grammar.adoc[文法の詳細]を基準とします。
 
 ``adocweave``内の``slides``は、この解析結果を参照する``Deck``へスライドの配置をまとめます。見出し、本文、
 発表者ノートを``BlockId``で保持し、本文のescapeとURL検査は

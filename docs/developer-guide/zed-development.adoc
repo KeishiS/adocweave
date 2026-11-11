@@ -27,7 +27,7 @@ xref:../../CONTRIBUTING.adoc#development-environment[開発環境]を参照し�
 [#zed-development-build]
 == 構築と自動検査
 
-Zed拡張の整形の検査、Clippyおよびテストは、xref:../../CONTRIBUTING.adoc#build-and-test[構築とテスト]の
+Zed拡張の整形の検査、Clippyおよびテストは、 xref:../../CONTRIBUTING.adoc#build-and-test[構築とテスト]の
 ``makers verify``に含まれます。Rustのテストは実行ファイルの選択と``adocweave lsp``の起動引数を検査します。
 
 Language Serverと、公式レジストリと同じ構築先向けのZed拡張は、リポジトリrootで次のように構築します。
@@ -39,7 +39,7 @@ cargo build --manifest-path editors/zed/Cargo.toml --target wasm32-wasip2
 ----
 
 公式レジストリは、Rust 1.90で``wasm32-wasip2``向けに構築します。
-``editors/zed/Cargo.toml``の``rust-version``はそのバージョン以下とし、root workspaceの``rust-version``とは別に管理します。
+``editors/zed/Cargo.toml``の``rust-version``はそのバージョン以下とし、rootのワークスペースの``rust-version``とは別に管理します。
 手元の構築と``makers verify``は``rust-toolchain.toml``が定めるバージョンのRustを使うため、Rust 1.90で
 構築できることは確かめません。
 

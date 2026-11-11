@@ -1,0 +1,15 @@
+[global]
+disable = ["MD013"]  # 1行の長さ制限無効化
+cache = false
+exclude = ["**/fixtures/**"]
+
+[MD004]  # 箇条書き
+style = "dash"
+
+[MD033]  # HTMLタグ
+allowed-elements = ["p", "img"]
+
+[per-file-ignores]
+".github/pull_request_template.md" = ["MD041"]  # H1抑制
+"editors/*/README.md" = ["MD041"]  # H1抑制
+"packages/wasm/README.md" = ["MD057"]  # リンク先検証無効化

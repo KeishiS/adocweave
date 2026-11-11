@@ -23,7 +23,7 @@ resource、local target、formatterおよびHTMLの責務別sectionを持ち、�
 
 [NOTE]
 ====
-``adocweave-config`` crateはxref:0045-project-owned-configuration.adoc[ADR 0045]で廃止し、この責務は
+``adocweave-config`` crateは xref:0045-project-owned-configuration.adoc[ADR 0045]で廃止し、この責務は
 ``adocweave-project``が持ちます。コアcrateがTOML、filesystemおよび設定探索へ依存しない判断は維持しています。
 ====
 

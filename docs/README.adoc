@@ -16,15 +16,15 @@
 ネイティブ実行ファイルとRust公開APIは、リポジトリ直下の``Cargo.toml``にある
 ``workspace.package.version``を基準とします。npmパッケージとエディタ拡張は、各ディレクトリのmanifestと
 Changelogを基準とする独立したバージョンを持ちます。
-root workspaceが必要とするRustのバージョンはlink:../Cargo.toml[``Cargo.toml``]の``rust-version``、
+rootのワークスペースが必要とするRustのバージョンは link:../Cargo.toml[``Cargo.toml``]の``rust-version``、
 Node.jsのバージョンは``packages/slides-helper``と``packages/textlint-plugin-asciidoc``の``package.json``にある
 ``engines.node``を基準とします。
-開発と検査に使うRustのバージョンはlink:../rust-toolchain.toml[``rust-toolchain.toml``]で定め、
+開発と検査に使うRustのバージョンは link:../rust-toolchain.toml[``rust-toolchain.toml``]で定め、
 ``rust-version``と同じ値に保ちます。
 Zed拡張が対応する最小のRustのバージョンは、公式レジストリの構築環境に合わせて
 link:../editors/zed/Cargo.toml[拡張のmanifest]で別に指定します。
 
-ネイティブ版の変更内容はhttps://github.com/KeishiS/adocweave/releases[GitHub Releases]、npmパッケージと
+ネイティブ版の変更内容は https://github.com/KeishiS/adocweave/releases[GitHub Releases]、npmパッケージと
 エディタ拡張の変更内容は各配布物のChangelogを参照してください。
 
 == ディレクトリの案内
@@ -34,14 +34,14 @@ user-guideディレクトリには、利用目的、操作、入力および結�
 developer-guideディレクトリには、アプリへの組み込み、実装、配布および設計について、
 コンポーネントの責務と分担、不変条件および検証方法を記載します。基本的な操作手順は
 user-guideと重複させません。
-採用した設計とその背景はxref:developer-guide/adr/index.adoc[ADRの索引]、
+採用した設計とその背景は xref:developer-guide/adr/index.adoc[ADRの索引]、
 現在の主要な計画はロードマップ、作業単位はGitHub Issuesに記録します。
 完了した作業の経緯はGitHub Issues、Pull RequestおよびGit履歴から確認します。
 
 == このリポジトリで使用する用語
 
 この節は、AdocWeave固有の考え方を表す語の意味を定めます。一般名詞を日本語と原綴りのどちらで
-書くかは、xref:developer-guide/terminology.adoc[用語の表記]を基準とします。``syntax-mode``の設定値を
+書くかは、 xref:developer-guide/terminology.adoc[用語の表記]を基準とします。``syntax-mode``の設定値を
 指すモード名は、設定値の原綴りを保って表記します。
 
 [#syntax-mode-terminology]

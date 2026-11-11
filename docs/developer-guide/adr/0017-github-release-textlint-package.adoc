@@ -5,7 +5,7 @@
 
 {status}
 
-この判断は、adapterの責務をxref:0018-textlint-txtast-backend.adoc[ADR 0018]、公開先と権限を
+この判断は、adapterの責務を xref:0018-textlint-txtast-backend.adoc[ADR 0018]、公開先と権限を
 xref:0023-publication-boundary.adoc[ADR 0023]、配布検査を
 xref:0030-minimal-textlint-release-gates.adoc[ADR 0030]、SBOMを
 xref:0036-no-unconsumed-sbom.adoc[ADR 0036]、配布物ごとの公開単位を

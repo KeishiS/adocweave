@@ -78,10 +78,7 @@
   },
   "scripts": {
     "build": "node scripts/build.mts",
-    "check": "npm run lint && tsc --noEmit && tsc -p tsconfig.scripts.json && node scripts/validate-package.mts",
-    "format": "biome format --write src test scripts",
-    "format:check": "biome format src test scripts",
-    "lint": "biome lint src test scripts",
+    "check": "tsc --noEmit && tsc -p tsconfig.scripts.json && node scripts/validate-package.mts",
     "test": "npm run build:test && node --test dist-test/test/*.test.js scripts/*.test.mts",
     "build:test": "node scripts/build-test.mts",
     "package": "node scripts/package.mts",
@@ -94,7 +91,6 @@
     "vscode-languageclient": "9.0.1"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.9",
     "@types/node": "26.6.3",
     "@types/vscode": "1.138.0",
     "@vscode/test-electron": "3.1.0",

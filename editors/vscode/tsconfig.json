@@ -13,13 +13,7 @@
     "skipLibCheck": true,
     "strict": true,
     "target": "ES2023",
-    "types": [
-      "node",
-      "vscode"
-    ]
+    "types": ["node", "vscode"]
   },
-  "include": [
-    "src/**/*.ts",
-    "test/**/*.ts"
-  ]
+  "include": ["src/**/*.ts", "test/**/*.ts"]
 }

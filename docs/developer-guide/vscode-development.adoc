@@ -24,7 +24,11 @@ literalなどの意味的な補足を担当し、見出しの基本色付けを�
 [#vscode-development-checks]
 == 自動検証
 
-整形の検査、``npm run check``および単体テストの``npm test``は、
+拡張のTypeScriptの整形の検査とlintには、JSONとTypeScriptを扱う整形とlintのツールであるBiomeを使います。
+Biomeは
+xref:../../CONTRIBUTING.adoc#development-environment[開発環境]のdevShellが用意し、拡張のnpmの依存関係には
+含めません。設定は、リポジトリのrootにある``biome.json``で定めます。
+これらの検査は、型検査と、manifestと構文強調の定義の検証を行う``npm run check``、単体テストの``npm test``と合わせて、
 xref:../../CONTRIBUTING.adoc#build-and-test[構築とテスト]の``makers verify``に含まれます。
 整形は``makers fmt``で行います。
 

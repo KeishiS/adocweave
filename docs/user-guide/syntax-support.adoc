@@ -203,7 +203,7 @@ book partは、``book`` doctypeで複数の章をまとめる構造上の区分�
 * 出力先の指定
 ----
 
-タイトルを表示する対象と制約は、xref:compatibility.adoc[AsciiDocとの互換性]を参照してください。
+タイトルを表示する対象と制約は、 xref:compatibility.adoc[AsciiDocとの互換性]を参照してください。
 
 ==== 明示アンカー
 
@@ -671,7 +671,7 @@ pass:[*このアスタリスクは強調になりません*]
 |対応
 |-
 
-|等幅（pass:[`text`]）
+|等幅（``+`text`+``）
 |対応
 |-
 

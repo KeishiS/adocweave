@@ -1,0 +1,83 @@
+{
+  "format_on_save": "off",
+  "remove_trailing_whitespace_on_save": false,
+  "ensure_final_newline_on_save": false,
+  "languages": {
+    "Rust": {
+      "format_on_save": "on",
+      "formatter": "language_server"
+    },
+    "JSON": {
+      "format_on_save": "on",
+      "formatter": {
+        "external": {
+          "command": "biome",
+          "arguments": ["format", "--stdin-file-path={buffer_path}"]
+        }
+      }
+    },
+    "JSONC": {
+      "format_on_save": "on",
+      "formatter": {
+        "external": {
+          "command": "biome",
+          "arguments": ["format", "--stdin-file-path={buffer_path}"]
+        }
+      }
+    },
+    "TypeScript": {
+      "format_on_save": "on",
+      "formatter": {
+        "external": {
+          "command": "biome",
+          "arguments": ["format", "--stdin-file-path={buffer_path}"]
+        }
+      }
+    },
+    "Markdown": {
+      "format_on_save": "on",
+      "formatter": {
+        "external": {
+          "command": "rumdl",
+          "arguments": ["fmt", "--stdin-filename", "{buffer_path}", "-"]
+        }
+      }
+    },
+    "TOML": {
+      "format_on_save": "on",
+      "language_servers": ["tombi"],
+      "formatter": {
+        "external": {
+          "command": "tombi",
+          "arguments": ["format", "--stdin-filename", "{buffer_path}", "-"]
+        }
+      }
+    },
+    "YAML": {
+      "format_on_save": "on",
+      "remove_trailing_whitespace_on_save": true,
+      "formatter": {
+        "external": {
+          "command": "yamlfmt",
+          "arguments": ["-"]
+        }
+      }
+    },
+    "Nix": {
+      "format_on_save": "on",
+      "formatter": {
+        "external": {
+          "command": "nixfmt",
+          "arguments": ["-"]
+        }
+      }
+    }
+  },
+  "lsp": {
+    "rust-analyzer": {
+      "initialization_options": {
+        "linkedProjects": ["./Cargo.toml", "./editors/zed/Cargo.toml"]
+      }
+    }
+  }
+}

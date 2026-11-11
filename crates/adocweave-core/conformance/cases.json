@@ -446,9 +446,7 @@
               "status": "resolved",
               "href": "/notes/123",
               "displayText": "Resolved note title",
-              "notices": [
-                "fallback"
-              ]
+              "notices": ["fallback"]
             }
           }
         ]
@@ -462,14 +460,10 @@
           "noreferrer": true
         },
         "sourceLanguages": {
-          "allowed": [
-            "rust"
-          ],
+          "allowed": ["rust"],
           "unknown": "diagnostic"
         },
-        "mathLanguages": [
-          "latex"
-        ],
+        "mathLanguages": ["latex"],
         "unresolvedReferences": "label-only",
         "resources": {
           "images": false,
@@ -614,11 +608,7 @@
       "contractImpact": "conformance,wasm-api",
       "source": "= Public Contract\n:toc:\n:toclevels: 2\n:sectnums:\n\n== First\n\n=== Child\n\n== Second\n",
       "publicContract": {
-        "features": [
-          "document-title",
-          "toc",
-          "section-numbers"
-        ],
+        "features": ["document-title", "toc", "section-numbers"],
         "stableContract": {
           "projectionAssertions": [
             {
@@ -627,16 +617,11 @@
             },
             {
               "pointer": "/structure/headings/1/number",
-              "value": [
-                1
-              ]
+              "value": [1]
             },
             {
               "pointer": "/structure/toc/0/children/0/number",
-              "value": [
-                1,
-                1
-              ]
+              "value": [1, 1]
             }
           ],
           "htmlContains": [
@@ -647,10 +632,7 @@
           "diagnosticCodes": [],
           "renderDiagnosticCodes": []
         },
-        "implementationDetails": [
-          "generated heading IDs",
-          "HTML whitespace and attribute order"
-        ]
+        "implementationDetails": ["generated heading IDs", "HTML whitespace and attribute order"]
       }
     },
     {
@@ -703,9 +685,7 @@
           "diagnosticCodes": [],
           "renderDiagnosticCodes": []
         },
-        "implementationDetails": [
-          "HTML whitespace and attribute order"
-        ]
+        "implementationDetails": ["HTML whitespace and attribute order"]
       }
     },
     {
@@ -720,10 +700,7 @@
       "contractImpact": "conformance,wasm-api",
       "source": "= Formula Contract\n:stem: latexmath\n\nInline stem:[x < y].\n\n[stem]\n++++\nx^2 < y\n++++\n",
       "publicContract": {
-        "features": [
-          "inline-formula",
-          "block-formula"
-        ],
+        "features": ["inline-formula", "block-formula"],
         "stableContract": {
           "projectionAssertions": [
             {
@@ -758,10 +735,7 @@
           "diagnosticCodes": [],
           "renderDiagnosticCodes": []
         },
-        "implementationDetails": [
-          "math engine integration",
-          "HTML whitespace and attribute order"
-        ]
+        "implementationDetails": ["math engine integration", "HTML whitespace and attribute order"]
       }
     },
     {
@@ -776,11 +750,7 @@
       "contractImpact": "conformance,wasm-api",
       "source": ".Public table\n[cols=\"1,1\",options=\"header\"]\n|===\n|Name |Value\n\n|alpha |one\n|===\n\n[quote,Author,Work]\n____\nQuoted text.\n____\n\n* first\n** nested\n\n.Public example\n====\nExample body.\n====\n\n.Public details\n[%collapsible]\n====\nHidden body.\n====\n",
       "publicContract": {
-        "features": [
-          "table",
-          "quote",
-          "unordered-list"
-        ],
+        "features": ["table", "quote", "unordered-list"],
         "stableContract": {
           "projectionAssertions": [
             {
@@ -831,10 +801,7 @@
       "contractImpact": "conformance,wasm-api",
       "source": "javascript:alert(1)[unsafe]\n",
       "publicContract": {
-        "features": [
-          "unsafe-url",
-          "diagnostic"
-        ],
+        "features": ["unsafe-url", "diagnostic"],
         "stableContract": {
           "projectionAssertions": [
             {
@@ -842,20 +809,11 @@
               "value": "javascript:alert(1)"
             }
           ],
-          "htmlContains": [
-            "<p>unsafe</p>"
-          ],
-          "diagnosticCodes": [
-            "invalid-url-scheme"
-          ],
-          "renderDiagnosticCodes": [
-            "invalid-url-scheme"
-          ]
+          "htmlContains": ["<p>unsafe</p>"],
+          "diagnosticCodes": ["invalid-url-scheme"],
+          "renderDiagnosticCodes": ["invalid-url-scheme"]
         },
-        "implementationDetails": [
-          "diagnostic message wording",
-          "diagnostic IDs and source ranges"
-        ]
+        "implementationDetails": ["diagnostic message wording", "diagnostic IDs and source ranges"]
       }
     },
     {
@@ -870,11 +828,7 @@
       "contractImpact": "conformance,wasm-api",
       "source": "[source,rust,options=unknown]\n----\nunsupported();\n----\n",
       "publicContract": {
-        "features": [
-          "source-block",
-          "unsupported-source-option",
-          "diagnostic"
-        ],
+        "features": ["source-block", "unsupported-source-option", "diagnostic"],
         "stableContract": {
           "projectionAssertions": [
             {
@@ -882,18 +836,11 @@
               "value": "rust"
             }
           ],
-          "htmlContains": [
-            "<pre><code class=\"language-rust\">unsupported();"
-          ],
-          "diagnosticCodes": [
-            "invalid-attribute"
-          ],
+          "htmlContains": ["<pre><code class=\"language-rust\">unsupported();"],
+          "diagnosticCodes": ["invalid-attribute"],
           "renderDiagnosticCodes": []
         },
-        "implementationDetails": [
-          "diagnostic message wording",
-          "diagnostic IDs and source ranges"
-        ]
+        "implementationDetails": ["diagnostic message wording", "diagnostic IDs and source ranges"]
       }
     }
   ],

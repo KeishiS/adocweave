@@ -1,7 +1,4 @@
-# 外から使うtaskは`fmt`、`fmt-check`、`verify`と、`verify`の別名の`default`です。
-# これらの名前はMarginalis、Renkanと共通です。
-# ほかのtaskはprivateで、それぞれ1つのコマンドを実行します。
-
+# 外から使うtaskは`fmt`、`fmt-check`、`lint`、`verify`と、`verify`の別名の`default`です。
 [config]
 default_to_workspace = false
 skip_core_tasks = true
@@ -10,20 +7,47 @@ skip_core_tasks = true
 alias = "verify"
 
 [tasks.fmt]
-description = "Format Rust sources in the workspace and the Zed extension and TypeScript sources in the VS Code extension"
-dependencies = ["fmt-workspace", "fmt-zed", "fmt-vscode"]
+description = "Format Rust, TypeScript in the VS Code extension, JSON, Markdown, TOML, YAML, and Nix files"
+dependencies = [
+  "fmt-workspace",
+  "fmt-zed",
+  "fmt-biome",
+  "fmt-markdown",
+  "fmt-toml",
+  "fmt-yaml",
+  "fmt-nix",
+]
 
 [tasks.fmt-check]
-description = "Check Rust formatting in the workspace and the Zed extension and TypeScript formatting in the VS Code extension without changing files"
-dependencies = ["fmt-check-workspace", "fmt-check-zed", "fmt-check-vscode"]
-
-[tasks.verify]
-description = "Check formatting, run Clippy with warnings denied, run the VS Code extension checks, and run the Rust, npm package, and VS Code extension tests"
+description = "Check the formatting of the files that fmt formats without changing them"
 dependencies = [
-  "fmt-check",
+  "fmt-check-workspace",
+  "fmt-check-zed",
+  "fmt-check-biome",
+  "fmt-check-markdown",
+  "fmt-check-toml",
+  "fmt-check-yaml",
+  "fmt-check-nix",
+]
+
+[tasks.lint]
+description = "Run Clippy with warnings denied, the VS Code extension checks, and the linters for JSON, TypeScript, Markdown, TOML, YAML, and GitHub Actions workflows"
+dependencies = [
   "clippy-workspace",
   "clippy-zed",
   "check-vscode",
+  "lint-biome",
+  "lint-markdown",
+  "lint-toml",
+  "lint-yaml",
+  "lint-workflows",
+]
+
+[tasks.verify]
+description = "Check formatting, run the linters, and run the Rust, npm package, and VS Code extension tests"
+dependencies = [
+  "fmt-check",
+  "lint",
   "test-workspace",
   "test-zed",
   "protocol-unchanged",
@@ -43,16 +67,45 @@ private = true
 command = "cargo"
 args = ["fmt", "--manifest-path", "editors/zed/Cargo.toml"]
 
-[tasks.install-vscode]
+[tasks.fmt-biome]
 private = true
-command = "npm"
-args = ["ci", "--ignore-scripts", "--no-audit", "--no-fund", "--prefix", "editors/vscode"]
+command = "biome"
+args = ["format", "--write"]
 
-[tasks.fmt-vscode]
+[tasks.fmt-markdown]
 private = true
-dependencies = ["install-vscode"]
-command = "npm"
-args = ["run", "format", "--prefix", "editors/vscode"]
+command = "rumdl"
+args = ["fmt"]
+
+[tasks.fmt-toml]
+private = true
+command = "tombi"
+args = ["format"]
+
+[tasks.yaml-no-trailing-spaces]
+private = true
+command = "yamllint"
+args = [
+  "--strict",
+  "-d",
+  "{rules: {trailing-spaces: enable}}",
+  ".github",
+  ".yamlfmt.yaml",
+  ".yamllint.yaml",
+]
+
+[tasks.fmt-yaml]
+private = true
+dependencies = ["yaml-no-trailing-spaces"]  # yamlfmtの不具合の回避
+command = "yamlfmt"
+args = [".github", ".yamlfmt.yaml", ".yamllint.yaml"]
+
+# nixfmtへディレクトリを渡す使い方は非推奨のため、対象のファイルを引数で指定します。
+# Nixのファイルを増やす場合は、`fmt-check-nix`の引数にも同じ変更で加えます。
+[tasks.fmt-nix]
+private = true
+command = "nixfmt"
+args = ["flake.nix"]
 
 [tasks.fmt-check-workspace]
 private = true
@@ -64,28 +117,97 @@ private = true
 command = "cargo"
 args = ["fmt", "--manifest-path", "editors/zed/Cargo.toml", "--check"]
 
-[tasks.fmt-check-vscode]
+[tasks.fmt-check-biome]
 private = true
-dependencies = ["install-vscode"]
-command = "npm"
-args = ["run", "format:check", "--prefix", "editors/vscode"]
+command = "biome"
+args = ["format"]
+
+[tasks.fmt-check-markdown]
+private = true
+command = "rumdl"
+args = ["fmt", "--check"]
+
+[tasks.fmt-check-toml]
+private = true
+command = "tombi"
+args = ["format", "--check"]
+
+[tasks.fmt-check-yaml]
+private = true
+command = "yamlfmt"
+args = ["-lint", ".github", ".yamlfmt.yaml", ".yamllint.yaml"]
+
+[tasks.fmt-check-nix]
+private = true
+command = "nixfmt"
+args = ["--check", "flake.nix"]
 
 [tasks.clippy-workspace]
 private = true
 command = "cargo"
-args = ["clippy", "--workspace", "--all-targets", "--all-features", "--locked", "--", "-D", "warnings"]
+args = [
+  "clippy",
+  "--workspace",
+  "--all-targets",
+  "--all-features",
+  "--locked",
+  "--",
+  "-D",
+  "warnings",
+]
 
 [tasks.clippy-zed]
 private = true
 command = "cargo"
-args = ["clippy", "--manifest-path", "editors/zed/Cargo.toml", "--all-targets", "--locked", "--", "-D", "warnings"]
+args = [
+  "clippy",
+  "--manifest-path",
+  "editors/zed/Cargo.toml",
+  "--all-targets",
+  "--locked",
+  "--",
+  "-D",
+  "warnings",
+]
 
-# `check` scriptは整形を検査しません。VS Code拡張の整形の検査は`fmt-check-vscode`だけが行います。
+[tasks.install-vscode]
+private = true
+command = "npm"
+args = ["ci", "--ignore-scripts", "--no-audit", "--no-fund", "--prefix", "editors/vscode"]
+
+# `check` scriptは、型検査と、manifestと構文強調の定義の検証を行います。lintは`lint-biome`が行います。
 [tasks.check-vscode]
 private = true
 dependencies = ["install-vscode"]
 command = "npm"
 args = ["run", "check", "--prefix", "editors/vscode"]
+
+[tasks.lint-biome]
+private = true
+command = "biome"
+args = ["lint", "--error-on-warnings"]
+
+[tasks.lint-markdown]
+private = true
+command = "rumdl"
+args = ["check"]
+
+[tasks.lint-toml]
+private = true
+command = "tombi"
+args = ["lint", "--error-on-warnings"]
+
+[tasks.lint-yaml]
+private = true
+command = "yamllint"
+args = ["--strict", ".github", ".yamlfmt.yaml", ".yamllint.yaml"]
+
+# release.ymlはcargo-distが生成します。生成部分と公開workflowに残るshellcheckの指摘のうち、
+# 引用符の省略(SC2086)と、同じファイルへの個別の追記(SC2129)は報告しません。
+[tasks.lint-workflows]
+private = true
+command = "actionlint"
+args = ["-ignore", "SC2086", "-ignore", "SC2129"]
 
 # スライドのCLI試験は実際のNode補助を起動し、補助パッケージ自身のテストも依存関係を使うため、テストの前に導入します。
 [tasks.install-slides-helper]

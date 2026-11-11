@@ -1,0 +1,12 @@
+[files]
+exclude = ["**/fixtures/**"]
+
+[format.rules]
+line-width = 100
+
+[schema]
+catalog.paths = ["tombi://www.schemastore.org/api/json/catalog.json"]
+
+[[overrides]]
+files.include = ["**/Cargo.lock", "**/fixtures/**"]
+format.enabled = false

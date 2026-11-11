@@ -5,7 +5,9 @@ AdocWeaveへの変更は短命なブランチで作業し、pull requestを通�
 [#development-environment]
 == 開発環境
 
-構築と検査には、Rust、Node.js、cargo-makeおよびgitを使います。これらは、Nixで起動する開発用のシェルでそろえます。
+構築と検査には、Rust、Node.js、cargo-make、gitと、ファイルの整形とlintに使うツールを使います。
+lintは、誤りやすい書き方や、決めた規則に合わない書き方を検出する検査です。
+これらは、Nixで起動する開発用のシェルでそろえます。
 開発用のシェルを使えるのは、IntelやAMDの64ビットCPUで動くLinuxだけです。
 
 Nixは、導入するソフトウェアとそのバージョンをファイルへ宣言し、同じ環境を再現するパッケージマネージャーです。
@@ -29,8 +31,8 @@ nix develop
 taskは、名前を付けて呼び出せるコマンドの組です。
 
 開発に使うRustのバージョンは、rootの link:rust-toolchain.toml[``rust-toolchain.toml``]で定めます。
-このファイルは、整形に使う``rustfmt``と、lint（誤りやすい書き方の検出）に使う``clippy``も、Rustと一緒に
-導入するコンポーネントとして指定します。devShellは、このファイルが定めるRustを導入します。
+このファイルは、整形に使う``rustfmt``と、lintに使う``clippy``も、Rustと一緒に導入するコンポーネントとして
+指定します。devShellは、このファイルが定めるRustを導入します。
 
 利用者が構築できる最小のRustのバージョンは、rootの link:Cargo.toml[``Cargo.toml``]にある
 ``workspace.package.rust-version``で示します。この値は``rust-toolchain.toml``の``channel``と常に同じにし、
@@ -38,7 +40,50 @@ taskは、名前を付けて呼び出せるコマンドの組です。
 成功すれば、最小のバージョンで構築できることも確かめられます。
 
 ``flake.lock``を更新するときは、``nix flake update``を実行し、``nix develop -c makers verify``が成功することを
-確かめてからpull requestにします。
+確かめてからpull requestにします。更新で整形のツールのバージョンが変わり、整形の結果が変わった場合は、
+``makers fmt``で整形し直した結果を、``flake.lock``の更新と同じコミットに含めます。どちらか一方だけの
+コミットでは、整形の検査が失敗するためです。
+
+devShellは、direnvで自動的に読み込むこともできます。
+direnvは、ディレクトリへ移動したときに、そこにある``.envrc``に従って環境変数を設定するツールです。
+rootの``.envrc``は``use flake``でdevShellを読み込むため、リポジトリのディレクトリへ
+移動するだけで、devShellのコマンドを使えます。
+``flake.nix``、``flake.lock``または``rust-toolchain.toml``が変わると、devShellを読み込み直します。
+``use flake``はdirenv本体の機能のため、Nix向けの拡張であるnix-direnvは必要ありません。
+
+direnvは https://direnv.net/docs/installation.html[公式の手順]で導入し、使っているシェルへ組み込みます。
+初めて使うときと、``.envrc``が変わったときは、内容を確かめてから、リポジトリのrootで次のコマンドを
+実行して読み込みを許可します。
+
+[source,console]
+----
+direnv allow
+----
+
+direnvは任意です。使わない場合は、``nix develop``でdevShellを起動します。
+
+エディタにZedを使う場合は、rootの``.zed/settings.json``により、``makers fmt``が整形する形式のファイルを、
+保存するときに同じツールと設定で整形します。整形の対象は<<build-and-test>>で説明します。ほかの形式の
+ファイルは、保存しても内容を変えません。そのため、AsciiDocの文書の行末の空白も、保存では消えません。
+
+Zedは、開いたディレクトリにある``.zed/settings.json``をプロジェクトの設定として読むため、
+リポジトリのrootを開きます。Zedは、初めて開いたディレクトリを制限モード（Restricted Mode）で開き、
+信頼するまでプロジェクトの設定を使いません。画面の案内に従って、リポジトリのrootを信頼します。
+
+整形に使うツールはdevShellにあるため、ZedがdevShellの環境を使えるようにします。ランチャーなどから
+起動したZedは、プロジェクトを開くときにdirenvの環境を読み込みます。このとき、Zedは自身の環境変数
+``PATH``から``direnv``を探し、見つからない場合は何も知らせずに読み込みを省きます。
+SSHで別の機械のリポジトリを開くリモート開発では、その機械で動くZedのサーバーが環境を読み込みます。
+そのため、その機械のユーザーのログインシェルで``direnv``が見つかり、そのユーザーとして
+リポジトリで``direnv allow``を済ませている必要があります。
+
+端末から``zed .``（nixpkgsで導入したZedでは``zeditor .``）を実行して起動したZedは、direnvを実行せず、
+その端末の環境を使います。direnvを読み込んだリポジトリのディレクトリか、``nix develop``で起動した
+シェルから実行します。保存時の整形が``No such file or directory``で失敗する場合は、Zedが
+devShellの環境を読み込めていません。
+
+TOMLとNixのファイルの整形には、ZedのTOML拡張とNix拡張が必要です。TOMLの診断には、
+``makers lint``と同じTombiの言語サーバー（ZedのTombi拡張）だけを使い、TOML拡張の``taplo``は使いません。
 
 [#build-and-test]
 == 構築とテスト
@@ -50,30 +95,39 @@ taskは、名前を付けて呼び出せるコマンドの組です。
 makers verify
 ----
 
-``verify``は、対象ごとに次の検査を実行します。引数を付けない``makers``も``verify``を実行します。
+``verify``は、整形の検査、lint、テストの順に次の検査を実行します。引数を付けない``makers``も``verify``を
+実行します。Rustの検査は、rootのワークスペースと、ワークスペースに含まれないZed拡張の両方を対象にします。
 
-* root workspaceとZed拡張: 整形の検査、Clippyおよびテスト。Clippyの警告も失敗として扱います。
-* ``packages/``にあるnpmパッケージ: ``npm test``
-* VS Code拡張: 整形の検査、``npm run check``（lint、型検査、manifestと構文強調の定義の検証）および``npm test``
+* 整形の検査: Rustのコード、VS Code拡張のTypeScript、Markdown、TOML、JSON、YAMLおよびNixのファイル
+* lint:
+** Rustのコード（Clippy）
+** VS Code拡張の``npm run check``（型検査と、manifestと構文強調の定義の検証）
+** VS Code拡張のTypeScript、Markdown、TOML、JSONおよびYAMLのファイル
+** GitHub Actionsのworkflow（actionlint）
+* テスト: Rustのテスト、``packages/``にあるnpmパッケージとVS Code拡張の``npm test``
+
+lintでは、Clippyを含め、警告も失敗として扱います。整形とlintの設定ファイルはrootにあります。
+テストが生成結果と比べる``config/adocweave.schema.json``、npmが生成する``package-lock.json``と、
+テストの入力と期待値を置く``fixtures``ディレクトリの下のファイルは、整形もlintもしません。
 
 ``verify``は、npmの依存関係を使う検査の前に、``packages/slides-helper``と``editors/vscode``へ依存関係を導入します。
 npmのcacheにない依存関係はregistry（パッケージの配布元）から取得するため、初回はregistryへの接続が必要です。
 スライドのCLI試験は実際のNode補助を起動するため、Rustのテストも補助の依存関係を使います。
 
 テストは、Rustの型からWebAssemblyパッケージの型宣言``packages/wasm/protocol.d.mts``を生成し直します。
-生成し直した結果がindex（``git add``で次のcommitへ登録した内容）と異なる場合は、``verify``が失敗します。
-protocolを変更した場合は、生成し直したファイルを``git add``してから再び実行し、同じcommitへ含めます。
+生成し直した結果がindex（``git add``で次のコミットへ登録した内容）と異なる場合は、``verify``が失敗します。
+protocolを変更した場合は、生成し直したファイルを``git add``してから再び実行し、同じコミットへ含めます。
 
-整形は``makers fmt``、ファイルを変更しない整形の検査は``makers fmt-check``で実行します。
-どちらも、Rustのコード（root workspaceとZed拡張）とVS Code拡張のTypeScriptを対象にします。
-VS Code拡張の整形には、npmの依存関係に含まれる整形ツールのBiomeを使います。そのため、どちらも先に
-VS Code拡張の依存関係を導入し、``verify``と同じく初回はregistryへの接続が必要です。
+整形は``makers fmt``、ファイルを変更しない整形の検査は``makers fmt-check``、lintは``makers lint``で、
+``verify``と同じ対象に個別に実行します。``makers``で名前を指定して実行するtaskは、この3つと``verify``だけです。
+``fmt``と``fmt-check``はnpmの依存関係を使わないため、registryへ接続せずに実行できます。
+``lint``は``verify``と同じくVS Code拡張の依存関係を導入するため、初回はregistryへの接続が必要です。
 
 VS Codeを起動して拡張を動かすExtension host testは``verify``に含まれません。手順は
 xref:docs/developer-guide/vscode-development.adoc#vscode-development-checks[VS Code拡張の開発]を参照してください。
 
-Zed拡張はroot workspaceに含まれませんが、``verify``の対象です。公式レジストリと同じ``wasm32-wasip2``向けの
-構築は、xref:docs/developer-guide/zed-development.adoc#zed-development-build[Zed拡張の開発]を参照してください。
+公式レジストリと同じ``wasm32-wasip2``向けのZed拡張の構築は、
+xref:docs/developer-guide/zed-development.adoc#zed-development-build[Zed拡張の開発]を参照してください。
 
 == 作業の進め方
 
@@ -184,7 +238,7 @@ remote名、ブランチ名、mergeの方式および必須checkの構成は、M
 |===
 |対象 |許可するlicense |取得元
 
-|root workspaceとZed拡張のRust依存
+|rootのワークスペースとZed拡張のRust依存
 |0BSD、Apache-2.0、Apache-2.0 WITH LLVM-exception、MIT、Unicode-3.0、Unlicense、Zlib
 |crates.ioだけ
 
@@ -219,7 +273,7 @@ citeprocのCPAL選択とNewcmフォントのGUST Font Licenseについては、�
 ``packages/slides-helper/licenses/evidence.json``へ記録します。依存の版やarchiveが変わった場合は、配布実物の
 本文と通知を確認し直します。CPALのGUI帰属表示条件を満たすため、CSLを使うpreviewの初期表示にはExhibit Bの
 copyright、phrase、URLを表示し、生成物には帰属表示とlicense本文を同梱します。
-licenseの選択と帰属表示を採用した理由はxref:docs/developer-guide/adr/0034-standard-runtime-dependency-audit.adoc[ADR 0034]を
+licenseの選択と帰属表示を採用した理由は xref:docs/developer-guide/adr/0034-standard-runtime-dependency-audit.adoc[ADR 0034]を
 参照してください。
 
 Reveal資産の正本は``crates/adocweave/assets/revealjs/sources.json``です。資産は``https://registry.npmjs.org/``の
@@ -262,7 +316,7 @@ CLIが端末へ表示するhelp、診断、進捗、要約およびerrorは英�
 
 == Pull request
 
-pull requestを作成するときは、link:.github/pull_request_template.md[Pull Request template]を使用します。
+pull requestを作成するときは、 link:.github/pull_request_template.md[Pull Request template]を使用します。
 変更の目的、主な変更点、実行した検証を簡潔に記載し、未実施の検証がある場合は理由を記載してください。
 
 CIの必須checkは``verify``の一つだけです。このcheckは検査を実行せず、常に成功します。

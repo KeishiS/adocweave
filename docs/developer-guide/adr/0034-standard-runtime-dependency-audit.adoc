@@ -14,7 +14,7 @@ RustSecデータベースのrevision、空の例外一覧、ビルド専用npm�
 
 == 決定
 
-依存監査の対象を、利用者の環境で動く配布runtimeへ限定します。Cargoは``cargo-deny``へ集約し、root workspaceと
+依存監査の対象を、利用者の環境で動く配布runtimeへ限定します。Cargoは``cargo-deny``へ集約し、rootのワークスペースと
 Zed拡張についてadvisory、license、取得元およびwildcard依存を検査します。advisory検査ではdatabase取得を無効にせず、
 実行時の最新RustSecデータベースを使用します。
 

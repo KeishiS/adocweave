@@ -176,7 +176,7 @@ link:https://rust-analyzer.github.io/book/contributing/architecture.html[rust-an
 ファイル内容を保持する仮想ファイルシステム（VFS）と、呼出元から渡された入力だけを解析するAPIの分離を
 参考にします。
 link:https://docs.astral.sh/ruff/editors/[Ruffのエディタ統合]にある、既存の検査・整形処理をLanguage Serverから
-利用する構成と、link:https://docs.astral.sh/ruff/editors/settings/[Language Serverによる設定の管理]を
+利用する構成と、 link:https://docs.astral.sh/ruff/editors/settings/[Language Serverによる設定の管理]を
 参考にします。
 link:https://docs.deno.com/runtime/reference/lsp_integration/#structure[DenoのLanguage Server構造]にある、
 Language Server固有の状態を``LanguageServer``が所有する分け方も参考にします。

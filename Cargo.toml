@@ -1,40 +1,40 @@
 [workspace]
+resolver = "2"
 members = [
-  "crates/adocweave-core",
   "crates/adocweave",
+  "crates/adocweave-core",
   "crates/adocweave-lsp",
   "crates/adocweave-project",
   "crates/adocweave-textlint",
   "crates/adocweave-wasm",
 ]
 exclude = ["editors/zed"]
-resolver = "2"
 
 [workspace.package]
+version = "0.62.0"
 edition = "2024"
+rust-version = "1.97.1"
 homepage = "https://github.com/KeishiS/adocweave"
+repository = "https://github.com/KeishiS/adocweave"
 license = "MIT OR Apache-2.0"
 publish = false
-repository = "https://github.com/KeishiS/adocweave"
-rust-version = "1.97.1"
-version = "0.62.0"
 
 # The profile used by cargo-dist for release artifacts.
 [profile.dist]
 inherits = "release"
-lto = "thin"
-codegen-units = 1
 debug = 0
-panic = "abort"
 strip = "symbols"
+lto = "thin"
+panic = "abort"
+codegen-units = 1
 
 # Size-oriented profile for the WASM artifact. Native release assets use
 # `dist`, which remains tuned independently.
 [profile.wasm]
 inherits = "release"
 opt-level = "z"
-lto = "fat"
-codegen-units = 1
 debug = 0
-panic = "abort"
 strip = "symbols"
+lto = "fat"
+panic = "abort"
+codegen-units = 1

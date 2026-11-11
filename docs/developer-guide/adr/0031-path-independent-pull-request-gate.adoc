@@ -51,4 +51,4 @@ Pull Requestでは配布candidateを構築しません。Zedの構築は公式�
 
 そのほかのcross target、実統合、fuzz、Nixおよび配布candidateの失敗は``main``への統合後に判明します。
 ``main``へのpushではmain gateを実行します。公開時は同じgateに続けて選択製品の全targetと成果物を検査し、
-失敗したrunを公開しません。このcandidateの扱いはxref:0032-same-run-release-publication.adoc[ADR 0032]で改訂します。
+失敗したrunを公開しません。このcandidateの扱いは xref:0032-same-run-release-publication.adoc[ADR 0032]で改訂します。

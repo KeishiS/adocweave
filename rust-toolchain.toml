@@ -1,6 +1,3 @@
-# 開発と検査に使うRustです。flake.nixのdevShellは、rust-overlayを通してこのファイルを読みます。
-# rustupを通してRustを使うツールも、リポジトリの中ではこのファイルが定めるRustを使います。
-# Cargo.tomlのworkspace.package.rust-versionは、常にchannelと同じ値にし、同じコミットで更新します。
 [toolchain]
 channel = "1.97.1"
 profile = "minimal"

@@ -68,7 +68,7 @@ CLIは``--slides-helper``、環境変数``ADOCWEAVE_SLIDES_HELPER``、``PATH``�
 明示的に指定したnative実行ファイルやscriptは、利用者が信頼した入口として直接起動します。
 補助は自身の``engines.node``を起動時に検査し、必要なバージョンを満たさない場合は、
 検出したバージョンと導入案内を返します。
-数式・引用・CSSと公開用／発表者用の指定はxref:slides.adoc[スライドの作成]を参照してください。
+数式・引用・CSSと公開用／発表者用の指定は xref:slides.adoc[スライドの作成]を参照してください。
 
 == 配布物の選択
 
@@ -267,7 +267,7 @@ npm install @adocweave/wasm@X.Y.Z
 ----
 
 ブラウザでは``@adocweave/wasm``を、Node.jsでは``@adocweave/wasm/direct``をimportします。
-APIの詳細はxref:../developer-guide/core-profile.adoc#wasm-api[WebAssembly API]を参照してください。
+APIの詳細は xref:../developer-guide/core-profile.adoc#wasm-api[WebAssembly API]を参照してください。
 
 更新する場合はバージョンを変更して``npm install``を実行します。削除は次のコマンドで行います。
 

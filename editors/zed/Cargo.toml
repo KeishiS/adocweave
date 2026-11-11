@@ -2,10 +2,10 @@
 name = "adocweave-zed"
 version = "0.0.0"
 edition = "2021"
+rust-version = "1.90"
+repository = "https://github.com/KeishiS/adocweave"
 license = "MIT"
 publish = false
-repository = "https://github.com/KeishiS/adocweave"
-rust-version = "1.90"
 
 [lib]
 crate-type = ["cdylib"]

@@ -4,11 +4,7 @@
     "allowImportingTsExtensions": true,
     "erasableSyntaxOnly": true,
     "noEmit": true,
-    "types": [
-      "node"
-    ]
+    "types": ["node"]
   },
-  "include": [
-    "scripts/**/*.mts"
-  ]
+  "include": ["scripts/**/*.mts"]
 }

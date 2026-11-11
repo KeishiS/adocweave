@@ -63,7 +63,7 @@ WebAssemblyはBrowser向けWebAssemblyと引き続き分離します。
 [NOTE]
 ====
 ここでいうcore crateの``adocweave``は、現在の``adocweave-core``です。``adocweave``という名前は、利用者が
-実行するCLIのcrateが持ちます。現在のcrate構成はxref:0046-project-owned-local-filesystem.adoc[ADR 0046]に
+実行するCLIのcrateが持ちます。現在のcrate構成は xref:0046-project-owned-local-filesystem.adoc[ADR 0046]に
 一覧があります。
 ====
 

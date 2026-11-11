@@ -66,8 +66,8 @@ VS Code拡張とZed拡張は、設定で指定した絶対パス、``PATH``、�
 
 [NOTE]
 ====
-この節の配布物を一括公開する判断はxref:0043-independent-distribution-units.adoc[ADR 0043]で置き換えました。
-現在の公開単位とworkflowの分離はxref:../release-distribution.adoc[配布仕様]、資格情報の境界は
+この節の配布物を一括公開する判断は xref:0043-independent-distribution-units.adoc[ADR 0043]で置き換えました。
+現在の公開単位とworkflowの分離は xref:../release-distribution.adoc[配布仕様]、資格情報の境界は
 xref:0023-publication-boundary.adoc[ADR 0023]を参照してください。以下は置き換え前の判断です。
 ====
 
@@ -120,7 +120,7 @@ OIDCおよび公開先の資格情報はstable tagから実行した各公開job
 link:https://doc.rust-lang.org/cargo/reference/workspaces.html#the-package-table[Cargo workspaceの``package``表]を
 使用します。一つの``vX.Y.Z``タグから一つのGitHub Releaseを作る構成は、cargo-distの
 link:https://axodotdev.github.io/cargo-dist/book/reference/concepts.html#announcements-selecting-apps[Announcement]に
-合わせます。native実行ファイルの形は、link:https://docs.deno.com/runtime/reference/cli/lsp/[Denoの``deno lsp``]や
+合わせます。native実行ファイルの形は、 link:https://docs.deno.com/runtime/reference/cli/lsp/[Denoの``deno lsp``]や
 link:https://docs.astral.sh/ruff/editors/[Ruffの``ruff server``]と同様にします。
 
 これらの標準機能と実績のある実行方法を組み合わせます。AdocWeave専用のRelease管理基盤、実行ファイル探索規則または

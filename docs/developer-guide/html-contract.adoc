@@ -38,7 +38,7 @@ UTF-8 encodingと非空タイトルを持つ``head``および``body``を常に�
 拒否した値をHTMLや診断messageへ出力しません。
 
 文書入力に由来する任意の``style``、classまたはraw HTMLは、stylesheet設定の有無にかかわらず拒否します。
-この分担を採用した理由はxref:adr/0007-host-supplied-stylesheets.adoc[ADR 0007]に記録しています。
+この分担を採用した理由は xref:adr/0007-host-supplied-stylesheets.adoc[ADR 0007]に記録しています。
 
 == 許可するHTML
 
@@ -58,7 +58,7 @@ UTF-8 encodingと非空タイトルを持つ``head``および``body``を常に�
 ``hidden``に限定します。
 classには実装が列挙する固定値、source blockの``language-*``、およびhostの``RolePolicy``が許可したblock roleを表す
 ``role-*``だけを使用します。文書に書いたroleは、hostが名前を列挙した場合に限り``role-<name>``として出力し、
-それ以外は出力しません（xref:adr/0020-host-allowed-role-classes.adoc[ADR 0020]）。
+それ以外は出力しません（ xref:adr/0020-host-allowed-role-classes.adoc[ADR 0020]）。
 入力由来の任意属性、event handler、`script`、SVGおよびraw HTMLは生成しません。
 ``role``と``aria-*``は検証済みの数式の固定表示に、``hidden``は保持した原TeXを隠すために使用します。
 原稿へ書かれた同名属性をそのまま出力するものではありません。
@@ -84,7 +84,7 @@ Tableの``width``は1から100までの値を百分率として正規化し、``
 利用側アプリが渡す参考文献一覧も同じ制限に従います。項目に番号を渡した場合は``ol``、渡さない場合は``ul``で
 出力し、番号の値はHTMLへ書き込みません。表示する番号は``ol``が振るものだけです。そのため利用側が渡す番号は、
 出力対象として残った項目の並び順で1から始まる連番でなければならず、満たさない場合は一覧を出力しません。
-詳しくはxref:server-execution.adoc#render-inputs[変換入力]を参照してください。
+詳しくは xref:server-execution.adoc#render-inputs[変換入力]を参照してください。
 
 == URLとリソース
 
@@ -103,7 +103,7 @@ codeとして実行するURLであり、許可する設定を受け付けるこ�
 
 解決できない参照、拒否したURLおよび利用できないresourceはactive要素へ変換せず、表示文字列や代替文字列を
 escapeした非activeな内容として出力します。解決済み表示文字列はプレーンテキストとして扱い、AsciiDocや
-HTMLとして再解析しません。詳しいfallback規則はxref:server-execution.adoc#render-inputs[変換入力]を
+HTMLとして再解析しません。詳しいfallback規則は xref:server-execution.adoc#render-inputs[変換入力]を
 基準とします。
 
 画像、音声および動画は、解決済みURL、macro種別と一致するMIME typeおよび対応する
@@ -286,7 +286,7 @@ linkは描画時にも``ActiveUrlPolicy``で検査し、拒否した場合はpla
 
 == 公開適合性fixture
 
-利用側はlink:../../crates/adocweave-core/conformance/cases.json[適合性manifest]から``publicContract``を持つcaseを
+利用側は link:../../crates/adocweave-core/conformance/cases.json[適合性manifest]から``publicContract``を持つcaseを
 選び、入力AsciiDoc、解析結果、HTML、解析診断および描画診断の対応を検査できます。caseに記録した解析条件と
 描画条件を適用し、``publicContract``のJSON pointer、HTML断片および診断codeを比較します。
 
