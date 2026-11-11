@@ -1,25 +1,15 @@
-# Markdownのlintと整形の設定です。対象は、.gitignoreが除外しない.mdファイルです。
-
 [global]
-# 日本語の段落を折り返すと、表示で語の間に空白が入るため、1行の長さを制限しません。
-disable = ["MD013"]
-# キャッシュのディレクトリをリポジトリへ作りません。
+disable = ["MD013"]  # 1行の長さ制限無効化
 cache = false
-# テストの入力と期待値を置く`fixtures`ディレクトリは、どの階層にあっても対象にしません。
 exclude = ["**/fixtures/**"]
 
-# 箇条書きの記号を`-`にそろえます(MD004)。
-[MD004]
+[MD004]  # 箇条書き
 style = "dash"
 
-# 文中のHTMLは、拡張のREADMEがレジストリでアイコンを中央に表示するための`p`と`img`だけを認めます(MD033)。
-[MD033]
+[MD033]  # HTMLタグ
 allowed-elements = ["p", "img"]
 
 [per-file-ignores]
-# pull requestの雛形と拡張のREADMEは、最上位の見出しで始めません(MD041)。
-".github/pull_request_template.md" = ["MD041"]
-"editors/*/README.md" = ["MD041"]
-# READMEが相対リンクで示すLICENSE-MITとLICENSE-APACHEは、公開するときにパッケージへ複製するため、
-# リンク先が存在するかを検査しません(MD057)。
-"packages/wasm/README.md" = ["MD057"]
+".github/pull_request_template.md" = ["MD041"]  # H1抑制
+"editors/*/README.md" = ["MD041"]  # H1抑制
+"packages/wasm/README.md" = ["MD057"]  # リンク先検証無効化

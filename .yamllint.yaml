@@ -1,15 +1,9 @@
-# YAMLのlintの設定です。
-
 extends: default
 
 rules:
-  # yamlfmtの整形に合わせ、コメントの前の空白を1つにします。
   comments:
     min-spaces-from-content: 1
-  # ファイルの先頭に、文書の開始を示す`---`を求めません。
   document-start: disable
-  # 長いshellのコマンドやcommit SHAを含む行を折り返しません。
   line-length: disable
-  # GitHub Actionsの`on:`を真偽値として扱いません。
   truthy:
     check-keys: false

@@ -1,7 +1,3 @@
-# YAMLの整形の設定です。リポジトリのrootで実行したyamlfmtはこのファイルを読むため、`makers fmt`と
-# Zedの保存時の整形は同じ設定を使います。このファイルがあると、yamlfmtは利用者ごとの設定を読みません。
-
 formatter:
   type: basic
-  # 空行は残し、続いた空行は1行にまとめます。
   retain_line_breaks_single: true
