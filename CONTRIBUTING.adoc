@@ -71,10 +71,19 @@ Zedは、開いたディレクトリにある``.zed/settings.json``をプロジ�
 信頼するまでプロジェクトの設定を使いません。画面の案内に従って、リポジトリのrootを信頼します。
 
 整形に使うツールはdevShellにあるため、ZedがdevShellの環境を使えるようにします。ランチャーなどから
-起動したZedは、プロジェクトを開くときにdirenvの環境を読み込みます。端末から``zed .``（nixpkgsで
-導入したZedでは``zeditor .``）を実行して起動したZedは、direnvを実行せず、その端末の環境を使います。
-direnvを読み込んだリポジトリのディレクトリか、``nix develop``で起動したシェルから実行します。
-TOMLとNixのファイルの整形には、ZedのTOML拡張とNix拡張が必要です。
+起動したZedは、プロジェクトを開くときにdirenvの環境を読み込みます。このとき、Zedは自身の環境変数
+``PATH``から``direnv``を探し、見つからない場合は何も知らせずに読み込みを省きます。
+SSHで別の機械のリポジトリを開くリモート開発では、その機械で動くZedのサーバーが環境を読み込みます。
+そのため、その機械のユーザーのログインシェルで``direnv``が見つかり、そのユーザーとして
+リポジトリで``direnv allow``を済ませている必要があります。
+
+端末から``zed .``（nixpkgsで導入したZedでは``zeditor .``）を実行して起動したZedは、direnvを実行せず、
+その端末の環境を使います。direnvを読み込んだリポジトリのディレクトリか、``nix develop``で起動した
+シェルから実行します。保存時の整形が``No such file or directory``で失敗する場合は、Zedが
+devShellの環境を読み込めていません。
+
+TOMLとNixのファイルの整形には、ZedのTOML拡張とNix拡張が必要です。TOMLの診断には、
+``makers lint``と同じTombiの言語サーバー（ZedのTombi拡張）だけを使い、TOML拡張の``taplo``は使いません。
 
 [#build-and-test]
 == 構築とテスト
