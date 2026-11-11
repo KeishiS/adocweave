@@ -82,8 +82,21 @@ private = true
 command = "tombi"
 args = ["format"]
 
+[tasks.yaml-no-trailing-spaces]
+private = true
+command = "yamllint"
+args = [
+  "--strict",
+  "-d",
+  "{rules: {trailing-spaces: enable}}",
+  ".github",
+  ".yamlfmt.yaml",
+  ".yamllint.yaml",
+]
+
 [tasks.fmt-yaml]
 private = true
+dependencies = ["yaml-no-trailing-spaces"]  # yamlfmtの不具合の回避
 command = "yamlfmt"
 args = [".github", ".yamlfmt.yaml", ".yamllint.yaml"]
 
